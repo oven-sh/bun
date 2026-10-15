@@ -9,7 +9,7 @@ use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
 };
 use crate::ir::width::string_width;
-use crate::js::format::format_node;
+use crate::js::format::format_name;
 use crate::prelude::*;
 use crate::write;
 use bun_lint::linter::goes_to_flow;
@@ -30,9 +30,28 @@ impl<'a> FormatKey<'a> {
     }
 }
 
-/// Writes `key`, which is not an expression in brackets. `parent`: what it is the name of. Returns
-/// the number of columns that it takes.
-fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
+/// What a key is the name of. Most keys are written without a look at it, so what kind of node a member or a property is gets
+/// found out only when it is asked for.
+#[derive(Copy, Clone)]
+pub(crate) enum KeyParent<'a> {
+    Node(AstNodes<'a>),
+    Member(Member<'a>),
+    Property(Prop<'a>),
+}
+
+impl<'a> KeyParent<'a> {
+    #[inline]
+    fn as_ast_nodes(self) -> AstNodes<'a> {
+        match self {
+            KeyParent::Node(node) => node,
+            KeyParent::Member(member) => member.as_ast_nodes(),
+            KeyParent::Property(property) => property.as_ast_nodes(),
+        }
+    }
+}
+
+/// Writes `key`, which is not an expression in brackets. Returns the number of columns that it takes.
+fn write_key<'a>(key: Key<'a>, parent: KeyParent<'a>, f: &mut Formatter<'a>) -> usize {
     let span = key.inner_span(file_of(f));
     let is_name = matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_));
     if is_name && f.is_quiet() && !f.options().quote_properties.is_consistent() {
@@ -42,8 +61,18 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
             _ => 0,
         };
     }
-    let printed = printed_key(key, span, parent(), f);
-    format_node(span, parent, f, |f| match &printed {
+    let mut printed = printed_key(key, span, parent.as_ast_nodes(), f);
+    // Prettier's `printPropertyKey` prints a key like any other node unless it adds or removes the quotes, so a
+    // `prettier-ignore` comment applies to `0XAB` and `'a-b'`, and not to the `'a'` that is printed as `a`.
+    let source = f.source_text().text_for(&span);
+    let has_quotes = |text: &[u8]| matches!(text.first(), Some(b'"' | b'\''));
+    if !f.is_quiet()
+        && has_quotes(source) == has_quotes(&printed)
+        && f.comments().of_name(span.start).is_ignored
+    {
+        printed = Cow::Borrowed(source);
+    }
+    format_name(span, f, |f| match &printed {
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });
@@ -59,7 +88,7 @@ impl<'a> Format<'a> for FormatKey<'a> {
         match self.key.kind() {
             KeyKind::Computed(expression) => expression.fmt(f),
             _ => {
-                write_key(self.key, || self.parent, f);
+                write_key(self.key, KeyParent::Node(self.parent), f);
             }
         }
     }
@@ -105,9 +134,9 @@ fn printed_key<'a>(
     if matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
         && !source.starts_with(b"`")
         && let Some(context) = context_of_string(source, f)
+        && let Some(sorted) = sorted_string_literal(source, false, (span, parent), context, f)
     {
-        let place = (span, parent);
-        return Cow::Owned(sorted_string_literal(source, false, place, context, f));
+        return Cow::Owned(sorted);
     }
     if let (KeyKind::ComputedString(_), [b'`', text @ .., b'`']) = (key.kind(), source)
         && has_white_space(text)
@@ -115,8 +144,12 @@ fn printed_key<'a>(
             f.context().tailwind_context(),
             f.options().tailwind.as_deref(),
         )
+        && let context = match context.follows_plugin {
+            true => context.in_template_at(span, parent, f),
+            false => context,
+        }
+        && let Some(sorted) = sorted_template_text(text, (true, true), context, tailwind)
     {
-        let sorted = sorted_template_text(text, (true, true), context, tailwind);
         return with_normalized_newlines(Cow::Owned([&b"`"[..], &sorted, b"`"].concat()));
     }
     match key.kind() {
@@ -141,7 +174,7 @@ fn printed_key<'a>(
             let printed = format_trimmed_number(source);
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only
             // if the number is written the way it is converted to a string.
-            let is_safe_to_quote = f.context().has_tree_of_babel()
+            let is_safe_to_quote = (f.context().has_tree_of_babel() || f.file().is_flow())
                 && is_simple_number(&printed)
                 && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {
@@ -288,12 +321,11 @@ pub(crate) fn format_computed_or_property_key<'a>(
     }
 }
 
-/// Writes a key that is not computed. `parent`: what it is the name of. Returns the number of columns
-/// that it takes.
+/// Writes a key that is not computed. Returns the number of columns that it takes.
 #[inline]
 pub(crate) fn write_member_name<'a>(
     key: Key<'a>,
-    parent: impl Fn() -> AstNodes<'a>,
+    parent: KeyParent<'a>,
     f: &mut Formatter<'a>,
 ) -> usize {
     write_key(key, parent, f)

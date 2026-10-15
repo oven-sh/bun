@@ -654,7 +654,7 @@ const NM_ARGV_BUDGET = 16_000;
 
 /** Run `tool args... <inputs>` over all inputs, chunked to stay under the argv limit. */
 function* chunkedRun(tool: string, args: string[], inputs: string[]): Generator<{ stdout: string; stderr: string }> {
-  for (let start = 0; start < inputs.length; ) {
+  for (let start = 0; start < inputs.length;) {
     let end = start;
     let length = 0;
     do {

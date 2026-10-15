@@ -154,7 +154,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects intersection_objects listed_properties keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
             mapped_param_constraints
@@ -192,6 +192,12 @@ pub struct Program<'s> {
     /// `Finished::order_dependent_variances` of the valid tasks so far: the first value in serial order for each symbol. Written at a
     /// barrier (`Program::validate`), read on a cache miss in `variances_worker`.
     serial_variances: Guarded<ArenaHashMap<'s, Sym, &'s [u8]>>,
+    /// `Finished::listings` of the valid tasks so far: the first in serial order for each
+    /// intersection. Written and read at a barrier (`Program::validate`).
+    serial_listings: Guarded<ArenaHashMap<'s, Sym, (bool, bool)>>,
+    /// A round of retries left every invalid task invalid: `Finished::listings` are not compared
+    /// for the rest of the step (`Program::stop_comparing_listings`).
+    listings_are_not_compared: Guarded<bool>,
     /// `Checker::referenced_properties` of all tasks. The task that checks the file of a
     /// declaration does not see what another one has marked, so `finish_file` takes back what it
     /// has reported. A union: it does not depend on which task comes first.
@@ -361,6 +367,10 @@ pub struct Program<'s> {
     /// An object type with the signatures and the index signatures of an intersection:
     /// `structured_members`.
     intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    /// `resolvedProperties` of an intersection, where `getPropertiesOfUnionOrIntersectionType`
+    /// assigned it while the members of a constituent were still in place: an object type with
+    /// the properties it found. `getPropertyOfType` finds the others by name all the same.
+    listed_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
     keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
@@ -465,6 +475,8 @@ impl<'s> Program<'s> {
             session,
             closed_a_cycle: Default::default(),
             serial_variances: Guarded::new(map_in(session.arena())),
+            serial_listings: Guarded::new(map_in(session.arena())),
+            listings_are_not_compared: Guarded::new(false),
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
@@ -541,6 +553,7 @@ impl<'s> Program<'s> {
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
             intersection_objects: ById::new_in(session),
+            listed_properties: ById::new_in(session),
             keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
@@ -738,6 +751,7 @@ impl<'s> Program<'s> {
             is_emitting: false,
             cached_by_emit: Vec::new(),
             reported: Vec::new(),
+            is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
@@ -783,6 +797,7 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
@@ -844,6 +859,11 @@ impl<'s> Program<'s> {
             resolved_meanwhile: Vec::new(),
             signatures_resolved_within: Vec::new(),
             restrictive_instantiations: Default::default(),
+            unresolved_renamed_params: Default::default(),
+            restrictive_instantiations_kept: Default::default(),
+            kept_a_renamed_param: Default::default(),
+            instantiating_generic_argument: None,
+            inferred_between_same_extends: Default::default(),
             prepared: Default::default(),
             last_prepared: (FileId(u32::MAX), FnId::NONE),
             prepared_exprs: (FileId(u32::MAX), Vec::new()),
@@ -882,6 +902,9 @@ struct Scope {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Query {
     Expr(FileId, ExprId),
+    /// Never entered. The owner of what `getTypeOfExpression` of the expression reports while a loop is analysed: every task
+    /// that analyses the loop reports it, and the final check of the expression, which owns `Expr`, does not.
+    ExprInFlowLoop(FileId, ExprId),
     Symbol(Sym),
     Declared(Sym),
     Return(FileId, FnId),
@@ -956,7 +979,7 @@ impl Query {
     #[inline]
     fn syntax(self) -> Option<(FileId, usize)> {
         Some(match self {
-            Query::Expr(file, _) => (file, 0),
+            Query::Expr(file, _) | Query::ExprInFlowLoop(file, _) => (file, 0),
             Query::Call(file, _) => (file, 1),
             Query::LiteralProp(file, _) => (file, 2),
             Query::Return(file, _) => (file, 3),
@@ -1425,6 +1448,9 @@ pub struct Checker<'p, 's> {
     cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
     reported: Vec<Reported>,
+    /// `check_expression` runs for `check_expression_in_flow_loop`, maybe in a file that is not that of the task. It notes
+    /// nothing for the end of `checkSourceFile`, which is for the walk of the file to do, and checks the calls that it visits.
+    is_checking_in_flow_loop: bool,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
@@ -1510,6 +1536,8 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
+    /// What `could_contain_type_variables` has found, by type.
+    could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.
@@ -1704,6 +1732,21 @@ pub struct Checker<'p, 's> {
     /// `cachedTypes[CachedTypeKindRestrictiveInstantiation][t] == t`: the conditional types that
     /// `getRestrictiveInstantiation` has returned.
     restrictive_instantiations: crate::util::FxHashSet<TypeId>,
+    /// The type parameters that `getUniqueTypeParameters` renamed and whose constraint nothing has
+    /// asked for since (`tp.constraint == nil`). They have no constraint declaration, so
+    /// `getRestrictiveTypeParameter` returns such a type parameter itself.
+    unresolved_renamed_params: crate::util::FxHashSet<TypeId>,
+    /// `cachedTypes[CachedTypeKindRestrictiveInstantiation]`, of the types in which a renamed type
+    /// parameter was left as it is: the entry stays when the constraint is asked for later.
+    restrictive_instantiations_kept: crate::util::FxHashMap<TypeId, TypeId>,
+    /// Whether the restrictive instantiation in progress left such a type parameter as it is.
+    kept_a_renamed_param: std::cell::Cell<bool>,
+    /// The argument whose generic signature `instantiateTypeWithSingleGenericCallSignature` is
+    /// instantiating, and the depth of `stack` when it began: `currentNode` is still the argument.
+    instantiating_generic_argument: Option<(FileId, ExprId, usize)>,
+    /// The extends types of conditional types that were related to an instantiation of the same
+    /// declaration with the same extends type: the inference between the two has been made.
+    inferred_between_same_extends: crate::util::FxHashSet<TypeId>,
     /// Functions whose context `prepare_enclosing` has already prepared.
     prepared: crate::util::FxHashSet<(FileId, FnId)>,
     last_prepared: (FileId, FnId),
@@ -2709,6 +2752,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.limits + self.times_cut_short.get()
     }
 
+    /// Changes whenever a query is refused or a computation is cut short. The same before and after: what was computed in
+    /// between is whole, and may be kept longer than the frames around it.
+    fn interruptions(&self) -> (u64, u64, u64) {
+        (self.unmarked_refusals, self.cuts(), self.refused_at)
+    }
+
     /// A result that was cut short has been read. Records the same marks as recomputing it would,
     /// so that results computed from it are recorded in turn.
     fn cut_short_again(&mut self) {
@@ -2747,6 +2796,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// change `currentNode`.
     /// `None`: `currentNode` is what `checkSourceElement` set, see `current_source_element`.
     pub(super) fn current_node(&self) -> Option<CurrentNode> {
+        if let Some((file, e, depth)) = self.instantiating_generic_argument
+            && !(self.stack.iter().zip(&self.frames).skip(depth))
+                .any(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q))
+        {
+            return Some(CurrentNode::Expr(file, e));
+        }
         let innermost_expr = (self.stack.iter().zip(&self.frames))
             .rposition(|(&q, frame)| !frame.is_quick_type && self.is_check_expression(q));
         // `checkSourceElement` has set it since the innermost `checkExpression` began.

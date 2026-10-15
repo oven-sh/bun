@@ -178,6 +178,11 @@ function serializeConfigObject(given, index) {
     // eslint-plugin-html has nothing in it: to load it changes the `Linter`, which then finds the scripts in a file.
     const changesLinter = plugin => /[\\/]eslint-plugin-html[\\/]/.test(locateDeep(plugin)?.module ?? "");
     if (Object.values(plugins).some(changesLinter)) out.$changesLinter = true;
+    // The others are not loaded. Where they are tells one from another.
+    const others = Object.entries(plugins).filter(it => !withRules.some(other => other[0] === it[0]));
+    out.$otherPlugins = Object.fromEntries(others.map(([prefix, plugin]) => [prefix, locateDeep(plugin) ?? null]));
+    const modules = Object.entries(plugins).map(([prefix, plugin]) => [prefix, otherModulesOf(plugin)]);
+    if (modules.some(it => it[1] !== undefined)) out.$pluginModules = Object.fromEntries(modules);
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [
@@ -214,21 +219,25 @@ function serializeConfigObject(given, index) {
 
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
 const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
-let exported = (await import(pathToFileURL(path).href)).default;
-if (typeof exported === "function")
-  exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();
-exported = await exported;
-// Vite+: what `vp lint` reads.
-if (isOfVite) exported = exported?.lint ?? null;
-const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
-if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
-[exported].flat(Infinity).forEach((object, index) => {
-  for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
-    if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
-  }
-});
-let config = null;
-if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
-else if (exported !== undefined) config = serializeConfigObject(exported, 0);
+// In a function: for an `await` at the top level that never settles Bun waits forever. This way the process ends when nothing is left to
+// wait for, as node does.
+(async () => {
+  let exported = (await import(pathToFileURL(path).href)).default;
+  if (typeof exported === "function")
+    exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();
+  exported = await exported;
+  // Vite+: what `vp lint` reads.
+  if (isOfVite) exported = exported?.lint ?? null;
+  const compat = Object.keys(require.cache).find(file => /[\\/]@eslint[\\/]compat[\\/]dist[\\/]/.test(file));
+  if (compat !== undefined) fixupPluginRules = (await import(pathToFileURL(compat).href)).fixupPluginRules ?? null;
+  [exported].flat(Infinity).forEach((object, index) => {
+    for (const [prefix, plugin] of Object.entries(object?.plugins ?? {})) {
+      if (!pluginsByPrefix.has(prefix)) pluginsByPrefix.set(prefix, { plugin, index });
+    }
+  });
+  let config = null;
+  if (Array.isArray(exported)) config = exported.flat(Infinity).map(serializeConfigObject);
+  else if (exported !== undefined) config = serializeConfigObject(exported, 0);
 
-finish(config, stringify);
+  finish(config, stringify);
+})();

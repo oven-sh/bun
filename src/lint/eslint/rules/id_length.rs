@@ -59,7 +59,10 @@ fn is_left(e: Expr) -> bool {
     match e.parent() {
         Node::Expr(parent) => parent.as_assign().is_some_and(|(_, target, _)| target == e),
         Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Expr(_) => parent.parent().as_stmt().is_some_and(|it| is_head_of(parent, it)),
+            StmtKind::Expr(_) => parent
+                .parent()
+                .as_stmt()
+                .is_some_and(|it| is_head_of(parent, it)),
             StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
                 left.as_expr() == Some(e)
             }
@@ -95,7 +98,10 @@ fn is_definition(member: Member) -> bool {
         && !member.is_signature()
         && match member.kind() {
             MemberKind::Property => !flags.contains(Flags::ACCESSOR),
-            MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => true,
+            MemberKind::Method
+            | MemberKind::Getter
+            | MemberKind::Setter
+            | MemberKind::Constructor => true,
             _ => false,
         }
 }
@@ -104,13 +110,16 @@ impl IdLength {
     /// Whether the name that `text` starts with has the right length by [`IdLength::enough`].
     #[inline]
     fn is_right_by_its_start(&self, text: &[u8]) -> bool {
-        text.get(..self.enough).is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
+        text.get(..self.enough)
+            .is_some_and(|it| it.iter().all(u8::is_ascii_alphabetic))
     }
 
     /// The same for the name that is written at `start`.
     #[inline]
     fn is_right_at(&self, file: &File, start: u32) -> bool {
-        file.text().get(start as usize..).is_some_and(|it| self.is_right_by_its_start(it))
+        file.text()
+            .get(start as usize..)
+            .is_some_and(|it| self.is_right_by_its_start(it))
     }
 
     /// What to report about an identifier named `name`, which is without its `#`, and the limit that the message names.
@@ -120,9 +129,25 @@ impl IdLength {
         }
         let length = get_grapheme_count(name) as f64;
         let problem = if length < self.min {
-            (if is_private { TOO_SHORT_PRIVATE } else { TOO_SHORT }, "min", self.min)
+            (
+                if is_private {
+                    TOO_SHORT_PRIVATE
+                } else {
+                    TOO_SHORT
+                },
+                "min",
+                self.min,
+            )
         } else if length > self.max {
-            (if is_private { TOO_LONG_PRIVATE } else { TOO_LONG }, "max", self.max)
+            (
+                if is_private {
+                    TOO_LONG_PRIVATE
+                } else {
+                    TOO_LONG
+                },
+                "max",
+                self.max,
+            )
         } else {
             return None;
         };
@@ -135,7 +160,10 @@ impl IdLength {
     /// to report it, or `None` if it is not in a place that the rule looks at.
     #[inline]
     fn check<'a>(&self, cx: &mut Cx<'a, Self>, name: Name<'a>, at: impl Fn() -> Option<Span>) {
-        if cx.state.get_or_insert_with(name, || self.problem_of(name).1.is_some()) {
+        if cx
+            .state
+            .get_or_insert_with(name, || self.problem_of(name).1.is_some())
+        {
             self.report(cx, name, &at);
         }
     }
@@ -155,12 +183,21 @@ impl IdLength {
         if let (name, Some((message, limit, value))) = self.problem_of(name)
             && let Some(at) = at()
         {
-            cx.report(at, message).data("name", name).data(limit, text::number_to_string(value));
+            let report = cx.report(at, message).called_with_the_name();
+            report
+                .data("name", name)
+                .data(limit, text::number_to_string(value));
         }
     }
 
     /// The value `value`, named `name`, of a property of an object pattern with the key `key`.
-    fn property_of_pattern<'a>(&self, file: &File<'a>, key: Key<'a>, name: Name<'a>, value: Span) -> Option<Span> {
+    fn property_of_pattern<'a>(
+        &self,
+        file: &File<'a>,
+        key: Key<'a>,
+        name: Name<'a>,
+        value: Span,
+    ) -> Option<Span> {
         match key_identifier(key) == Some(name) {
             true => self.properties.then(|| key.inner_span(file)),
             false => Some(value),
@@ -178,7 +215,8 @@ impl IdLength {
             Node::Param(param) if param.is_rest() => Some(pat.span()),
             Node::Param(param) => {
                 let is_supported = param.default().is_some()
-                    || !param.is_parameter_property() && param.func().is_some_and(is_function_with_body);
+                    || !param.is_parameter_property()
+                        && param.func().is_some_and(is_function_with_body);
                 is_supported.then(|| param.binding_span())
             }
             Node::PatElem(_) => Some(pat.span()),
@@ -271,7 +309,11 @@ impl IdLength {
         };
         let (file, keyword) = (cx.file(), attributes.keyword_span());
         let is_assert = file.slice(keyword) == b"assert";
-        self.check(cx, file.name_of(if is_assert { "assert" } else { "with" }), || Some(keyword));
+        self.check(
+            cx,
+            file.name_of(if is_assert { "assert" } else { "with" }),
+            || Some(keyword),
+        );
         for key in attributes.entries().iter().filter_map(Prop::key) {
             if let KeyKind::Ident(name) = key.kind() {
                 self.check(cx, name, || Some(key.span(file)));
@@ -289,7 +331,9 @@ impl IdLength {
         } else if let Some(keyword) = member.constructor_keyword()
             && !keyword.is_string()
         {
-            self.check(cx, keyword.name(), || is_definition(member).then(|| keyword.span()));
+            self.check(cx, keyword.name(), || {
+                is_definition(member).then(|| keyword.span())
+            });
         }
     }
 }
@@ -320,10 +364,20 @@ impl IdLength {
             return;
         };
         self.check(cx, name, || match pat.parent() {
-            Node::Param(param) if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature) => None,
+            Node::Param(param)
+                if param
+                    .func()
+                    .is_some_and(|it| it.kind() == FnKind::IndexSignature) =>
+            {
+                None
+            }
             Node::Param(_) if name.is("this") => None,
             // `{ a }`
-            Node::PatProp(prop) if prop.is_shorthand() && prop.default().is_none() && !self.properties => None,
+            Node::PatProp(prop)
+                if prop.is_shorthand() && prop.default().is_none() && !self.properties =>
+            {
+                None
+            }
             _ => Some(pat.span()),
         });
     }
@@ -412,12 +466,19 @@ impl IdLength {
         };
         match cx.language().is_oxlint {
             true => self.check_member_expression_as_oxlint(e, name, cx),
-            false => self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span())),
+            false => self.check(cx, name.name(), || {
+                is_assigned_member(e).then(|| name.span())
+            }),
         }
     }
 
     /// `a.b`: a private name, or what an assignment or a property of an object pattern assigns to.
-    fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_member_expression_as_oxlint<'a>(
+        &self,
+        e: Expr<'a>,
+        name: Ident<'a>,
+        cx: &mut Cx<'a, Self>,
+    ) {
         self.check(cx, name.name(), || {
             let is_assigned_to = || match e.parent() {
                 Node::Expr(parent) => parent.as_assign().is_some_and(|(_, target, _)| target == e),
@@ -471,7 +532,12 @@ impl IdLength {
 impl Rule for IdLength {
     const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
     const ON: On = On::new()
-        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::Assign, ExprTag::PrivateIdentifier])
+        .exprs(&[
+            ExprTag::Ident,
+            ExprTag::Dot,
+            ExprTag::Assign,
+            ExprTag::PrivateIdentifier,
+        ])
         .stmts(&[
             StmtTag::Interface,
             StmtTag::TypeAlias,
@@ -512,7 +578,10 @@ impl Rule for IdLength {
             exceptions: (options.strings("exceptions").iter())
                 .map(|it| it.as_bytes().into())
                 .collect(),
-            exception_patterns: patterns.iter().filter_map(|it| Regex::new(it, "u").ok()).collect(),
+            exception_patterns: patterns
+                .iter()
+                .filter_map(|it| Regex::new(it, "u").ok())
+                .collect(),
             check_generic: options.bool_or("checkGeneric", true),
             enough: match max == f64::INFINITY {
                 true => min.ceil() as usize,
@@ -540,7 +609,13 @@ impl Rule for IdLength {
                 ])
                 .members()
                 .enum_members()
-                .types(&[TypeTag::Import, TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate]);
+                .types(&[
+                    TypeTag::Import,
+                    TypeTag::Tuple,
+                    TypeTag::Ref,
+                    TypeTag::Typeof,
+                    TypeTag::Predicate,
+                ]);
             if self.check_generic {
                 on = on.type_params();
             }
@@ -562,7 +637,10 @@ impl Rule for IdLength {
             .stmts(&[StmtTag::Import])
             .import_specs();
         if self.properties {
-            on = on.props().types(&[TypeTag::Import]).exprs(&[ExprTag::Assign]);
+            on = on
+                .props()
+                .types(&[TypeTag::Import])
+                .exprs(&[ExprTag::Assign]);
         }
         on
     }
@@ -610,7 +688,14 @@ impl Rule for IdLength {
         }
         match (ty.tag(), cx.language().is_oxlint) {
             (TypeTag::Import, false) => self.check_import_type(ty, cx),
-            (TypeTag::Import | TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {
+            (
+                TypeTag::Import
+                | TypeTag::Tuple
+                | TypeTag::Ref
+                | TypeTag::Typeof
+                | TypeTag::Predicate,
+                true,
+            ) => {
                 self.check_type_as_oxlint(ty, cx);
             }
             _ => {}

@@ -11,6 +11,8 @@
 //! specification wherever they differ from it.
 
 #![forbid(unsafe_code)]
+// For what only `--debug-check` runs: `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter.
+#![feature(optimize_attribute)]
 
 pub mod css;
 pub mod cursor;
@@ -25,8 +27,9 @@ pub mod markdown;
 pub mod options;
 pub mod pragma;
 pub mod range;
-mod sort;
+pub mod sort;
 mod stack;
+pub mod svelte;
 pub mod syntax_error;
 pub mod tailwind;
 mod text;

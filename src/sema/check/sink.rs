@@ -256,6 +256,7 @@ fn is_task_independent(q: Query) -> bool {
         | Query::TypeNode(..)
         | Query::Enum(..)
         | Query::Expr(..)
+        | Query::ExprInFlowLoop(..)
         | Query::Call(..)
         | Query::InitializerIsUndefined(..)
         | Query::AliasTarget(_)
@@ -315,8 +316,13 @@ impl super::Program<'_> {
             file => self.files.modules.get(file.idx()).map(|m| m.file_name()),
         };
         let path = |file: FileId| path(file).map(crate::resolve::typescript_path);
-        (path(a.file), a.start, a.end, a.code, &a.args)
-            .cmp(&(path(b.file), b.start, b.end, b.code, &b.args))
+        // Nearly always two of one file.
+        let by_path = match a.file == b.file {
+            true => std::cmp::Ordering::Equal,
+            false => path(a.file).cmp(&path(b.file)),
+        };
+        by_path
+            .then_with(|| (a.start, a.end, a.code, &a.args).cmp(&(b.start, b.end, b.code, &b.args)))
             .then_with(|| compare_message_chain_size(&a.message_chain, &b.message_chain))
             .then_with(|| compare_message_chain_content(&a.message_chain, &b.message_chain))
             // `compareRelatedInfo`
@@ -672,6 +678,14 @@ impl Checker<'_, '_> {
     pub(super) fn log_reported_from(&mut self, from: usize) {
         for diagnostic in self.reported.split_off(from) {
             self.log_diagnostic(None, diagnostic);
+        }
+    }
+
+    /// The diagnostics reported from index `from` on are kept whatever the frames in progress do with theirs. See
+    /// `Query::ExprInFlowLoop`.
+    pub(super) fn log_reported_in_flow_loop(&mut self, from: usize, file: FileId, e: ExprId) {
+        for diagnostic in self.reported.split_off(from) {
+            self.log_diagnostic(Some(Query::ExprInFlowLoop(file, e)), diagnostic);
         }
     }
 

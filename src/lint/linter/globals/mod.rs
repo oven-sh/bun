@@ -188,7 +188,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         add(tables::COMMONJS.0, tables::COMMONJS.1);
     }
     let defined = all.len();
-    for (name, setting) in &language.globals {
+    for (name, setting) in language.globals.iter() {
         match all.iter_mut().take(defined).find(|it| *it.0 == **name) {
             Some(existing) => existing.1 = *setting,
             None => all.push((Cow::Owned(name.to_vec()), *setting)),
@@ -204,9 +204,13 @@ pub struct ConfigGlobals {
     /// ESLint's `configGlobals`: what the version of ECMAScript and `sourceType: "commonjs"`
     /// define, overridden by `languageOptions.globals`. Sorted by name.
     settings: Vec<(Cow<'static, [u8]>, Global)>,
+    /// With an oxlint config: what `settings` would have for a variable if `globals` didn't turn it off. Sorted by name.
+    behind_off: Vec<(Cow<'static, [u8]>, Global)>,
     /// For each name of the pool, two bits: whether the libraries of TypeScript define it as a
     /// type, as a value.
     libs: Box<[u8]>,
+    /// The names that they define, in the order in which typescript-eslint defines them.
+    lib_order: Box<[u16]>,
 }
 
 impl ConfigGlobals {
@@ -231,24 +235,35 @@ impl ConfigGlobals {
             );
         }
         settings.extend(
-            language
-                .globals
-                .iter()
+            (language.env_behind_off.iter().rev())
+                .chain(language.globals.iter())
                 .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
         );
         // Of two with the same name, the later one counts.
         settings.reverse();
         crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
-        settings.dedup_by(|a, b| a.0 == b.0);
+        let mut behind_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
+        settings.dedup_by(|dropped, kept| {
+            let is_same = dropped.0 == kept.0;
+            if is_same && language.is_oxlint && kept.1 == Global::Off {
+                behind_off.push(dropped.clone());
+            }
+            is_same
+        });
+        behind_off.dedup_by(|a, b| a.0 == b.0);
+        let (libs, lib_order) = Self::libs(language);
         ConfigGlobals {
             settings,
-            libs: Self::libs(language),
+            behind_off,
+            libs,
+            lib_order,
         }
     }
 
     /// `populateGlobalsFromLib` of typescript-eslint's scope manager.
-    fn libs(language: &LanguageOptions) -> Box<[u8]> {
+    fn libs(language: &LanguageOptions) -> (Box<[u8]>, Box<[u16]>) {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
+        let mut order = Vec::new();
         let find = |name: &[u8]| {
             tables::LIBS
                 .binary_search_by(|it| it.0.as_bytes().cmp(name))
@@ -275,10 +290,13 @@ impl ConfigGlobals {
             }
             for entry in entries(start, len) {
                 let (id, shift) = ((entry >> 2) as usize, (entry >> 2) % 4 * 2);
+                if (flags[id / 4] >> shift) & 3 == 0 {
+                    order.push(entry >> 2);
+                }
                 flags[id / 4] |= ((entry & 3) as u8) << shift;
             }
         }
-        flags
+        (flags, order.into())
     }
 
     fn setting(&self, name: &[u8]) -> Option<Global> {
@@ -287,6 +305,15 @@ impl ConfigGlobals {
             .binary_search_by(|it| (*it.0).cmp(name))
             .ok()?;
         Some(self.settings[at].1)
+    }
+
+    /// oxlint's `env_contains_var(name)`, for a variable that `globals` turns off.
+    fn behind_off(&self, name: &[u8]) -> Option<Global> {
+        let at = self
+            .behind_off
+            .binary_search_by(|it| (*it.0).cmp(name))
+            .ok()?;
+        Some(self.behind_off[at].1)
     }
 
     /// `TYPE`, `VALUE`, or 0 if no library defines `name`.
@@ -300,12 +327,44 @@ impl ConfigGlobals {
 }
 
 impl LanguageOptions {
-    /// What the libraries of TypeScript define, sorted by name: the name, whether it is a type, whether it is a value.
+    /// How many names [`Self::lib_name`] knows.
+    pub fn lib_name_count() -> usize {
+        tables::NAME_ENDS.len()
+    }
+
+    /// The name with the number `id`. Empty if there is none.
+    pub fn lib_name(id: usize) -> &'static [u8] {
+        name_at(id)
+    }
+
+    /// What [`Self::lib_variable_entries`] has for `name`.
+    pub fn lib_variable_entry(&self, name: &[u8]) -> Option<u32> {
+        let id = id_of(name)?;
+        let flags = (self.config_globals().libs[id / 4] >> (id % 4 * 2)) & 3;
+        (flags != 0).then_some((id as u32) << 2 | u32::from(flags))
+    }
+
+    /// [`Self::lib_variables`] as numbers: that of the name `<< 2`, 1 if it is a type, 2 if it is a value.
+    pub fn lib_variable_entries(&self) -> impl Iterator<Item = u32> + '_ {
+        let ConfigGlobals {
+            libs, lib_order, ..
+        } = self.config_globals();
+        lib_order.iter().map(move |&id| {
+            let flags = (libs[usize::from(id) / 4] >> (id % 4 * 2)) & 3;
+            u32::from(id) << 2 | u32::from(flags)
+        })
+    }
+
+    /// What the libraries of TypeScript define, in the order in which typescript-eslint defines it: the name, whether it is a type,
+    /// whether it is a value.
     pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {
-        let libs = &self.config_globals().libs;
-        (0..tables::NAME_ENDS.len()).filter_map(move |id| {
-            let flags = (libs.get(id / 4)? >> (id % 4 * 2)) & 3;
-            (flags != 0).then(|| (name_at(id), flags & TYPE != 0, flags & VALUE != 0))
+        let ConfigGlobals {
+            libs, lib_order, ..
+        } = self.config_globals();
+        lib_order.iter().map(move |&id| {
+            let id = usize::from(id);
+            let flags = (libs[id / 4] >> (id % 4 * 2)) & 3;
+            (name_at(id), flags & TYPE != 0, flags & VALUE != 0)
         })
     }
 }
@@ -400,7 +459,12 @@ impl<'a> File<'a> {
                 && self.is_javascript()
                 && !crate::utils::oxlint::has_module_syntax(self)
         };
-        let implicit = (config.setting(name))
+        // To oxlint, "off" only takes back an entry of `globals`. What an `env` defines stays defined.
+        let of_config = match config.setting(name) {
+            Some(Global::Off) => config.behind_off(name).or(Some(Global::Off)),
+            setting => setting,
+        };
+        let implicit = of_config
             .filter(|it| {
                 !only_written
                     || *it == Global::Off

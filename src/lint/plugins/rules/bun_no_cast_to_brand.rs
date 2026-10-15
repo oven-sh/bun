@@ -24,11 +24,11 @@ struct Brand {
 
 const CAST: Message = Message::new(
     "cast",
-    "This cast makes a `{{type}}` of a value that nothing has checked. Only the module `{{module}}` makes one.",
+    "This cast creates a `{{type}}` from an unchecked value. Only `{{module}}` should create one.",
 );
 const MINT: Message = Message::new(
     "mint",
-    "`{{name}}` makes a `{{type}}` of any value, and this file is not listed as one that may import it.",
+    "`{{name}}` turns any value into a `{{type}}`, and this file is not allowed to import it.",
 );
 
 impl Brand {

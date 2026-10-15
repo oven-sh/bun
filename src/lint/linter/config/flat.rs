@@ -6,14 +6,17 @@ use super::rc::strings_of;
 use super::{Config, ConfigObject, Pattern, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::{Deprecated, Registry, parse_rule_id};
+use crate::linter::registry::{Deprecated, Missing, Registry, parse_rule_id};
 use crate::linter::resolved::{find_formatting_rule, find_js_rule, needs_resolver};
 use crate::options::Json;
-use crate::paths;
-use crate::rule::{Plugin, minor_of};
+use crate::paths::{self, package_of};
+use crate::rule::{Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
-use bun_core::strings;
 use std::sync::Arc;
+
+/// A JavaScript plugin that is loaded already, and what `$jsPlugins` would have for it: `{ module, export }`. These come from
+/// `plugins` in bunfig.toml and from `--plugin`.
+pub type NamedPlugin = (Arc<js_plugin::Plugin>, Json);
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -47,6 +50,8 @@ pub(super) struct Reader<'r> {
     pub(super) registry: &'r Registry,
     pub(super) base_path: Vec<u8>,
     pub(super) prefers_typescript_rules: bool,
+    /// [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig)
+    pub(super) has_every_rule: bool,
     pub(super) objects: Vec<ConfigObject>,
     pub(super) notes: Vec<Vec<u8>>,
     /// [`Config::advice`]
@@ -62,6 +67,8 @@ pub(super) struct Reader<'r> {
     pub(super) defaults: usize,
     /// The names of the plugins of the configuration that are not [built in](is_built_in).
     pub(super) foreign_prefixes: Vec<Box<[u8]>>,
+    /// How many of `js_plugins` and of `js_locations`, from the first, are [`NamedPlugin`]s.
+    pub(super) named: usize,
     /// [`names_unknown_resolver`] somewhere.
     pub(super) has_unknown_resolver: bool,
     /// The names of the plugins of which a rule is on that is answered for here and can hand a file back.
@@ -123,22 +130,6 @@ fn add_foreign_prefixes(registry: &Registry, json: &Json, into: &mut Vec<Box<[u8
     if let Some(extends) = json.get(b"extends") {
         add_foreign_prefixes(registry, extends, into);
     }
-}
-
-/// The package that `name` is, or is a file of: eslint-config-next writes `require.resolve("eslint-import-resolver-node")`.
-fn package_of(name: &[u8]) -> &[u8] {
-    const FOLDER: &[u8] = b"node_modules";
-    let after = strings::last_index_of(name, FOLDER).and_then(|at| name.get(at + FOLDER.len()..));
-    let Some([b'/' | b'\\', inside @ ..]) = after else {
-        return name;
-    };
-    let end_of_part =
-        |from: usize| Some(from + strings::index_of_any(inside.get(from..)?, b"/\\")?);
-    let end = match (inside.first(), end_of_part(0)) {
-        (Some(b'@'), Some(scope)) => end_of_part(scope + 1),
-        (_, end) => end,
-    };
-    &inside[..end.unwrap_or(inside.len())]
 }
 
 /// Whether `settings` has an `import/resolver`, or a parser in `import/parsers`, that the rules here do not do the same as, or a
@@ -206,6 +197,41 @@ fn has_unknown_resolver(json: &Json) -> bool {
 }
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
+
+/// `Kind::Problem` rules that [warn by default](Reader::grade_by_kind) anyway. An error fails CI, so it has to be right nearly
+/// every time. These find unused or useless code, or code that people often write on purpose: `while (match = re.exec(text))`,
+/// `object.hasOwnProperty(key)`, a regular expression that strips ANSI escapes.
+const WARN_BY_DEFAULT: [&[u8]; 29] = [
+    b"@typescript-eslint/await-thenable",
+    b"@typescript-eslint/ban-ts-comment",
+    b"@typescript-eslint/no-duplicate-enum-values",
+    b"@typescript-eslint/no-extra-non-null-assertion",
+    b"@typescript-eslint/no-non-null-asserted-optional-chain",
+    b"@typescript-eslint/no-unsafe-argument",
+    b"@typescript-eslint/no-unsafe-assignment",
+    b"@typescript-eslint/no-unsafe-call",
+    b"@typescript-eslint/no-unsafe-declaration-merging",
+    b"@typescript-eslint/no-unsafe-function-type",
+    b"@typescript-eslint/no-unsafe-member-access",
+    b"@typescript-eslint/no-unsafe-return",
+    b"@typescript-eslint/no-unused-vars",
+    b"@typescript-eslint/no-wrapper-object-types",
+    b"no-cond-assign",
+    b"no-constant-condition",
+    b"no-control-regex",
+    b"no-empty-character-class",
+    b"no-empty-pattern",
+    b"no-ex-assign",
+    b"no-prototype-builtins",
+    b"no-self-assign",
+    b"no-setter-return",
+    b"no-unassigned-vars",
+    b"no-unreachable",
+    b"no-unused-private-class-members",
+    b"no-unused-vars",
+    b"no-useless-assignment",
+    b"no-useless-backreference",
+];
 
 /// `Config "name": ` or `Config (unnamed): `, which the message of a `ConfigError` starts with.
 fn config_name(json: &Json) -> Vec<u8> {
@@ -280,8 +306,9 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$ignorePatterns" | b"$jsPlugins" | b"$parser" | b"$processor"
-            | b"$source" => None,
+            b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
+            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
                 .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
@@ -315,6 +342,24 @@ impl Reader<'_> {
         }
     }
 
+    /// Warns that an oxlint config turns off `id`, which isn't a rule. oxlint rejects such a config. The rules here are those of
+    /// one version of oxlint, so a config for a later one can name a rule that isn't known here.
+    fn note_unknown_rule_that_is_off(&mut self, id: &[u8]) {
+        let hint = match self.registry.why_missing(id) {
+            Missing::OfPluginWithoutRules(_) => return,
+            Missing::Unknown(Some(close)) => [b"Did you mean \"", &close[..], b"\"?"].concat(),
+            Missing::Unknown(None) | Missing::Formatting => {
+                b"It has no effect. Fix the name or remove it.".to_vec()
+            }
+        };
+        self.note(&[
+            b"Unknown rule \"",
+            id,
+            b"\" is turned off in the oxlint config\n  ",
+            &hint,
+        ]);
+    }
+
     /// Says so if the rules here, which answer for the plugin with the prefix `prefix`, are those of a later version than the one
     /// that is installed. `name`: what the plugin says it is: `<package>@<version>`.
     pub(super) fn advise_about_version(&mut self, prefix: &[u8], name: &[u8]) {
@@ -333,9 +378,8 @@ impl Reader<'_> {
             package,
             b" ",
             installed,
-            b" is installed; bun lint follows ",
+            b" is installed, but bun lint's built-in rules match ",
             ours.as_bytes(),
-            b".",
         ]
         .concat();
         if !self.advice.contains(&line) {
@@ -350,7 +394,10 @@ impl Reader<'_> {
         key: &str,
         items: &[Json],
     ) -> Result<Vec<Pattern>, ConfigError> {
+        // Overrides from bunfig.toml are marked with `$globsOfBun`.
+        let are_of_bun = json.get(b"$globsOfBun").is_some();
         let patterns = items.iter().map(|item| match item {
+            Json::String(pattern) if are_of_bun => Ok(Pattern::of_bunfig(pattern)),
             Json::String(pattern) => Ok(Pattern::new(pattern)),
             // Which files it is for cannot be told. To lint fewer files than ESLint and find no problems is worse than not to lint.
             _ => {
@@ -359,9 +406,9 @@ impl Reader<'_> {
                     &config_name(json),
                     b"Key \"",
                     key.as_bytes(),
-                    b"\": A function is not supported, at user-defined index ",
+                    b"\": Functions are not supported, at user-defined index ",
                     index.as_bytes(),
-                    b".\n`FlatCompat` of @eslint/eslintrc makes one of each of the `overrides`, and of the `ignorePatterns`, of what it is given.",
+                    b".\nFlatCompat from @eslint/eslintrc creates one for each \"overrides\" and \"ignorePatterns\" entry.",
                 ]))
             }
         });
@@ -370,6 +417,9 @@ impl Reader<'_> {
 
     /// The rule here that answers for `id`. Without one, the plugin is loaded that the configuration has for it.
     pub(super) fn native_rule(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        if self.has_every_rule {
+            return self.registry.find_by_any_name(id);
+        }
         let prefix = parse_rule_id(id).0;
         let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
         (self
@@ -402,8 +452,11 @@ impl Reader<'_> {
             };
             let is_about_layout = self.formatting_rule(id).is_some();
             if !is_about_layout && let Some(found) = find_js_rule(&self.js_plugins, id) {
-                // Also for a rule that is off, as in oxlint.
-                if found.is_none() {
+                // Also for a rule that is off, as in oxlint. ESLint does not look at such a rule.
+                let Some(rule) = found else {
+                    if !self.prefers_typescript_rules && setting.severity == Severity::Off {
+                        continue;
+                    }
                     return Err(ConfigError::new(&[
                         b"Rule '",
                         name,
@@ -411,6 +464,14 @@ impl Reader<'_> {
                         prefix,
                         b"'",
                     ]));
+                };
+                // oxlint checks the options of every entry before it lints, also of one that is off or in an override that
+                // matches no file. ESLint checks them for the files that the rule is on for.
+                if self.prefers_typescript_rules
+                    && let Err(lines) = crate::linter::schema::validate_js(rule, &setting.options)
+                {
+                    let message = super::js_options_error_of_oxlint(rule, &setting.options, &lines);
+                    return Err(ConfigError { message });
                 }
                 // A worker reads JSON.
                 let kind = setting
@@ -421,7 +482,7 @@ impl Reader<'_> {
                     return Err(ConfigError::new(&[
                         b"Key \"rules\": Key \"",
                         id,
-                        b"\": An option of a rule in JavaScript cannot be handed on: ",
+                        b"\": Options for a rule that runs in JavaScript must be JSON, not ",
                         kind,
                         b".",
                     ]));
@@ -433,6 +494,7 @@ impl Reader<'_> {
             let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
             setting.written_for = match self.prefers_typescript_rules {
                 _ if is_foreign => None,
+                _ if self.has_every_rule => self.native_rule(id).map(|it| it.meta.plugin),
                 true => Plugin::of_oxlint_prefix(prefix),
                 false => Plugin::of_prefix(prefix),
             };
@@ -457,11 +519,47 @@ impl Reader<'_> {
                     if setting.severity != Severity::Off && is_new {
                         self.unknown_rules.push(id.into());
                     }
+                    if setting.severity == Severity::Off && self.prefers_typescript_rules {
+                        self.note_unknown_rule_that_is_off(id);
+                    }
                 }
             }
             settings.push(setting);
         }
         Ok(settings)
+    }
+
+    /// `$severityByKind`, which `bun lint`'s default config sets. Enabled `Kind::Problem` rules become errors, except those in
+    /// [`WARN_BY_DEFAULT`]. Every other enabled rule becomes a warning.
+    fn grade_by_kind(&self, settings: &mut [RuleSetting]) {
+        for setting in settings
+            .iter_mut()
+            .filter(|it| it.severity != Severity::Off)
+        {
+            let kind = self.native_rule(&setting.id).map(|it| it.meta.kind);
+            setting.severity = match kind {
+                Some(Kind::Problem) if !WARN_BY_DEFAULT.contains(&&setting.id[..]) => {
+                    Severity::Error
+                }
+                _ => Severity::Warn,
+            };
+        }
+    }
+
+    /// `$withoutWarnings`, which `bun lint`'s default config sets for declaration files. Turns off every rule that the config
+    /// objects so far set to warn.
+    fn without_warnings(&self) -> Vec<RuleSetting> {
+        let so_far = self.objects.iter().flat_map(|it| &it.rules);
+        let off = |it: &RuleSetting| RuleSetting {
+            severity: Severity::Off,
+            options: Vec::new(),
+            has_only_severity: true,
+            ..it.clone()
+        };
+        so_far
+            .filter(|it| it.severity == Severity::Warn)
+            .map(off)
+            .collect()
     }
 
     /// `assertValidBaseConfig`, with what `wrapConfigErrorWithDetails` adds.
@@ -574,11 +672,17 @@ impl Reader<'_> {
                 });
             }
         }
+        let modules_of = |prefix: &[u8]| json.get(b"$pluginModules")?.get(prefix);
+        let others = json.get(b"$otherPlugins").and_then(Json::as_object);
+        for (prefix, location) in others.unwrap_or_default() {
+            self.refuse_second(prefix, location, modules_of(prefix))?;
+        }
         for (prefix, location) in json
             .get(b"$jsPlugins")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
+            self.refuse_second(prefix, location, modules_of(prefix))?;
             // `twin`: which of the plugins that objects have under that name.
             let is_it = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
@@ -595,6 +699,17 @@ impl Reader<'_> {
         if let Some(rules) = json.get(b"rules") {
             object.rules = self.rules(rules)?;
         }
+        if json.get(b"$severityByKind").is_some() {
+            self.grade_by_kind(&mut object.rules);
+        }
+        if json.get(b"$defaultOptions").is_some() {
+            for setting in &mut object.rules {
+                setting.defaults.clone_from(&setting.options);
+            }
+        }
+        if json.get(b"$withoutWarnings").is_some() {
+            object.rules = self.without_warnings();
+        }
         let part = |key: &[u8]| json.get(key).cloned().unwrap_or(Json::Null);
         object.language_options = part(b"languageOptions");
         object.linter_options = part(b"linterOptions");
@@ -604,6 +719,7 @@ impl Reader<'_> {
         object.source = json.get(b"$source").cloned();
         object.parser_location = json.get(b"$parser").cloned();
         object.changes_linter = json.get(b"$changesLinter").is_some();
+        object.is_for_react = json.get(b"$forReact").is_some();
         object.processor_location = json
             .get(b"$processor")
             .filter(|it| it.as_object().is_some())
@@ -653,7 +769,7 @@ impl Reader<'_> {
             }
         }
         for extension in extensions {
-            let Json::Object(mut entries) = extension else {
+            let Some(mut entries) = extension.into_object() else {
                 return Err(ConfigError::new(&[b"Unexpected non-object config."]));
             };
             if entries.iter().any(|it| it.0 == b"basePath") {
@@ -698,6 +814,9 @@ impl Reader<'_> {
                             .cloned(),
                     );
                     put(&mut entries, b"ignores", Json::Array(all));
+                }
+                if let Some(by_kind) = own_json.get(b"$severityByKind") {
+                    put(&mut entries, b"$severityByKind", by_kind.clone());
                 }
             }
             if let Some(base_path) = own_json.get(b"basePath") {
@@ -752,7 +871,7 @@ impl Config {
         base_path: &[u8],
         json: &Json,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, None)
+        Self::from_flat(registry, base_path, json, None, Vec::new(), false)
     }
 
     /// The same, with the plugins that are not implemented here. An object has beside `plugins` the key `$jsPlugins`, with
@@ -763,8 +882,20 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: &mut LoadLocatedPlugin<'_>,
+        named: Vec<NamedPlugin>,
     ) -> Result<Config, ConfigError> {
-        Self::from_flat(registry, base_path, json, Some(load_plugin))
+        Self::from_flat(registry, base_path, json, Some(load_plugin), named, false)
+    }
+
+    /// Builds the config for projects with no ESLint or oxlint config. `json` has the shape of a flat config, but doesn't
+    /// have to declare plugins. See [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig).
+    pub fn without_a_file(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        named: Vec<NamedPlugin>,
+    ) -> Result<Config, ConfigError> {
+        Self::from_flat(registry, base_path, json, None, named, true)
     }
 
     fn from_flat(
@@ -772,11 +903,14 @@ impl Config {
         base_path: &[u8],
         json: &Json,
         load_plugin: Option<&mut LoadLocatedPlugin<'_>>,
+        named: Vec<NamedPlugin>,
+        has_every_rule: bool,
     ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
             registry,
             base_path: paths::absolute(base_path),
             prefers_typescript_rules: false,
+            has_every_rule,
             objects: Vec::new(),
             notes: Vec::new(),
             advice: Vec::new(),
@@ -786,9 +920,11 @@ impl Config {
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
+            named: 0,
             has_unknown_resolver: has_unknown_resolver(json),
             handing_back: Vec::new(),
         };
+        reader.add_named(named);
         add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
@@ -816,6 +952,55 @@ impl Config {
 }
 
 impl Reader<'_> {
+    /// ESLint's `Cannot redefine plugin`, for a plugin that the configuration has as `prefix` and a [`NamedPlugin`]. `location`:
+    /// where the former is, which is `null` for one that no module exports. The configuration can have imported the same
+    /// package: then it is one plugin, for ESLint too. `modules`: all the modules that are the former, if there is more than
+    /// the one of `location`: one module can have what another exports, and a package can have one build to import and one to
+    /// require.
+    pub(super) fn refuse_second(
+        &self,
+        prefix: &[u8],
+        location: &Json,
+        modules: Option<&Json>,
+    ) -> Result<(), ConfigError> {
+        // `[]` and `["default"]` are the same for what has no `default`.
+        let is_whole = |it: &Json| {
+            let path = it.get(b"export").and_then(Json::as_array);
+            path.is_some_and(|it| {
+                it.len() <= 1 && it.iter().all(|it| it.as_str() == Some(b"default"))
+            })
+        };
+        let modules = modules.and_then(Json::as_array).unwrap_or_default();
+        let is_same = |it: &Json| {
+            let Some(module) = it.get(b"module").filter(|_| is_whole(it)) else {
+                return false;
+            };
+            modules.contains(module)
+                || (location.get(b"module") == Some(module) && is_whole(location))
+        };
+        let mut named = self.js_locations.iter().take(self.named);
+        match named.any(|it| *it.0 == *prefix && !is_same(&it.1)) {
+            true => Err(ConfigError::new(&[
+                b"The plugin \"",
+                prefix,
+                b"\" is loaded twice: here, and by plugins in bunfig.toml or --plugin",
+            ])),
+            false => Ok(()),
+        }
+    }
+
+    /// Before anything is read.
+    pub(super) fn add_named(&mut self, named: Vec<NamedPlugin>) {
+        self.named = named.len();
+        for (plugin, location) in named {
+            self.js_plugin_places.push(self.js_locations.len() as u32);
+            self.js_locations.push((plugin.name.clone(), location));
+            // It is asked for by name, so nothing here stands in for it: `@stylistic` is not left to `bun fmt`.
+            self.foreign_prefixes.push(plugin.name.clone());
+            self.js_plugins.push(plugin);
+        }
+    }
+
     /// Loads the plugins of which a rule is enabled that does not exist here, and takes note of those that the configuration has
     /// described, for which nothing is loaded: a comment can name a rule of them, and whether there is such a rule is to be known.
     pub(super) fn load_js_plugins(
@@ -823,6 +1008,10 @@ impl Reader<'_> {
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
         for (place, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
+            // A `NamedPlugin`.
+            if self.js_plugin_places.contains(&(place as u32)) {
+                continue;
+            }
             let mut unknown = self.unknown_rules.iter();
             // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
             if prefix.is_empty()
@@ -860,6 +1049,7 @@ impl Reader<'_> {
             lints_all_that_is_named: false,
             dot_patterns: None,
             prefers_typescript_rules: self.prefers_typescript_rules,
+            has_every_rule: self.has_every_rule,
             options_of_oxlint: Vec::new(),
             printed_for_oxlint: Vec::new(),
             notes: self.notes,

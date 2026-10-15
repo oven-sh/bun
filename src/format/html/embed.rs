@@ -16,7 +16,7 @@ use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 
 /// `inferParserByTypeAttribute`
-fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
     Some(match kind {
         b"module"
         | b"text/javascript"
@@ -301,15 +301,8 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             b"graphql" => self.write_printed_text(false, |options, out| {
                 crate::graphql::format(code, options, &mut Default::default(), out)
             }),
-            // A template of which Prettier loses something stays as it is.
             b"glimmer" => self.write_printed_text(false, |options, out| {
-                let mut scratch = crate::handlebars::Scratch::default();
-                let result = crate::handlebars::format(code, options, &mut scratch, out);
-                if scratch.is_damaged() {
-                    Err(FormatError::SyntaxError)
-                } else {
-                    result
-                }
+                crate::handlebars::format(code, options, &mut Default::default(), out)
             }),
             _ => false,
         }
@@ -399,7 +392,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             raw.get(first_line_end..last_line_start).unwrap_or_default(),
         );
         // There is no formatter for TOML.
-        if !(is_yaml || (is_toml && value.is_empty())) {
+        if !(is_yaml || (is_toml && value.is_empty()))
+            || crate::front_matter::has_indented_delimiter(raw)
+        {
             return false;
         }
         let attempt = self.out.start_attempt();

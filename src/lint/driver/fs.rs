@@ -4,7 +4,9 @@ use crate::paths;
 use bun_core::ZStr;
 use bun_paths::resolve_path::z;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, path_buffer_pool};
+use bun_sema::util::FxHashSet;
 use bun_sys::{EntryKind, Fd, File, O};
+use bun_threading::Guarded;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `ENOENT: No such file or directory`
@@ -313,20 +315,45 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     Some(found.unwrap_or(cwd))
 }
 
+/// The real paths of the files that a run has written. Two paths can lead to one file (a link, a letter in the other case), and
+/// two threads that replace the same file at the same time fail now and then on Windows.
+#[derive(Default)]
+pub(crate) struct Written(Guarded<FxHashSet<Vec<u8>>>);
+
 /// Replaces the text of the file at `path`, which exists. What links to the file still does. `Err`: why it is not written.
 /// A link below `cwd`, the working directory, is not followed out of the repository: nobody reads the links of a checkout.
-pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
-    let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
-        .map_err(|error| describe(&error))?
-        .to_vec();
+/// A file that is in `written` already is left as it is.
+pub(crate) fn write_atomically(
+    written: &Written,
+    cwd: &[u8],
+    path: &[u8],
+    text: &[u8],
+) -> Result<(), Vec<u8>> {
+    let resolve = || {
+        let mut buffer = path_buffer_pool::get();
+        bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
+            .map(<[u8]>::to_vec)
+            .map_err(|error| describe(&error))
+    };
     // `bun lint` has the path as the system writes it.
-    let (path, portable) = (paths::from_native(path), paths::from_native(&real));
-    if portable != path
-        && paths::inside(cwd, &path).is_some()
-        && !repository(cwd).is_some_and(|it| paths::inside(&it, &portable).is_some())
-    {
-        return Err(b"A link leads out of the repository.".to_vec());
+    let portable = paths::from_native(path);
+    let leads_out = |real: &[u8]| {
+        let real = paths::from_native(real);
+        real != portable
+            && paths::inside(cwd, &portable).is_some()
+            && !repository(cwd).is_some_and(|it| paths::inside(&it, &real).is_some())
+    };
+    let mut real = resolve()?;
+    // NTFS keeps a file that is open and has lost its name to another in a directory of its own. That is where this one is if
+    // another thread, which has reached it by another path, has replaced it since it was opened here. The new one has the name.
+    if cfg!(windows) && leads_out(&real) {
+        real = resolve()?;
+    }
+    if leads_out(&real) {
+        return Err(b"it is a symlink to a file outside the repository".to_vec());
+    }
+    if !written.0.lock().insert(real.clone()) {
+        return Ok(());
     }
     write_through(&real, text).map_err(|error| describe(&error))
 }

@@ -193,6 +193,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(level) = level else {
             return ty;
         };
+        // `checkExpressionEx` restores `currentNode` after this function returns.
+        let around = self
+            .instantiating_generic_argument
+            .replace((file, e, self.stack.len()));
         let instantiated = self.with_inference_context(level, |c, n| {
             let returns_plain_function = n.sig.is_some_and(|sig| {
                 let returned = c.sig_return(sig);
@@ -200,11 +204,23 @@ impl<'p, 's> Checker<'p, 's> {
                     .is_some_and(|(s, _)| c.sig_type_params(s).is_empty())
             });
             if returns_plain_function
-                && let Some(unique) = c.unique_type_params(&n.inferred_type_params, &type_params)
+                && let Some(unique) = c.unique_type_params(
+                    &n.inferred_type_params,
+                    &type_params,
+                    ((file.0 as usize) << 32) | e.0 as usize,
+                )
             {
                 let instantiated = if unique[..] == type_params[..] {
                     signature
                 } else {
+                    // Each call of `getUniqueTypeParameters` makes new type parameters, whose
+                    // constraints are not resolved yet.
+                    for (renamed, declared) in unique.iter().zip(&type_params) {
+                        if renamed != declared {
+                            c.unresolved_renamed_params.insert(*renamed);
+                        }
+                    }
+                    c.restrictive_instantiations_kept.clear();
                     c.with_own_type_params(signature, &type_params, &unique)
                 };
                 if c.adopt_generic_argument(n, instantiated, contextual_signature) {
@@ -232,6 +248,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_assignable(s, t)
             })
         });
+        self.instantiating_generic_argument = around;
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
             None => ty,
@@ -4373,6 +4390,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => !self.stack.iter().any(|&q| self.is_resolution(q)),
         };
         if asks_for_the_type_alone {
+            self.resolve_type_queries_within(file, node);
             let outer = self.looked_at_type_node.replace((file, node));
             self.type_from_node(file, node);
             self.looked_at_type_node = outer;
@@ -4387,6 +4405,39 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn look_at_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.look_at_type_node(file, node);
+        }
+    }
+
+    /// `checkSourceElement` visits the children of a type node before it asks for the type of the node. The flow analysis of
+    /// the `x` of a `typeof x` in a loop gets to `node` again, which is not in progress then, and the type that `node` gets
+    /// there is kept: `x = cond ? b : ((null! as (typeof x)["p"]), a)`.
+    fn resolve_type_queries_within(&mut self, file: FileId, node: TypeNodeId) {
+        // FOR SPEED: most files have no `typeof` type, and most type nodes here are a name.
+        if !self.bound(file).has_type_queries()
+            || matches!(self.hir(file)[node].kind, TypeNodeKind::Ref { args, .. } if args.is_empty())
+        {
+            return;
+        }
+        let hir = self.hir(file);
+        let mut pending: SmallVec<[Node; 8]> = SmallVec::from_slice(&[hir.node(node)]);
+        while let Some(at) = pending.pop() {
+            if let NodeData::Type(inner) = hir.data(at)
+                && matches!(hir[inner].kind, TypeNodeKind::Typeof { .. })
+            {
+                if inner != node {
+                    // `c.currentNode`, where an error at a limit is reported.
+                    let outer = self.looked_at_type_node.replace((file, inner));
+                    self.type_from_node(file, inner);
+                    self.looked_at_type_node = outer;
+                }
+                continue;
+            }
+            let from = pending.len();
+            hir.for_each_child(at, &mut |child| {
+                pending.push(child);
+                false
+            });
+            pending[from..].reverse();
         }
     }
 
@@ -5332,9 +5383,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // operand types may be narrower than the final ones. Outside one this check also
                 // stands for the later one in the normal mode, so it reports.
                 let (l, r) = self.check_operands(file, left, right);
-                let is_in_flow_loop = (self.flow_loops.last())
-                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
-                if !(is_in_flow_loop && self.is_checked_type_only(file, e)) {
+                if let Some(pushed_at) = self.flow_loop_pushed_at()
+                    && self.is_checked_type_only(file, e)
+                {
+                    // What has not reported is not stored: the check in the normal mode comes here again.
+                    self.taint_from(pushed_at);
+                } else {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

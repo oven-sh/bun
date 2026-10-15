@@ -12,7 +12,7 @@ pub struct NoLiteralTempDir {
 
 const LITERAL_DIRECTORY: Message = Message::new(
     "literalDirectory",
-    "`{{directory}}` is not where every system keeps temporary files. Ask for the directory: `os.tmpdir()`.",
+    "`{{directory}}` is not the temporary directory on every system. Use `os.tmpdir()`.",
 );
 
 impl NoLiteralTempDir {

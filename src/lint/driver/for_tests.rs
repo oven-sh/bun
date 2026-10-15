@@ -34,6 +34,7 @@ impl Host for Tester<'_> {
         self.linter.registry()
     }
 
+    #[optimize(size)]
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
         // Nothing here hands out the file before it is linted.
         if case.prepare.is_some() {
@@ -45,7 +46,7 @@ impl Host for Tester<'_> {
             Place::Program(tsconfig) => crate::paths::dirname(tsconfig),
         };
         let options = Options {
-            project: match case.place {
+            tsconfig: match case.place {
                 Place::Program(tsconfig) => Some(tsconfig.to_vec()),
                 _ => None,
             },
@@ -67,6 +68,7 @@ impl Host for Tester<'_> {
             linter: &self.linter,
             options: &options,
             cwd: directory,
+            only: None,
             of_oxlint: None,
             checks_types: false,
             keeps_text: true,
@@ -178,6 +180,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
                 rules: None,
                 plugins_from: None,
                 cascade: 1,
+                named: &[],
             },
             &mut [LegacyFile {
                 path: paths::join(base_path, b".eslintrc.json"),
@@ -232,6 +235,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
 }
 
 /// The file at `file` has a list of what [`configuration_case`] is given. Returns the list of what it answers.
+#[optimize(size)]
 fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
     let cases = bun_lint::json::parse(&crate::fs::read(file).ok()?)?;
     let registry = registry();
@@ -245,6 +249,7 @@ fn configuration_cases(file: &[u8]) -> Option<Vec<u8>> {
 
 /// `bun lint --run-path-tests <posix | windows> (<function> <a> <b>)..`, or `configurations <file>`: `args` is what follows the
 /// flag. Returns what the functions answer, a line each: the paths of Windows are tested on every system. `None`: no such function.
+#[optimize(size)]
 pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
     let (style, mut rest) = match args {
         [b"posix", rest @ ..] => (Style::Posix, rest),
@@ -275,6 +280,7 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
 
 /// `bun lint --run-eslint-tests <bundle> ..`: `args` is what follows the flag. Prints the cases that
 /// fail and the totals. Returns whether the tests could be run.
+#[optimize(size)]
 pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
     bun_lint_conformance::run_from_command_line(
         args,

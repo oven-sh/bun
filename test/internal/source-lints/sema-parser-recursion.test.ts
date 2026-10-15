@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 import path from "path";
 
 // `bun_sema_parser` (src/sema/parser) is a recursive descent parser, and `bun lint` and
-// `bun format` run it on whatever is in a file. `Parser::is_too_deep` says: "Every recursive path
+// `bun fmt` run it on whatever is in a file. `Parser::is_too_deep` says: "Every recursive path
 // of the parser passes through a function that asks this". Where that was not so, a file of
 // 14,000 `@` overflowed the stack (`primary_expression` -> `decorated_expression` -> `modifiers` ->
 // `decorator` -> `left_hand_side_expression` -> `primary_expression`), and so did 100 KB of

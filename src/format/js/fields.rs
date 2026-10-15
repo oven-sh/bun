@@ -107,10 +107,6 @@ pub(crate) trait StmtFields<'a>: Copy {
     fn for_left(self) -> Option<Stmt<'a>>;
     /// `ForStatement.init`
     fn for_init(self) -> Option<Stmt<'a>>;
-    /// `IfStatement.consequent`
-    fn consequent(self) -> Option<Stmt<'a>>;
-    /// `IfStatement.alternate`
-    fn alternate(self) -> Option<Stmt<'a>>;
     /// `TryStatement.finalizer`
     fn finalizer(self) -> Option<Stmt<'a>>;
     /// `for await`
@@ -128,20 +124,6 @@ impl<'a> StmtFields<'a> for Stmt<'a> {
     fn for_init(self) -> Option<Stmt<'a>> {
         match self.kind() {
             StmtKind::For { init, .. } => init,
-            _ => None,
-        }
-    }
-
-    fn consequent(self) -> Option<Stmt<'a>> {
-        match self.kind() {
-            StmtKind::If { yes, .. } => Some(yes),
-            _ => None,
-        }
-    }
-
-    fn alternate(self) -> Option<Stmt<'a>> {
-        match self.kind() {
-            StmtKind::If { no, .. } => no,
             _ => None,
         }
     }

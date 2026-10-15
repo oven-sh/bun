@@ -380,7 +380,7 @@ impl<'a> VNode<'a> {
     }
 
     #[inline]
-    pub(super) fn stmt(self) -> Option<Stmt<'a>> {
+    pub(crate) fn stmt(self) -> Option<Stmt<'a>> {
         self.base.as_stmt()
     }
 

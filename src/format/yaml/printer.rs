@@ -30,6 +30,10 @@ pub(crate) struct Printer<'t, 'a> {
     /// `printedEmptyLineCache`: for each position, whether a node ends there whose next line has been looked at.
     pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
+    /// How many keys are around what is being printed.
+    pub(crate) key_depth: u32,
+    /// Where the first character of the text is that is no white space.
+    pub(crate) start_of_content: u32,
     /// The document.
     pub(crate) out: &'t mut Elements,
     pub(crate) stack: &'t Stack,
@@ -491,8 +495,18 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 };
                 let (head, body) = (self.node(head_id), self.node(body_id));
                 let mut has_head = false;
+                // At the start of a line, where Prettier puts it, it would be a marker.
+                let looks_like_marker = self.first_child(body).is_some_and(|it| {
+                    it.kind == Kind::Plain
+                        && it.tag.is_none()
+                        && it.anchor.is_none()
+                        && it.leading_comments.is_empty()
+                        && matches!(self.source(it), [b'-', b'-', b'-', rest @ ..] | [b'.', b'.', b'.', rest @ ..]
+                            if rest.first().is_none_or(u8::is_ascii_whitespace))
+                });
                 // `shouldPrintDocumentHeadEndMarker`
                 if node.directives_end_marker
+                    || looks_like_marker
                     || !head.children.is_empty()
                     || !head.end_comments.is_empty()
                     || head.trailing_comment.is_some()
@@ -509,8 +523,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     has_head = true;
                 }
                 if !body.children.is_empty() || !body.end_comments.is_empty() {
-                    if has_head {
+                    if has_head && (!looks_like_marker || head.trailing_comment.is_some()) {
                         self.out.hard_line();
+                    }
+                    if looks_like_marker {
+                        self.out.token(" ");
                     }
                     self.print(body_id, is_last_descendant);
                 }
@@ -853,6 +870,12 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     merged.push(Words::Slices(words));
                     continue;
                 }
+                // For Prettier the empty lines at the end of a scalar that keeps them are lines with an empty word here, so
+                // it does not take the last for the line break that ends the scalar, and there is one more.
+                if words.is_empty() && node.chomping == Chomping::Keep {
+                    merged.push(Words::None);
+                    continue;
+                }
                 if self.prose_wrap == ProseWrap::Never {
                     merged.push(Words::Joined(words.join(&b" "[..])));
                     continue;
@@ -976,7 +999,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                         out.end_indent();
                     }
                 }
-            } else if node.chomping == Chomping::Keep && is_last_descendant && self.is_last_document
+            } else if node.chomping == Chomping::Keep
+                && is_last_descendant
+                && self.is_last_document
+                && self.key_depth == 0
             {
                 out.start_indent(IndentCommand::DedentToRoot);
                 match words.is_empty() {
@@ -1090,6 +1116,33 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `printMappingItem`
+    /// To Prettier a key is the last of what it is in if the pair is. So it ends a scalar in it that keeps its line breaks as
+    /// it ends one at the end of the file, with one line break more.
+    #[inline]
+    fn print_key(&mut self, key: Id, is_last_descendant: bool) {
+        self.key_depth += 1;
+        self.print(key, is_last_descendant);
+        self.key_depth -= 1;
+    }
+
+    /// Whether a scalar in `node` is on more than one line.
+    fn has_scalar_over_several_lines(&self, node: Option<&Node<'a>>) -> bool {
+        let tree = self.tree;
+        let mut left: Vec<Id> = node.map_or(Vec::new(), |it| tree.items(it.children).collect());
+        while let Some(id) = left.pop() {
+            let node = self.node(id);
+            if matches!(
+                node.kind,
+                Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle
+            ) && node.position.start.line != node.position.end.line
+            {
+                return true;
+            }
+            left.extend(tree.items(node.children));
+        }
+        false
+    }
+
     fn print_mapping_item(&mut self, node: &'t Node<'a>, is_last_descendant: bool) {
         let (Some(key_id), Some(value_id), 2) = (
             node.children.first(),
@@ -1124,11 +1177,15 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             b""
         };
 
+        // At the start of the file, U+FEFF is a byte order mark. Prettier puts it there.
+        let would_be_byte_order_mark = node.position.start.offset == self.start_of_content
+            && key_content.is_some_and(|it| self.source(it).starts_with(text::BOM));
+
         if is_empty_value {
             if node.kind == Kind::FlowMappingItem
                 && parent.is_some_and(|it| it.kind == Kind::FlowMapping)
             {
-                return self.print(key_id, is_last_descendant);
+                return self.print_key(key_id, is_last_descendant);
             }
             let is_in_set = parent
                 .and_then(|it| it.tag)
@@ -1137,14 +1194,15 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 && self.is_absolutely_printed_as_single_line(key_content)
                 && key_content.is_none_or(|it| it.trailing_comment.is_none())
                 && !is_in_set
+                && !would_be_byte_order_mark
             {
-                self.print(key_id, is_last_descendant);
+                self.print_key(key_id, is_last_descendant);
                 self.out.text(space_before_colon);
                 return self.out.token(":");
             }
             self.out.token("? ");
             self.start_align(2);
-            self.print(key_id, is_last_descendant);
+            self.print_key(key_id, is_last_descendant);
             return self.out.end_indent();
         }
 
@@ -1156,10 +1214,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         }
 
         // An explicit key.
-        if !value.leading_comments.is_empty() || !is_inline_node(key_content) {
+        if !value.leading_comments.is_empty()
+            || !is_inline_node(key_content)
+            || would_be_byte_order_mark
+        {
             self.out.token("? ");
             self.start_align(2);
-            self.print(key_id, is_last_descendant);
+            self.print_key(key_id, is_last_descendant);
             self.out.end_indent();
             self.out.hard_line();
             let tree = self.tree;
@@ -1197,7 +1258,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             && self.is_absolutely_printed_as_single_line(value_content)
             && self.is_absolutely_printed_as_single_line(key_content)
         {
-            self.print(key_id, is_last_descendant);
+            self.print_key(key_id, is_last_descendant);
             self.out.text(space_before_colon);
             self.out.token(": ");
             if value.end_comments.is_empty() {
@@ -1248,7 +1309,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         });
         // A key that is on one line for sure is implicit, however long it is.
         if self.is_absolutely_printed_as_single_line(key_content) && key_has_no_comments {
-            self.print(key_id, is_last_descendant);
+            self.print_key(key_id, is_last_descendant);
             self.start_align(self.tab_width);
             write_colon(self.out);
             self.print(value_id, is_last_descendant);
@@ -1256,20 +1317,26 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             return self.out.end_group();
         }
 
-        // Explicit if the key breaks, implicit otherwise.
+        // Explicit if the key breaks, implicit otherwise. The line break in a scalar in a pair in `{ }` breaks no group
+        // around the pair, so Prettier prints a key over several lines that is implicit, which cannot be read.
+        let should_break = self.has_scalar_over_several_lines(key_content);
         self.last_group_id += 1;
         let group_id = self.last_group_id;
-        self.out.start_group(Group::default());
+        self.out.start_group(Group {
+            should_break,
+            ..Group::default()
+        });
         self.out.start_if_break(0);
         self.out.token("? ");
         self.out.otherwise();
         self.out.end_if_break();
         self.out.start_group(Group {
             id: group_id,
+            should_break,
             ..Group::default()
         });
         self.start_align(2);
-        self.print(key_id, is_last_descendant);
+        self.print_key(key_id, is_last_descendant);
         self.out.end_indent();
         self.out.end_group();
         self.out.end_group();

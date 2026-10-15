@@ -72,6 +72,14 @@ impl RuleId {
         self.write_to(&mut out);
         out
     }
+
+    /// [`Meta::docs_url`], if the rule is built in.
+    pub fn docs_url(&self) -> Option<Vec<u8>> {
+        match self {
+            RuleId::Known(meta) | RuleId::Named(meta, _) => Some(meta.docs_url()),
+            RuleId::Js(_) | RuleId::Unknown(_) => None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -108,6 +116,18 @@ impl Suppression {
     }
 }
 
+/// A suggestion's `data`, which ESLint passes through to its output.
+#[derive(Clone, Debug, Default)]
+pub enum Data {
+    /// The rule gave none.
+    #[default]
+    None,
+    /// Values for the placeholders in a built-in rule's message.
+    Texts(Vec<(&'static str, Vec<u8>)>),
+    /// The `data` that a rule written in JavaScript gave, as JSON.
+    Json(Vec<u8>),
+}
+
 /// An element of ESLint's `suggestions`.
 #[derive(Clone, Debug)]
 pub struct Suggestion {
@@ -115,25 +135,22 @@ pub struct Suggestion {
     pub message_id: Cow<'static, str>,
     /// `desc`
     pub message: Vec<u8>,
-    /// What the placeholders of the message stand for.
-    pub data: Vec<(Cow<'static, str>, Vec<u8>)>,
-    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
-    pub has_data: bool,
+    pub data: Data,
     pub fix: Fix,
     pub kind: SuggestionKind,
 }
 
 impl From<crate::context::Suggestion> for Suggestion {
     fn from(it: crate::context::Suggestion) -> Suggestion {
-        let has_data = !it.data.is_empty();
-        let data = it.data.into_iter();
         Suggestion {
             message_id: Cow::Borrowed(it.message_id),
             message: it.message,
-            data: data
-                .map(|(name, value)| (Cow::Borrowed(name), value))
-                .collect(),
-            has_data,
+            // Where upstream writes `desc` itself, the built-in rule fills in a template of its own. That data isn't
+            // upstream's, so drop it.
+            data: match it.data.is_empty() || it.message_id.is_empty() {
+                true => Data::None,
+                false => Data::Texts(it.data),
+            },
             fix: it.fix,
             kind: it.kind,
         }
@@ -142,16 +159,12 @@ impl From<crate::context::Suggestion> for Suggestion {
 
 impl From<js_plugin::Suggested> for Suggestion {
     fn from(it: js_plugin::Suggested) -> Suggestion {
-        let data = it.data.into_iter();
         Suggestion {
             message_id: it
                 .message_id
                 .map_or(Cow::Borrowed(""), |id| Cow::Owned(id.into())),
             message: it.message,
-            data: data
-                .map(|(name, value)| (Cow::Owned(name.into()), value))
-                .collect(),
-            has_data: it.has_data,
+            data: it.data.map_or(Data::None, Data::Json),
             fix: it.fix,
             kind: SuggestionKind::Suggestion,
         }
@@ -176,6 +189,8 @@ pub struct LintMessage {
     pub end: Option<(u32, u32)>,
     /// The file is not linted because of it.
     pub is_fatal: bool,
+    /// [`Report::claims`](crate::context::Report::claims). See [`LintMessage::hide_claimed`].
+    pub claim: Option<crate::context::Claim>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
@@ -183,12 +198,59 @@ pub struct LintMessage {
     /// shown: [`Report::comments_apply_at`](crate::context::Report::comments_apply_at). Only oxlint has such messages, and only
     /// with a configuration of oxlint it counts.
     pub comments_apply_at: Option<((u32, u32), (u32, u32))>,
+    pub not_numbers: NotNumbers,
     pub details: Option<Box<Details>>,
     /// [`Diagnostic::constant_help`](crate::context::Diagnostic::constant_help)
     pub constant_help: Option<Help>,
+    /// For oxlint, which sorts nothing: it prints what its own rules report about a file in the order in which it runs them
+    /// (see `oxlint_order`), then what the rules of JavaScript plugins report, in the order in which they report it, then what
+    /// it says about comments. The how manyth of all that the message is, from 1. 0: it is of no rule, and comes first.
+    /// `u32::MAX`: about a comment.
+    pub reported: u32,
 }
 
 impl LintMessage {
+    /// Takes out of `messages` what a rule without types reports about a node that the rule with types of its
+    /// [pair](crate::rule_set::Pairs) reports too. What it would change goes to that report. Whether anything was taken out.
+    ///
+    /// It is the last step: `messages` are those that are shown, after the comments and the files that suppress, and after the
+    /// fixes. Up to here there are two reports, and all of that works as it does for two.
+    pub fn hide_claimed(messages: &mut Vec<LintMessage>) -> bool {
+        let claims = messages
+            .iter()
+            .zip(0..)
+            .filter_map(|(it, at)| Some((it.claim?, at)));
+        let mut with_types: Vec<(crate::context::Claim, usize)> =
+            claims.filter(|it| it.0.with_types).collect();
+        if with_types.is_empty() {
+            return false;
+        }
+        with_types.sort_unstable();
+        let mut is_hidden = vec![false; messages.len()];
+        for from in 0..messages.len() {
+            let Some(claim) = messages[from].claim.filter(|it| !it.with_types) else {
+                continue;
+            };
+            let Ok(found) = with_types.binary_search_by_key(&claim.with_types(), |it| it.0) else {
+                continue;
+            };
+            is_hidden[from] = true;
+            let fix = messages[from].fix.take();
+            let suggestions = std::mem::take(&mut messages[from].suggestions);
+            let shown = &mut messages[with_types[found].1];
+            shown.fix = shown.fix.take().or(fix);
+            for suggestion in suggestions {
+                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
+                    shown.suggestions.push(suggestion);
+                }
+            }
+        }
+        let mut is_hidden = is_hidden.into_iter();
+        let before = messages.len();
+        messages.retain(|_| is_hidden.next() == Some(false));
+        messages.len() != before
+    }
+
     /// oxlint's `help`. Empty: there is none.
     pub fn help(&self) -> &str {
         self.text(Part::Help, |it| &it.help)
@@ -212,6 +274,14 @@ impl LintMessage {
     }
 }
 
+/// Whether a rule written in JavaScript gave something other than a number for `line` or `column`. ESLint keeps such a report.
+/// The field is 0 then, which is what ESLint's `stylish` prints, and `null` in JSON.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NotNumbers {
+    pub line: bool,
+    pub column: bool,
+}
+
 /// [`Details`](crate::context::Details) of a report, with lines and columns as the message has them.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
@@ -220,6 +290,8 @@ pub struct Details {
     pub labels: Vec<((u32, u32), (u32, u32), Cow<'static, str>)>,
     pub help: Cow<'static, str>,
     pub note: Cow<'static, str>,
+    /// 1038: oxlint's `code` of the message, which is from no rule, is `TS(1038)`. 0: it has none.
+    pub typescript_code: u16,
 }
 
 impl Default for LintMessage {
@@ -235,12 +307,15 @@ impl Default for LintMessage {
             column: 0,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 }
@@ -286,12 +361,15 @@ impl<'a> Locator<'a> {
             column,
             end: Some(self.position(span.end)),
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
             comments_apply_at: None,
+            not_numbers: NotNumbers::default(),
             details: None,
             constant_help: None,
+            reported: 0,
         }
     }
 }
@@ -300,36 +378,64 @@ impl<'a> Locator<'a> {
 
 /// `JSON.stringify(value)`
 pub fn write_json(out: &mut Vec<u8>, value: &Json) {
-    match value {
-        Json::Null => out.extend_from_slice(b"null"),
-        Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
-        Json::Number(value) if !value.is_finite() => out.extend_from_slice(b"null"),
-        Json::Number(value) => {
-            out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
-        }
-        Json::String(value) => json_stringify(value, out),
-        Json::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_json(out, item);
+    write_json_with(out, value, |out, number| match number.is_finite() {
+        true => out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number)),
+        false => out.extend_from_slice(b"null"),
+    });
+}
+
+/// [`write_json`] with another way to write numbers. It doesn't recurse, so it can write the options from a comment, which are
+/// nested as deep as the comment likes.
+pub(crate) fn write_json_with(
+    out: &mut Vec<u8>,
+    mut value: &Json,
+    write_number: fn(&mut Vec<u8>, f64),
+) {
+    // The arrays and objects around `value`, each with how many of its children are written.
+    let mut open: Vec<(&Json, usize)> = Vec::new();
+    loop {
+        match value {
+            Json::Null => out.extend_from_slice(b"null"),
+            Json::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
+            Json::Number(value) => write_number(out, *value),
+            Json::String(value) => json_stringify(value, out),
+            Json::Array(_) => {
+                out.push(b'[');
+                open.push((value, 0));
             }
-            out.push(b']');
-        }
-        Json::Object(entries) => {
-            out.push(b'{');
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                json_stringify(key, out);
-                out.push(b':');
-                write_json(out, value);
+            Json::Object(_) => {
+                out.push(b'{');
+                open.push((value, 0));
             }
-            out.push(b'}');
         }
+        value = loop {
+            let Some((parent, written)) = open.last_mut() else {
+                return;
+            };
+            let at = *written;
+            *written += 1;
+            let comma: &[u8] = if at > 0 { b"," } else { b"" };
+            match parent {
+                Json::Array(items) => match items.get(at) {
+                    Some(item) => {
+                        out.extend_from_slice(comma);
+                        break item;
+                    }
+                    None => out.push(b']'),
+                },
+                Json::Object(entries) => match entries.get(at) {
+                    Some((key, value)) => {
+                        out.extend_from_slice(comma);
+                        json_stringify(key, out);
+                        out.push(b':');
+                        break value;
+                    }
+                    None => out.push(b'}'),
+                },
+                _ => {}
+            }
+            open.pop();
+        };
     }
 }
 
@@ -381,6 +487,8 @@ pub(crate) fn write_js_string(out: &mut Vec<u8>, value: &Json) {
             out.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *value))
         }
         Json::String(value) => out.extend_from_slice(value),
+        // `Array.prototype.join` calls itself too, and throws where this stops.
+        Json::Array(_) if !bun_core::StackCheck::init().is_safe_to_recurse() => {}
         Json::Array(items) => {
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
@@ -452,6 +560,28 @@ fn write_fix(out: &mut Vec<u8>, fix: &Fix, offsets: &mut Utf16Offsets) {
     out.push(b'}');
 }
 
+/// Writes `,"data":{..}` if the rule gave any data.
+fn write_data(out: &mut Vec<u8>, suggestion: &Suggestion) {
+    let texts = match &suggestion.data {
+        Data::None => return,
+        Data::Json(json) => {
+            out.extend_from_slice(b",\"data\":");
+            return out.extend_from_slice(json);
+        }
+        Data::Texts(texts) => texts,
+    };
+    out.extend_from_slice(b",\"data\":{");
+    for (i, (name, value)) in texts.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        json_stringify(name.as_bytes(), out);
+        out.push(b':');
+        json_stringify(value, out);
+    }
+    out.push(b'}');
+}
+
 impl LintMessage {
     /// Sorts by line and column. Those at the same place keep their order. Most lists are in order already.
     pub fn sort(messages: &mut [LintMessage]) {
@@ -480,7 +610,15 @@ impl LintMessage {
         out.extend_from_slice(b",\"message\":");
         json_stringify(&self.message, out);
         if !self.is_fatal || self.line != 0 {
-            let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
+            for (key, number, is_null) in [
+                ("line", self.line, self.not_numbers.line),
+                ("column", self.column, self.not_numbers.column),
+            ] {
+                let _ = match is_null {
+                    true => write!(out, ",\"{key}\":null"),
+                    false => write!(out, ",\"{key}\":{number}"),
+                };
+            }
         }
         if let Some(id) = self.message_id.as_deref().filter(|it| !it.is_empty()) {
             out.extend_from_slice(b",\"messageId\":");
@@ -509,6 +647,7 @@ impl LintMessage {
                 if suggestion.message_id.is_empty() {
                     out.extend_from_slice(b"{\"desc\":");
                     json_stringify(&suggestion.message, out);
+                    write_data(out, suggestion);
                     out.extend_from_slice(b",\"fix\":");
                     write_fix(out, &suggestion.fix, offsets);
                     out.push(b'}');
@@ -516,20 +655,7 @@ impl LintMessage {
                 }
                 out.extend_from_slice(b"{\"messageId\":");
                 json_stringify(suggestion.message_id.as_bytes(), out);
-                if suggestion.has_data {
-                    out.extend_from_slice(b",\"data\":{");
-                }
-                for (i, (name, value)) in suggestion.data.iter().enumerate() {
-                    if i > 0 {
-                        out.push(b',');
-                    }
-                    json_stringify(name.as_bytes(), out);
-                    out.push(b':');
-                    json_stringify(value, out);
-                }
-                if suggestion.has_data {
-                    out.push(b'}');
-                }
+                write_data(out, suggestion);
                 out.extend_from_slice(b",\"fix\":");
                 write_fix(out, &suggestion.fix, offsets);
                 out.extend_from_slice(b",\"desc\":");

@@ -518,7 +518,8 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub(crate) use crate::strings_impl::{
-    find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
+    find_authority_password, find_url_password, is_uuid, next_url_password, starts_with_npm_secret,
+    starts_with_secret, starts_with_uuid,
 };
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
@@ -996,6 +997,18 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
     (c as i8) >= -0x40
 }
 
+/// Longest prefix of `self_` within `max_len` bytes that does not split a UTF-8 sequence.
+pub fn truncate_to_char_boundary(self_: &[u8], max_len: usize) -> &[u8] {
+    if self_.len() <= max_len {
+        return self_;
+    }
+    let mut end = max_len;
+    while !is_on_char_boundary(self_, end) {
+        end -= 1;
+    }
+    &self_[..end]
+}
+
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len()
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
@@ -1446,6 +1459,8 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 }
 
 pub use highway::contains_newline_or_non_ascii_or_quote;
+pub use highway::line_starts;
+pub use highway::{ScannerStops, ScannerStopsBuffer};
 
 /// Supports:
 /// - `"`
@@ -1483,7 +1498,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider portable_simd or a highway entry point if hot.
+    // PERF: scalar loop; consider a highway entry point if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -1907,7 +1922,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF: scalar loop; consider portable_simd or a simdutf utf16 validator if hot.
+    // PERF: scalar loop; consider a highway kernel or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // Wrapping cast.
@@ -2162,22 +2177,6 @@ pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'
 pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'a [u8] {
     if has_prefix_comptime(input, prefix) {
         return &input[prefix.len()..];
-    }
-    input
-}
-
-pub fn without_prefix_comptime_z<'a>(
-    input: &'a crate::string::ZStr,
-    prefix: &'static [u8],
-) -> &'a crate::string::ZStr {
-    if has_prefix_comptime(input.as_bytes(), prefix) {
-        // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
-        // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
-        // debug-asserts it.
-        return crate::string::ZStr::from_buf(
-            &input.as_bytes_with_nul()[prefix.len()..],
-            input.len() - prefix.len(),
-        );
     }
     input
 }
@@ -2830,6 +2829,22 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn truncate_to_char_boundary_never_splits_a_sequence() {
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 4), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abcd", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 0), b"");
+        // "aé" is `61 C3 A9`: a cut at byte 2 would land inside `é`.
+        assert_eq!(super::truncate_to_char_boundary("aéz".as_bytes(), 2), b"a");
+        assert_eq!(
+            super::truncate_to_char_boundary("aéz".as_bytes(), 3),
+            "aé".as_bytes()
+        );
+        // A 4-byte sequence that does not fit at all yields the empty prefix.
+        assert_eq!(super::truncate_to_char_boundary("😀".as_bytes(), 3), b"");
     }
 
     #[test]

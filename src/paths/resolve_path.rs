@@ -1289,10 +1289,7 @@ pub fn normalize_string_spill<'a, const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     if needed <= PARSER_BUFFER_LEN {
         return normalize_string::<ALLOW_ABOVE_ROOT, P>(str);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, &mut spill[..])
+    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, grow(spill, needed))
 }
 
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -1305,6 +1302,32 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+}
+
+/// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
+pub fn normalize_buf_z_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a ZStr {
+    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
+    normalize_buf_z::<P>(str, buf_or_spill(buf, spill, str.len() + 2))
+}
+
+/// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
+pub fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
+    if needed <= buf.len() {
+        buf
+    } else {
+        grow(spill, needed)
+    }
+}
+
+fn grow(spill: &mut Vec<u8>, needed: usize) -> &mut [u8] {
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    spill
 }
 
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
@@ -1384,6 +1407,14 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// [`join_abs_string`]; `None` when the normalized result does not fit the thread-local buffer.
+pub fn join_abs_string_checked<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    parts: &[&[u8]],
+) -> Option<&'a [u8]> {
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_checked::<P>(cwd, tl_buf_mut(b), parts))
+}
+
 /// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
 /// into `spill` (grown as needed). `spill` is untouched in the common case.
 pub fn join_abs_string_spill<'a, P: PlatformT>(
@@ -1396,10 +1427,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
         return join_abs_string::<P>(cwd, parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
+    join_abs_string_buf::<P>(cwd, grow(spill, needed), parts)
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
@@ -1438,16 +1466,7 @@ pub fn join_z_buf_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    let needed = join_needed(parts);
-    let out: &mut [u8] = if needed <= buf.len() {
-        buf
-    } else {
-        if spill.len() < needed {
-            spill.resize(needed, 0);
-        }
-        &mut spill[..]
-    };
-    join_z_buf::<P>(out, parts)
+    join_z_buf::<P>(buf_or_spill(buf, spill, join_needed(parts)), parts)
 }
 
 /// [`join`] (thread-local buffer) when the result fits, otherwise into
@@ -1457,10 +1476,7 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
     if needed <= JOIN_BUF_LEN {
         return join::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_string_buf::<P>(&mut spill[..], parts)
+    join_string_buf::<P>(grow(spill, needed), parts)
 }
 
 /// [`join_z`] (thread-local buffer) when the result fits, otherwise into
@@ -1470,10 +1486,7 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     if needed <= JOIN_BUF_LEN {
         return join_z::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_z_buf::<P>(&mut spill[..], parts)
+    join_z_buf::<P>(grow(spill, needed), parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1701,6 +1714,19 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     let len = joined.len();
     buf[..len].copy_from_slice(joined);
     Some(&buf[..len])
+}
+
+/// [`join_abs_string_buf_checked`], NUL-terminated; the last byte of `buf` is reserved for the NUL.
+pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
+    cwd: &[u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a ZStr> {
+    debug_assert!(!parts.is_empty());
+    let cap = buf.len() - 1;
+    let len = join_abs_string_buf_checked::<P>(cwd, &mut buf[..cap], parts)?.len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
 }
 
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
@@ -2486,7 +2512,7 @@ pub use crate::PathChar;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
 // Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
-// are only linked into the full binary, so the two they reference are satisfied
+// are only linked into the full binary, so the ones they reference are satisfied
 // below with scalar stubs (the simdutf counterparts live in string_paths.rs).
 // Under Miri the wrappers take their own scalar path and never call these.
 #[cfg(test)]
@@ -2526,6 +2552,35 @@ mod tests {
         text.iter()
             .position(|b| chars.contains(b))
             .unwrap_or(text_len)
+    }
+
+    /// `n` when `c` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let h = unsafe { core::slice::from_raw_parts(h, n) };
+        h.iter().rposition(|&b| b == c).unwrap_or(n)
+    }
+
+    /// `usize::MAX` when `nd` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        h: *const u16,
+        n: usize,
+        nd: *const u16,
+        k: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (h, nd) = unsafe {
+            (
+                core::slice::from_raw_parts(h, n),
+                core::slice::from_raw_parts(nd, k),
+            )
+        };
+        let last = n
+            .checked_sub(k)
+            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
+        last.unwrap_or(usize::MAX)
     }
 
     #[test]
@@ -2646,6 +2701,42 @@ mod tests {
             normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
             b"C:."
         );
+    }
+
+    #[test]
+    fn normalize_buf_z_spill_spills_only_what_does_not_fit_with_its_nul() {
+        let mut buf = [0u8; 32];
+        let mut spill = Vec::new();
+        let norm = |buf: &mut [u8], spill: &mut Vec<u8>, s: &[u8]| {
+            normalize_buf_z_spill::<platform::Posix>(buf, spill, s)
+                .as_bytes_with_nul()
+                .to_vec()
+        };
+        assert_eq!(
+            norm(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
+            b"cli/x.js\0"
+        );
+        assert_eq!(norm(&mut buf, &mut spill, b"./bins/"), b"bins/\0");
+        assert!(spill.is_empty());
+
+        let mut input = b"./".to_vec();
+        input.resize(2 + buf.len() * 3, b'b');
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = vec![b'b'; buf.len() * 3];
+        expected.extend_from_slice(b"/x.js\0");
+        assert_eq!(norm(&mut buf, &mut spill, &input), expected);
+        assert!(!spill.is_empty());
+
+        // Normalizes to exactly `buf.len()` bytes, leaving no room for the NUL.
+        let mut spill = Vec::new();
+        let input = vec![b'a'; buf.len()];
+        assert_eq!(norm(&mut buf, &mut spill, &input)[..buf.len()], input[..]);
+        assert!(!spill.is_empty());
+
+        // `""` grows to `.`.
+        let mut spill = Vec::new();
+        assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
+        assert_eq!(spill.len(), 2);
     }
 
     #[test]

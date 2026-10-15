@@ -17,12 +17,14 @@ use crate::lint::Context;
 use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
+use bun_lint::ast::File;
 use bun_lint::context::Severity;
+use bun_lint::glob::Picomatch;
 use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
-    Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
-    is_parse_error,
+    Details, LintMessage, LintOptions, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId,
+    apply_fixes, is_parse_error,
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
@@ -130,8 +132,10 @@ impl ByPath {
             return None;
         }
         let folded = self.folded.get_or_init(|| {
-            let exact = self.exact.iter();
-            exact
+            // Of two that differ in case alone, the first counts.
+            let exact =
+                bun_lint::utils::sort::in_order_of(&self.exact, |it| std::cmp::Reverse(*it.1));
+            (exact.into_iter())
                 .map(|(path, &at)| (to_file_name_lower_case(path), at))
                 .collect()
         });
@@ -172,8 +176,10 @@ impl<'t> Listed<'t> {
                     b"tsconfigRootDir",
                     b"projectFolderIgnoreList",
                 ] {
-                    let value = options.get(name).unwrap_or(&Json::Null);
-                    value.stringify(&mut text);
+                    match options.get(name) {
+                        Some(value) => value.stringify(&mut text),
+                        None => text.extend_from_slice(b"null"),
+                    }
                     text.push(b'\n');
                 }
                 *by_text.entry(text).or_insert_with(|| {
@@ -222,16 +228,20 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 
 /// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
 /// A link to a directory is not followed.
-fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
-    let options = bun_glob::Options {
-        dot: false,
-        ..bun_glob::Options::MICROMATCH_DOT
+fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
+    let mut pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+    // It starts as far up as the pattern goes.
+    while let Some(rest) = pattern.strip_prefix(b"../") {
+        (root, pattern) = (crate::paths::dirname(root), rest);
+    }
+    let read = |it: &[u8]| {
+        bun_glob::Pattern::with_dots(
+            &bun_lint::glob::from_picomatch(it, Picomatch::Micromatch),
+            bun_glob::Dots::Hide,
+        )
     };
-    let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    let pattern = bun_glob::Pattern::new(pattern, options);
-    let ignored: Vec<bun_glob::Pattern> = (ignored.iter())
-        .map(|it| bun_glob::Pattern::new(it, options))
-        .collect();
+    let pattern = read(pattern);
+    let ignored: Vec<bun_glob::Pattern> = ignored.iter().map(|it| read(it)).collect();
     let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
     let mut found = Vec::new();
     // From `root`. A loop: directories can be nested to any depth.
@@ -259,7 +269,7 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
             }
         }
     }
-    found.sort();
+    bun_lint::utils::sort::sort(&mut found);
     found
 }
 
@@ -373,6 +383,14 @@ fn check_and_lint_in(
             Some(context.formatter),
             Some(&of_file),
             |file| {
+                let text = file.text();
+                let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
+                    context.parse_again(path, text, config, then);
+                };
+                let options = LintOptions {
+                    parse_again: Some(&parse_again),
+                    ..options
+                };
                 let mut result = context.linter.lint(file, config, &options);
                 if file.is_too_large_for_flow_analysis() {
                     result.messages.insert(0, too_large_for_flow_analysis());
@@ -412,7 +430,7 @@ fn check_and_lint_in(
         cwd: &environment.cwd,
         project: match project {
             Project::This(config) => Some(config),
-            Project::Nearest | Project::Including => context.options.project.as_deref(),
+            Project::Nearest | Project::Including => context.options.tsconfig.as_deref(),
         },
         listed_projects: (listed.as_ref()).map(|it| it as &dyn bun_sema_driver::ListedProjects),
         build: false,
@@ -606,12 +624,18 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
     }
 }
 
+/// Whether [`type_error`] made `message`.
+pub(crate) fn is_type_error(message: &LintMessage) -> bool {
+    message.message_id.is_none()
+        && matches!(&message.rule_id, Some(RuleId::Unknown(id)) if id.starts_with(b"typescript/TS"))
+}
+
 /// What is said about a file for which [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis)
 /// holds. typescript-eslint says nothing.
 fn too_large_for_flow_analysis() -> LintMessage {
     LintMessage {
         severity: Severity::Warn,
-        message: b"This file is too large for control flow analysis. What rules that need types say about it may be wrong or incomplete."
+        message: b"This file is too large for control flow analysis. Reports from rules that need type information may be wrong or incomplete."
             .to_vec(),
         line: 1,
         column: 1,
@@ -627,10 +651,12 @@ struct Fixing {
     previous: Option<Vec<u8>>,
     passes: usize,
     is_fixed: bool,
+    /// Number of fixes applied to get `current`.
+    fixes: usize,
     /// Nothing more is fixed: only the messages about `current` are missing.
     is_over: bool,
-    /// The rules whose fixes the last pass has applied, and whether the text had changed before it.
-    last_pass: Option<(Vec<RuleId>, bool)>,
+    /// The rules whose fixes the last pass applied, then `is_fixed` and `fixes` as they were before that pass.
+    last_pass: Option<(Vec<RuleId>, bool, usize)>,
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -666,21 +692,24 @@ pub(crate) fn lint(
                 (None, None) => continue,
             };
             // The fixes of the last pass are taken back.
-            if matches!(&result.messages[..], [only] if is_parse_error(only))
-                && let (Some(before), Some((rules, was_fixed))) =
+            if !result.messages.is_empty()
+                && result.messages.iter().all(is_parse_error)
+                && let (Some(before), Some((rules, was_fixed, fixes))) =
                     (state.previous.take(), state.last_pass.take())
             {
                 context.note_broken_fixes(file.path, rules);
                 *state = Fixing {
                     current: Some(before),
                     is_fixed: was_fixed,
+                    fixes,
                     is_over: true,
                     ..Fixing::default()
                 };
                 next.push(index);
                 continue;
             }
-            let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
+            let mut finish = |result: LintResult, text: Option<Vec<u8>>, fixed: (bool, usize)| {
+                let (is_fixed, fixes) = fixed;
                 // What is not there is not written.
                 let is_fixed = is_fixed && text.is_some();
                 let mut result = context.result(
@@ -691,14 +720,15 @@ pub(crate) fn lint(
                     file.config,
                 );
                 result.had_types = true;
+                result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };
-            let has_fixes = context.fixes()
+            let has_fixes = context.fixes_file(file.path)
                 && !state.is_over
                 && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
-                finish(result, text, state.is_fixed);
+                finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             };
             state.passes += 1;
@@ -710,14 +740,22 @@ pub(crate) fn lint(
                 context.should_fix(message)
             });
             result.messages = fixed.remaining;
+            if file.config.language.is_oxlint {
+                // They are by place now.
+                bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
+            }
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
-                finish(result, text, state.is_fixed);
+                finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
-                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
+                // A file that oxc refuses keeps what tsgolint fixes in it.
+                if !was_refused
+                    && !context.parses(file.path, &fixed.output, file.config)
+                    && context.parses(file.path, text, file.config)
+                {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),
@@ -727,14 +765,15 @@ pub(crate) fn lint(
                     next.push(index);
                     continue;
                 }
-                finish(result, Some(text.clone()), true);
+                finish(result, Some(text.clone()), (true, fixed.count));
                 if let Some(done) = &mut done[index] {
                     done.fixed_text = Some(fixed.output);
                 }
                 continue;
             }
-            state.last_pass = Some((fixed.applied, state.is_fixed));
+            state.last_pass = Some((fixed.applied, state.is_fixed, state.fixes));
             state.is_fixed = true;
+            state.fixes += fixed.count;
             let before_the_last = state.previous.replace(text.clone());
             let is_circular = state.passes > 1 && before_the_last.as_ref() == Some(&fixed.output);
             if is_circular {

@@ -1,10 +1,10 @@
 // Makes test/cli/format/sort-imports/*.json of the cases that fixtures.mjs, fuzz.mjs and oxfmt.mjs make.
 //
-//   node make-fixtures.mjs --out=<directory> --sample=150 [--bin="bun format"] <cases.json..>
+//   node make-fixtures.mjs --out=<directory> --sample=150 [--bin="bun fmt"] <cases.json..>
 //
 // All cases of the tools' own tests are taken, and of the others (`fuzz/..`) every n-th, so that `--sample` are left of
-// each file. Left out: what the tool itself fails on, syntax that bun format does not read, and, of the cases for oxfmt,
-// those that bun format and oxfmt format differently without sorting imports (`plain`): they are not about imports.
+// each file. Left out: what the tool itself fails on, syntax that bun fmt does not read, and, of the cases for oxfmt,
+// those that bun fmt and oxfmt format differently without sorting imports (`plain`): they are not about imports.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,7 +28,7 @@ for (const file of positional) {
       { ...it, options, output: it.plain },
       { ...it, options, input: it.output },
     ]);
-    const [bin, ...args] = (named.bin ?? "bun format").split(" ");
+    const [bin, ...args] = (named.bin ?? "bun fmt").split(" ");
     const differs = new Set();
     // One run for all the cases with the same options.
     for (const [options, group] of Map.groupBy(plain, it => JSON.stringify(it.options))) {
@@ -48,7 +48,7 @@ for (const file of positional) {
   for (const [index, it] of cases.entries()) {
     if (index % step !== 0 || UNSUPPORTED.some(pattern => pattern.test(it.name)) || /\bassert\s*\{/.test(it.input) || REFUSED.test(it.input)) continue;
     const { parser, flavor, ...options } = it.options;
-    // `bun format` refuses the syntax of TypeScript in a JavaScript file, as Prettier does, unless such a parser is asked for.
+    // `bun fmt` refuses the syntax of TypeScript in a JavaScript file, as Prettier does, unless such a parser is asked for.
     if (/\.[cm]?jsx?$/.test(it.filename) && ["typescript", "babel-ts", "flow", "babel-flow"].includes(parser) && /^tests\/(Angular|Typescript)/.test(it.name)) {
       options.overrides = [{ files: "*.js", options: { parser } }];
     }

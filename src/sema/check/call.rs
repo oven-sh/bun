@@ -3007,7 +3007,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mapper = self.inference_mapper_comparing(&inference, compare);
-        self.instantiate_sig(sig, mapper)
+        let instantiated = self.instantiate_sig(sig, mapper);
+        // `getSignatureInstantiation` erases the type parameters. One that is a clone and is inferred to be itself
+        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper as it is.
+        if self.sig_type_params(instantiated).is_empty() {
+            instantiated
+        } else {
+            self.without_filling_in_type_arguments(instantiated)
+        }
     }
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
@@ -3072,10 +3079,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
     /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
     /// `None`: the renamed clones cannot be represented.
+    /// `serial`: of the argument. Each call of `getUniqueTypeParameters` makes type parameters of
+    /// its own, with nothing resolved yet: the clones of one argument are distinct from those of
+    /// every other (`renamed_type_param`).
     pub(super) fn unique_type_params(
         &self,
         inferred: &[TypeId],
         own: &[TypeId],
+        serial: usize,
     ) -> Option<Vec<TypeId>> {
         let mut names: Vec<Atom> = inferred
             .iter()
@@ -3156,6 +3167,10 @@ impl<'p, 's> Checker<'p, 's> {
             let mut pairs = self.types().mapping(around).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
+            let serial = self.number_literal(serial as f64, true);
+            if !pairs.iter().any(|pair| pair.0 == serial) {
+                pairs.push((serial, serial));
+            }
             unique.push(self.cloned_type_param(file, tp, self.types().mapper(pairs)));
         }
         Some(unique)

@@ -22,17 +22,22 @@ fn is_thenable_expression(node: Expr) -> bool {
     is_thenable(node, node.ty())
 }
 
+fn is_thenable_return(statement: Stmt) -> bool {
+    matches!(statement.kind(), StmtKind::Return(Some(argument)) if is_thenable_expression(argument))
+}
+
 /// Whether `func` returns something thenable.
-fn returns_thenable(func: Func) -> bool {
+fn returns_thenable(func: Func, is_oxlint: bool) -> bool {
     if func.is_arrow() {
-        // Upstream looks at every child of the arrow function that is neither a block nor an
-        // `await`, which the parameters are too.
-        let has_thenable_parameter = func.params().iter().any(|param| {
-            match param.default().is_none() && !param.is_rest() {
-                true => is_thenable(param.pat(), param.pat().ty()),
-                false => is_thenable(param, param.type_at_location()),
-            }
-        });
+        // typescript-eslint looks at every child of the arrow function that is neither a block nor an
+        // `await`, which the parameters are too. tsgolint looks at the body only.
+        let has_thenable_parameter = !is_oxlint
+            && func.params().iter().any(|param| {
+                match param.default().is_none() && !param.is_rest() {
+                    true => is_thenable(param.pat(), param.pat().ty()),
+                    false => is_thenable(param, param.type_at_location()),
+                }
+            });
         if has_thenable_parameter {
             return true;
         }
@@ -42,9 +47,7 @@ fn returns_thenable(func: Func) -> bool {
             return true;
         }
     }
-    func.returns().any(|statement| {
-        matches!(statement.kind(), StmtKind::Return(Some(argument)) if is_thenable_expression(argument))
-    })
+    func.returns().any(is_thenable_return)
 }
 
 fn has_async_iterator(ty: Type) -> bool {
@@ -55,7 +58,7 @@ fn has_async_iterator(ty: Type) -> bool {
 }
 
 /// Whether the generator `func` delegates to an async generator or yields something thenable.
-fn is_async_yield(func: Func) -> bool {
+fn is_async_yield(func: Func, is_oxlint: bool) -> bool {
     func.yields().any(|node| {
         let Some((Some(argument), star)) = node.as_yield() else {
             return false;
@@ -64,10 +67,10 @@ fn is_async_yield(func: Func) -> bool {
             ExprKind::String(_)
             | ExprKind::Number(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex(_)
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null => false,
+            | ExprKind::Regex(_) => false,
+            // typescript-eslint skips a `Literal`, tsgolint an `ast.IsLiteralExpression`.
+            ExprKind::True | ExprKind::False | ExprKind::Null if !is_oxlint => false,
+            ExprKind::Template(template) if is_oxlint && template.exprs().is_empty() => false,
             _ if star => has_async_iterator(argument.ty()),
             _ => is_thenable_expression(argument),
         }
@@ -148,11 +151,12 @@ impl Rule for RequireAwait {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
         let has_await = std::mem::take(&mut cx.state.has_await);
         for (func, has_await) in std::mem::take(&mut cx.state.candidates).into_iter().zip(has_await) {
             if has_await
-                || returns_thenable(func)
-                || func.is_generator() && is_async_yield(func)
+                || returns_thenable(func, is_oxlint)
+                || func.is_generator() && is_async_yield(func, is_oxlint)
             {
                 continue;
             }
@@ -162,8 +166,9 @@ impl Rule for RequireAwait {
                 false => get_function_head_loc(func),
             };
             cx.report(place, MISSING_AWAIT)
+                .claims(func)
                 .data("name", upper_case_first(&name).into_owned())
-                .suggest(REMOVE_ASYNC, |fixer| remove_async(fixer, func));
+                .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }
     }
 }

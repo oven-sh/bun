@@ -5,7 +5,7 @@
 //! in the order they start, which makes the scopes inside a scope a contiguous range of numbers.
 
 use super::ScopeKind;
-use crate::ast::File;
+use crate::ast::{File, ImportAttributes};
 use crate::language::{Parser, SourceType};
 use crate::runner::in_walk_order;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, kind_counts};
@@ -71,7 +71,8 @@ pub(crate) struct ScopeTree {
     pub(crate) of_class: Vec<u32>,
     /// The `export as namespace N` statements.
     pub(crate) namespace_exports: Vec<hir::StmtId>,
-    /// The types of the parameters of `catch` clauses, which typescript-eslint does not visit.
+    /// What typescript-eslint does not visit, so that there are no scopes, no variables and no references in it: the types of
+    /// the parameters of `catch` clauses, the options of import types. oxc visits them.
     pub(crate) unvisited: Vec<(u32, u32)>,
     /// Each position from which on what is written belongs to another scope. Sorted. Of those at one
     /// position the last counts.
@@ -136,10 +137,13 @@ fn rank_of(kind: ScopeKind, block: Block) -> u8 {
 }
 
 /// Whether the file is analyzed as `eslint-scope` does it. Otherwise as
-/// `@typescript-eslint/scope-manager` does.
+/// `@typescript-eslint/scope-manager` does, which is what oxlint hands its JavaScript plugins for every file.
 #[inline]
 pub(crate) fn is_javascript_mode(file: &File) -> bool {
-    file.is_javascript() && file.language().parser != Parser::TypeScript
+    let language = file.language();
+    file.is_javascript()
+        && language.parser != Parser::TypeScript
+        && (!language.is_oxlint || file.has_scopes_of_oxc())
 }
 
 /// ESLint's `scopeManager.isGlobalReturn()`.
@@ -636,7 +640,47 @@ impl<'f, 'a> Collector<'f, 'a> {
             all.scope(ScopeKind::Module, Block::File, 0, u32::MAX);
         }
         all.what_the_tree_has();
+        all.leave_out_what_is_not_visited();
         all
+    }
+
+    /// `TypeVisitor.TSImportType` visits the type arguments and nothing else. `PatternVisitor.TSTypeAnnotation` visits nothing.
+    fn leave_out_what_is_not_visited(&mut self) {
+        let hir = &self.file.hir;
+        if self.is_javascript || self.file.has_scopes_of_oxc() {
+            self.unvisited.clear();
+            return;
+        }
+        if !hir.import_attributes.is_empty() {
+            let options = hir.types.iter().filter_map(|ty| {
+                let within = ImportAttributes::search_span_of_type(hir, ty)?;
+                let mut all = hir.import_attributes.iter();
+                let first = all.find(|it| within.contains_offset(it.0))?;
+                hir.exprs.get(first.1.idx()).map(|it| (it.pos, it.end))
+            });
+            self.unvisited.extend(options);
+        }
+        if self.unvisited.is_empty() {
+            return;
+        }
+        let unvisited = &self.unvisited;
+        let is_visited = |pos: u32| !unvisited.iter().any(|it| (it.0..it.1).contains(&pos));
+        // Where each of `protos` is afterwards.
+        let mut kept = 0;
+        let places: Vec<Option<u32>> = (self.protos.iter())
+            .map(|it| {
+                is_visited(it.start).then(|| {
+                    kept += 1;
+                    kept - 1
+                })
+            })
+            .collect();
+        self.protos.retain(|it| is_visited(it.start));
+        self.zones.retain_mut(|it| {
+            let place = places.get(it.scope as usize).copied().flatten();
+            it.scope = place.unwrap_or(it.scope);
+            place.is_some()
+        });
     }
 
     fn what_the_tree_has(&mut self) {
@@ -988,7 +1032,7 @@ impl<'f, 'a> Collector<'f, 'a> {
             return;
         };
         // `namespace A.B.C { }` is one declaration, which the HIR stores as three.
-        if self.file.language().has_scopes_of_oxc {
+        if self.file.has_scopes_of_oxc() {
             self.declaration(ScopeKind::TsModule, it.stmt, it.name_pos);
         } else if !is_after_dot(self.file, it) {
             self.declaration(ScopeKind::TsModule, it.stmt, last_name_pos(self.file, it));

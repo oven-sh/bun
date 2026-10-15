@@ -26,7 +26,12 @@ fn name_of(func: Func<'_>) -> Option<Name<'_>> {
     let key = match func.owner() {
         Node::Member(member) => match member.key() {
             Some(key) => key,
-            None => return member.constructor_keyword().filter(|it| !it.is_string()).map(Ident::name),
+            None => {
+                return member
+                    .constructor_keyword()
+                    .filter(|it| !it.is_string())
+                    .map(Ident::name);
+            }
         },
         Node::Expr(e) => match e.parent() {
             Node::VarDecl(declaration) => return declaration.pat().as_ident(),
@@ -112,7 +117,9 @@ fn member_of(func: Func<'_>) -> Option<Member<'_>> {
     match func.owner() {
         Node::Member(member) => Some(member),
         Node::Expr(e) => match e.parent() {
-            Node::Member(member) if member.init() == Some(e) && !member.flags().contains(Flags::ACCESSOR) => {
+            Node::Member(member)
+                if member.init() == Some(e) && !member.flags().contains(Flags::ACCESSOR) =>
+            {
                 Some(member)
             }
             _ => None,
@@ -127,7 +134,9 @@ impl ExplicitFunctionReturnType {
             || (self.allow_iifes && is_iife(func))
             || (!self.allowed_names.is_empty()
                 && name_of(func).is_some_and(|name| {
-                    self.allowed_names.iter().any(|allowed| **allowed == *name.bytes())
+                    self.allowed_names
+                        .iter()
+                        .any(|allowed| **allowed == *name.bytes())
                 }))
     }
 
@@ -141,7 +150,8 @@ impl ExplicitFunctionReturnType {
             && !func.has_body()
             && match func.owner() {
                 Node::Member(member) => {
-                    matches!(func.kind(), FnKind::Method | FnKind::Getter) && matches!(member.parent(), Node::Class(_))
+                    matches!(func.kind(), FnKind::Method | FnKind::Getter)
+                        && matches!(member.parent(), Node::Class(_))
                 }
                 _ => func.kind() == FnKind::Decl,
             };
@@ -173,28 +183,38 @@ impl ExplicitFunctionReturnType {
             Span::new(start, end.filter(|&it| it >= start).unwrap_or(start))
         };
         if is_only_declared && matches!(func.owner(), Node::Member(_)) {
-            cx.report(head(), MISSING_RETURN_TYPE);
+            cx.report(head(), MISSING_RETURN_TYPE).called_with(func);
             return;
         }
         let mut options = self.options;
-        options.allow_direct_const_assertion_in_arrow_functions &= !(is_oxlint && oxlint_hides_const_assertion(func));
-        let untyped = ReturnTypeOptions { allow_typed_function_expressions: false, ..options };
+        options.allow_direct_const_assertion_in_arrow_functions &=
+            !(is_oxlint && oxlint_hides_const_assertion(func));
+        let untyped = ReturnTypeOptions {
+            allow_typed_function_expressions: false,
+            ..options
+        };
         let is_default = is_oxlint && oxlint_is_default_of_parameter(func);
         if is_expression
             && self.options.allow_typed_function_expressions
-            && (is_valid_function_expression_return_type(func, if is_default { untyped } else { options })
-                || ancestor_has_return_type(func)
+            && (is_valid_function_expression_return_type(
+                func,
+                if is_default { untyped } else { options },
+            ) || ancestor_has_return_type(func)
                 || is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
         {
             return;
         }
         // oxlint allows `() => 1 as const` whatever `allowTypedFunctionExpressions` is.
-        let only_const = ReturnTypeOptions { allow_expressions: false, ..untyped };
-        if is_oxlint && is_expression && is_valid_function_expression_return_type(func, only_const) {
+        let only_const = ReturnTypeOptions {
+            allow_expressions: false,
+            ..untyped
+        };
+        if is_oxlint && is_expression && is_valid_function_expression_return_type(func, only_const)
+        {
             return;
         }
         if is_only_declared {
-            cx.report(head(), MISSING_RETURN_TYPE);
+            cx.report(head(), MISSING_RETURN_TYPE).called_with(func);
             return;
         }
         if is_oxlint && options.allow_higher_order_functions && oxlint_returns_functions(func) {
@@ -206,14 +226,20 @@ impl ExplicitFunctionReturnType {
                 loc.start = member.span().start;
             }
             // And of a declaration up to the end of its name, without `<T>`.
-            if is_oxlint && func.kind() == FnKind::Decl && let Some(name) = func.name() {
+            if is_oxlint
+                && func.kind() == FnKind::Decl
+                && let Some(name) = func.name()
+            {
                 loc.end = name.span().end;
             }
             // In place of the `=>`, at the two bytes that follow one byte after the parameters.
-            if is_oxlint && func.arrow_span() == Some(loc) && let Some(params) = func.params_span() {
+            if is_oxlint
+                && func.arrow_span() == Some(loc)
+                && let Some(params) = func.params_span()
+            {
                 loc = Span::new(params.end + 1, params.end + 3);
             }
-            cx.report(loc, MISSING_RETURN_TYPE);
+            cx.report(loc, MISSING_RETURN_TYPE).called_with(func);
         });
     }
 }
@@ -231,7 +257,8 @@ fn oxlint_returns_functions(func: Func) -> bool {
 }
 
 impl Rule for ExplicitFunctionReturnType {
-    const META: Meta = Meta::typescript("explicit-function-return-type", Kind::Problem).reports_on_exit();
+    const META: Meta =
+        Meta::typescript("explicit-function-return-type", Kind::Problem).reports_on_exit();
     const ON: On = On::new().funcs();
     /// For oxlint: whether what is around a node has a return type.
     type State<'a> = AncestorMemo<'a, bool>;
@@ -239,8 +266,10 @@ impl Rule for ExplicitFunctionReturnType {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         ExplicitFunctionReturnType {
-            allow_concise_arrow_function_expressions_starting_with_void: object
-                .bool_or("allowConciseArrowFunctionExpressionsStartingWithVoid", false),
+            allow_concise_arrow_function_expressions_starting_with_void: object.bool_or(
+                "allowConciseArrowFunctionExpressionsStartingWithVoid",
+                false,
+            ),
             allowed_names: (object.strings("allowedNames").into_iter())
                 .map(|name| name.as_bytes().into())
                 .collect(),

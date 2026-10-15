@@ -5,7 +5,7 @@ use crate::token::T;
 use bun_sema::atom::known;
 use bun_sema::hir::*;
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseIdentifierOrPattern`
     #[inline]
     pub(crate) fn identifier_or_pattern(&mut self) -> PatId {
@@ -24,7 +24,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let name = self.lx.atom;
         self.note_identifier(name, self.lx.start);
-        let pat = self.f.pat(PatKind::Ident(name), self.lx.start, self.lx.end);
+        let pat = self.add_pat(PatKind::Ident(name), self.lx.start, self.lx.end);
         self.next_after_name();
         pat
     }
@@ -39,8 +39,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return PatId::NONE;
         }
         match name == known::empty {
-            true => self.f.pat(PatKind::Ident(name), full, full),
-            false => self.f.pat(PatKind::Ident(name), pos, end),
+            true => self.add_pat(PatKind::Ident(name), full, full),
+            false => self.add_pat(PatKind::Ident(name), pos, end),
         }
     }
 
@@ -61,7 +61,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if self.token() == T::Comma {
                 // `finishNode(NewOmittedExpression(), nodePos())`
                 let (comma, full) = (self.pos(), self.full_start());
-                let pat = self.f.pat(PatKind::Missing, comma, full);
+                let pat = self.add_pat(PatKind::Missing, comma, full);
                 self.s.pat_elems.push(PatElem {
                     pat,
                     default: ExprId::NONE,
@@ -102,7 +102,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.expect(T::CloseBracket);
         let elements = take_span!(self, pat_elems, base);
         let end = self.prev_end();
-        self.f.pat(PatKind::Array(elements), start, end)
+        self.add_pat(PatKind::Array(elements), start, end)
     }
 
     /// `parseObjectBindingPattern`
@@ -155,7 +155,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.expect(T::CloseBrace);
         let properties = take_span!(self, pat_props, base);
         let end = self.prev_end();
-        self.f.pat(PatKind::Object(properties), start, end)
+        self.add_pat(PatKind::Object(properties), start, end)
     }
 
     /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: its first token.
@@ -165,6 +165,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
         let name_end = self.lx.end;
         let (mut key, mut name_kind, key_pos) = self.property_name();
+        if matches!(key, PropKey::Private(_)) {
+            self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
+        }
         // In a type nothing asks whether the name is in quotes.
         if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
             name_kind = NameKind::Identifier;
@@ -177,7 +180,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             match key {
                 PropKey::Name(name) => {
                     self.note_identifier(name, key_pos);
-                    self.f.pat(PatKind::Ident(name), key_pos, name_end)
+                    self.add_pat(PatKind::Ident(name), key_pos, name_end)
                 }
                 _ => PatId::NONE,
             }

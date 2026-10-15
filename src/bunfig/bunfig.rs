@@ -150,8 +150,19 @@ struct Parser<'a, 'tool> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    /// Reads `[lint]` and `[format]`.
+    /// `./bunfig.toml`, which comes with the project: not the user's own file, not `--config`.
+    is_project_file: bool,
+    /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
+    counts: Counts,
+}
+
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -346,6 +357,15 @@ impl<'a> Parser<'a, '_> {
     // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    fn read_for_tool(&mut self, json: &Expr) -> crate::Result<()> {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
+            }
+        }
+        Ok(())
+    }
+
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
@@ -355,6 +375,10 @@ impl<'a> Parser<'a, '_> {
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
+        }
+
+        if self.counts == Counts::OnlyForTheTool {
+            return self.read_for_tool(&json);
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -410,11 +434,7 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
-        if let Some(read) = self.tool.as_deref_mut() {
-            if let Err((loc, message)) = read(&json) {
-                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
-            }
-        }
+        self.read_for_tool(&json)?;
 
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
@@ -775,6 +795,24 @@ impl<'a> Parser<'a, '_> {
                     self.load_log_level(&expr)?;
                 }
 
+                // Only the package manager reads these two.
+                if self.is_project_file && cmd.is_npm_related() {
+                    for (key, env_var) in [
+                        ("globalDir", "BUN_INSTALL_GLOBAL_DIR"),
+                        ("globalBinDir", "BUN_INSTALL_BIN"),
+                    ] {
+                        if let Some(expr) = install_obj.get(key.as_bytes()) {
+                            self.log.add_warning_fmt(
+                                Some(self.source),
+                                expr.loc,
+                                format_args!(
+                                    "\"{key}\" is ignored in a project's bunfig.toml. Set it in $HOME/.bunfig.toml or in ${env_var}"
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 self.parse_install(&install_obj)?;
             }
 
@@ -1104,8 +1142,10 @@ impl Bunfig {
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
+        is_project_file: bool,
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
+        counts: Counts,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1177,7 +1217,9 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            is_project_file,
             tool,
+            counts,
         };
         parser.parse(cmd)
     }
@@ -1189,24 +1231,13 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a, '_> {
-    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(url)?)
-    }
-
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
         // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
         let mut registry = match obj.get(b"url") {
             Some(url) => {
                 self.expect_string(&url)?;
                 let url = url.as_string(self.bump).expect("infallible: type checked");
-                self.parse_registry_url(url)?
+                api::NpmRegistry::from_url(url)
             }
             None => api::NpmRegistry::default(),
         };
@@ -1223,26 +1254,18 @@ impl<'a> Parser<'a, '_> {
             };
         }
 
-        if let Some(username) = username {
-            self.expect_string(&username)?;
-            registry.username = username
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(password) = password {
-            self.expect_string(&password)?;
-            registry.password = password
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(token) = token {
-            self.expect_string(&token)?;
-            registry.token = token
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        for (value, field) in [
+            (username, &mut registry.username),
+            (password, &mut registry.password),
+            (token, &mut registry.token),
+        ] {
+            if let Some(value) = value {
+                self.expect_string(&value)?;
+                *field = value
+                    .as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into();
+            }
         }
 
         Ok(registry)
@@ -1250,10 +1273,7 @@ impl<'a> Parser<'a, '_> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => {
-                let url = s.string(self.bump)?;
-                self.parse_registry_url(url)
-            }
+            ExprData::EString(s) => Ok(api::NpmRegistry::from_url(s.string(self.bump)?)),
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(
@@ -1282,7 +1302,15 @@ impl<'a> Parser<'a, '_> {
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
-        if let Some(cafile) = install_obj.get(b"cafile") {
+        let cafile = install_obj.get(b"cafile");
+        let ca = install_obj.get(b"ca");
+        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        if cafile.is_some() || ca.is_some() {
+            install.cafile = None;
+            install.ca = None;
+        }
+
+        if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
                 Some(s) => Some(s.into()),
                 None => {
@@ -1292,7 +1320,7 @@ impl<'a> Parser<'a, '_> {
             };
         }
 
-        if let Some(ca) = install_obj.get(b"ca") {
+        if let Some(ca) = ca {
             match &ca.data {
                 ExprData::EArray(arr) => {
                     let items = arr.items.slice();
@@ -1436,12 +1464,14 @@ impl<'a> Parser<'a, '_> {
         }
         if let Some(v) = install_obj
             .get(b"globalDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_dir = Some(v.into());
         }
         if let Some(v) = install_obj
             .get(b"globalBinDir")
+            .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
             install.global_bin_dir = Some(v.into());
@@ -1496,17 +1526,21 @@ impl<'a> Parser<'a, '_> {
         }
 
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+            let duration = (min_age.as_string(self.bump)).and_then(bun_core::fmt::parse_seconds);
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value() < 0.0 {
+                    if !(seconds.value() >= 0.0 && seconds.value().is_finite()) {
                         self.add_error(
                             min_age.loc,
                             b"Expected positive number of seconds for minimumReleaseAge",
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                }
+                _ if duration.is_some() => {
+                    install.minimum_release_age_ms = duration.map(|seconds| seconds * MS_PER_S);
                 }
                 _ => {
                     self.add_error(

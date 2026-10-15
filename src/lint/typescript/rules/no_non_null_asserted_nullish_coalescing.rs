@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ast_utils::is_configured_global;
 use rustc_hash::FxHashMap;
 
@@ -15,14 +16,14 @@ const SUGGEST_REMOVING_NON_NULL: Message =
 /// Where the first of what gives a variable a value ends.
 #[derive(Default)]
 pub struct State<'a> {
-    of_variables: FxHashMap<Symbol<'a>, Option<u32>>,
+    of_variables: IdMap<Symbol<'a>, Option<u32>>,
     /// By the name, for the names that nothing in the file declares. `None` until it is asked for.
     of_globals: Option<FxHashMap<Name<'a>, u32>>,
 }
 
 /// Whether `variable` is given a value by something that ends before `end`.
 fn has_assignment_before<'a>(variable: Symbol<'a>, end: u32, state: &mut State<'a>) -> bool {
-    let first = state.of_variables.entry(variable).or_insert_with(|| {
+    let first = state.of_variables.get_or_insert_with(variable, || {
         let declarators = variable.declarations().filter_map(|declaration| match (declaration, declaration.node()) {
             (Declaration::Var(_), Some(Node::VarDecl(declarator))) => {
                 (declarator.is_definite() || declarator.init().is_some()).then(|| declarator.span().end)

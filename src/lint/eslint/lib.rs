@@ -3,6 +3,7 @@
 //! License): the same options, the same messages, at the same places.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 bun_lint::rules! {
     accessor_pairs::AccessorPairs,

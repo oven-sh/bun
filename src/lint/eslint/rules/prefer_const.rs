@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
 use rustc_hash::FxHashMap;
@@ -120,7 +121,7 @@ struct Known<'a> {
     assignments: FxHashMap<(Expr<'a>, Scope<'a>), bool>,
     /// For a variable that is declared more than once: the identifier to report, and what writes
     /// to it if there is one.
-    redeclared: FxHashMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
+    redeclared: IdMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
     patterns: Patterns<'a>,
 }
 
@@ -345,7 +346,7 @@ impl PreferConst {
     /// ESLint's `groupByDestructuring`, for one variable.
     fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Known<'a>) {
         let is_redeclared = variable.declarations().len() > 1;
-        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(&variable) {
+        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(variable) {
             for &host in hosts {
                 groups.push(host, *identifier);
             }

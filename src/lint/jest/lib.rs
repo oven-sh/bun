@@ -7,6 +7,7 @@
 //! The rules of `bun:test` are the same rules for the tests of `bun test`. They are Bun's own, and exist with every configuration.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 mod jest;
 mod jest_expect;

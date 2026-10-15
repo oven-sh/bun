@@ -101,6 +101,12 @@ impl Span {
 /// Everything that has a place in the source text: a node, a token, a comment, a [`Span`].
 pub trait Spanned {
     fn span(&self) -> Span;
+
+    /// The node that it is, if it is one.
+    #[inline]
+    fn packed_node(&self) -> Option<crate::ast::Packed> {
+        None
+    }
 }
 
 impl Spanned for Span {
@@ -114,6 +120,11 @@ impl<T: Spanned> Spanned for &T {
     #[inline]
     fn span(&self) -> Span {
         (**self).span()
+    }
+
+    #[inline]
+    fn packed_node(&self) -> Option<crate::ast::Packed> {
+        (**self).packed_node()
     }
 }
 

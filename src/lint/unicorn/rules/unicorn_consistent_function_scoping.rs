@@ -1,10 +1,11 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, is_react_hook, iter_outer_expressions};
-use bun_lint_oxlint::import::has_module_syntax;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::{IdMap, IdSet};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint_oxlint::ast_util::{get_inner_expression, is_react_hook, iter_outer_expressions};
+use bun_lint_oxlint::import::has_module_syntax;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow functions that are declared in a scope which does not capture any variables from the outer scope.
@@ -12,33 +13,41 @@ pub struct ConsistentFunctionScoping {
     check_arrow_functions: bool,
 }
 
-const CONSISTENT_FUNCTION_SCOPING: Message =
-    Message::new("", "Function `{{name}}` does not capture any variables from its parent scope");
+const CONSISTENT_FUNCTION_SCOPING: Message = Message::new(
+    "",
+    "Function `{{name}}` does not capture any variables from its parent scope",
+);
 
 #[derive(Default)]
 pub struct State<'a> {
     /// [`arrows_with_lexical_capture`], once that is asked.
-    arrows_with_lexical_capture: Option<FxHashSet<Func<'a>>>,
+    arrows_with_lexical_capture: Option<IdSet<Func<'a>>>,
     /// Whether oxc takes the file for a module, once that is asked.
     is_module: Option<bool>,
     /// Whether a scope is in strict mode for a reason other than that.
-    is_strict: FxHashMap<Scope<'a>, bool>,
+    is_strict: IdMap<Scope<'a>, bool>,
     /// [`Captures::of`], once that is asked.
     captures: Option<Captures<'a>>,
     /// [`functions_with_private_names`], once that is asked.
-    with_private_names: Option<FxHashSet<Scope<'a>>>,
+    with_private_names: Option<IdSet<Scope<'a>>>,
 }
 
 /// Up to three variables, those first that are declared furthest out.
 type Outermost<'a> = SmallVec<[Symbol<'a>; 4]>;
 
 impl Rule for ConsistentFunctionScoping {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "consistent-function-scoping", Kind::Problem);
+    const META: Meta = Meta::oxlint(
+        Plugin::Unicorn,
+        "consistent-function-scoping",
+        Kind::Problem,
+    );
     const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
-        ConsistentFunctionScoping { check_arrow_functions: options.object(0).bool_or("checkArrowFunctions", true) }
+        ConsistentFunctionScoping {
+            check_arrow_functions: options.object(0).bool_or("checkArrowFunctions", true),
+        }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -118,7 +127,10 @@ impl ConsistentFunctionScoping {
             (Some(binding), _, _) if func.is_arrow() => (binding.text(), binding.span()),
             (Some(binding), Some(own_name), _) => (binding.text(), own_name.span()),
             // The `function`.
-            (Some(binding), None, Some(e)) => (binding.text(), Span::new(e.span().start, e.span().start + 8)),
+            (Some(binding), None, Some(e)) => (
+                binding.text(),
+                Span::new(e.span().start, e.span().start + 8),
+            ),
             (None, Some(own_name), _) => (own_name.bytes(), own_name.span()),
             _ => return,
         };
@@ -126,7 +138,11 @@ impl ConsistentFunctionScoping {
         let Some(scope) = func.scope() else {
             return;
         };
-        let Some(parent_scope) = scope.chain().skip(1).find(|it| it.kind() != ScopeKind::FunctionExpressionName) else {
+        let Some(parent_scope) = scope
+            .chain()
+            .skip(1)
+            .find(|it| it.kind() != ScopeKind::FunctionExpressionName)
+        else {
             return;
         };
         let Some(symbol) = binding.map_or_else(|| func.symbol(), Pat::symbol) else {
@@ -141,42 +157,61 @@ impl ConsistentFunctionScoping {
             return;
         }
 
-        let captures = cx.state.captures.get_or_insert_with(|| Captures::of(file, |it| self.place_of(it).is_some()));
+        let captures = cx
+            .state
+            .captures
+            .get_or_insert_with(|| Captures::of(file, |it| self.place_of(it).is_some()));
         // What is declared further out than the function around it does not keep it in that function.
         let is_in_plain_function = function_of(parent_scope).is_some()
-            && !captures.with_eval.contains(&parent_scope)
+            && !captures.with_eval.contains(parent_scope)
             && !captures.is_in_scope_of_oxlint_only(parent_scope, scope.span().start);
         let is_kept = match is_in_plain_function {
-            true => captures.of_parent.contains(&scope),
-            false => (captures.outermost.get(&scope))
-                .is_some_and(|it| it.iter().any(|it| *it != symbol && Some(*it) != func.symbol())),
+            true => captures.of_parent.contains(scope),
+            false => (captures.outermost.get(scope)).is_some_and(|it| {
+                it.iter()
+                    .any(|it| *it != symbol && Some(*it) != func.symbol())
+            }),
         };
         if is_kept {
             return;
         }
         let with_private_names = &mut cx.state.with_private_names;
-        if with_private_names.get_or_insert_with(|| functions_with_private_names(file)).contains(&scope) {
+        if with_private_names
+            .get_or_insert_with(|| functions_with_private_names(file))
+            .contains(scope)
+        {
             return;
         }
         let arrows = &mut cx.state.arrows_with_lexical_capture;
-        if func.is_arrow() && arrows.get_or_insert_with(|| arrows_with_lexical_capture(file)).contains(&func) {
+        if func.is_arrow()
+            && arrows
+                .get_or_insert_with(|| arrows_with_lexical_capture(file))
+                .contains(func)
+        {
             return;
         }
 
         // oxlint has the name of a function expression in the scope of the function itself.
         let parent_scope_span = match expression.filter(|_| binding.is_none()) {
-            Some(e) if is_value_of_assignment_or_property(e) => get_short_span_for_fn_scope(parent_scope),
+            Some(e) if is_value_of_assignment_or_property(e) => {
+                get_short_span_for_fn_scope(parent_scope)
+            }
             Some(_) => Some((reporter_span, "function")),
             None => get_short_span_for_fn_scope(symbol_scope),
         };
         let report = match parent_scope_span {
-            Some((parent, kind)) => {
-                cx.report(parent, CONSISTENT_FUNCTION_SCOPING).comments_apply_at(reporter_span).labels_with(|labels| {
+            Some((parent, kind)) => cx
+                .report(parent, CONSISTENT_FUNCTION_SCOPING)
+                .comments_apply_at(reporter_span)
+                .labels_with(|labels| {
                     labels.first("Outer scope where this function is defined");
-                    let text = ["This function does not use any variables from the parent ", kind].concat();
+                    let text = [
+                        "This function does not use any variables from the parent ",
+                        kind,
+                    ]
+                    .concat();
                     labels.push(reporter_span, text);
-                })
-            }
+                }),
             None => cx.report(reporter_span, CONSISTENT_FUNCTION_SCOPING),
         };
         report.data("name", name);
@@ -238,26 +273,26 @@ struct Direct<'a> {
 
 /// What the functions of a file that are looked at, and the functions in these, refer to that is not their own.
 struct Captures<'a> {
-    regions: FxHashMap<Scope<'a>, Region>,
+    regions: IdMap<Scope<'a>, Region>,
     /// [`scopes_of_oxlint_only`]
     scopes_of_oxlint_only: FxHashMap<Scope<'a>, Vec<Span>>,
     /// [`outermost_captures`]
-    outermost: FxHashMap<Scope<'a>, Outermost<'a>>,
+    outermost: IdMap<Scope<'a>, Outermost<'a>>,
     /// The scopes of the functions that refer to a variable that has to do with the scope around them: it is declared
     /// there, that scope refers to it as well, it is the name of the function whose scope that is, or of the class that
     /// this function is directly in.
-    of_parent: FxHashSet<Scope<'a>>,
+    of_parent: IdSet<Scope<'a>>,
     /// [`scopes_with_eval`]
-    with_eval: FxHashSet<Scope<'a>>,
+    with_eval: IdSet<Scope<'a>>,
 }
 
 impl<'a> Captures<'a> {
     fn of(file: &'a File<'a>, is_looked_at: impl Fn(Func<'a>) -> bool) -> Captures<'a> {
         let mut captures = Captures {
-            regions: FxHashMap::default(),
+            regions: IdMap::new(),
             scopes_of_oxlint_only: scopes_of_oxlint_only(file),
-            outermost: FxHashMap::default(),
-            of_parent: FxHashSet::default(),
+            outermost: IdMap::new(),
+            of_parent: IdSet::new(),
             with_eval: scopes_with_eval(file),
         };
         // From the global scope to the current one.
@@ -294,7 +329,7 @@ impl<'a> Captures<'a> {
         // The scopes of these functions and those in them.
         let mut inside: Vec<Scope<'a>> = Vec::new();
         // The scopes of `path` that refer to a variable.
-        let mut direct: FxHashMap<Symbol<'a>, SmallVec<[Direct<'a>; 2]>> = FxHashMap::default();
+        let mut direct: IdMap<Symbol<'a>, SmallVec<[Direct<'a>; 2]>> = IdMap::new();
         for scope in file.scopes() {
             while path.last().is_some_and(|it| !it.contains(scope)) {
                 path.pop();
@@ -312,13 +347,14 @@ impl<'a> Captures<'a> {
             } else if is_around.get(scope.id().idx()) != Some(&true) {
                 continue;
             }
-            for reference in scope.references() {
-                let is_of_interest = |it: &Symbol<'a>| it.scope() != scope && is_reference_of_oxlint(reference, *it);
+            for reference in scope.references_with_names_of_patterns_first() {
+                let is_of_interest =
+                    |it: &Symbol<'a>| it.scope() != scope && is_reference_of_oxlint(reference, *it);
                 let Some(symbol) = reference.symbol().filter(is_of_interest) else {
                     continue;
                 };
                 let at = reference.ident().start();
-                let entries = direct.entry(symbol).or_default();
+                let entries = direct.get_or_insert_with(symbol, SmallVec::new);
                 while entries.last().is_some_and(|it| !it.scope.contains(scope)) {
                     entries.pop();
                 }
@@ -339,14 +375,17 @@ impl<'a> Captures<'a> {
     fn is_in_scope_of_oxlint_only(&self, scope: Scope<'a>, at: u32) -> bool {
         self.scopes_of_oxlint_only.get(&scope).is_some_and(|spans| {
             let after = spans.partition_point(|it| it.start <= at);
-            after.checked_sub(1).and_then(|it| spans.get(it)).is_some_and(|it| at < it.end)
+            after
+                .checked_sub(1)
+                .and_then(|it| spans.get(it))
+                .is_some_and(|it| at < it.end)
         })
     }
 
     /// `symbol`, which has to do with the scope around `inner`, is referred to at `at`, in `inner`. Whether that is
     /// noted, or there is nothing to note as `inner` is not the scope of a function that something is asked about.
     fn note(&mut self, inner: Scope<'a>, symbol: Symbol<'a>, at: u32) -> bool {
-        let (Some(region), Some(func)) = (self.regions.get(&inner), function_of(inner)) else {
+        let (Some(region), Some(func)) = (self.regions.get(inner), function_of(inner)) else {
             return true;
         };
         if !region.contains(at) || own_symbols(func).contains(&Some(symbol)) {
@@ -357,16 +396,26 @@ impl<'a> Captures<'a> {
     }
 
     /// `entries`: the scopes of `path` that refer to `symbol`, which the last of `path` does at `at`.
-    fn note_reference(&mut self, path: &[Scope<'a>], entries: &mut [Direct<'a>], symbol: Symbol<'a>, at: u32) {
+    fn note_reference(
+        &mut self,
+        path: &[Scope<'a>],
+        entries: &mut [Direct<'a>],
+        symbol: Symbol<'a>,
+        at: u32,
+    ) {
         let in_scope_of_declaration = scope_in(path, symbol.scope());
         let in_what_it_names = match symbol.declarations().next() {
             Some(Declaration::Fn(func)) => func.scope().and_then(|it| scope_in(path, it)),
-            Some(Declaration::Class(class)) => {
-                class.scope().and_then(|it| scope_in(path, it)).and_then(|it| scope_in(path, it))
-            }
+            Some(Declaration::Class(class)) => class
+                .scope()
+                .and_then(|it| scope_in(path, it))
+                .and_then(|it| scope_in(path, it)),
             _ => None,
         };
-        for inner in [in_scope_of_declaration, in_what_it_names].into_iter().flatten() {
+        for inner in [in_scope_of_declaration, in_what_it_names]
+            .into_iter()
+            .flatten()
+        {
             self.note(inner, symbol, at);
         }
         for entry in entries.iter_mut().rev() {
@@ -387,7 +436,10 @@ impl<'a> Captures<'a> {
 
 /// For oxlint the name of a function expression and the initializer of a field have no scope.
 fn is_scope_of_oxlint(scope: Scope) -> bool {
-    !matches!(scope.kind(), ScopeKind::FunctionExpressionName | ScopeKind::ClassFieldInitializer)
+    !matches!(
+        scope.kind(),
+        ScopeKind::FunctionExpressionName | ScopeKind::ClassFieldInitializer
+    )
 }
 
 /// The scope directly in `outer`, for oxlint, that is one of `path`, which leads from the global scope inwards.
@@ -396,12 +448,15 @@ fn scope_in<'a>(path: &[Scope<'a>], outer: Scope<'a>) -> Option<Scope<'a>> {
     if after.checked_sub(1).and_then(|it| path.get(it)) != Some(&outer) {
         return None;
     }
-    path.get(after..)?.iter().copied().find(|it| is_scope_of_oxlint(*it))
+    path.get(after..)?
+        .iter()
+        .copied()
+        .find(|it| is_scope_of_oxlint(*it))
 }
 
 /// The scopes with an `eval(..)` in them.
-fn scopes_with_eval<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
-    let mut found = FxHashSet::default();
+fn scopes_with_eval<'a>(file: &'a File<'a>) -> IdSet<Scope<'a>> {
+    let mut found = IdSet::new();
     let Some(eval) = file.find_name("eval") else {
         return found;
     };
@@ -411,7 +466,10 @@ fn scopes_with_eval<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
             path.pop();
         }
         path.push(scope);
-        if scope.references().any(|it| it.name() == eval && is_called(it)) {
+        if scope
+            .references_with_names_of_patterns_first()
+            .any(|it| it.name() == eval && is_called(it))
+        {
             for it in path.iter().rev() {
                 // Those around one that is known are known.
                 if !found.insert(*it) {
@@ -447,14 +505,22 @@ fn declares_in_its_head(statement: Stmt) -> bool {
         StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => Some(left),
         _ => None,
     };
-    head.and_then(Stmt::as_var).and_then(|it| it.first()).is_some_and(|it| it.var_kind() != VarKind::Var)
+    head.and_then(Stmt::as_var)
+        .and_then(|it| it.first())
+        .is_some_and(|it| it.var_kind() != VarKind::Var)
 }
 
 /// By the scope of the function that they are directly in: the statements that have a scope for oxlint only, without
 /// those that are in another of them, in the order of the file.
 fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Span>> {
     let mut found: FxHashMap<Scope<'a>, Vec<Span>> = FxHashMap::default();
-    for tag in [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::TypeAlias, StmtTag::Interface] {
+    for tag in [
+        StmtTag::For,
+        StmtTag::ForIn,
+        StmtTag::ForOf,
+        StmtTag::TypeAlias,
+        StmtTag::Interface,
+    ] {
         for statement in file.stmts_of_kind(tag) {
             if matches!(statement.parent(), Node::File(_)) || declares_in_its_head(statement) {
                 continue;
@@ -465,6 +531,10 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
             }
         }
     }
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "each list is put in order by itself"
+    )]
     for spans in found.values_mut() {
         utils::sort::sort_unstable_by_key(spans, |it| it.start);
         let mut end = 0;
@@ -480,27 +550,31 @@ fn scopes_of_oxlint_only<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<Spa
 }
 
 /// By the scope that it is in: a private name that is used, and where.
-fn private_references<'a>(file: &'a File<'a>) -> FxHashMap<Scope<'a>, Vec<(Name<'a>, u32)>> {
-    let mut found: FxHashMap<Scope<'a>, Vec<(Name<'a>, u32)>> = FxHashMap::default();
+fn private_references<'a>(file: &'a File<'a>) -> IdMap<Scope<'a>, Vec<(Name<'a>, u32)>> {
+    let mut found: IdMap<Scope<'a>, Vec<(Name<'a>, u32)>> = IdMap::new();
     if !file.has_classes() || !strings::contains_char(file.text(), b'#') {
         return found;
     }
-    let members = file.exprs_of_kind(ExprTag::Dot).filter(|it| it.is_private_member());
+    let members = file
+        .exprs_of_kind(ExprTag::Dot)
+        .filter(|it| it.is_private_member());
     for usage in members.chain(file.exprs_of_kind(ExprTag::PrivateIdentifier)) {
         let name = match usage.kind() {
             ExprKind::Dot { name, .. } => name.name(),
             ExprKind::PrivateIdentifier(name) => name,
             _ => continue,
         };
-        found.entry(Node::Expr(usage).scope()).or_default().push((name, usage.span().start));
+        let scope = Node::Expr(usage).scope();
+        let reference = (name, usage.span().start);
+        found.get_or_insert_with(scope, Vec::new).push(reference);
     }
     found
 }
 
 /// The scopes of the functions that use a private name of a class, and are directly in that class or directly in what
 /// is directly in it.
-fn functions_with_private_names<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
-    let mut found = FxHashSet::default();
+fn functions_with_private_names<'a>(file: &'a File<'a>) -> IdSet<Scope<'a>> {
+    let mut found = IdSet::new();
     let private_references = private_references(file);
     if private_references.is_empty() {
         return found;
@@ -526,7 +600,7 @@ fn functions_with_private_names<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> 
                 }
             }
         }
-        for &(name, at) in private_references.get(&scope).into_iter().flatten() {
+        for &(name, at) in private_references.get(scope).into_iter().flatten() {
             let Some(classes) = declaring.get_mut(&name) else {
                 continue;
             };
@@ -555,8 +629,12 @@ fn functions_with_private_names<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> 
 
 fn add_outermost<'a>(list: &mut Outermost<'a>, symbol: Symbol<'a>) {
     if !list.contains(&symbol) {
-        let is_further_in = |it: &Symbol<'a>| it.scope() != symbol.scope() && symbol.scope().contains(it.scope());
-        list.insert(list.iter().position(is_further_in).unwrap_or(list.len()), symbol);
+        let is_further_in =
+            |it: &Symbol<'a>| it.scope() != symbol.scope() && symbol.scope().contains(it.scope());
+        list.insert(
+            list.iter().position(is_further_in).unwrap_or(list.len()),
+            symbol,
+        );
         list.truncate(3);
     }
 }
@@ -567,17 +645,19 @@ fn add_outermost<'a>(list: &mut Outermost<'a>, symbol: Symbol<'a>) {
 /// after it.
 fn outermost_captures<'a>(
     scopes: &[Scope<'a>],
-    regions: &FxHashMap<Scope<'a>, Region>,
-) -> FxHashMap<Scope<'a>, Outermost<'a>> {
-    let mut of_functions = FxHashMap::default();
+    regions: &IdMap<Scope<'a>, Region>,
+) -> IdMap<Scope<'a>, Outermost<'a>> {
+    let mut of_functions = IdMap::new();
     // What the scopes in a scope refer to and is declared outside it: all, and what is in the region of the function.
-    let mut from_inside: FxHashMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = FxHashMap::default();
+    let mut from_inside: IdMap<Scope<'a>, (Outermost<'a>, Outermost<'a>)> = IdMap::new();
     for &scope in scopes.iter().rev() {
-        let (mut all, mut in_region) = from_inside.remove(&scope).unwrap_or_default();
-        let region = regions.get(&scope);
-        for reference in scope.references() {
+        let (mut all, mut in_region) = from_inside.remove(scope).unwrap_or_default();
+        let region = regions.get(scope);
+        for reference in scope.references_with_names_of_patterns_first() {
             let counts = |it: &Symbol<'a>| {
-                it.scope() != scope && is_reference_of_oxlint(reference, *it) && !is_jsx_tag_name(reference)
+                it.scope() != scope
+                    && is_reference_of_oxlint(reference, *it)
+                    && !is_jsx_tag_name(reference)
             };
             let Some(referenced) = reference.symbol().filter(counts) else {
                 continue;
@@ -593,8 +673,11 @@ fn outermost_captures<'a>(
         let Some(parent) = scope.parent().filter(|_| !all.is_empty()) else {
             continue;
         };
-        let is_in_region = regions.get(&parent).is_some_and(|it| it.contains(scope.span().start));
-        let (all_of_parent, in_region_of_parent) = from_inside.entry(parent).or_default();
+        let is_in_region = regions
+            .get(parent)
+            .is_some_and(|it| it.contains(scope.span().start));
+        let (all_of_parent, in_region_of_parent) =
+            from_inside.get_or_insert_with(parent, Default::default);
         for referenced in all.into_iter().filter(|it| it.scope() != parent) {
             add_outermost(all_of_parent, referenced);
             if is_in_region {
@@ -608,17 +691,35 @@ fn outermost_captures<'a>(
 /// The scope that oxc has `symbol` in, which is the name of `func` or the variable that it is the value of. In sloppy
 /// JavaScript a plain function that is declared in a block is a variable of the function around it as well (Annex
 /// B.3.2.1): oxc moves it there, unless something before it has the name there.
-fn scope_of_symbol<'a>(func: Func<'a>, symbol: Symbol<'a>, file: &'a File<'a>, state: &mut State<'a>) -> Scope<'a> {
+fn scope_of_symbol<'a>(
+    func: Func<'a>,
+    symbol: Symbol<'a>,
+    file: &'a File<'a>,
+    state: &mut State<'a>,
+) -> Scope<'a> {
     let scope = symbol.scope();
     let var_scope = scope.variable_scope();
-    let Some(name) = func.name().filter(|_| func.kind() == FnKind::Decl && scope != var_scope) else {
+    let Some(name) = func
+        .name()
+        .filter(|_| func.kind() == FnKind::Decl && scope != var_scope)
+    else {
         return scope;
     };
-    if func.is_async() || func.is_generator() || !file.is_javascript() || is_strict_mode(scope, file, state) {
+    if func.is_async()
+        || func.is_generator()
+        || !file.is_javascript()
+        || is_strict_mode(scope, file, state)
+    {
         return scope;
     }
-    let is_before = |it: Declaration<'a>| it.name_span().is_some_and(|it| it.start < name.span().start);
-    match var_scope.get_name(name.name()).is_some_and(|it| it.declarations().any(is_before)) {
+    let is_before = |it: Declaration<'a>| {
+        it.name_span()
+            .is_some_and(|it| it.start < name.span().start)
+    };
+    match var_scope
+        .get_name(name.name())
+        .is_some_and(|it| it.declarations().any(is_before))
+    {
         true => scope,
         false => var_scope,
     }
@@ -633,12 +734,16 @@ fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>, state: &mut State<'a
     if is_module {
         return true;
     }
-    let has_use_strict =
-        |statements: List<'a, Stmt<'a>>| statements.iter().map_while(Stmt::directive).any(|it| it == b"use strict");
+    let has_use_strict = |statements: List<'a, Stmt<'a>>| {
+        statements
+            .iter()
+            .map_while(Stmt::directive)
+            .any(|it| it == b"use strict")
+    };
     let mut passed: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
     let mut answer = false;
     for scope in scope.chain() {
-        if let Some(&known) = state.is_strict.get(&scope) {
+        if let Some(&known) = state.is_strict.get(scope) {
             answer = known;
             break;
         }
@@ -653,7 +758,9 @@ fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>, state: &mut State<'a
             break;
         }
     }
-    state.is_strict.extend(passed.into_iter().map(|it| (it, answer)));
+    state
+        .is_strict
+        .extend(passed.into_iter().map(|it| (it, answer)));
     answer
 }
 
@@ -665,7 +772,8 @@ fn is_iife(func: Func) -> bool {
 
 /// `parent_scope`: the scope that the function is in. Whether that is of a function that is an argument of a hook.
 fn is_in_react_hook(parent_scope: Scope) -> bool {
-    let (ScopeKind::Function, Node::Func(outer)) = (parent_scope.kind(), parent_scope.node()) else {
+    let (ScopeKind::Function, Node::Func(outer)) = (parent_scope.kind(), parent_scope.node())
+    else {
         return false;
     };
     matches!(outer.owner(), Node::Expr(e) if !e.is_parenthesized() && matches!(e.parent(), Node::Expr(call)
@@ -695,8 +803,8 @@ fn is_value_of_assignment_or_property(e: Expr) -> bool {
 }
 
 /// The arrow functions in which there is a `this`, a `super` or a `new.target` that is that of what is around them.
-fn arrows_with_lexical_capture<'a>(file: &'a File<'a>) -> FxHashSet<Func<'a>> {
-    let mut found = FxHashSet::default();
+fn arrows_with_lexical_capture<'a>(file: &'a File<'a>) -> IdSet<Func<'a>> {
+    let mut found = IdSet::new();
     // The function that a node is in. `Some(None)`: it is in the initializer of a field, which has a `this` of its own.
     let mut owners: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
     let mut owner_of = |node: Node<'a>| {
@@ -723,7 +831,11 @@ fn arrows_with_lexical_capture<'a>(file: &'a File<'a>) -> FxHashSet<Func<'a>> {
 /// oxlint calls it.
 fn get_short_span_for_fn_scope(scope: Scope) -> Option<(Span, &'static str)> {
     // oxlint has no scope for the initializer of a field.
-    let scope = if scope.kind() == ScopeKind::ClassFieldInitializer { scope.parent()? } else { scope };
+    let scope = if scope.kind() == ScopeKind::ClassFieldInitializer {
+        scope.parent()?
+    } else {
+        scope
+    };
     let keyword = |len: u32| Some(Span::new(scope.span().start, scope.span().start + len));
     let (span, kind) = match (scope.kind(), scope.node()) {
         (ScopeKind::Function, Node::Func(func)) if func.is_arrow() => {
@@ -733,7 +845,9 @@ fn get_short_span_for_fn_scope(scope: Scope) -> Option<(Span, &'static str)> {
             let span = match arrow.parent() {
                 _ if arrow.is_parenthesized() => None,
                 Node::VarDecl(declarator) => Some(declarator.pat().span()),
-                Node::Expr(parent) if parent.tag() == ExprTag::Assign && !parent.is_assignment_target() => {
+                Node::Expr(parent)
+                    if parent.tag() == ExprTag::Assign && !parent.is_assignment_target() =>
+                {
                     parent.left().map(Expr::span)
                 }
                 _ => None,

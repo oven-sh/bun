@@ -4385,6 +4385,20 @@ impl VirtualMachine {
         self.unhandled_rejection_owned(global_object, reason, promise, owner);
     }
 
+    /// Like `uncaught_exception(.., true)`, but the current `Bun.ModuleGraph` takes it first.
+    pub fn uncaught_rejection(&mut self, global_object: &JSGlobalObject, reason: JSValue) -> bool {
+        if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
+            return true;
+        }
+        let owner = Bun__ModuleGraph__rejecting(global_object);
+        if owner.is_cell()
+            && Bun__ModuleGraph__handleUnhandledRejection(global_object, reason, owner)
+        {
+            return true;
+        }
+        self.uncaught_exception(global_object, reason, true)
+    }
+
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
     /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(

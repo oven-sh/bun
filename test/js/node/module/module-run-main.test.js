@@ -102,6 +102,24 @@ describe.concurrent("Module.runMain of a script that fails", () => {
       { stdout: "", stderr: ["error: from main.cjs"], exitCode: 1 },
     ],
     [
+      "a plugin's onLoad for the main file, inside a preload's Module.runMain",
+      {
+        "preload.cjs":
+          override(`() => runMain(process.argv[1])`) +
+          `Bun.plugin({
+            setup(build) {
+              build.onLoad({ filter: /main\\.cjs$/ }, () => {
+                runMain("./throws.mjs");
+                return { contents: 'console.log("main ran");', loader: "js" };
+              });
+            },
+          });`,
+        "main.cjs": ``,
+      },
+      ["--preload", "./preload.cjs", "main.cjs"],
+      { stdout: "main ran\n", stderr: ["error: from throws.mjs"], exitCode: 1 },
+    ],
+    [
       "a Worker",
       {
         "main.mjs": `
@@ -113,6 +131,18 @@ describe.concurrent("Module.runMain of a script that fails", () => {
       },
       ["main.mjs"],
       { stdout: "error event: error: from throws.mjs\nclose event: 1\n", stderr: [], exitCode: 0 },
+    ],
+    [
+      "the code of a Bun.ModuleGraph, whose onError takes it",
+      {
+        "main.mjs": `
+          const graph = new Bun.ModuleGraph({ onError: (error, kind) => console.log(kind + ": " + error.message) });
+          await graph.import(import.meta.dir + "/in-graph.cjs");
+        `,
+        "in-graph.cjs": `require("node:module").runMain("./throws.mjs");`,
+      },
+      ["main.mjs"],
+      { stdout: "unhandledRejection: from throws.mjs\n", stderr: [], exitCode: 0 },
     ],
     [
       "a module that imports the script as text",
@@ -319,9 +349,14 @@ describe.concurrent("Module.runMain of a script that fails", () => {
     proc.kill();
     const stderr = await proc.stderr.text();
 
-    expect(stdout).toContain("run 3");
-    expect(stderr.match(/^error: failure [012]$/gm) ?? []).toEqual(
-      expect.arrayContaining(["error: failure 0", "error: failure 1", "error: failure 2"]),
-    );
+    // A save can reload more than once, so a run and its report can repeat: the first of each count.
+    const first = (text, lines) => [...new Set(text.match(lines))];
+    expect({
+      runs: first(stdout, /^run \d+$/gm),
+      reports: first(stderr, /^error: failure [012]$/gm),
+    }).toEqual({
+      runs: ["run 0", "run 1", "run 2", "run 3"],
+      reports: ["error: failure 0", "error: failure 1", "error: failure 2"],
+    });
   });
 });

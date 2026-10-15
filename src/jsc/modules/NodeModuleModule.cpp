@@ -812,7 +812,7 @@ enum class RunMainOwner : uint8_t {
     EntryLoads = 2,
 };
 extern "C" RunMainOwner Bun__VirtualMachine__runMainOwner(void* bunVM, const BunString* key);
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" bool Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRunMainRejected);
 
 // Being fetched, running, or run: whoever started that load reports it.
@@ -857,19 +857,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    switch (owner) {
-    case RunMainOwner::EntryAwaits:
-        Bun__VirtualMachine__setOverrideModuleRunMainPromise(bunVM, promise);
-        break;
-    case RunMainOwner::EntryLoads:
-        break;
-    case RunMainOwner::Caller: {
-        // JSC marks this promise as handled, and nobody else looks at it.
-        auto* onRejected = JSC::JSFunction::create(vm, globalObject, 1, String(), Bun__onRunMainRejected, ImplementationVisibility::Private);
-        promise->performPromiseThenExported(vm, globalObject, jsUndefined(), onRejected, JSPromise::create(vm, globalObject->promiseStructure()));
-        break;
-    }
-    }
+    if (owner == RunMainOwner::EntryLoads)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    // False when a load that started inside this one is the entry point's already.
+    if (owner == RunMainOwner::EntryAwaits && Bun__VirtualMachine__setOverrideModuleRunMainPromise(bunVM, promise))
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    // JSC marks this promise as handled, and nobody else looks at it.
+    auto* onRejected = JSC::JSFunction::create(vm, globalObject, 1, String(), Bun__onRunMainRejected, ImplementationVisibility::Private);
+    promise->performPromiseThenExported(vm, globalObject, jsUndefined(), onRejected, JSPromise::create(vm, globalObject->promiseStructure()));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

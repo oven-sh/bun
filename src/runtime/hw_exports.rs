@@ -108,8 +108,12 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
 pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
-) {
-    vm.set_pending_internal_promise(Some(promise));
+) -> bool {
+    if vm.pending_internal_promise().is_none() {
+        vm.set_pending_internal_promise(Some(promise));
+        return true;
+    }
+    false
 }
 
 /// Who reports the load `Module.runMain(key)` starts. NodeModuleModule.cpp mirrors the values.
@@ -152,7 +156,7 @@ pub(crate) fn on_run_main_rejected(
     if vm.is_watcher_enabled() {
         return Err(global.throw_value(reason));
     }
-    let _ = vm.uncaught_exception(global, reason, true);
+    let _ = vm.uncaught_rejection(global, reason);
     Ok(JSValue::UNDEFINED)
 }
 

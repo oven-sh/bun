@@ -3,6 +3,7 @@ import { isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
+import { closedPort } from "./raw-peer";
 
 test("WebSocket error event snapshot", async () => {
   const ws = new WebSocket("ws://127.0.0.1:8080");
@@ -66,15 +67,6 @@ async function recordEvents(ws: WebSocket) {
 
 const closed1006 = { readyState: WebSocket.CLOSED, code: 1006, reason: "", wasClean: false };
 
-async function closedPort() {
-  const server = net.createServer().listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
-  server.close();
-  await once(server, "close");
-  return port;
-}
-
 describe.concurrent("connection fails before open", () => {
   test("connection refused", async () => {
     expect(await recordEvents(new WebSocket(`ws://127.0.0.1:${await closedPort()}/`))).toEqual([
@@ -83,6 +75,20 @@ describe.concurrent("connection fails before open", () => {
         readyState: WebSocket.CLOSED,
         message: "WebSocket connection to '<url>' failed: Failed to connect",
         code: "ECONNREFUSED",
+      },
+      closed1006,
+    ]);
+  });
+
+  test("hostname doesn't resolve", async () => {
+    // getaddrinfo rejects DNS labels longer than 63 bytes without sending a query.
+    const host = Buffer.alloc(64, "a").toString() + ".com";
+    expect(await recordEvents(new WebSocket(`ws://${host}/`))).toEqual([
+      "readyState 0",
+      {
+        readyState: WebSocket.CLOSED,
+        message: "WebSocket connection to '<url>' failed: Failed to connect",
+        code: "ENOTFOUND",
       },
       closed1006,
     ]);
@@ -107,6 +113,12 @@ describe.concurrent("connection fails before open", () => {
       "closes the connection during the handshake",
       (socket: net.Socket) => socket.end(),
       "Connection ended",
+      "ECONNRESET",
+    ],
+    [
+      "resets the connection during the handshake",
+      (socket: net.Socket) => socket.resetAndDestroy(),
+      "Connection ended: read ECONNRESET",
       "ECONNRESET",
     ],
     [
@@ -144,7 +156,15 @@ describe.concurrent("connection fails before open", () => {
     ]);
   });
 
-  test("untrusted certificate", async () => {
+  test.each([
+    ["untrusted certificate", {}, "self signed certificate", "DEPTH_ZERO_SELF_SIGNED_CERT"],
+    [
+      "certificate hostname mismatch",
+      { tls: { ca: tls.cert, serverName: "evil.test" } },
+      "Hostname/IP does not match certificate's altnames",
+      "ERR_TLS_CERT_ALTNAME_INVALID",
+    ],
+  ])("%s", async (_label, options, reason, code) => {
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -152,13 +172,13 @@ describe.concurrent("connection fails before open", () => {
       fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
       websocket: { message() {} },
     });
-    const events = await recordEvents(new WebSocket(`wss://127.0.0.1:${server.port}/`));
+    const events = await recordEvents(new WebSocket(`wss://127.0.0.1:${server.port}/`, options));
     expect(events).toEqual([
       "readyState 0",
       {
         readyState: WebSocket.CLOSED,
-        message: "WebSocket connection to '<url>' failed: TLS handshake failed: self signed certificate",
-        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        message: `WebSocket connection to '<url>' failed: TLS handshake failed: ${reason}`,
+        code,
       },
       closed1006,
     ]);

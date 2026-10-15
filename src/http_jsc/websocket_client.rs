@@ -18,6 +18,7 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
@@ -311,14 +312,22 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn cancel(this: ThisPtr<Self>) {
         log!("cancel");
         let _guard = RefPtr::from_this(this);
+        // `ws` calls this from JS. Holding `_scope` makes the `did_*` callbacks' `enter()` nested, so
+        // they don't drain `process.nextTick` callbacks and microtasks before the calling JS frame
+        // returns. `feed` and `stream_closed` do the same.
         match this.io() {
-            Io::Stream => cpp_websocket::without_checkpoint(|| this.finish(Outcome::Closed)),
+            Io::Stream => {
+                let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+                this.finish(Outcome::Closed);
+            }
             Io::Socket if this.options.ws_mode => {
-                cpp_websocket::without_checkpoint(|| this.tcp.get().close_now());
+                let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+                this.tcp.get().close_now();
             }
             Io::Tunnel(tunnel) if this.options.ws_mode => {
                 if tunnel.has_socket() {
-                    cpp_websocket::without_checkpoint(|| Self::handle_tunnel_close(this));
+                    let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+                    Self::handle_tunnel_close(this);
                 }
             }
             Io::Socket | Io::Tunnel(_) => this.finish(Outcome::Closed),
@@ -1502,18 +1511,20 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// `code` 1005 ("no status received") sends a Close frame with an empty payload.
-    pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {
+    /// `reason` is UTF-8. It's left out if it doesn't fit, but C++ already rejects those.
+    pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: &[u8]) {
         // See write_binary_data() — tunnel.write() can re-enter finish().
         let _guard = RefPtr::from_this(this);
 
         let mut payload = [0u8; MAX_CONTROL_PAYLOAD];
         let mut payload_len = 0;
         if code != 1005 {
-            let (code_bytes, reason_bytes) = payload.split_at_mut(2);
-            code_bytes.copy_from_slice(&code.to_be_bytes());
-            payload_len = 2 + reason
-                .and_then(|str| encode_close_reason(str, reason_bytes))
-                .unwrap_or(0);
+            payload[..2].copy_from_slice(&code.to_be_bytes());
+            payload_len = 2;
+            if let Some(reason_bytes) = payload.get_mut(2..2 + reason.len()) {
+                reason_bytes.copy_from_slice(reason);
+                payload_len += reason.len();
+            }
         }
         this.send_close(&payload[..payload_len]);
     }
@@ -1720,12 +1731,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         this.parsing.set(true);
-        cpp_websocket::without_checkpoint(|| {
+        {
+            let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
             this.handle_data_loop(data);
             while let Some(pending) = this.initial_data.take() {
                 this.handle_data_loop(&pending.0);
             }
-        });
+        }
         this.parsing.set(false);
     }
 
@@ -1735,7 +1747,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         if matches!(this.io(), Io::Stream) {
             this.transport.set(Transport::Socket);
         }
-        cpp_websocket::without_checkpoint(|| this.finish(Outcome::Closed));
+        let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+        this.finish(Outcome::Closed);
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).
@@ -1766,7 +1779,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.flush_send_queue();
     }
 
-    /// The JS wrapper was collected: C++ is letting go of its ref.
+    /// The JS wrapper was collected or its context is being torn down. C++ is letting go of its
+    /// ref, so forget it first: nothing below may call back into it or into script. Then drop the
+    /// connection, with a raw close on TLS too, since there may be no loop left to finish a
+    /// graceful one.
     pub(crate) fn finalize(this: ThisPtr<Self>) {
         log!("finalize");
         // Either release below may be the last ref.
@@ -1774,17 +1790,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // This is only called by outgoing_websocket.
         this.release_cpp_ref();
-        this.drop_connection(CloseMode::Reset);
-    }
-
-    /// The owning C++ WebSocket's context is being torn down: forget it (nothing
-    /// here may call back into it or into script) and drop the connection now —
-    /// a raw close on TLS too, since no loop remains to finish a graceful one.
-    pub(crate) fn drop_connection_without_callback(this: ThisPtr<Self>) {
-        log!("dropConnectionWithoutCallback");
-        let _guard = RefPtr::from_this(this);
-
-        let _cpp_ref = this.outgoing_websocket.replace(None);
         this.drop_connection(CloseMode::Reset);
     }
 
@@ -1834,26 +1839,6 @@ fn write_remote_address(
     true
 }
 
-/// Transcode a close reason to UTF-8 into `buf`. Returns `None` if it doesn't fit.
-fn encode_close_reason(reason: &EncodedSlice, buf: &mut [u8]) -> Option<usize> {
-    use std::io::Write;
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    if reason.is_16bit() {
-        // Allocates; close-reason is bounded ≤123 bytes and this path is cold.
-        let utf8 = reason.to_owned_slice();
-        cursor.write_all(&utf8).ok()?;
-    } else if reason.is_utf8() {
-        cursor.write_all(reason.slice()).ok()?;
-    } else {
-        let result = strings::copy_latin1_into_utf8(cursor.get_mut(), reason.slice());
-        if (result.read as usize) < reason.slice().len() {
-            return None;
-        }
-        cursor.set_position(result.written as u64);
-    }
-    Some(cursor.position() as usize)
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // exportAll()
 // ──────────────────────────────────────────────────────────────────────────
@@ -1898,19 +1883,13 @@ pub fn bun__websocketclient__remote_address(
 pub fn bun__websocketclient__close(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
     code: u16,
-    reason: Option<&bun_core::EncodedSlice>,
+    reason: &[u8],
 ) {
     WebSocketClient::close(this, code, reason)
 }
 // HOST_EXPORT(Bun__WebSocketClient__finalize, c)
 pub fn bun__websocketclient__finalize(this: ThisPtr<crate::websocket_client::WebSocketClient>) {
     WebSocketClient::finalize(this)
-}
-// HOST_EXPORT(Bun__WebSocketClient__dropConnectionWithoutCallback, c)
-pub fn bun__websocketclient__drop_connection_without_callback(
-    this: ThisPtr<crate::websocket_client::WebSocketClient>,
-) {
-    WebSocketClient::drop_connection_without_callback(this)
 }
 // HOST_EXPORT(Bun__WebSocketClient__init, c)
 pub fn bun__websocketclient__init(
@@ -2041,7 +2020,7 @@ pub fn bun__websocketclienttls__remote_address(
 pub fn bun__websocketclienttls__close(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
     code: u16,
-    reason: Option<&bun_core::EncodedSlice>,
+    reason: &[u8],
 ) {
     WebSocketClientTLS::close(this, code, reason)
 }
@@ -2050,12 +2029,6 @@ pub fn bun__websocketclienttls__finalize(
     this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
 ) {
     WebSocketClientTLS::finalize(this)
-}
-// HOST_EXPORT(Bun__WebSocketClientTLS__dropConnectionWithoutCallback, c)
-pub fn bun__websocketclienttls__drop_connection_without_callback(
-    this: ThisPtr<crate::websocket_client::WebSocketClientTLS>,
-) {
-    WebSocketClientTLS::drop_connection_without_callback(this)
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__init, c)
 pub fn bun__websocketclienttls__init(

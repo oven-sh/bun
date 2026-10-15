@@ -91,21 +91,6 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
     await expectEcho(listening.connect({ path: "/ws" }));
   });
 
-  test("50 connections: each gets its own echo, then a broadcast", async () => {
-    await using server = await createServer(implementation);
-    const { wss } = server;
-    echo(wss);
-    const clients = Array.from({ length: 50 }, () => server.connect());
-    await Promise.all(clients.map(client => client.response));
-    clients.forEach((client, i) => client.text("n" + i));
-    expect(await Promise.all(clients.map(client => client.next()))).toEqual(clients.map((_, i) => `text "echo:n${i}"`));
-    expect(wss.clients.size).toBe(50);
-
-    const callbacks = Promise.all(Array.from(wss.clients, ws => new Promise(resolve => ws.send("all", resolve))));
-    expect(await Promise.all(clients.map(client => client.next()))).toEqual(clients.map(() => 'text "all"'));
-    expect(await callbacks).toHaveLength(50);
-  });
-
   describe("handleUpgrade() with framework-wrapped arguments", () => {
     test("accepts a socket wrapped in a Proxy that hides symbols", async () => {
       const server = http.createServer();
@@ -672,20 +657,6 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
     expect(req.socket.destroyed).toBe(true);
   });
 
-  // engine.io destroys any upgraded socket on its http.Server whose bytesWritten is still 0. npm ws writes through the
-  // raw node:http socket, so there the count doesn't depend on `ws`. The built-in only counts the 101, not the frames
-  // after it.
-  test.skipIf(!builtin)("req.socket.bytesWritten is non-zero after the upgrade", async () => {
-    await using server = await openServer(implementation);
-    const { ws, req, client } = server;
-    ws.send("hmr connected");
-    expect(await client.next()).toBe('text "hmr connected"');
-    expect({ writable: req.socket.writable, written: req.socket.bytesWritten > 0 }).toEqual({
-      writable: true,
-      written: true,
-    });
-  });
-
   test("the README's heartbeat example: ping(), 'pong' with `this` as the socket, terminate()", async () => {
     await using server = await openServer(implementation);
     const { wss, ws, client, events } = server;
@@ -809,8 +780,11 @@ describe("packages built on the ws server (built-in)", () => {
     const server = http.createServer();
     const io = new SocketIO(server, { destroyUpgradeTimeout: 20 });
     const wss = new WebSocketServer({ noServer: true });
+    let upgraded!: Duplex;
     server.on("upgrade", (req, socket, head) => {
-      if (req.url === "/hmr") wss.handleUpgrade(req, socket, head, ws => ws.send("hmr connected"));
+      if (req.url !== "/hmr") return;
+      upgraded = socket;
+      wss.handleUpgrade(req, socket, head, ws => ws.send("hmr connected"));
     });
     await using listening = await serve(server);
     try {
@@ -821,6 +795,7 @@ describe("packages built on the ws server (built-in)", () => {
       // Nothing handles this upgrade, so engine.io destroys it after `destroyUpgradeTimeout`. By then the first
       // socket's timer has already fired.
       expect((await listening.connect({ path: "/unhandled" }).response).status).toBe("no response");
+      expect(upgraded.writableEnded).toBe(false);
       expect(await client.roundTrip()).toEqual([]);
     } finally {
       io.close();

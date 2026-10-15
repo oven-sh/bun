@@ -24,7 +24,6 @@ enum class WebSocketErrorCode : int32_t {
     failed_to_allocate_memory = 19,
     control_frame_is_fragmented = 20,
     invalid_control_frame = 21,
-    compression_unsupported = 22,
     invalid_compressed_data = 23,
     unexpected_mask_from_server = 25,
     unsupported_control_frame = 27,

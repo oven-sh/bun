@@ -7,36 +7,37 @@ import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import path from "node:path";
 import { Duplex, duplexPair } from "node:stream";
-import zlib from "node:zlib";
 import type { ServerOptions, WebSocket } from "ws";
 import {
+  abnormalClose,
   type ClientOptions,
   closePayload,
+  createInflater,
+  deflateWithContext,
   encodeFrame,
   type FrameOptions,
   HttpClient,
   implementations,
+  invalidFrame,
+  invalidUTF8,
+  MiB,
   nextEvent,
   OP,
   type Payload,
   RawSocket,
   recordEvents,
+  repeatA,
   response101,
   runScript,
   scriptTimeout,
   show,
   showFrame,
+  tooBig,
   upgradeRequest,
   type WsModule,
 } from "./ws-raw-peer";
 
-const MiB = 1024 * 1024;
-const abnormalClose = "close 1006 Buffer() rs=3";
-const tooBig = 'RangeError "Max payload size exceeded" WS_ERR_UNSUPPORTED_MESSAGE_LENGTH';
-const invalidFrame = (what: string, code: string) => `RangeError "Invalid WebSocket frame: ${what}" ${code}`;
-const invalidUTF8 = 'Error "Invalid WebSocket frame: invalid UTF-8 sequence" WS_ERR_INVALID_UTF8';
 const writeAfterDestroy = 'Error "Cannot call write after a stream was destroyed" ERR_STREAM_DESTROYED';
-const repeatA = (count: number) => Buffer.alloc(count, "a").toString();
 
 type Role = "client" | "server";
 const roles: Role[] = ["client", "server"];
@@ -216,34 +217,6 @@ function widenLength(frame: Buffer) {
 /** 2000 pseudo-random bytes with no repeated sequences, so they don't compress. */
 const noise = Buffer.alloc(2000);
 for (let i = 0, x = 1; i < noise.length; i++) noise[i] = (x = (x * 1103515245 + 12345) % 2147483648) >> 16;
-
-/** Returns a function that inflates the payloads of compressed messages sharing one window. */
-function createInflater() {
-  let stream = Buffer.alloc(0);
-  let inflated = 0;
-  return (payload: Buffer) => {
-    stream = Buffer.concat([stream, payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-    const output = zlib.inflateRawSync(stream, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-    const message = output.subarray(inflated);
-    inflated = output.length;
-    return message;
-  };
-}
-
-/** Deflates `messages` with one shared window, so later payloads can back-reference bytes from earlier ones. */
-async function deflateWithContext(messages: Buffer[], windowBits: number) {
-  const stream = zlib.createDeflateRaw({ windowBits });
-  const chunks: Buffer[] = [];
-  stream.on("data", chunk => chunks.push(chunk));
-  const payloads: Buffer[] = [];
-  for (const message of messages) {
-    stream.write(message);
-    await new Promise<void>(resolve => stream.flush(zlib.constants.Z_SYNC_FLUSH, resolve));
-    payloads.push(Buffer.concat(chunks.splice(0)).subarray(0, -4));
-  }
-  stream.destroy();
-  return payloads;
-}
 
 describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementation, builtin, specifier }) => {
   describe.each(roles)("%s", role => {

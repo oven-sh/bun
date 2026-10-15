@@ -5,6 +5,8 @@ import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
+import { echoCloseFrame } from "./proxy-test-utils";
+import { RawSocket } from "./raw-peer";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
@@ -1191,24 +1193,6 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     });
   });
 
-  // Every protocol error fires `error` with the same `error.code` as npm ws, then `close` with 1006.
-  it.each([
-    ["a masked frame", [0x81, 0x80, 0, 0, 0, 0], "WS_ERR_UNEXPECTED_MASK"],
-    ["a reserved opcode", [0x83, 0x00], "WS_ERR_INVALID_OPCODE"],
-    ["a continuation frame with nothing to continue", [0x80, 0x00], "WS_ERR_INVALID_OPCODE"],
-    ["RSV1 without an extension", [0xc1, 0x00], "WS_ERR_UNEXPECTED_RSV_1"],
-    ["RSV2", [0xa1, 0x00], "WS_ERR_UNEXPECTED_RSV_2_3"],
-    ["a fragmented ping", [0x09, 0x00], "WS_ERR_EXPECTED_FIN"],
-    ["a 126-byte ping", [0x89, 0x7e, 0x00, 0x7e], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
-    ["a Close frame with a 1-byte payload", [0x88, 0x01, 0x03], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
-    ["invalid UTF-8 text", [0x81, 0x01, 0xff], "WS_ERR_INVALID_UTF8"],
-  ])("%s fails the connection", async (_label, bytes, code) => {
-    const server = await rawWsServer(sock => sock.write(Buffer.from(bytes)));
-    const errors = [];
-    expect(await connectAndAwaitClose(server, errors)).toEqual({ code: 1006, reason: "", wasClean: false });
-    expect(errors).toEqual([code]);
-  });
-
   it("Close frame with reason preserves reason", async () => {
     const server = await rawWsServer(sock => sock.write(closeFrame(1011, "boom")));
     expect(await connectAndAwaitClose(server)).toEqual({ code: 1011, reason: "boom", wasClean: true });
@@ -1250,20 +1234,6 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     return payload.toString();
   }
 
-  // Returns the unmasked payload of the client's first Close frame, or undefined if it hasn't fully arrived.
-  function findClientCloseFrame(buf) {
-    for (let offset = 0; offset + 6 <= buf.length;) {
-      const len = buf[offset + 1] & 0x7f;
-      expect(len).toBeLessThan(126);
-      if (offset + 6 + len > buf.length) return;
-      if ((buf[offset] & 0x0f) === 0x8) {
-        const mask = buf.subarray(offset + 2, offset + 6);
-        return Buffer.from(buf.subarray(offset + 6, offset + 6 + len)).map((byte, i) => byte ^ mask[i % 4]);
-      }
-      offset += 6 + len;
-    }
-  }
-
   // 2 header bytes + 4 mask bytes + "from-handler".length
   const CLIENT_TEXT_FRAME_LEN = 6 + "from-handler".length;
 
@@ -1276,15 +1246,14 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     let conn;
     const server = await rawWsServer(
       sock => {
-        conn = sock;
+        conn = new RawSocket(sock, false);
+        echoCloseFrame(conn);
         sock.write(Buffer.concat([textFrame("A"), textFrame("B"), textFrame("C")]));
       },
-      (sock, chunk) => {
+      (_sock, chunk) => {
         clientChunks.push(chunk);
-        const received = Buffer.concat(clientChunks);
-        if (received.length >= CLIENT_TEXT_FRAME_LEN) gotClientFrame.resolve();
-        const close = findClientCloseFrame(received);
-        if (close && sock.writable) sock.end(Buffer.concat([Buffer.from([0x88, close.length]), close]));
+        if (Buffer.concat(clientChunks).length >= CLIENT_TEXT_FRAME_LEN) gotClientFrame.resolve();
+        conn.push(chunk);
       },
     );
     try {

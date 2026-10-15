@@ -1225,7 +1225,7 @@ class WebSocket extends EventEmitter {
 
   emitClose(): void {
     this._readyState = CLOSED;
-    failCallbacks(this);
+    settleCallbacks(this, true);
     this.emit("close", this._closeCode, this._closeMessage);
   }
 
@@ -1270,7 +1270,6 @@ class WebSocket extends EventEmitter {
 
     // On the native server socket, 1005 means a Close frame with no body.
     if (this[kTransport] === NATIVE_SERVER) this[kNative]!.close(code === undefined ? 1005 : code, data);
-    else if (code === undefined) this[kNative]!.close();
     else this[kNative]!.close(code, data);
   }
 
@@ -1542,20 +1541,12 @@ function flushUnusedWriteCallback(websocket: WebSocket): void {
   process.nextTick(cb, $ERR_STREAM_DESTROYED("write"));
 }
 
-function runCallbacks(websocket: WebSocket): void {
+function settleCallbacks(websocket: WebSocket, failed: boolean): void {
   const callbacks = websocket[kCallbacks];
   if (callbacks === null) return;
 
   websocket[kCallbacks] = null;
-  for (let i = 0; i < callbacks.length; i++) callbacks[i](null);
-}
-
-function failCallbacks(websocket: WebSocket): void {
-  const callbacks = websocket[kCallbacks];
-  if (callbacks === null) return;
-
-  websocket[kCallbacks] = null;
-  const err = $ERR_STREAM_DESTROYED("write");
+  const err = failed ? $ERR_STREAM_DESTROYED("write") : null;
   for (let i = 0; i < callbacks.length; i++) callbacks[i](err);
 }
 
@@ -1719,7 +1710,7 @@ const serverHandlers: ServerHandlers = {
     this.emit("pong", data);
   },
   drain() {
-    if (nativeBufferedAmount(this) === 0) runCallbacks(this);
+    if (nativeBufferedAmount(this) === 0) settleCallbacks(this, false);
   },
   // `code` is one of:
   // - the status code of the peer's Close frame (1005 if it had none), which the native side already echoed
@@ -1790,11 +1781,10 @@ const clientHandlers: ClientHandlers = {
     }
 
     if (reset) {
-      const err = connResetException("read ECONNRESET");
-
-      err.errno = process.binding("uv").UV_ECONNRESET;
-      err.syscall = "read";
-      emitRequestError(req, err);
+      emitRequestError(
+        req,
+        new (require("internal/shared").ErrnoException)(process.binding("uv").UV_ECONNRESET, "read"),
+      );
     }
   },
   open() {
@@ -1981,18 +1971,14 @@ function connectError(native: NativeClient, error: NativeError): Error {
       err = new Error(`getaddrinfo ENOTFOUND ${url.hostname}`);
       err.syscall = "getaddrinfo";
       err.hostname = url.hostname;
+    } else if (errno === undefined) {
+      return error;
     } else if (url.protocol === "ws+unix:" || url.protocol === "wss+unix:") {
-      const path = url.pathname.split(":")[0];
-      err = new Error(`connect ${code} ${path}`);
-      err.syscall = "connect";
-      err.address = path;
+      return new (require("internal/shared").ExceptionWithHostPort)(errno, "connect", url.pathname.split(":")[0]);
     } else {
       const port = +url.port || (url.protocol === "wss:" ? 443 : 80);
       const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
-      err = new Error(`connect ${code} ${host}:${port}`);
-      err.syscall = "connect";
-      err.address = host;
-      err.port = port;
+      return new (require("internal/shared").ExceptionWithHostPort)(errno, "connect", host, port);
     }
   }
 
@@ -2153,16 +2139,9 @@ function validateUpgrade(
 
 // Implements http.request()'s `signal` option: aborting the signal destroys the request.
 function abortOnSignal(req: ClientRequest, signal: AbortSignal): void {
-  require("internal/validators").validateAbortSignal(signal, "options.signal");
-
   const onAbort = () => void req.destroy($makeAbortError(undefined, { cause: signal.reason }));
 
-  if (signal.aborted) {
-    process.nextTick(onAbort);
-  } else {
-    signal.addEventListener("abort", onAbort, { once: true });
-    req[kRemoveAbortListener] = () => signal.removeEventListener("abort", onAbort);
-  }
+  req[kRemoveAbortListener] = require("internal/abort_listener").addAbortListener(signal, onAbort)[Symbol.dispose];
 }
 
 // Call this whenever the request ends. The signal can outlive it, and the listener would leak.
@@ -2723,7 +2702,9 @@ function initAsClient(
       opts.secureContext ||
       ($isObject(agent) && hasCustomConnect(agent)))
   ) {
-    opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
+    const defaultCreateConnection = isSecure ? tlsConnect : netConnect;
+
+    opts.createConnection = opts.createConnection || defaultCreateConnection;
     opts.defaultPort = opts.defaultPort || defaultPort;
     opts.timeout = handshakeTimeout;
 
@@ -2754,10 +2735,8 @@ function initAsClient(
       if (serverName !== undefined) requestOptions.servername = serverName;
 
       if (agentOptions) {
-        const createConnection = isSecure ? tlsConnect : netConnect;
-
         opts.agent = undefined;
-        opts.createConnection = args => createConnection({ ...args, ...agentOptions });
+        opts.createConnection = args => defaultCreateConnection({ ...args, ...agentOptions });
       }
     }
 
@@ -2819,11 +2798,9 @@ function initAsClient(
 
   const headers = req[kHeaders];
   const extraHeaders = opts.headers;
-  if (extraHeaders) {
-    for (const name of Object.keys(extraHeaders)) {
-      const value = extraHeaders[name];
-      if (value !== undefined) headers[name.toLowerCase()] = [name, value];
-    }
+  for (const name of Object.keys(extraHeaders)) {
+    const value = extraHeaders[name];
+    if (value !== undefined) headers[name.toLowerCase()] = [name, value];
   }
   if (headers.host === undefined) {
     const host = isIpcUrl ? "localhost" : parsedUrl.hostname;

@@ -134,7 +134,7 @@ pub enum RedirectCredentialsPolicy {
 
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
-    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
+    HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding, header_has_token,
     upgrade_header_is_not_h2,
 };
 pub use init_error::InitError;

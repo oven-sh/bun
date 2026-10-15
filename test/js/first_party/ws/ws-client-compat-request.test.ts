@@ -5,22 +5,19 @@ import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
+  closedBeforeOpen,
   closedPort,
   connectClient,
   createPeer,
   implementations,
   nextEvent,
+  openEvents,
   response101,
   tryCall,
   type ClientOptions,
   type PeerOptions,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const closedBeforeOpen = [
-  'error Error "WebSocket was closed before the connection was established" rs=2',
-  "close 1006 Buffer() rs=3",
-];
 const hangUp = ['error Error "socket hang up" ECONNRESET rs=2', "close 1006 Buffer() rs=3"];
 const boom = ['error Error "boom" rs=2', "close 1006 Buffer() rs=3"];
 const forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno";

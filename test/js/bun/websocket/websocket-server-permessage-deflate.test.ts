@@ -3,9 +3,9 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import net from "node:net";
 import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
+import { type Frame, RawClient } from "../../web/websocket/raw-peer";
 
 type Compress = "shared" | "dedicated" | "3KB" | "32KB" | "256KB";
 
@@ -22,14 +22,6 @@ function pseudoRandomText(n: number): string {
   return out.toString("latin1");
 }
 
-function maskedTextFrame(text: string): Buffer {
-  const payload = Buffer.from(text);
-  if (payload.length > 125) throw new Error("maskedTextFrame() only supports payloads up to 125 bytes");
-  const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
-  const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
-  return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]);
-}
-
 // Inflates one permessage-deflate payload with no prior context. Throws if the
 // payload back-references an earlier message.
 function inflateWithoutContext(payload: Buffer): Buffer {
@@ -44,11 +36,6 @@ function inflateAndCheckEnd(payload: Buffer): { text: string; ended: boolean } {
   const { buffer, engine } = inflateRawSync(input, { finishFlush: constants.Z_SYNC_FLUSH, info: true });
   // zlib stops reading at the end of the stream, so it leaves the trailing bytes unread.
   return { text: buffer.toString(), ended: engine.bytesWritten < input.length };
-}
-
-interface Frame {
-  rsv1: boolean;
-  payload: Buffer;
 }
 
 interface Peer {
@@ -89,100 +76,23 @@ function startServer(perMessageDeflate: boolean | { compress: Compress; decompre
 }
 
 async function connect(server: ReturnType<typeof startServer>, offer: string): Promise<Peer> {
-  const socket = net.connect(server.port, "127.0.0.1");
-  socket.setNoDelay(true);
-  let buffer = Buffer.alloc(0);
-  const waiters: { tryRead: () => unknown; resolve: (value: any) => void }[] = [];
-  let failure: Error | undefined;
-  const pump = () => {
-    while (waiters.length) {
-      if (failure) {
-        waiters.shift()!.resolve(Promise.reject(failure));
-        continue;
-      }
-      const value = waiters[0].tryRead();
-      if (value === undefined) return;
-      waiters.shift()!.resolve(value);
-    }
-  };
-  socket.on("data", (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk]);
-    pump();
-  });
-  socket.on("close", () => {
-    failure ??= new Error("the server closed the socket");
-    pump();
-  });
-  socket.on("error", (error: Error) => {
-    failure ??= error;
-    pump();
-  });
-  const read = <T>(tryRead: () => T | undefined): Promise<T> =>
-    new Promise<T>(resolve => {
-      waiters.push({ tryRead, resolve });
-      pump();
-    });
-
-  const readFrame = () =>
-    read<Frame>(() => {
-      if (buffer.length < 2) return;
-      let length = buffer[1] & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (buffer.length < 4) return;
-        length = buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (length === 127) {
-        if (buffer.length < 10) return;
-        length = Number(buffer.readBigUInt64BE(2));
-        offset = 10;
-      }
-      if (buffer.length < offset + length) return;
-      const frame = { rsv1: (buffer[0] & 0x40) !== 0, payload: buffer.subarray(offset, offset + length) };
-      buffer = buffer.subarray(offset + length);
-      return frame;
-    });
-
-  socket.write(
-    "GET / HTTP/1.1\r\n" +
-      "Host: localhost\r\n" +
-      "Upgrade: websocket\r\n" +
-      "Connection: Upgrade\r\n" +
-      "Sec-WebSocket-Version: 13\r\n" +
-      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-      `Sec-WebSocket-Extensions: ${offer}\r\n\r\n`,
-  );
-  let head: string;
-  try {
-    head = await read<string>(() => {
-      const end = buffer.indexOf("\r\n\r\n");
-      if (end < 0) return;
-      const head = buffer.subarray(0, end).toString();
-      buffer = buffer.subarray(end + 4);
-      return head;
-    });
-    expect(head).toStartWith("HTTP/1.1 101");
-  } catch (error) {
-    socket.destroy();
-    throw error;
+  const client = await RawClient.upgrade(server.port, { headers: { "Sec-WebSocket-Extensions": offer } });
+  async function readFrame() {
+    const frame = await client.nextFrame();
+    if (!frame) throw new Error("the server closed the socket");
+    return frame;
   }
-  const extensions = head
-    .split("\r\n")
-    .find(line => line.toLowerCase().startsWith("sec-websocket-extensions:"))
-    ?.slice("sec-websocket-extensions:".length)
-    .trim();
-
   return {
-    extensions,
-    async request(n) {
-      socket.write(maskedTextFrame(String(n)));
-      return await readFrame();
+    extensions: client.header("sec-websocket-extensions"),
+    request(n) {
+      client.text(String(n));
+      return readFrame();
     },
     publish(n) {
-      socket.write(maskedTextFrame(`publish ${n}`));
+      client.text(`publish ${n}`);
     },
     readFrame,
-    close: () => socket.destroy(),
+    close: () => client.destroy(),
   };
 }
 
@@ -190,9 +100,9 @@ async function connect(server: ReturnType<typeof startServer>, offer: string): P
 // still in the compressor's window. That needs windowBits w where 2^w - 262 >= n.
 async function secondCopySize(peer: Peer, n: number): Promise<number> {
   const first = await peer.request(n);
-  expect(first.rsv1).toBe(true);
+  expect(first.rsv).toBe(4);
   const second = await peer.request(n);
-  expect(second.rsv1).toBe(true);
+  expect(second.rsv).toBe(4);
   return second.payload.length;
 }
 
@@ -288,7 +198,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       try {
         expect(peer.extensions).toBeUndefined();
         const frame = await peer.request(600);
-        expect(frame.rsv1).toBe(false);
+        expect(frame.rsv).toBe(0);
         expect(frame.payload.toString()).toBe(pseudoRandomText(600));
       } finally {
         peer.close();
@@ -356,7 +266,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       try {
         expect(peer.extensions).toBe(response);
         const frame = await peer.request(600);
-        expect(frame.rsv1).toBe(true);
+        expect(frame.rsv).toBe(4);
         expect(inflateWithoutContext(frame.payload).toString()).toBe(pseudoRandomText(600));
       } finally {
         peer.close();
@@ -387,7 +297,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     try {
       expect(peer.extensions).toBeUndefined();
       const frame = await peer.request(600);
-      expect(frame.rsv1).toBe(false);
+      expect(frame.rsv).toBe(0);
       expect(frame.payload.toString()).toBe(pseudoRandomText(600));
     } finally {
       peer.close();
@@ -418,7 +328,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
           const peer = await connect(server, "permessage-deflate");
           try {
             const frame = await send(peer);
-            expect(frame.rsv1).toBe(true);
+            expect(frame.rsv).toBe(4);
             expect(inflateAndCheckEnd(frame.payload)).toEqual({ text: pseudoRandomText(n), ended: false });
           } finally {
             peer.close();

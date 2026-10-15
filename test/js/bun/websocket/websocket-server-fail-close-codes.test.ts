@@ -6,7 +6,6 @@ import { describe, expect, test } from "bun:test";
 import { tls as cert } from "harness";
 import net from "node:net";
 import tls from "node:tls";
-import zlib from "node:zlib";
 
 const CONT = 0x0;
 const TEXT = 0x1;
@@ -42,11 +41,6 @@ function closeBody(code: number, reason: string | number[] = ""): Buffer {
   return Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason as string)]);
 }
 
-// Compresses a permessage-deflate payload: raw deflate with a sync flush, minus the trailing 00 00 ff ff.
-function deflate(data: Buffer): Buffer {
-  return zlib.deflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).subarray(0, -4);
-}
-
 // Formats the frames the server sent, one string per frame.
 function describeFrames(bytes: Buffer): string[] {
   const names: Record<number, string> = { 1: "TEXT", 2: "BINARY", 8: "CLOSE", 9: "PING", 10: "PONG" };
@@ -67,7 +61,7 @@ function describeFrames(bytes: Buffer): string[] {
 describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", scheme => {
   // Upgrades over a raw socket, writes `bytes` in one write, and reads until the server's FIN.
   // The server echoes every message.
-  async function probe(bytes: Buffer, options: { deflate?: boolean; maxPayloadLength?: number } = {}) {
+  async function probe(bytes: Buffer, options: { maxPayloadLength?: number } = {}) {
     const events: string[] = [];
     const serverClosed = Promise.withResolvers<void>();
     await using server = Bun.serve({
@@ -80,7 +74,6 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
       },
       websocket: {
         maxPayloadLength: options.maxPayloadLength ?? 1024,
-        perMessageDeflate: options.deflate === true,
         message(ws, message) {
           events.push(`message ${JSON.stringify(message.toString())}`);
           ws.send(message);
@@ -108,9 +101,6 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
         head = received.subarray(0, end).toString();
         received = received.subarray(end + 4);
         if (!head.startsWith("HTTP/1.1 101 ")) return finished.reject(new Error(`upgrade failed: ${head}`));
-        if (options.deflate && !/sec-websocket-extensions: permessage-deflate/i.test(head)) {
-          return finished.reject(new Error(`permessage-deflate was not negotiated: ${head}`));
-        }
         socket.write(bytes);
       });
       socket.on("end", () => finished.resolve("FIN"));
@@ -122,9 +112,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
           "Connection: Upgrade\r\n" +
           "Upgrade: websocket\r\n" +
           "Sec-WebSocket-Version: 13\r\n" +
-          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-          (options.deflate ? "Sec-WebSocket-Extensions: permessage-deflate\r\n" : "") +
-          "\r\n",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
       );
       const ending = await finished.promise;
       await serverClosed.promise;
@@ -254,20 +242,6 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
     });
   });
 
-  test("rejects a compressed message that isn't valid deflate data", async () => {
-    expect(await probe(frame(TEXT, [0xff, 0xff, 0xff, 0xff, 0xff, 0xff], { rsv: 4 }), { deflate: true })).toEqual(
-      failed(1007, "Received invalid compressed data"),
-    );
-  });
-
-  test("rejects a compressed message that inflates past maxPayloadLength", async () => {
-    const compressed = deflate(Buffer.alloc(1025, "a"));
-    expect(compressed.length).toBeLessThan(126);
-    expect(await probe(frame(TEXT, compressed, { rsv: 4 }), { deflate: true })).toEqual(
-      failed(1009, "Received too big message"),
-    );
-  });
-
   describe("accepts valid frames", () => {
     test("a message, then Close 1000", async () => {
       expect(await probe(Buffer.concat([frame(TEXT, "ok"), frame(CLOSE, closeBody(1000, "bye"))]))).toEqual({
@@ -290,14 +264,6 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
         wire: ['PONG "p"', 'BINARY "hello"', 'CLOSE 1000 ""', "FIN"],
         events: ['message "hello"', 'close 1000 ""'],
       });
-    });
-
-    test("a compressed message that inflates to exactly maxPayloadLength", async () => {
-      const { events } = await probe(
-        Buffer.concat([frame(TEXT, deflate(Buffer.alloc(1024, "a")), { rsv: 4 }), frame(CLOSE, closeBody(1000))]),
-        { deflate: true },
-      );
-      expect(events).toEqual([`message ${JSON.stringify(Buffer.alloc(1024, "a").toString())}`, 'close 1000 ""']);
     });
 
     // maxPayloadLength only applies to messages. RFC 6455 5.5 caps control frames at 125 bytes.

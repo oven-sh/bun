@@ -273,6 +273,8 @@ pub(crate) trait BlobExt {
     where
         Self: Sized;
     fn shared_view_raw(&self) -> *mut [u8];
+    /// The Blob's bytes, or `None` for a file- or S3-backed Blob, which has to be read first.
+    fn in_memory_view(&self) -> Option<&[u8]>;
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
@@ -2377,6 +2379,13 @@ impl BlobExt for Blob {
             }
             _ => empty(),
         }
+    }
+
+    fn in_memory_view(&self) -> Option<&[u8]> {
+        if self.needs_to_read_file() || self.is_s3() {
+            return None;
+        }
+        Some(self.shared_view())
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
@@ -5662,13 +5671,12 @@ pub(crate) extern "C" fn Blob__sharedView(
     ptr: &mut *const u8,
     len: &mut usize,
 ) -> bool {
-    let Some(blob) = value.as_class_ref::<Blob>() else {
+    let Some(view) = value
+        .as_class_ref::<Blob>()
+        .and_then(BlobExt::in_memory_view)
+    else {
         return false;
     };
-    if blob.needs_to_read_file() || blob.is_s3() {
-        return false;
-    }
-    let view = blob.shared_view();
     *ptr = view.as_ptr();
     *len = view.len();
     true

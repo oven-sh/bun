@@ -2,10 +2,10 @@
 // non-101 response fails a socket that has no 'unexpected-response' listener. See ws-raw-peer.ts.
 // The request passed to 'unexpected-response' is covered in ws-client-compat-request.test.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import {
   acceptKey,
+  closedBeforeOpen,
   connectClient,
   createPeer,
   encodeFrame,
@@ -13,6 +13,7 @@ import {
   nextEvent,
   OP,
   openClient,
+  openEvents,
   response101,
   show,
   showError,
@@ -20,11 +21,6 @@ import {
   type RawSocket,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const closedBeforeOpen = [
-  'error Error "WebSocket was closed before the connection was established" rs=2',
-  "close 1006 Buffer() rs=3",
-];
 const unexpected503 = ['error Error "Unexpected server response: 503" rs=2', "close 1006 Buffer() rs=3"];
 
 /** A peer that sends `response` to every request and then closes the connection. */
@@ -185,18 +181,6 @@ describe.each(implementations)("ws client 'upgrade' and 'unexpected-response' ev
         await using client = await connectClient(implementation, {}, respondsWith(response));
         const [, incoming] = await nextEvent(client.ws, "unexpected-response");
         expect(await readAll(incoming)).toBe(body);
-      });
-
-      test("reads a body that arrives after the event", async () => {
-        await using client = await connectClient(
-          implementation,
-          {},
-          { respond: () => "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\n" },
-        );
-        const [, response] = await nextEvent(client.ws, "unexpected-response");
-        const conn = await client.peer.connection();
-        conn.write("no way");
-        expect(await readAll(response)).toBe("no way");
       });
 
       const contentLengthHead = "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\n";
@@ -390,32 +374,6 @@ describe.each(implementations)("ws client 'upgrade' and 'unexpected-response' ev
           noErrorListener: true,
         };
         expect((await bodyEvents(row)).response).toEqual(['data Buffer("no")', "aborted", "close"]);
-      });
-
-      // Skipped on Windows because Winsock accepts everything on loopback, so writes never stall.
-      test.skipIf(isWindows)("an unread body applies backpressure to the server", async () => {
-        await using client = await connectClient(
-          implementation,
-          {},
-          { respond: () => "HTTP/1.1 403 Forbidden\r\n\r\n" },
-        );
-        const [, response] = (await nextEvent(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
-        const conn = await client.peer.connection();
-        await using control = await openClient(implementation);
-        const chunk = Buffer.alloc(100_000, "a");
-        let sent = 0;
-        // Write until the kernel's buffers are full, i.e. the server's write queue stays non-empty across a round trip.
-        do {
-          conn.write(chunk);
-          sent += chunk.length;
-          await control.conn.roundTrip();
-        } while (conn.socket.writableLength === 0 && sent < 1000 * chunk.length);
-        expect(conn.socket.writableLength).toBeGreaterThan(0);
-
-        conn.end();
-        let received = 0;
-        for await (const data of response) received += data.length;
-        expect(received).toBe(sent);
       });
     });
 

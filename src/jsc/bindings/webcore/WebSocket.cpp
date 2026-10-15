@@ -151,7 +151,6 @@ static FailureDescription describeFailure(Bun::WebSocketErrorCode code)
     case unexpected_opcode:
         return { "Protocol error - unexpected opcode"_s, "WS_ERR_INVALID_OPCODE"_s };
     case unexpected_rsv1:
-    case compression_unsupported:
         return { "Protocol error - RSV1 must be clear"_s, "WS_ERR_UNEXPECTED_RSV_1"_s };
     case unexpected_rsv2_or_3:
         return { "Protocol error - RSV2 and RSV3 must be clear"_s, "WS_ERR_UNEXPECTED_RSV_2_3"_s };
@@ -291,20 +290,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 WebSocket::~WebSocket()
 {
     cancelUpgradeClient();
-
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client: {
-        Bun__WebSocketClient__finalize(reinterpret_cast<void*>(this->m_connectedWebSocket.client));
-        break;
-    }
-    case ConnectedWebSocketKind::ClientSSL: {
-        Bun__WebSocketClientTLS__finalize(reinterpret_cast<void*>(this->m_connectedWebSocket.clientSSL));
-        break;
-    }
-    default: {
-        break;
-    }
-    }
+    callClient<Bun__WebSocketClient__finalize, Bun__WebSocketClientTLS__finalize>();
 }
 
 // Transient proxy configuration - used only during connect() and not stored as member fields
@@ -432,16 +418,10 @@ size_t WebSocket::memoryCost() const
     cost += m_subprotocol.sizeInBytes();
     cost += m_extensions.sizeInBytes();
 
-    if (m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
-        cost += Bun__WebSocketClient__memoryCost(m_connectedWebSocket.client);
-    } else if (m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
-        cost += Bun__WebSocketClientTLS__memoryCost(m_connectedWebSocket.clientSSL);
-    }
+    cost += callClient<Bun__WebSocketClient__memoryCost, Bun__WebSocketClientTLS__memoryCost>();
 
     if (m_upgradeClient) {
-        // Use TLS cost if connection type is TLS or ProxyTLS
-        bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-        if (useTLSClient) {
+        if (usesTLSSocket()) {
             cost += Bun__WebSocketHTTPSClient__memoryCost(m_upgradeClient);
         } else {
             cost += Bun__WebSocketHTTPClient__memoryCost(m_upgradeClient);
@@ -641,41 +621,22 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // The upgrade client takes ownership, even if connect() fails.
     void* sslConfig = options.sslConfig.release();
 
-    // Use TLS client based on connection type:
-    // - TLS/ProxyTLS: use TLS socket
-    // - Plain/ProxyPlain: use plain socket
-    bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
-
     // Set to an errno name when connect() returns null and the cause is known.
     BunString connectErrorCode { BunStringTag::Empty };
 
-    if (useTLSClient) {
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(
-            scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
-            &host, port, &path, &clientProtocolString,
-            headerNames.begin(), headerNames.size(), headerValues.begin(), headerValues.size(),
-            hasProxy ? &proxyHost : nullptr, proxyPort,
-            (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
-            proxyHeaderNames.begin(), proxyHeaderNames.size(), proxyHeaderValues.begin(), proxyHeaderValues.size(),
-            sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
-            is_unix ? &unixSocketPath : nullptr,
-            options.extensions.isNull() ? nullptr : &extensions,
-            &connectErrorCode);
-    } else {
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(
-            scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
-            &host, port, &path, &clientProtocolString,
-            headerNames.begin(), headerNames.size(), headerValues.begin(), headerValues.size(),
-            hasProxy ? &proxyHost : nullptr, proxyPort,
-            (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
-            proxyHeaderNames.begin(), proxyHeaderNames.size(), proxyHeaderValues.begin(), proxyHeaderValues.size(),
-            sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
-            is_unix ? &unixSocketPath : nullptr,
-            options.extensions.isNull() ? nullptr : &extensions,
-            &connectErrorCode);
-    }
+    auto* connectUpgradeClient = usesTLSSocket() ? Bun__WebSocketHTTPSClient__connect : Bun__WebSocketHTTPClient__connect;
+    this->m_upgradeClient = connectUpgradeClient(
+        scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
+        &host, port, &path, &clientProtocolString,
+        headerNames.begin(), headerNames.size(), headerValues.begin(), headerValues.size(),
+        hasProxy ? &proxyHost : nullptr, proxyPort,
+        (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
+        proxyHeaderNames.begin(), proxyHeaderNames.size(), proxyHeaderValues.begin(), proxyHeaderValues.size(),
+        sslConfig, is_secure,
+        targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+        is_unix ? &unixSocketPath : nullptr,
+        options.extensions.isNull() ? nullptr : &extensions,
+        &connectErrorCode);
 
     // Report the failure from a task, like an asynchronous connection failure, so the constructor still returns a CONNECTING socket.
     if (!m_upgradeClient) {
@@ -724,38 +685,15 @@ ExceptionOr<void> WebSocket::sendFrame(Opcode opcode, const Payload& payload, ui
 
 void WebSocket::sendWebSocketData(std::span<const uint8_t> bytes, Opcode op, uint8_t flags)
 {
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client: {
-        Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, bytes.data(), bytes.size(), static_cast<uint8_t>(op), flags);
-        break;
-    }
-    case ConnectedWebSocketKind::ClientSSL: {
-        Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, bytes.data(), bytes.size(), static_cast<uint8_t>(op), flags);
-        break;
-    }
-    default: {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    }
+    RELEASE_ASSERT(m_connectedWebSocketKind != ConnectedWebSocketKind::None);
+    callClient<Bun__WebSocketClient__writeBinaryData, Bun__WebSocketClientTLS__writeBinaryData>(bytes.data(), bytes.size(), static_cast<uint8_t>(op), flags);
 }
 
 void WebSocket::sendWebSocketString(const String& message, Opcode op, uint8_t flags)
 {
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client: {
-        auto slice = Zig::toEncodedSlice(message);
-        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op), flags);
-        break;
-    }
-    case ConnectedWebSocketKind::ClientSSL: {
-        auto slice = Zig::toEncodedSlice(message);
-        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &slice, static_cast<uint8_t>(op), flags);
-        break;
-    }
-    default: {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    }
+    RELEASE_ASSERT(m_connectedWebSocketKind != ConnectedWebSocketKind::None);
+    auto slice = Zig::toEncodedSlice(message);
+    callClient<Bun__WebSocketClient__writeString, Bun__WebSocketClientTLS__writeString>(&slice, static_cast<uint8_t>(op), flags);
 }
 
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
@@ -765,9 +703,10 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     // over-long reason throws even on a CLOSING/CLOSED socket.
     if (optionalCode && !isValidCloseCodeForSending(optionalCode.value()))
         return Exception { InvalidAccessError, makeString("The close code must be a valid WebSocket close code (1000-1014, excluding the reserved codes 1004-1006, or in the range of 3000 to 4999). Received "_s, optionalCode.value(), '.') };
+    UTF8CString utf8Reason;
     if (!reason.isEmpty()) {
         // The limit is on the UTF-8 encoding of the reason, not its UTF-16 length.
-        auto utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         if (utf8Reason.length() > maxReasonSizeInBytes)
             return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
     }
@@ -783,17 +722,8 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     uint16_t code = optionalCode.value_or(reason.isEmpty() ? 1005 : 1000);
     const bool wasPaused = isPaused();
     m_state = CLOSING;
-    EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
-        Bun__WebSocketClient__close(m_connectedWebSocket.client, code, &reasonSlice);
-        break;
-    case ConnectedWebSocketKind::ClientSSL:
-        Bun__WebSocketClientTLS__close(m_connectedWebSocket.clientSSL, code, &reasonSlice);
-        break;
-    case ConnectedWebSocketKind::None:
-        break;
-    }
+    auto reasonBytes = byteCast<uint8_t>(utf8Reason.span());
+    callClient<Bun__WebSocketClient__close, Bun__WebSocketClientTLS__close>(code, reasonBytes.data(), reasonBytes.size());
     // close() unpauses a WHATWG socket, so parse any bytes that arrived with the 101. A `ws` socket stays paused, like npm ws.
     if (wasPaused && !isPaused())
         queueInitialDataDelivery();
@@ -836,56 +766,31 @@ bool WebSocket::resume()
 // socket opens); false when there is no socket to act on.
 bool WebSocket::applyPauseToConnectedClient()
 {
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
+    if (m_connectedWebSocketKind != ConnectedWebSocketKind::None) {
         return m_paused
-            ? Bun__WebSocketClient__pause(m_connectedWebSocket.client)
-            : Bun__WebSocketClient__resume(m_connectedWebSocket.client);
-    case ConnectedWebSocketKind::ClientSSL:
-        return m_paused
-            ? Bun__WebSocketClientTLS__pause(m_connectedWebSocket.clientSSL)
-            : Bun__WebSocketClientTLS__resume(m_connectedWebSocket.clientSSL);
-    case ConnectedWebSocketKind::None:
-        if (m_upgradeClient) {
-            if (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS)
-                Bun__WebSocketHTTPSClient__setPaused(m_upgradeClient, m_paused);
-            else
-                Bun__WebSocketHTTPClient__setPaused(m_upgradeClient, m_paused);
-        }
-        return m_state == CONNECTING;
+            ? callClient<Bun__WebSocketClient__pause, Bun__WebSocketClientTLS__pause>()
+            : callClient<Bun__WebSocketClient__resume, Bun__WebSocketClientTLS__resume>();
     }
-    return false;
+    if (m_upgradeClient) {
+        if (usesTLSSocket())
+            Bun__WebSocketHTTPSClient__setPaused(m_upgradeClient, m_paused);
+        else
+            Bun__WebSocketHTTPClient__setPaused(m_upgradeClient, m_paused);
+    }
+    return m_state == CONNECTING;
 }
 
 void WebSocket::queueInitialDataDelivery()
 {
     queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
-        switch (ws.m_connectedWebSocketKind) {
-        case ConnectedWebSocketKind::Client:
-            Bun__WebSocketClient__deliverInitialData(ws.m_connectedWebSocket.client);
-            break;
-        case ConnectedWebSocketKind::ClientSSL:
-            Bun__WebSocketClientTLS__deliverInitialData(ws.m_connectedWebSocket.clientSSL);
-            break;
-        case ConnectedWebSocketKind::None:
-            break;
-        }
+        ws.callClient<Bun__WebSocketClient__deliverInitialData, Bun__WebSocketClientTLS__deliverInitialData>();
     });
 }
 
 void WebSocket::setRef(bool ref)
 {
     m_unref = !ref;
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
-        Bun__WebSocketClient__setRef(m_connectedWebSocket.client, ref);
-        break;
-    case ConnectedWebSocketKind::ClientSSL:
-        Bun__WebSocketClientTLS__setRef(m_connectedWebSocket.clientSSL, ref);
-        break;
-    case ConnectedWebSocketKind::None:
-        break;
-    }
+    callClient<Bun__WebSocketClient__setRef, Bun__WebSocketClientTLS__setRef>(ref);
 }
 
 std::optional<WebSocket::RemoteAddress> WebSocket::remoteAddress() const
@@ -893,18 +798,8 @@ std::optional<WebSocket::RemoteAddress> WebSocket::remoteAddress() const
     BunString address { BunStringTag::Empty };
     uint16_t port = 0;
     bool isIPv6 = false;
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
-        if (Bun__WebSocketClient__remoteAddress(m_connectedWebSocket.client, &address, &port, &isIPv6))
-            return RemoteAddress { address.transferToWTFString(), port, isIPv6 };
-        break;
-    case ConnectedWebSocketKind::ClientSSL:
-        if (Bun__WebSocketClientTLS__remoteAddress(m_connectedWebSocket.clientSSL, &address, &port, &isIPv6))
-            return RemoteAddress { address.transferToWTFString(), port, isIPv6 };
-        break;
-    case ConnectedWebSocketKind::None:
-        break;
-    }
+    if (callClient<Bun__WebSocketClient__remoteAddress, Bun__WebSocketClientTLS__remoteAddress>(&address, &port, &isIPv6))
+        return RemoteAddress { address.transferToWTFString(), port, isIPv6 };
     return std::nullopt;
 }
 
@@ -925,8 +820,7 @@ void WebSocket::cancelUpgradeClient()
     auto* upgradeClient = std::exchange(m_upgradeClient, nullptr);
     if (!upgradeClient)
         return;
-    // TLS and ProxyTLS both hold a TLS socket to the next hop.
-    if (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS)
+    if (usesTLSSocket())
         Bun__WebSocketHTTPSClient__cancel(upgradeClient);
     else
         Bun__WebSocketHTTPClient__cancel(upgradeClient);
@@ -934,16 +828,7 @@ void WebSocket::cancelUpgradeClient()
 
 void WebSocket::cancelConnectedClient()
 {
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
-        Bun__WebSocketClient__cancel(m_connectedWebSocket.client);
-        break;
-    case ConnectedWebSocketKind::ClientSSL:
-        Bun__WebSocketClientTLS__cancel(m_connectedWebSocket.clientSSL);
-        break;
-    case ConnectedWebSocketKind::None:
-        break;
-    }
+    callClient<Bun__WebSocketClient__cancel, Bun__WebSocketClientTLS__cancel>();
 }
 
 // The context is being torn down. Drop the connection immediately: no closing handshake, no events
@@ -953,12 +838,13 @@ void WebSocket::stop()
 {
     m_state = CLOSED;
     cancelUpgradeClient();
+    // Clear the pointers before calling into the native client, so nothing it does can reach a client that's being freed.
     switch (std::exchange(m_connectedWebSocketKind, ConnectedWebSocketKind::None)) {
     case ConnectedWebSocketKind::Client:
-        Bun__WebSocketClient__dropConnectionWithoutCallback(std::exchange(m_connectedWebSocket.client, nullptr));
+        Bun__WebSocketClient__finalize(std::exchange(m_connectedWebSocket.client, nullptr));
         break;
     case ConnectedWebSocketKind::ClientSSL:
-        Bun__WebSocketClientTLS__dropConnectionWithoutCallback(std::exchange(m_connectedWebSocket.clientSSL, nullptr));
+        Bun__WebSocketClientTLS__finalize(std::exchange(m_connectedWebSocket.clientSSL, nullptr));
         break;
     case ConnectedWebSocketKind::None:
         break;
@@ -981,17 +867,7 @@ unsigned WebSocket::bufferedAmount() const
 {
     // Live: bytes queued in the native client (frames not yet written to the
     // socket, plus the proxy tunnel's pending ciphertext).
-    size_t live = 0;
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client:
-        live = Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client);
-        break;
-    case ConnectedWebSocketKind::ClientSSL:
-        live = Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL);
-        break;
-    case ConnectedWebSocketKind::None:
-        break;
-    }
+    size_t live = callClient<Bun__WebSocketClient__bufferedAmount, Bun__WebSocketClientTLS__bufferedAmount>();
     return saturateAdd(m_bufferedAmount, live);
 }
 
@@ -1467,12 +1343,11 @@ void* WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMe
     // For TLS: direct wss:// connection, socket is already TLS.
     // For ProxyTLS: connected through HTTPS proxy, socket is TLS (even for ws:// target).
     // For Plain/ProxyPlain: socket is not TLS.
-    bool useTLSSocket = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
+    bool useTLSSocket = usesTLSSocket();
 
     auto* globalObject = scriptExecutionContext()->jsGlobalObject();
-    void* client = useTLSSocket
-        ? Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions)
-        : Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
+    auto* initClient = useTLSSocket ? Bun__WebSocketClientTLS__init : Bun__WebSocketClient__init;
+    void* client = initClient(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
     // The socket was already closed or shut down by the time the 101 was parsed.
     if (!client) {
         didFail(Bun::WebSocketErrorCode::ended, 0, {}, {});

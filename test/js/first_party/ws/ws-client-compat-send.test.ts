@@ -3,51 +3,36 @@ import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
 import { openAsBlob } from "node:fs";
 import path from "node:path";
-import { constants, inflateRawSync } from "node:zlib";
 import {
   closedPort,
   connectClient,
+  createInflater,
+  detached,
   Frame,
   implementations,
+  invalidData,
+  MiB,
   nextEvent,
   OP,
   openClient,
+  repeatA,
+  resizable,
   response101,
+  shared,
   show,
   showFrame,
+  tooLong,
   tryCall,
 } from "./ws-raw-peer";
 
 type Client = Awaited<ReturnType<typeof openClient>>;
 type Callback = (...args: unknown[]) => void;
 
-const MiB = 1024 * 1024;
-const a = (count: number) => Buffer.alloc(count, "a").toString();
 const connecting = 'throws Error "WebSocket is not open: readyState 0 (CONNECTING)"';
 const closing = 'callback(Error "WebSocket is not open: readyState 2 (CLOSING)")';
 const closed = 'callback(Error "WebSocket is not open: readyState 3 (CLOSED)")';
-const tooLong = 'throws RangeError "The data size must not be greater than 125 bytes"';
-const invalidData = (received: string) =>
-  'throws TypeError "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an ' +
-  `Array-like Object. Received ${received}" ERR_INVALID_ARG_TYPE`;
 
 const bytes = (...values: number[]) => new Uint8Array(values);
-// npm ws masks a SharedArrayBuffer in place, so each send() needs a fresh one.
-const shared = (...values: number[]) => {
-  const buffer = new SharedArrayBuffer(values.length);
-  new Uint8Array(buffer).set(values);
-  return buffer;
-};
-const resizable = (...values: number[]) => {
-  const buffer = new ArrayBuffer(values.length, { maxByteLength: 64 });
-  new Uint8Array(buffer).set(values);
-  return buffer;
-};
-const detached = () => {
-  const view = new Uint8Array(4);
-  structuredClone(view.buffer, { transfer: [view.buffer] });
-  return view;
-};
 
 /**
  * Runs `act(callback)`. `returned` is its `tryCall()` result. `callback` resolves to `callback(<arguments>)` once the
@@ -91,19 +76,6 @@ async function callOnClosedSocket(ws: Client["ws"], act: (ws: any, callback: Cal
 /** Formats a frame without its payload: `text`, `binary rsv1`, `continuation !fin`. */
 const showFrameHeader = (frame: Frame) =>
   showFrame(new Frame(frame.fin, frame.rsv, frame.opcode, frame.hasWrongMask, Buffer.alloc(0), undefined));
-
-/** A connection's compressed messages form one deflate stream, so each one is inflated after all the earlier ones. */
-function inflater() {
-  let stream = Buffer.alloc(0);
-  let inflatedLength = 0;
-  return (payload: Buffer) => {
-    stream = Buffer.concat([stream, payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-    const inflated = inflateRawSync(stream, { finishFlush: constants.Z_SYNC_FLUSH });
-    const message = inflated.subarray(inflatedLength);
-    inflatedLength = inflated.length;
-    return message;
-  };
-}
 
 /**
  * Sends 1 MiB messages to a peer that has stopped reading until the client has to buffer some, then two small ones
@@ -201,11 +173,11 @@ const controlPayloads: Row[] = [
   { label: "Blob", data: new Blob(["b"]), sent: '"b"' },
   { label: "array", data: [1, 2], sent: "0x0102" },
   { label: "object", data: {}, thrown: invalidData("an instance of Object") },
-  { label: "125-byte string", data: a(125), sent: "125 bytes" },
-  { label: "126-byte string", data: a(126), thrown: tooLong },
+  { label: "125-byte string", data: repeatA(125), sent: "125 bytes" },
+  { label: "126-byte string", data: repeatA(126), thrown: tooLong },
   { label: "63-character, 126-byte string", data: Buffer.alloc(126, "é").toString(), thrown: tooLong },
   { label: "126-byte Buffer", data: Buffer.alloc(126), thrown: tooLong },
-  { label: "126-byte Blob", data: new Blob([a(126)]), thrown: tooLong },
+  { label: "126-byte Blob", data: new Blob([repeatA(126)]), thrown: tooLong },
 ];
 
 // `shown` is the payload as `showFrame` prints it. The first five rows run with every `binary` value, the rest only
@@ -286,7 +258,7 @@ const closedSocketCalls: {
   { call: "send(null)", act: (ws, cb) => ws.send(null, cb), bufferedBytes: 0 },
   { call: "ping()", act: (ws, cb) => ws.ping(cb), bufferedBytes: 0 },
   // No frame is built, so the 125-byte limit isn't checked.
-  { call: "ping(126 bytes)", act: (ws, cb) => ws.ping(a(126), cb), bufferedBytes: 126 },
+  { call: "ping(126 bytes)", act: (ws, cb) => ws.ping(repeatA(126), cb), bufferedBytes: 126 },
   {
     call: "send({})",
     act: (ws, cb) => ws.send({}, cb),
@@ -506,7 +478,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         {},
         { headers: ["Sec-WebSocket-Extensions: " + extension] },
       );
-      const inflate = inflater();
+      const inflate = createInflater();
       const results: Record<string, string> = {};
       for (const { label, data, options } of rows) {
         client.ws.send(data as Buffer, options as {});
@@ -521,17 +493,17 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     test("compresses every message unless `compress` is false", async () => {
       expect(
         await run("permessage-deflate", [
-          { label: "2048 bytes", data: a(2048) },
-          { label: "2048 bytes, compress: false", data: a(2048), options: { compress: false } },
-          { label: "2048 bytes, compress: true", data: a(2048), options: { compress: true } },
-          { label: "10 bytes", data: a(10) },
-          { label: "10 bytes, compress: true", data: a(10), options: { compress: true } },
-          { label: "1023 bytes", data: a(1023) },
-          { label: "1024 bytes", data: a(1024) },
+          { label: "2048 bytes", data: repeatA(2048) },
+          { label: "2048 bytes, compress: false", data: repeatA(2048), options: { compress: false } },
+          { label: "2048 bytes, compress: true", data: repeatA(2048), options: { compress: true } },
+          { label: "10 bytes", data: repeatA(10) },
+          { label: "10 bytes, compress: true", data: repeatA(10), options: { compress: true } },
+          { label: "1023 bytes", data: repeatA(1023) },
+          { label: "1024 bytes", data: repeatA(1024) },
           { label: "Buffer", data: Buffer.alloc(2048, "世 ") },
           { label: "Buffer, binary: false", data: Buffer.alloc(2048, "世 "), options: { binary: false } },
           { label: "string, binary: true", data: Buffer.alloc(2048, "世 ").toString(), options: { binary: true } },
-          { label: "Blob", data: new Blob([a(100)]) },
+          { label: "Blob", data: new Blob([repeatA(100)]) },
         ]),
       ).toEqual({
         "2048 bytes": "text rsv1, intact",
@@ -551,16 +523,16 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
     test("with client_no_context_takeover, only compresses messages of 1024 bytes or more", async () => {
       expect(
         await run("permessage-deflate; client_no_context_takeover", [
-          { label: "1023 bytes", data: a(1023) },
-          { label: "1024 bytes", data: a(1024) },
+          { label: "1023 bytes", data: repeatA(1023) },
+          { label: "1024 bytes", data: repeatA(1024) },
           { label: "511 characters, 1022 bytes", data: Buffer.alloc(1022, "é").toString() },
           { label: "512 characters, 1024 bytes", data: Buffer.alloc(1024, "é").toString() },
           { label: "Buffer of 1023 bytes", data: Buffer.alloc(1023) },
           { label: "Buffer of 1024 bytes", data: Buffer.alloc(1024) },
-          { label: "Blob of 1023 bytes", data: new Blob([a(1023)]) },
-          { label: "Blob of 1024 bytes", data: new Blob([a(1024)]) },
-          { label: "4 bytes, compress: true", data: a(4), options: { compress: true } },
-          { label: "2048 bytes, compress: false", data: a(2048), options: { compress: false } },
+          { label: "Blob of 1023 bytes", data: new Blob([repeatA(1023)]) },
+          { label: "Blob of 1024 bytes", data: new Blob([repeatA(1024)]) },
+          { label: "4 bytes, compress: true", data: repeatA(4), options: { compress: true } },
+          { label: "2048 bytes, compress: false", data: repeatA(2048), options: { compress: false } },
         ]),
       ).toEqual({
         "1023 bytes": "text, intact",
@@ -605,9 +577,9 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] },
       );
       const { ws, conn } = client;
-      ws.send(a(100), { fin: false });
-      ws.send(a(100), { fin: false });
-      ws.send(a(100));
+      ws.send(repeatA(100), { fin: false });
+      ws.send(repeatA(100), { fin: false });
+      ws.send(repeatA(100));
       const frames = [(await conn.nextFrame())!, (await conn.nextFrame())!, (await conn.nextFrame())!];
       const compressed = (frames[0].rsv & 4) !== 0;
       expect(frames.map(showFrameHeader)).toEqual([
@@ -616,7 +588,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
         "continuation",
       ]);
       const payload = Buffer.concat(frames.map(frame => frame.payload));
-      expect((compressed ? inflater()(payload) : payload).toString()).toBe(a(300));
+      expect((compressed ? createInflater()(payload) : payload).toString()).toBe(repeatA(300));
     });
   });
 
@@ -760,7 +732,7 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
           () => ws.send({}, callback),
           () => ws.send(),
           () => ws.ping("x", undefined, callback),
-          () => ws.ping(a(126)),
+          () => ws.ping(repeatA(126)),
           () => ws.ping(callback),
           () => ws.pong("x", undefined, callback),
           () => ws.pong({}),

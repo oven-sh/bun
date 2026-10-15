@@ -9,24 +9,23 @@ import net from "node:net";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
+  abnormalClose,
   closedPort,
   createPeer,
   encodeFrame,
   implementations,
   nextEvent,
   OP,
+  openEvents,
   type RawSocket,
   recordEvents,
   response101,
   show,
+  stripMessage,
   tryCall,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const abnormalClose = "close 1006 Buffer() rs=3";
 const boomThenClose = ['error Error "boom" rs=2', abnormalClose];
-// OpenSSL writes these error messages, so only compare the class and the code.
-const stripMessage = (line: string) => line.replace(/ ".*"/, "");
 
 // Can't be resolved, because DNS labels are limited to 63 characters. A client can only reach the server through the
 // option under test.

@@ -1,15 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tls as tlsCerts } from "harness";
-import { createHash } from "node:crypto";
 import net from "node:net";
-import tls from "node:tls";
-import { startEchoServer, startProxy } from "./proxy-test-utils";
+import { ignoreAmbientNoProxy, openOrFailure, startEchoServer, startProxy } from "./proxy-test-utils";
+import { createPeer, encodeFrame, OP, response101 } from "./raw-peer";
 
-// NO_PROXY applies to an explicit `proxy` option too, and every target here is 127.0.0.1.
-const prevNoProxy = process.env.NO_PROXY;
-const prevNoProxyLower = process.env.no_proxy;
-process.env.NO_PROXY = "";
-process.env.no_proxy = "";
+ignoreAmbientNoProxy();
 
 let echo: ReturnType<typeof startEchoServer>;
 let echoUrl: string;
@@ -21,20 +16,10 @@ beforeAll(() => {
 
 afterAll(() => {
   echo?.stop(true);
-  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
-  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
 /** Resolves with the first message (the echo server greets with "connected"), or the error message after "failed: ". */
-function greetingOrFailure(ws: WebSocket): Promise<string> {
-  const { promise, resolve } = Promise.withResolvers<string>();
-  ws.addEventListener("message", event => resolve(String(event.data)));
-  ws.addEventListener("error", event =>
-    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
-  );
-  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
-  return promise.finally(() => ws.terminate());
-}
+const greetingOrFailure = (ws: WebSocket) => openOrFailure(ws, "message");
 
 /**
  * A proxy that replies to every CONNECT with `reply`, then tunnels to the requested port.
@@ -152,36 +137,12 @@ describe("CONNECT reply", () => {
 
 describe("101 response received through a TLS tunnel", () => {
   /** A wss:// server that replies with `before101`, a 101 with the `extra` header lines, and a "connected" message. */
-  async function startWssServer(before101: string, extra: string[]) {
-    const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
-      let request = "";
-      socket.on("error", () => {});
-      socket.on("data", chunk => {
-        request += chunk.toString("latin1");
-        if (!request.endsWith("\r\n\r\n")) return;
-        const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
-        request = "";
-        const accept = createHash("sha1")
-          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-          .digest("base64");
-        const head = [
-          "HTTP/1.1 101 Switching Protocols",
-          "Upgrade: websocket",
-          "Connection: Upgrade",
-          `Sec-WebSocket-Accept: ${accept}`,
-          ...extra,
-          "\r\n",
-        ].join("\r\n");
-        socket.write(before101 + head + "\x81\x09connected", "latin1");
-      });
+  function startWssServer(before101: string, extra: string[]) {
+    return createPeer({
+      secure: true,
+      respond: connection => before101 + response101(connection, extra),
+      afterUpgrade: encodeFrame(OP.text, "connected"),
     });
-    const port = await startProxy(server);
-    return {
-      url: `wss://127.0.0.1:${port}/`,
-      [Symbol.dispose]() {
-        server.close();
-      },
-    };
   }
 
   test.each([
@@ -200,14 +161,14 @@ describe("101 response received through a TLS tunnel", () => {
     ],
     ["an extension the client didn't offer", "", ["Sec-WebSocket-Extensions: foo"], "Unsupported websocket extension"],
   ])("%s", async (_, before101, extra, outcome) => {
-    using server = await startWssServer(before101, extra);
+    await using server = await startWssServer(before101, extra);
     using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
     const ws = new WebSocket(server.url, { proxy: proxy.url, tls: { ca: tlsCerts.cert } });
     expect(await greetingOrFailure(ws)).toBe(outcome);
   });
 
   test("sets error.code for an untrusted certificate", async () => {
-    using server = await startWssServer("", []);
+    await using server = await startWssServer("", []);
     using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
     const ws = new WebSocket(server.url, { proxy: proxy.url });
     const { promise, resolve } = Promise.withResolvers<unknown>();

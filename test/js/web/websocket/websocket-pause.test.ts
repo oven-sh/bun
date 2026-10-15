@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { isLinux, isMacOS, tls } from "harness";
-import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import net from "node:net";
 import nodeTls from "node:tls";
 import { WebSocket as WsWebSocket } from "ws";
+import { closePayload, createPeer, encodeFrame, OP, response101 } from "./raw-peer";
 
 const CHUNK = new Uint8Array(64 * 1024);
 // Must exceed what the kernel buffers for one loopback connection while the client
@@ -321,69 +321,8 @@ describe("WebSocket.pause() before open", () => {
   });
 });
 
-// Builds one unmasked server-to-client frame.
-function frame(payload: string | Uint8Array, opcode = 1): Buffer {
-  const body = Buffer.from(payload);
-  return Buffer.concat([Buffer.from([0x80 | opcode, body.length]), body]);
-}
-
-function closeFrame(code: number): Buffer {
-  return frame(Buffer.from([code >> 8, code & 0xff]), 8);
-}
-
-function switchingProtocols(request: string) {
-  const key = /sec-websocket-key: (.*)\r\n/i.exec(request)![1];
-  const accept = createHash("sha1")
-    .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-    .digest("base64");
-  return (
-    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-    `Sec-WebSocket-Accept: ${accept}\r\n\r\n`
-  );
-}
-
-// A peer that writes raw frames, so a test controls which bytes are sent in the
-// same write as the 101 response. The client's upgrade parser reads those along
-// with the response. `end` also closes the peer's side in that write. After the
-// upgrade, each chunk from the client runs the next callback in `afterUpgrade`.
-async function rawPeer(
-  secure: boolean,
-  {
-    withResponse,
-    end = false,
-    afterUpgrade = [],
-  }: { withResponse: Buffer[]; end?: boolean; afterUpgrade?: ((socket: net.Socket) => void)[] },
-) {
-  const sockets = new Set<net.Socket>();
-  function onConnection(socket: net.Socket) {
-    sockets.add(socket);
-    socket.on("error", () => {});
-    const steps = [...afterUpgrade];
-    let request: string | undefined = "";
-    socket.on("data", chunk => {
-      if (request === undefined) return steps.shift()?.(socket);
-      request += chunk.toString("latin1");
-      if (!request.includes("\r\n\r\n")) return;
-      const response = Buffer.concat([Buffer.from(switchingProtocols(request)), ...withResponse]);
-      request = undefined;
-      if (end) socket.end(response);
-      else socket.write(response);
-    });
-  }
-  const server = secure
-    ? nodeTls.createServer({ key: tls.key, cert: tls.cert }, onConnection)
-    : net.createServer(onConnection);
-  const port = await new Promise<number>(resolve =>
-    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
-  );
-  return {
-    url: `${secure ? "wss" : "ws"}://127.0.0.1:${port}`,
-    [Symbol.dispose]() {
-      server.close();
-      for (const socket of sockets) socket.destroy();
-    },
-  };
-}
+const textFrames = (...messages: string[]) => Buffer.concat(messages.map(message => encodeFrame(OP.text, message)));
+const closeFrame = (code: number) => encodeFrame(OP.close, closePayload(code));
 
 // A connection to an echo server, for ioRoundtrips().
 async function startClock() {
@@ -424,7 +363,7 @@ describe("frames sent in the same write as the 101", () => {
 
     // `open` and each message are dispatched as separate tasks, so microtasks run between them.
     it(`are delivered after onopen's microtasks (${mode.name})`, async () => {
-      using peer = await rawPeer(mode.secure, { withResponse: [frame("greeting")] });
+      await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames("greeting") });
       using client = await connect(peer.url);
       const order: string[] = [];
       const { promise: done, resolve } = Promise.withResolvers<void>();
@@ -443,10 +382,7 @@ describe("frames sent in the same write as the 101", () => {
     });
 
     it.each(["while CONNECTING", "inside onopen"])(`wait for resume() after pause() %s (${mode.name})`, async where => {
-      using peer = await rawPeer(mode.secure, {
-        withResponse: WITH_101.map(m => frame(m)),
-        afterUpgrade: [socket => socket.write(Buffer.concat(LATER.map(m => frame(m))))],
-      });
+      await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames(...WITH_101) });
       using clockServer = await startClock();
       using client = await connect(peer.url);
       const { ws } = client;
@@ -468,6 +404,9 @@ describe("frames sent in the same write as the 101", () => {
 
       // The peer replies with more frames. They queue behind the buffered ones.
       ws.send("more");
+      const connection = await peer.connection();
+      await connection.nextFrame();
+      connection.write(textFrames(...LATER));
       await ioRoundtrips(clockServer.clock, 5);
       expect({ received, isPaused: ws.isPaused }).toEqual({ received: [], isPaused: true });
 
@@ -481,10 +420,7 @@ describe("frames sent in the same write as the 101", () => {
     });
 
     it(`are delivered before the close event when a paused connection is reset (${mode.name})`, async () => {
-      using peer = await rawPeer(mode.secure, {
-        withResponse: WITH_101.map(m => frame(m)),
-        afterUpgrade: [socket => socket.resetAndDestroy()],
-      });
+      await using peer = await createPeer({ secure: mode.secure, afterUpgrade: textFrames(...WITH_101) });
       using clockServer = await startClock();
       using client = await connect(peer.url);
       const { ws } = client;
@@ -502,6 +438,9 @@ describe("frames sent in the same write as the 101", () => {
       expect(events).toEqual([]);
 
       ws.send("reset");
+      const connection = await peer.connection();
+      await connection.nextFrame();
+      connection.reset();
       // Some platforms don't report the reset while the socket is paused. In that case resume() surfaces it.
       await Promise.race([closed, ioRoundtrips(clockServer.clock, 20)]);
       ws.resume();
@@ -512,9 +451,22 @@ describe("frames sent in the same write as the 101", () => {
     // Sending the Pong and the Close echo may fail because the connection is already closed. That must not
     // stop parsing early.
     it(`are parsed up to the Close frame when the peer already ended the connection (${mode.name})`, async () => {
-      using peer = await rawPeer(mode.secure, {
-        withResponse: [frame("m1"), frame("ping", 9), frame("m2"), closeFrame(4001), frame("m3")],
-        end: true,
+      await using peer = await createPeer({
+        secure: mode.secure,
+        // The 101, the frames and the FIN are sent together.
+        respond(connection) {
+          connection.socket.end(
+            Buffer.concat([
+              Buffer.from(response101(connection)),
+              textFrames("m1"),
+              encodeFrame(OP.ping, "ping"),
+              textFrames("m2"),
+              closeFrame(4001),
+              textFrames("m3"),
+            ]),
+          );
+          return null;
+        },
       });
       using clockServer = await startClock();
       using client = await connect(peer.url);
@@ -529,7 +481,10 @@ describe("frames sent in the same write as the 101", () => {
     });
 
     it(`let close() finish cleanly when they include the peer's Close frame (${mode.name})`, async () => {
-      using peer = await rawPeer(mode.secure, { withResponse: [frame("m1"), closeFrame(4002)] });
+      await using peer = await createPeer({
+        secure: mode.secure,
+        afterUpgrade: Buffer.concat([textFrames("m1"), closeFrame(4002)]),
+      });
       using clockServer = await startClock();
       using client = await connect(peer.url);
       const { ws } = client;
@@ -540,6 +495,10 @@ describe("frames sent in the same write as the 101", () => {
       await open(ws);
       await ioRoundtrips(clockServer.clock, 5);
       ws.close(1000);
+      // The close event waits for the peer's FIN.
+      const connection = await peer.connection();
+      await connection.ended;
+      connection.end();
       const { code, wasClean } = await closed;
       // The WebSocket is already CLOSING when "m1" is parsed, so the message is dropped.
       expect({ code, wasClean, received }).toEqual({ code: 4002, wasClean: true, received: [] });
@@ -634,50 +593,42 @@ describe("WebSocket.close() while paused", () => {
         // Completes the upgrade, then doesn't read until resumed. The client's 8-byte Close frame
         // is the last thing it sends, so the origin replies once it has read every expected byte.
         let origin!: net.Socket;
-        const server = net.createServer(sock => {
-          sock.once("data", head => {
-            sock.write(switchingProtocols(head.toString("latin1")));
-            sock.pause();
-            origin = sock;
-          });
-          sock.on("error", () => {});
+        await using peer = await createPeer({
+          respond(connection) {
+            origin = connection.socket;
+            origin.pause();
+            return response101(connection);
+          },
         });
-        const port = await new Promise<number>(resolve =>
-          server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
-        );
-        try {
-          const leaked = await leakedFds(`ws://127.0.0.1:${port}`, {}, async ws => {
-            await open(ws);
-            const closed = closeEvent(ws);
-            // Fill the socket until the client has to buffer, then buffer more than the
-            // kernel can accept when close() retries the write.
-            let sent = 0;
-            for (; ws.bufferedAmount === 0; sent++) {
-              expect(sent).toBeLessThan(1024);
-              ws.send(CHUNK);
-            }
-            for (let extra = 0; extra < 64; extra++, sent++) ws.send(CHUNK);
-            if (order === "pause(), then close()") {
-              expect(ws.pause()).toBe(true);
-              ws.close(1000);
-            } else {
-              ws.close(1000);
-              expect(ws.pause()).toBe(false);
-            }
-            expect(ws.isPaused).toBe(false);
-            // The Close frame is still buffered.
-            expect(ws.bufferedAmount).toBeGreaterThan(0);
-            let remaining = sent * (CHUNK.byteLength + 14) + 8;
-            origin.on("data", chunk => {
-              if ((remaining -= chunk.length) === 0) origin.end(closeFrame(1000));
-            });
-            origin.resume();
-            return closed;
+        const leaked = await leakedFds(peer.url, {}, async ws => {
+          await open(ws);
+          const closed = closeEvent(ws);
+          // Fill the socket until the client has to buffer, then buffer more than the
+          // kernel can accept when close() retries the write.
+          let sent = 0;
+          for (; ws.bufferedAmount === 0; sent++) {
+            expect(sent).toBeLessThan(1024);
+            ws.send(CHUNK);
+          }
+          for (let extra = 0; extra < 64; extra++, sent++) ws.send(CHUNK);
+          if (order === "pause(), then close()") {
+            expect(ws.pause()).toBe(true);
+            ws.close(1000);
+          } else {
+            ws.close(1000);
+            expect(ws.pause()).toBe(false);
+          }
+          expect(ws.isPaused).toBe(false);
+          // The Close frame is still buffered.
+          expect(ws.bufferedAmount).toBeGreaterThan(0);
+          let remaining = sent * (CHUNK.byteLength + 14) + 8;
+          origin.on("data", chunk => {
+            if ((remaining -= chunk.length) === 0) origin.end(closeFrame(1000));
           });
-          expect(leaked).toEqual([]);
-        } finally {
-          server.close();
-        }
+          origin.resume();
+          return closed;
+        });
+        expect(leaked).toEqual([]);
       });
     }
   });
@@ -686,7 +637,7 @@ describe("WebSocket.close() while paused", () => {
 describe("ws package", () => {
   it("pause() inside the open handler buffers frames sent with the 101", async () => {
     const MESSAGES = ["m1", "m2", "m3"];
-    using peer = await rawPeer(false, { withResponse: MESSAGES.map(m => frame(m)) });
+    await using peer = await createPeer({ afterUpgrade: textFrames(...MESSAGES) });
     using clockServer = await startClock();
 
     const ws = new WsWebSocket(peer.url);

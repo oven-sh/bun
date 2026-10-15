@@ -1,74 +1,38 @@
 // `ws` client close(), terminate() and the closing handshake, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import {
+  abnormalClose,
+  closedBeforeOpen,
   closedPort,
   closePayload,
   connectClient,
   createPeer,
   encodeFrame,
   implementations,
+  invalidCloseCalls,
   nextEvent,
   OP,
   openClient,
+  openEvents,
   type Payload,
+  reasonTooLong,
   recordEvents,
   runScript,
   scriptTimeout,
   show,
   showFrame,
   tryCall,
+  validCloseCalls,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const closedBeforeOpen = [
-  'error Error "WebSocket was closed before the connection was established" rs=2',
-  "close 1006 Buffer() rs=3",
-];
-const abnormalClose = "close 1006 Buffer() rs=3";
-const invalidCode = 'throws TypeError "First argument must be a valid error code number"';
-const reasonTooLong = 'throws RangeError "The message must not be greater than 123 bytes"';
 type Client = Awaited<ReturnType<typeof openClient>>;
-const a = (count: number) => Buffer.alloc(count, "a").toString();
-// Adds a `call` label such as `close(1000, "bye")` to each row.
-const withCallLabels = <Row extends { args: unknown[] }>(rows: Row[]) =>
-  rows.map(row => ({ call: `close(${row.args.map(show).join(", ")})`, ...row }));
 
 describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   describe("close(code, reason) on an open socket", () => {
     // The peer echoes the Close frame, so 'close' reports the code and reason that were sent.
-    test.each(
-      withCallLabels([
-        { args: [], frame: "close", event: "close 1005 Buffer() rs=3" },
-        { args: [1000], frame: "close 1000", event: "close 1000 Buffer() rs=3" },
-        { args: [1000, "bye"], frame: 'close 1000 "bye"', event: 'close 1000 Buffer("bye") rs=3' },
-        { args: [1000, ""], frame: "close 1000", event: "close 1000 Buffer() rs=3" },
-        { args: [1000, Buffer.from("buf")], frame: 'close 1000 "buf"', event: 'close 1000 Buffer("buf") rs=3' },
-        { args: [1000, new Uint8Array([104, 105])], frame: 'close 1000 "hi"', event: 'close 1000 Buffer("hi") rs=3' },
-        {
-          args: [1000, new TextEncoder().encode("🙂")],
-          frame: 'close 1000 "🙂"',
-          event: 'close 1000 Buffer("🙂") rs=3',
-        },
-        { args: [1000, a(123)], frame: "close 1000 123 bytes", event: "close 1000 Buffer(123 bytes) rs=3" },
-        { args: [1000, a(120) + "☃"], frame: "close 1000 123 bytes", event: "close 1000 Buffer(123 bytes) rs=3" },
-        { args: [1000.5], frame: "close 1000", event: "close 1000 Buffer() rs=3" },
-        { args: [1001], frame: "close 1001", event: "close 1001 Buffer() rs=3" },
-        { args: [1003, "bye"], frame: 'close 1003 "bye"', event: 'close 1003 Buffer("bye") rs=3' },
-        { args: [1012], frame: "close 1012", event: "close 1012 Buffer() rs=3" },
-        { args: [1013], frame: "close 1013", event: "close 1013 Buffer() rs=3" },
-        { args: [1014], frame: "close 1014", event: "close 1014 Buffer() rs=3" },
-        { args: [3000, "x"], frame: 'close 3000 "x"', event: 'close 3000 Buffer("x") rs=3' },
-        { args: [4999], frame: "close 4999", event: "close 4999 Buffer() rs=3" },
-        // Without a code the reason is dropped, no matter how long it is.
-        { args: [undefined, "reason"], frame: "close", event: "close 1005 Buffer() rs=3" },
-        { args: [undefined, a(200)], frame: "close", event: "close 1005 Buffer() rs=3" },
-        // A reason without a `length` is treated as empty.
-        { args: [1000, 42], frame: "close 1000", event: "close 1000 Buffer() rs=3" },
-        { args: [1000, {}], frame: "close 1000", event: "close 1000 Buffer() rs=3" },
-      ]),
-    )("$call sends $frame", async ({ args, frame, event }) => {
+    test.each(validCloseCalls)("$call sends $frame", async ({ args, frame, event }) => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       expect(tryCall(() => ws.close(...(args as [])))).toBe("undefined");
@@ -82,29 +46,7 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
       expect(await conn.remainingFrames()).toEqual([]);
     });
 
-    test.each(
-      withCallLabels([
-        { args: [999], thrown: invalidCode },
-        { args: [1004], thrown: invalidCode },
-        { args: [1005], thrown: invalidCode },
-        { args: [1006], thrown: invalidCode },
-        { args: [1015], thrown: invalidCode },
-        { args: [1016], thrown: invalidCode },
-        { args: [2999], thrown: invalidCode },
-        { args: [5000], thrown: invalidCode },
-        { args: [65535], thrown: invalidCode },
-        { args: [100000], thrown: invalidCode },
-        { args: [0], thrown: invalidCode },
-        { args: [-1], thrown: invalidCode },
-        { args: [NaN], thrown: invalidCode },
-        { args: ["1000"], thrown: invalidCode },
-        { args: [null], thrown: invalidCode },
-        { args: [true], thrown: invalidCode },
-        { args: [1000, a(124)], thrown: reasonTooLong },
-        { args: [1000, Buffer.alloc(124, "é").toString()], thrown: reasonTooLong },
-        { args: [1000, Buffer.alloc(124, "a")], thrown: reasonTooLong },
-      ]),
-    )("$call throws and sends nothing", async ({ args, thrown }) => {
+    test.each(invalidCloseCalls)("$call throws and sends nothing", async ({ args, thrown }) => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       expect(tryCall(() => ws.close(...(args as [])))).toBe(thrown);

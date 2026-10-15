@@ -20,6 +20,7 @@ use ::bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, fmt as bun_fmt};
+use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
@@ -475,12 +476,6 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
         && key[..22]
             .iter()
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
-}
-
-/// Whether a comma-separated header value contains `token` (case-insensitive).
-fn has_token(list: &[u8], token: &[u8]) -> bool {
-    http::HeaderValueIterator::init(list)
-        .any(|item| strings::eql_case_insensitive_ascii(item, token, true))
 }
 
 type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1775,8 +1770,8 @@ where
         // RFC 6455 §4.2.1: a WebSocket handshake needs "websocket" in |Upgrade|,
         // "Upgrade" in |Connection|, and 16 base64-encoded bytes in |Sec-WebSocket-Key|.
         // Otherwise fall through so the caller's fetch() can respond.
-        if !has_token(&upgrade_header, b"websocket")
-            || !has_token(&connection_header, b"upgrade")
+        if !header_has_token(&upgrade_header, b"websocket")
+            || !header_has_token(&connection_header, b"upgrade")
             || !is_valid_sec_websocket_key(&sec_websocket_key)
         {
             return Ok(JSValue::FALSE);

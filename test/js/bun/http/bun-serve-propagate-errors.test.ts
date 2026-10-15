@@ -2,21 +2,8 @@ import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("Bun.serve() propagates errors to the parent fixture", async () => {
-  const code = `import { test } from "bun:test";
-
-test("Bun.serve() propagates errors to the parent", async () => {
-  const server = Bun.serve({
-    development: false,
-    port: 0,
-    fetch(req) {
-      throw new Error("Test failed successfully");
-    },
-  });
-  await fetch(server.url);
-  server.stop(true);
-});
-`;
+// Runs `code` as a test file with `bun test`.
+async function runBunTest(code: string) {
   await using dir = tempDir("propagate-errors", {
     "package.json": JSON.stringify({
       name: "test",
@@ -34,9 +21,27 @@ test("Bun.serve() propagates errors to the parent", async () => {
     stdin: "inherit",
     stderr: "pipe",
   });
+  return { stderr: stderr.toString(), exitCode };
+}
 
+test("Bun.serve() propagates errors to the parent fixture", async () => {
+  const code = `import { test } from "bun:test";
+
+test("Bun.serve() propagates errors to the parent", async () => {
+  const server = Bun.serve({
+    development: false,
+    port: 0,
+    fetch(req) {
+      throw new Error("Test failed successfully");
+    },
+  });
+  await fetch(server.url);
+  server.stop(true);
+});
+`;
+  const { stderr, exitCode } = await runBunTest(code);
   expect(exitCode).toBe(1);
-  expect(stderr.toString()).toContain("error: Test failed successfully");
+  expect(stderr).toContain("error: Test failed successfully");
 });
 
 test("Bun.serve() propagates an error thrown after server.upgrade() to the parent", async () => {
@@ -62,25 +67,8 @@ test("fetch() throws after server.upgrade()", async () => {
   server.stop(true);
 });
 `;
-  await using dir = tempDir("propagate-errors-upgrade", {
-    "package.json": JSON.stringify({
-      name: "test",
-      version: "0.0.0",
-      dependencies: {},
-    }),
-    "index.test.ts": code,
-  });
-
-  const { stderr, exitCode } = spawnSync({
-    cmd: [bunExe(), "test"],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "inherit",
-    stdin: "inherit",
-    stderr: "pipe",
-  });
-
-  expect(stderr.toString()).toContain("error: Test failed successfully");
+  const { stderr, exitCode } = await runBunTest(code);
+  expect(stderr).toContain("error: Test failed successfully");
   expect(exitCode).toBe(1);
 });
 

@@ -6,51 +6,34 @@ import { once } from "node:events";
 import { openAsBlob } from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { constants, inflateRawSync } from "node:zlib";
 import type { WebSocket as Socket } from "ws";
 import {
+  createInflater,
   createServer,
+  detached,
   encodeFrame,
   type Frame,
   implementations,
+  invalidData,
+  MiB,
   nextEvent,
   OP,
   openServer,
   type RawClient,
+  repeatA,
+  resizable,
+  shared,
   show,
   showFrame,
+  tooLong,
   tryCall,
   upgradeRequest,
 } from "./ws-raw-peer";
 
-const MiB = 1024 * 1024;
-const repeatA = (count: number) => Buffer.alloc(count, "a").toString();
-const invalidData = (received: string) =>
-  'throws TypeError "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an ' +
-  `Array-like Object. Received ${received}" ERR_INVALID_ARG_TYPE`;
-const tooLong = 'throws RangeError "The data size must not be greater than 125 bytes"';
 const notOpen = (state: string) => `Error "WebSocket is not open: readyState ${state}"`;
 // Defaults each row's label to show(row.data).
 const withLabels = <Row extends { data: unknown }>(rows: (Row & { label?: string })[]) =>
   rows.map(row => ({ label: show(row.data), ...row }));
-
-function shared(bytes: number[]) {
-  const buffer = new SharedArrayBuffer(bytes.length);
-  new Uint8Array(buffer).set(bytes);
-  return buffer;
-}
-
-function resizable(bytes: number[]) {
-  const buffer = new ArrayBuffer(bytes.length, { maxByteLength: 64 });
-  new Uint8Array(buffer).set(bytes);
-  return buffer;
-}
-
-function detached() {
-  const view = new Uint8Array(4);
-  structuredClone(view.buffer, { transfer: [view.buffer] });
-  return view;
-}
 
 /** Records each callback invocation as `[name, ...args]`. `waitForCalls(n)` resolves after `n` invocations. */
 function createRecorder() {
@@ -113,8 +96,8 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
           frame: "binary 0x0809",
         },
         { data: new Uint8Array([5, 6, 7]).buffer, frame: "binary 0x050607" },
-        { data: shared([1, 2]), frame: "binary 0x0102" },
-        { data: resizable([3, 4]), label: "a resizable ArrayBuffer", frame: "binary 0x0304" },
+        { data: shared(1, 2), frame: "binary 0x0102" },
+        { data: resizable(3, 4), label: "a resizable ArrayBuffer", frame: "binary 0x0304" },
         { data: new Blob(["blobby"]), frame: 'binary "blobby"' },
         { data: new Blob([]), frame: "binary" },
         // Other falsy values are sent as an empty binary message.
@@ -474,19 +457,16 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
 
         const noise = randomBytes(3000);
         const message = Buffer.concat([noise, noise]);
-        let stream = Buffer.alloc(0);
-        let inflated = 0;
+        // Small output chunks force zlib to resolve back-references through its window.
+        const inflaterOptions = { windowBits, chunkSize: 64 };
+        let inflate = createInflater(inflaterOptions);
         for (let i = 0; i < 3; i++) {
           ws.send(message);
           const frame = (await client.nextFrame())!;
           expect(showFrame(frame)).toBe(`binary ${frame.length} bytes rsv1`);
           // Without context takeover each message is its own deflate stream. With it, each one continues the last.
-          if (serverNoContextTakeover) [stream, inflated] = [Buffer.alloc(0), 0];
-          stream = Buffer.concat([stream, frame.payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-          // Small output chunks force zlib to resolve back-references through its window.
-          const output = inflateRawSync(stream, { windowBits, chunkSize: 64, finishFlush: constants.Z_SYNC_FLUSH });
-          expect(output.subarray(inflated).equals(message)).toBe(true);
-          inflated = output.length;
+          if (serverNoContextTakeover) inflate = createInflater(inflaterOptions);
+          expect(inflate(frame.payload).equals(message)).toBe(true);
         }
       },
     );

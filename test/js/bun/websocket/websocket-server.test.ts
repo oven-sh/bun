@@ -8,6 +8,7 @@ import net, { isIP } from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 import { constants, inflateRawSync } from "node:zlib";
+import { closePayload, OP, RawClient } from "../../web/websocket/raw-peer";
 
 const strings = [
   {
@@ -2312,91 +2313,23 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
 // to true for server.publish(). Both defaults are documented, so check the
 // frames on the wire.
 describe.concurrent("compress argument defaults", () => {
-  type Frame = { text: string; compressed: boolean };
+  const offerDeflate = { "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits" };
 
-  // Raw RFC 6455 client that records every text frame the server sends.
-  // The server negotiates server_no_context_takeover, so each RSV1 payload
+  // The next `count` text frames. The server negotiates server_no_context_takeover, so each RSV1 payload
   // can be inflated independently.
-  function connectRaw(port: number, pathname: string, offerDeflate: boolean) {
-    type Raw = { negotiated: string; frames(count: number): Promise<Frame[]>; [Symbol.dispose](): void };
-    const upgrade = Promise.withResolvers<Raw>();
-    const frames: Frame[] = [];
-    const waiters: { count: number; deferred: PromiseWithResolvers<Frame[]> }[] = [];
-    const resolveWaiters = () => {
-      for (let i = waiters.length - 1; i >= 0; i--) {
-        const { count, deferred } = waiters[i];
-        if (frames.length < count) continue;
-        waiters.splice(i, 1);
-        deferred.resolve(frames.slice(0, count));
-      }
-    };
-    let failure: Error | undefined;
-    let buffer = Buffer.alloc(0);
-    let upgraded = false;
-
-    const socket = net.connect({ port, host: "127.0.0.1" }, () => {
-      socket.write(
-        `GET ${pathname} HTTP/1.1\r\n` +
-          "Host: x\r\n" +
-          "Upgrade: websocket\r\n" +
-          "Connection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-          "Sec-WebSocket-Version: 13\r\n" +
-          (offerDeflate ? "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" : "") +
-          "\r\n",
-      );
-    });
-    const fail = (error: Error) => {
-      failure ??= error;
-      upgrade.reject(failure);
-      for (const { deferred } of waiters.splice(0)) deferred.reject(failure);
-      socket.destroy();
-    };
-    socket.on("error", fail);
-    socket.on("close", () => fail(new Error(`${pathname}: socket closed after ${frames.length} frame(s)`)));
-    socket.on("data", (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      if (!upgraded) {
-        const end = buffer.indexOf("\r\n\r\n");
-        if (end === -1) return;
-        const head = buffer.subarray(0, end).toString();
-        buffer = buffer.subarray(end + 4);
-        upgraded = true;
-        if (!head.startsWith("HTTP/1.1 101 ")) return fail(new Error(`${pathname}: upgrade failed: ${head}`));
-        upgrade.resolve({
-          negotiated: head.split("\r\n").find(line => /^sec-websocket-extensions:/i.test(line)) ?? "none",
-          frames(count) {
-            if (failure) return Promise.reject(failure);
-            const deferred = Promise.withResolvers<Frame[]>();
-            waiters.push({ count, deferred });
-            resolveWaiters();
-            return deferred.promise;
-          },
-          [Symbol.dispose]() {
-            socket.removeAllListeners("close");
-            socket.destroy();
-          },
-        });
-      }
-      // Every message below fits in one unfragmented frame with a 7-bit length.
-      while (buffer.length >= 2) {
-        const length = buffer[1] & 0x7f;
-        if (length >= 126) return fail(new Error(`${pathname}: unexpected extended-length frame`));
-        if (buffer.length < 2 + length) break;
-        const opcode = buffer[0] & 0x0f;
-        const compressed = (buffer[0] & 0x40) !== 0;
-        const payload = buffer.subarray(2, 2 + length);
-        buffer = buffer.subarray(2 + length);
-        if (opcode !== 0x1) continue;
-        frames.push({
-          text: (compressed ? inflateRawSync(payload, { finishFlush: constants.Z_SYNC_FLUSH }) : payload).toString(),
-          compressed,
-        });
-      }
-      resolveWaiters();
-    });
-
-    return upgrade.promise;
+  async function textFrames(client: RawClient, count: number) {
+    const frames: { text: string; compressed: boolean }[] = [];
+    while (frames.length < count) {
+      const frame = await client.nextFrame();
+      if (!frame) throw new Error(`socket closed after ${frames.length} frame(s)`);
+      if (frame.opcode !== OP.text) continue;
+      const compressed = (frame.rsv & 4) !== 0;
+      const payload = compressed
+        ? inflateRawSync(frame.payload, { finishFlush: constants.Z_SYNC_FLUSH })
+        : frame.payload;
+      frames.push({ text: payload.toString(), compressed });
+    }
+    return frames;
   }
 
   it("server.publish() compresses by default; ws.send() and ws.publish() only with compress: true", async () => {
@@ -2420,12 +2353,12 @@ describe.concurrent("compress argument defaults", () => {
       },
     });
 
-    using deflate = await connectRaw(server.port, "/deflate", true);
-    using plain = await connectRaw(server.port, "/plain", false);
-    expect({ deflate: deflate.negotiated, plain: plain.negotiated }).toEqual({
-      deflate: expect.stringMatching(/^Sec-WebSocket-Extensions: permessage-deflate/i),
-      plain: "none",
-    });
+    using deflate = await RawClient.upgrade(server.port, { path: "/deflate", headers: offerDeflate });
+    using plain = await RawClient.upgrade(server.port, { path: "/plain" });
+    expect({
+      deflate: deflate.header("sec-websocket-extensions"),
+      plain: plain.header("sec-websocket-extensions"),
+    }).toEqual({ deflate: expect.stringMatching(/^permessage-deflate/), plain: undefined });
     await Promise.all([opened.deflate.promise, opened.plain.promise]);
 
     server.publish("t", "server.publish()");
@@ -2442,7 +2375,7 @@ describe.concurrent("compress argument defaults", () => {
     // it's going to get.
     sockets.plain.send("end");
 
-    expect(await deflate.frames(8)).toEqual([
+    expect(await textFrames(deflate, 8)).toEqual([
       { text: "server.publish()", compressed: true },
       { text: "server.publish(undefined)", compressed: true },
       { text: "server.publish(false)", compressed: false },
@@ -2454,7 +2387,7 @@ describe.concurrent("compress argument defaults", () => {
     ]);
     // A subscriber that didn't negotiate the extension gets uncompressed frames
     // regardless of `compress`.
-    expect(await plain.frames(5)).toEqual([
+    expect(await textFrames(plain, 5)).toEqual([
       { text: "server.publish()", compressed: false },
       { text: "server.publish(undefined)", compressed: false },
       { text: "server.publish(false)", compressed: false },
@@ -2481,15 +2414,15 @@ describe.concurrent("compress argument defaults", () => {
       },
     });
 
-    using raw = await connectRaw(server.port, "/", true);
-    expect(raw.negotiated).toBe("none");
+    using raw = await RawClient.upgrade(server.port, { headers: offerDeflate });
+    expect(raw.header("sec-websocket-extensions")).toBeUndefined();
     const ws = await opened.promise;
 
     server.publish("t", "server.publish()");
     server.publish("t", "server.publish(true)", true);
     ws.send("ws.send(true)", true);
 
-    expect(await raw.frames(3)).toEqual([
+    expect(await textFrames(raw, 3)).toEqual([
       { text: "server.publish()", compressed: false },
       { text: "server.publish(true)", compressed: false },
       { text: "ws.send(true)", compressed: false },
@@ -2748,43 +2681,14 @@ describe("server.upgrade() validates the opening handshake", () => {
 // `Upgrade: websocket`) and failed the handshake after the server had already
 // called open().
 describe.concurrent("server.upgrade() ignores reserved handshake headers in options.headers", () => {
-  const K = "dGhlIHNhbXBsZSBub25jZQ==";
-  // RFC 6455 §1.3: the accept value for the sample nonce above.
+  // RFC 6455 §1.3: the accept value for the sample nonce, which is the key RawClient sends.
   const ACCEPT = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-  const rawHandshake = (port: number, extra: string[] = []) =>
-    new Promise<string[]>(resolve => {
-      let buf = "";
-      let settled = false;
-      const done = () => {
-        if (settled) return;
-        settled = true;
-        sock.destroy();
-        const head = buf.split("\r\n\r\n", 1)[0] ?? "";
-        resolve(head.split("\r\n"));
-      };
-      const sock = net.connect({ port, host: "127.0.0.1" }, () => {
-        sock.write(
-          [
-            "GET /ws HTTP/1.1",
-            "Host: x",
-            "Upgrade: websocket",
-            "Connection: Upgrade",
-            `Sec-WebSocket-Key: ${K}`,
-            "Sec-WebSocket-Version: 13",
-            ...extra,
-            "",
-            "",
-          ].join("\r\n"),
-        );
-      });
-      sock.on("data", d => {
-        buf += d.toString("latin1");
-        if (buf.includes("\r\n\r\n")) done();
-      });
-      sock.on("error", done);
-      sock.on("close", done);
-    });
+  async function rawHandshake(port: number, headers?: Record<string, string>) {
+    using client = new RawClient(port, { path: "/ws", headers });
+    await client.response;
+    return client.headLines;
+  }
 
   // Lowercases header names, drops Date, and sorts, so the comparison doesn't
   // depend on write order.
@@ -2872,7 +2776,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       websocket: { message() {} },
     });
 
-    const lines = await rawHandshake(server.port, ["Sec-WebSocket-Protocol: superchat, chat"]);
+    const lines = await rawHandshake(server.port, { "Sec-WebSocket-Protocol": "superchat, chat" });
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     // Sec-WebSocket-Protocol in options.headers picks the subprotocol.
     // upgrade() writes it exactly once.
@@ -2924,7 +2828,7 @@ describe.concurrent("server.upgrade() ignores reserved handshake headers in opti
       },
       websocket: { message() {} },
     });
-    const lines = await rawHandshake(server.port, ["Sec-WebSocket-Protocol: superchat, chat"]);
+    const lines = await rawHandshake(server.port, { "Sec-WebSocket-Protocol": "superchat, chat" });
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
     // Control: without Sec-WebSocket-Protocol in options.headers, the first offered subprotocol is selected.
@@ -3292,96 +3196,6 @@ describe.concurrent("request handlers run to completion before the callbacks the
   });
 });
 
-// Builds a masked client frame. The all-zero masking key leaves the payload unchanged.
-function clientFrame(opcode: number, payload: string | Uint8Array = "") {
-  const data = Buffer.from(payload);
-  let header: Buffer;
-  if (data.length < 126) {
-    header = Buffer.from([0x80 | opcode, 0x80 | data.length]);
-  } else if (data.length < 65536) {
-    header = Buffer.from([0x80 | opcode, 0x80 | 126, data.length >> 8, data.length & 0xff]);
-  } else {
-    header = Buffer.alloc(10);
-    header[0] = 0x80 | opcode;
-    header[1] = 0x80 | 127;
-    header.writeBigUInt64BE(BigInt(data.length), 2);
-  }
-  return Buffer.concat([header, Buffer.alloc(4), data]);
-}
-
-function closePayload(code: number, reason = "") {
-  return Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason)]);
-}
-
-// Raw RFC 6455 client. Resolves once the 101 arrives, then returns the server's frames exactly as sent.
-function rawClient(port: number, { pathname = "/", secure = false } = {}) {
-  type Frame = { opcode: number; payload: Buffer };
-  const socket = secure
-    ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
-    : net.connect({ port, host: "127.0.0.1" });
-  const opened = Promise.withResolvers<{
-    socket: net.Socket;
-    closed: Promise<void>;
-    frame(): Promise<Frame | undefined>;
-    [Symbol.dispose](): void;
-  }>();
-  const closed = Promise.withResolvers<void>();
-  const frames: Frame[] = [];
-  let frameArrived = Promise.withResolvers<void>();
-  let buffer = Buffer.alloc(0);
-  let upgraded = false;
-  let isClosed = false;
-
-  socket.once(secure ? "secureConnect" : "connect", () => {
-    socket.write(
-      `GET ${pathname} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
-        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-    );
-  });
-  socket.on("error", error => opened.reject(error));
-  socket.on("close", () => {
-    isClosed = true;
-    opened.reject(new Error("closed before the 101"));
-    closed.resolve();
-    frameArrived.resolve();
-  });
-  socket.on("data", chunk => {
-    buffer = Buffer.concat([buffer, chunk]);
-    if (!upgraded) {
-      const end = buffer.indexOf("\r\n\r\n");
-      if (end === -1) return;
-      const head = buffer.subarray(0, end).toString("latin1");
-      buffer = buffer.subarray(end + 4);
-      if (!head.startsWith("HTTP/1.1 101 ")) return void opened.reject(new Error(head));
-      upgraded = true;
-      opened.resolve({
-        socket,
-        closed: closed.promise,
-        // Resolves with the next frame, or undefined once the connection is closed.
-        async frame() {
-          while (frames.length === 0) {
-            if (isClosed) return undefined;
-            await frameArrived.promise;
-          }
-          return frames.shift();
-        },
-        [Symbol.dispose]() {
-          socket.destroy();
-        },
-      });
-    }
-    // The server only sends frames with a 7-bit length in these tests.
-    while (buffer.length >= 2 && buffer.length >= 2 + (buffer[1] & 0x7f)) {
-      const length = buffer[1] & 0x7f;
-      frames.push({ opcode: buffer[0] & 0x0f, payload: buffer.subarray(2, 2 + length) });
-      buffer = buffer.subarray(2 + length);
-    }
-    frameArrived.resolve();
-    frameArrived = Promise.withResolvers();
-  });
-  return opened.promise;
-}
-
 // Once fetch() has returned a Response, the connection is busy sending it. Calling upgrade() at that
 // point used to write the 101 into the middle of the body and turn the socket into a WebSocket while
 // the body stream was still writing to it.
@@ -3573,9 +3387,9 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
         },
       },
     });
-    using client = await rawClient(server.port!);
-    const frame = await client.frame();
-    expect(frame?.opcode).toBe(8);
+    using client = await RawClient.upgrade(server.port!);
+    const frame = await client.nextFrame();
+    expect(frame?.opcode).toBe(OP.close);
     const payload = frame!.payload;
     return {
       thrown,
@@ -3642,7 +3456,7 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
         },
       },
     });
-    const clients = [await rawClient(server.port!), await rawClient(server.port!)];
+    const clients = [await RawClient.upgrade(server.port!), await RawClient.upgrade(server.port!)];
     await bothOpen.promise;
     sockets[1].terminate();
     await oneClosed.promise;
@@ -3651,7 +3465,7 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
       open: sockets[0],
       closed: sockets[1],
       [Symbol.dispose]() {
-        for (const client of clients) client[Symbol.dispose]();
+        for (const client of clients) client.destroy();
         server.stop(true);
       },
     };
@@ -3766,7 +3580,7 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
         message() {},
       },
     });
-    using client = await rawClient(server.port!);
+    using client = await RawClient.upgrade(server.port!);
     await opened.promise;
     const publish = server.publish.bind(server) as (...args: unknown[]) => number;
     const named = { toString: () => "named" };
@@ -3791,10 +3605,10 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
       [["t", "k", Symbol()], 1, "k"],
     ];
     for (const [args, returned, text] of delivered) {
-      expect({ args, returned: publish(...args), frame: await client.frame() }).toEqual({
+      expect({ args, returned: publish(...args), frame: await client.next() }).toEqual({
         args,
         returned,
-        frame: { opcode: 1, payload: Buffer.from(text) },
+        frame: `text ${JSON.stringify(text)}`,
       });
     }
     expect(publish(10n, "no subscribers")).toBe(0);
@@ -3848,22 +3662,11 @@ describe.concurrent("ws.remoteAddress read in open() is still available in close
           },
         },
       });
-      const client = net.connect(server.port!, "127.0.0.1", () => {
-        client.write(
-          "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
-        );
-      });
-      client.on("error", () => {});
-      client.once("data", () => {
-        if (how === "the client sends a Close frame") client.write(clientFrame(8, closePayload(1000)));
-        else if (how === "the client drops the connection") client.destroy();
-      });
-      try {
-        expect(await address.promise).toBe("127.0.0.1");
-      } finally {
-        client.destroy();
-      }
+      using client = new RawClient(server.port!);
+      await client.response;
+      if (how === "the client sends a Close frame") client.close(1000);
+      else if (how === "the client drops the connection") client.destroy();
+      expect(await address.promise).toBe("127.0.0.1");
     },
   );
 });
@@ -3911,24 +3714,24 @@ describe.concurrent.each([
     return Object.assign(state, { server });
   }
 
-  async function roundTrips(echo: Awaited<ReturnType<typeof rawClient>>, count: number) {
+  async function roundTrips(echo: RawClient, count: number) {
     for (let i = 0; i < count; i++) {
-      echo.socket.write(clientFrame(1, "fence"));
-      expect((await echo.frame())?.payload.toString()).toBe("fence");
+      echo.text("fence");
+      expect(await echo.next()).toBe('text "fence"');
     }
   }
 
   it("a paused socket stops reading, so the client hits backpressure; resume() delivers everything", async () => {
     const state = pausedServer();
     using _server = state.server;
-    using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
-    using echo = await rawClient(state.server.port!, { pathname: "/echo", secure });
+    using client = await RawClient.upgrade(state.server.port!, { path: "/paused", secure });
+    using echo = await RawClient.upgrade(state.server.port!, { path: "/echo", secure });
     const ws = await state.opened.promise;
     expect(ws.isPaused).toBe(true);
 
     // Fill the kernel buffers on both sides: write until write() returns false and no 'drain'
     // fires while the server's event loop keeps running.
-    const frame = clientFrame(2, Buffer.alloc(64 * 1024, "x"));
+    const frame = client.frame(OP.binary, Buffer.alloc(64 * 1024, "x"));
     let sent = 0;
     let drained = true;
     client.socket.on("drain", () => (drained = true));
@@ -3954,14 +3757,14 @@ describe.concurrent.each([
   it("pause() and resume() are idempotent, and a paused socket can still send", async () => {
     const state = pausedServer();
     using _server = state.server;
-    using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
-    using echo = await rawClient(state.server.port!, { pathname: "/echo", secure });
+    using client = await RawClient.upgrade(state.server.port!, { path: "/paused", secure });
+    using echo = await RawClient.upgrade(state.server.port!, { path: "/echo", secure });
     const ws = await state.opened.promise;
     ws.pause();
     expect(ws.send("from a paused socket")).toBeGreaterThan(0);
-    expect((await client.frame())?.payload.toString()).toBe("from a paused socket");
+    expect(await client.next()).toBe('text "from a paused socket"');
 
-    client.socket.write(clientFrame(1, "one"));
+    client.text("one");
     await roundTrips(echo, 3);
     expect(state.messages).toBe(0);
 
@@ -3976,10 +3779,12 @@ describe.concurrent.each([
   it("delivers the client's messages and Close frame only after resume()", async () => {
     const state = pausedServer();
     using _server = state.server;
-    using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
+    using client = await RawClient.upgrade(state.server.port!, { path: "/paused", secure });
     const ws = await state.opened.promise;
-    client.socket.write(Buffer.concat([clientFrame(1, "last words"), clientFrame(8, closePayload(4000, "bye"))]));
-    client.socket.end();
+    client.write(
+      Buffer.concat([client.frame(OP.text, "last words"), client.frame(OP.close, closePayload(4000, "bye"))]),
+    );
+    client.end();
     await once(client.socket, "finish");
     ws.resume();
     expect(await state.closed.promise).toEqual([4000, "bye", 1]);
@@ -3990,7 +3795,7 @@ describe.concurrent.each([
   it("terminate() closes a paused socket", async () => {
     const state = pausedServer();
     using _server = state.server;
-    using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
+    using client = await RawClient.upgrade(state.server.port!, { path: "/paused", secure });
     const ws = await state.opened.promise;
     ws.terminate();
     expect(await state.closed.promise).toEqual([1006, "", 0]);
@@ -4001,18 +3806,13 @@ describe.concurrent.each([
   it("close() on a paused socket sends the Close frame and disconnects once the client echoes it", async () => {
     const state = pausedServer();
     using _server = state.server;
-    using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
+    using client = await RawClient.upgrade(state.server.port!, { path: "/paused", secure });
     const ws = await state.opened.promise;
     ws.close(4001, "done");
     expect(await state.closed.promise).toEqual([4001, "done", 0]);
     expect({ isPaused: ws.isPaused, readyState: ws.readyState }).toEqual({ isPaused: false, readyState: 3 });
-    const frame = await client.frame();
-    expect([frame?.opcode, frame?.payload.readUInt16BE(0), frame?.payload.subarray(2).toString()]).toEqual([
-      8,
-      4001,
-      "done",
-    ]);
-    client.socket.end(clientFrame(8, closePayload(4001)));
+    expect(await client.next()).toBe('close 4001 "done"');
+    client.socket.end(client.frame(OP.close, closePayload(4001)));
     await client.closed;
   });
 });

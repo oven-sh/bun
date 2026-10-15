@@ -94,6 +94,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
       headers: {
         "X-Latin1": latin1Value,
         "X-Utf16": utf16BackedValue,
+        Host: "hôte",
       },
     });
     ws.onerror = () => wsDone.resolve();
@@ -113,6 +114,7 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     expect(headerBytes("X-Latin1")).toEqual(Buffer.from(latin1Value, "latin1"));
     expect(headerBytes("X-Latin1").toString("latin1")).toBe(latin1Value);
     expect(headerBytes("X-Utf16")).toEqual(Buffer.from(utf16BackedValue, "latin1"));
+    expect(headerBytes("Host")).toEqual(Buffer.from("hôte", "latin1"));
   });
 
   test("Latin1 header value round-trips through a Bun.serve upgrade handler", async () => {

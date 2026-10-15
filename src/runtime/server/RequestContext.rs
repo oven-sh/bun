@@ -398,6 +398,8 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
 // Adapt on this side per phase-d rules.
+pub(super) use shim::signal_release;
+
 mod shim {
     use super::*;
 
@@ -431,7 +433,7 @@ mod shim {
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
-    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
+    pub(in crate::server) fn signal_release(s: NonNull<AbortSignal>) {
         // See `signal_aborted`. Order: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.

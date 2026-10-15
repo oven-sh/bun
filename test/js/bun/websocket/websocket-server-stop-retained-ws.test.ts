@@ -1,10 +1,6 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
-import { once } from "node:events";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
-import { WebSocketServer } from "ws";
 
 // A closed ServerWebSocket retained in JS points into the server's native
 // allocation; stopping and collecting the server freed it, so ws.publish()
@@ -211,25 +207,4 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
       server.stop(true);
     }
   });
-});
-
-test("http.Server#close() leaves WebSocketServer connections open", async () => {
-  const server = http.createServer();
-  const wss = new WebSocketServer({ server });
-  wss.on("connection", ws => ws.on("message", message => ws.send("echo:" + message)));
-  await once(server.listen(0, "127.0.0.1"), "listening");
-
-  const client = new WebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/`);
-  try {
-    await once(client, "open");
-    server.close();
-    client.send("hi");
-    const [{ data }] = await once(client, "message");
-    expect(data).toBe("echo:hi");
-    expect(client.readyState).toBe(WebSocket.OPEN);
-  } finally {
-    for (const ws of wss.clients) ws.terminate();
-    client.close();
-    server.closeAllConnections();
-  }
 });

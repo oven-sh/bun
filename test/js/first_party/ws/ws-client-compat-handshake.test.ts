@@ -4,6 +4,7 @@ import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
+  abnormalClose,
   closedPort,
   connectClient,
   createPeer,
@@ -12,6 +13,7 @@ import {
   nextEvent,
   OP,
   openClient,
+  openEvents,
   type RawSocket,
   recordEvents,
   response101,
@@ -19,18 +21,14 @@ import {
   scriptTimeout,
   show,
   showError,
+  stripMessage,
   tryCall,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const abnormalClose = "close 1006 Buffer() rs=3";
 const invalidScheme = 'The URL\'s protocol must be one of "ws:", "wss:", "http:", "https:", or "ws+unix:"';
 const thrown = (name: string, message: string) => `throws ${name} ${JSON.stringify(message)}`;
 const withLabels = <Row extends { value: unknown }>(rows: Row[]) =>
   rows.map(row => ({ label: typeof row.value === "object" ? JSON.stringify(row.value) : show(row.value), ...row }));
-// Strips the message from an error line but keeps the class and code. For errors whose message comes from Node's HTTP
-// parser or OpenSSL.
-const withoutMessage = (line: string) => line.replace(/ ".*"/, "");
 // Replaces the random key with <key>, but only if it's valid: 16 bytes in base64.
 const requestLines = (conn: RawSocket) =>
   conn.headLines.map(line => line.replace(/^(Sec-WebSocket-Key: )[A-Za-z0-9+/]{22}==$/, "$1<key>"));
@@ -483,14 +481,14 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
         const respond = withExtraHeaders(["Sec-WebSocket-Version: 8"]);
         await using client = await connectClient(implementation, {}, { respond });
         await client.closed;
-        expect(client.events.map(withoutMessage)).toEqual(["upgrade 101 rs=0", "error Error rs=2", abnormalClose]);
+        expect(client.events.map(stripMessage)).toEqual(["upgrade 101 rs=0", "error Error rs=2", abnormalClose]);
       },
     );
 
     test("a response that isn't HTTP", async () => {
       await using client = await connectClient(implementation, {}, { respond: () => "garbage\r\n\r\n" });
       await client.closed;
-      expect(client.events.map(withoutMessage)).toEqual(["error Error HPE_INVALID_CONSTANT rs=2", abnormalClose]);
+      expect(client.events.map(stripMessage)).toEqual(["error Error HPE_INVALID_CONSTANT rs=2", abnormalClose]);
       const conn = await client.peer.connection();
       expect(await conn.remainingFrames()).toEqual([]);
       expect(conn.socketEvents).toEqual(["end"]);
@@ -897,10 +895,7 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
     test("rejects a self-signed certificate before sending the request", async () => {
       await using client = await connectClient(implementation, {}, { secure: true });
       await client.closed;
-      expect(client.events.map(withoutMessage)).toEqual([
-        "error Error DEPTH_ZERO_SELF_SIGNED_CERT rs=2",
-        abnormalClose,
-      ]);
+      expect(client.events.map(stripMessage)).toEqual(["error Error DEPTH_ZERO_SELF_SIGNED_CERT rs=2", abnormalClose]);
       // The first request the server receives comes from the second client.
       using secondClient = connect(client.peer.url + "/second", { rejectUnauthorized: false });
       expect((await client.peer.connection()).headLines[0]).toBe("GET /second HTTP/1.1");

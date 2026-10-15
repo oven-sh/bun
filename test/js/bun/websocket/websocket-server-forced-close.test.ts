@@ -5,8 +5,7 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls } from "harness";
-import net from "node:net";
-import nodeTls from "node:tls";
+import { RawClient } from "../../web/websocket/raw-peer";
 
 function serve(secure: boolean, websocket: WebSocketHandler<undefined>, asyncUpgrade = false) {
   return Bun.serve({
@@ -20,51 +19,6 @@ function serve(secure: boolean, websocket: WebSocketHandler<undefined>, asyncUpg
     },
     websocket,
   });
-}
-
-function maskedText(text: string): Buffer {
-  const mask = [0x12, 0x34, 0x56, 0x78];
-  return Buffer.from([0x81, 0x80 | text.length, ...mask, ...Array.from(Buffer.from(text), (b, i) => b ^ mask[i & 3])]);
-}
-
-// Upgrades over a raw socket. `ended` resolves when the connection closes, with the HTTP status
-// line ("" if none arrived) and every frame the server sent.
-function rawClient(port: number, secure: boolean) {
-  const socket = secure
-    ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
-    : net.connect({ port, host: "127.0.0.1" });
-  const ended = Promise.withResolvers<{ status: string; frames: string[] }>();
-  let received = Buffer.alloc(0);
-  socket.on("data", chunk => {
-    received = Buffer.concat([received, chunk]);
-  });
-  // Ignore errors. "close" always fires afterwards.
-  socket.on("error", () => {});
-  socket.on("close", () => {
-    const headEnd = received.indexOf("\r\n\r\n");
-    const status = received.subarray(0, Math.max(received.indexOf("\r\n"), 0)).toString();
-    const frames: string[] = [];
-    let rest = headEnd === -1 ? Buffer.alloc(0) : received.subarray(headEnd + 4);
-    while (rest.length >= 2 && rest.length >= 2 + rest[1]) {
-      const payload = rest.subarray(2, 2 + rest[1]);
-      frames.push(
-        (rest[0] & 0xf) === 0x8
-          ? `CLOSE ${payload.readUInt16BE(0)} ${JSON.stringify(payload.subarray(2).toString())}`
-          : payload.toString(),
-      );
-      rest = rest.subarray(2 + rest[1]);
-    }
-    ended.resolve({ status, frames });
-  });
-  socket.write(
-    "GET / HTTP/1.1\r\n" +
-      "Host: localhost\r\n" +
-      "Upgrade: websocket\r\n" +
-      "Connection: Upgrade\r\n" +
-      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
-      "Sec-WebSocket-Version: 13\r\n\r\n",
-  );
-  return { socket, ended: ended.promise };
 }
 
 describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer that does not read", scheme => {
@@ -223,21 +177,16 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: flushes accepted send() an
       },
     });
 
-    const a = rawClient(server.port!, secure);
-    const b = rawClient(server.port!, secure);
-    try {
-      await bothOpen.promise;
-      a.socket.write(maskedText("go"));
-      const [fromA, fromB] = await Promise.all([a.ended, b.ended]);
-      expect({ results, a: fromA.frames, b: fromB.frames }).toEqual({
-        results: [4, 4, 4, 4],
-        a: ["sent", "bye0", "bye1", "bye2"],
-        b: ["bye0", "bye1", "bye2"],
-      });
-    } finally {
-      a.socket.destroy();
-      b.socket.destroy();
-    }
+    using a = new RawClient(server.port!, { secure });
+    using b = new RawClient(server.port!, { secure });
+    await bothOpen.promise;
+    a.text("go");
+    const [fromA, fromB] = await Promise.all([a.remainingFrames(), b.remainingFrames()]);
+    expect({ results, a: fromA, b: fromB }).toEqual({
+      results: [4, 4, 4, 4],
+      a: ['text "sent"', 'text "bye0"', 'text "bye1"', 'text "bye2"'],
+      b: ['text "bye0"', 'text "bye1"', 'text "bye2"'],
+    });
   });
 
   // server.upgrade() already returned true, so the 101 has to be sent whether or not it's still corked.
@@ -255,15 +204,11 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: flushes accepted send() an
       kind === "asynchronous",
     );
 
-    const client = rawClient(server.port!, secure);
-    try {
-      expect(await client.ended).toEqual({
-        status: "HTTP/1.1 101 Switching Protocols",
-        frames: ["before the throw"],
-      });
-    } finally {
-      client.socket.destroy();
-    }
+    using client = new RawClient(server.port!, { secure });
+    expect({ status: (await client.response).status, frames: await client.remainingFrames() }).toEqual({
+      status: "HTTP/1.1 101 Switching Protocols",
+      frames: ['text "before the throw"'],
+    });
   });
 });
 
@@ -321,26 +266,22 @@ describe.concurrent.each([
       return line;
     }
 
-    const client = rawClient(parseInt(await readLine()), false);
-    try {
-      client.socket.once("data", () => client.socket.write(maskedText("go")));
-      const [results, { frames }, stderr, exitCode] = await Promise.all([
-        readLine(),
-        client.ended,
-        proc.stderr.text(),
-        proc.exited,
-      ]);
-      // ASAN builds tear down the VM at exit to find leaks. That stops the server, which sends a 1001 Close frame.
-      if (frames.at(-1) === 'CLOSE 1001 "Server closed"') frames.pop();
-      expect({ results, frames, stderr }).toEqual({
-        results: "[4,4,4,4]",
-        frames: ["sent", "bye0", "bye1", "bye2"],
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    } finally {
-      client.socket.destroy();
-    }
+    using client = await RawClient.upgrade(parseInt(await readLine()));
+    client.text("go");
+    const [results, frames, stderr, exitCode] = await Promise.all([
+      readLine(),
+      client.remainingFrames(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    // ASAN builds tear down the VM at exit to find leaks. That stops the server, which sends a 1001 Close frame.
+    if (frames.at(-1) === 'close 1001 "Server closed"') frames.pop();
+    expect({ results, frames, stderr }).toEqual({
+      results: "[4,4,4,4]",
+      frames: ['text "sent"', 'text "bye0"', 'text "bye1"', 'text "bye2"'],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -420,7 +361,7 @@ test.concurrent(
     // If the server pings again instead of closing, fail right away rather than time out.
     const secondPing = Promise.withResolvers<never>();
     let pings = 0;
-    const client = rawClient(server.port!, false);
+    using client = new RawClient(server.port!);
     client.socket.on("data", chunk => {
       // The server only sends "tick" messages and empty pings, so 0x89 can only be a ping header.
       for (const byte of chunk) {
@@ -435,7 +376,6 @@ test.concurrent(
       expect(pings).toBe(1);
     } finally {
       clearInterval(sendInterval);
-      client.socket.destroy();
     }
   },
   30_000,

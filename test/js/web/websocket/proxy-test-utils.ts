@@ -3,11 +3,31 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
-import { expect } from "bun:test";
+import { afterAll, beforeAll, expect } from "bun:test";
 import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
+import { OP, type RawSocket } from "./raw-peer";
+
+/**
+ * NO_PROXY applies to explicit proxies too. An ambient NO_PROXY=localhost,127.0.0.1,... would bypass
+ * the proxy tests in the calling describe block (or file).
+ */
+export function ignoreAmbientNoProxy() {
+  const prevNoProxy = process.env.NO_PROXY;
+  const prevNoProxyLower = process.env.no_proxy;
+  beforeAll(() => {
+    process.env.NO_PROXY = "";
+    process.env.no_proxy = "";
+  });
+  afterAll(() => {
+    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
+    else process.env.NO_PROXY = prevNoProxy;
+    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
+    else process.env.no_proxy = prevNoProxyLower;
+  });
+}
 
 /** One CONNECT request as the proxy read it. Header names are lowercased. */
 export interface ConnectRequest {
@@ -263,6 +283,14 @@ export async function startRawWssServer(
   };
 }
 
+/** Echoes the client's first Close frame, then ends the connection. */
+export async function echoCloseFrame(connection: RawSocket) {
+  let frame;
+  do frame = await connection.nextFrame();
+  while (frame && frame.opcode !== OP.close);
+  if (frame) connection.socket.end(connection.frame(OP.close, frame.payload));
+}
+
 /**
  * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
  * when the upgrade client owns the connection, or on the client's first frame,
@@ -368,6 +396,20 @@ export function clientEvents(ws: WebSocket): Promise<ClientEvent[]> {
     resolve(events);
   });
   return promise;
+}
+
+/**
+ * Resolves with "open", or with the `error` event's message without the "... failed: " prefix. With
+ * `until: "message"`, waits for the first message and resolves with its data. Terminates `ws` afterwards.
+ */
+export function openOrFailure(ws: WebSocket, until: "open" | "message" = "open"): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  ws.addEventListener(until, event => resolve(until === "open" ? "open" : String((event as MessageEvent).data)));
+  ws.addEventListener("error", event =>
+    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
+  );
+  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
+  return promise.finally(() => ws.terminate());
 }
 
 /**

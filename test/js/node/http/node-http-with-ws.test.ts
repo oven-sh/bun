@@ -5,7 +5,6 @@ import https from "https";
 import { once } from "node:events";
 import net, { connect, type AddressInfo, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { Server as SocketIOServer } from "socket.io";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 import NpmWebSocketServerModule from "../../../node_modules/ws/lib/websocket-server.js";
@@ -477,36 +476,7 @@ describe.concurrent("node:http socket behind a WebSocketServer connection", () =
       server.close();
     }
   });
-
-  // engine.io ends upgraded sockets it doesn't own if `socket.bytesWritten <= 0` after destroyUpgradeTimeout.
-  test("socket.io on the same http.Server doesn't close it", async () => {
-    const server = http.createServer();
-    const io = new SocketIOServer(server, { destroyUpgradeTimeout: 1 });
-    const wss = new WebSocketServer({ noServer: true });
-    const endedByEngine = Promise.withResolvers<boolean>();
-    server.on("upgrade", (req, socket, head) => {
-      wss.handleUpgrade(req, socket, head, ws => {
-        // engine.io's listener ran first, so its timer (same delay) fires before this one.
-        setTimeout(() => {
-          endedByEngine.resolve(socket.writableEnded);
-          ws.send("still open");
-        }, 1);
-      });
-    });
-    const reader = new SocketReader(connect(await listen(server), "127.0.0.1"));
-    try {
-      reader.socket.write(upgradeRequest("/hmr"));
-      await reader.readThrough(endOfHead);
-      expect(await endedByEngine.promise).toBe(false);
-      expect((await reader.readThrough(Buffer.from("still open"))).subarray(2).toString()).toBe("still open");
-    } finally {
-      reader.close();
-      await closeWebSocketServer(wss);
-      await io.close();
-    }
-  });
-
-  test("destroy() closes the connection and emits 'close'", async () => {
+  test("destroy() inside the handleUpgrade() callback closes the connection and emits 'close'", async () => {
     const server = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
     const socketClosed = Promise.withResolvers<void>();

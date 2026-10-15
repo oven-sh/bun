@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
 import {
+  closedBeforeOpen,
   connectClient,
   createPeer,
   implementations,
@@ -15,11 +16,6 @@ import {
   runScript,
   scriptTimeout,
 } from "./ws-raw-peer";
-
-const closedBeforeOpen = [
-  'error Error "WebSocket was closed before the connection was established" rs=2',
-  "close 1006 Buffer() rs=3",
-];
 
 async function readAll(response: IncomingMessage) {
   const chunks: Buffer[] = [];

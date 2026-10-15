@@ -266,6 +266,8 @@ pub struct WebSocketBehavior {
     pub reset_idle_timeout_on_send: bool,
     pub send_pings_automatically: bool,
     pub max_lifetime: c_ushort,
+    pub auto_pong: bool,
+    pub skip_utf8_validation: bool,
     pub upgrade: uws_websocket_upgrade_handler,
     pub open: uws_websocket_handler,
     pub message: uws_websocket_message_handler,
@@ -286,6 +288,8 @@ impl Default for WebSocketBehavior {
             reset_idle_timeout_on_send: true,
             send_pings_automatically: true,
             max_lifetime: 0,
+            auto_pong: true,
+            skip_utf8_validation: false,
             upgrade: None,
             open: None,
             message: None,
@@ -295,23 +299,6 @@ impl Default for WebSocketBehavior {
             close: None,
         }
     }
-}
-
-/// `uws_ws_package_behavior_t`: settings for a `ws` package socket context. It isn't bound to a route.
-#[repr(C)]
-pub struct WsPackageBehavior {
-    /// In bytes. 0 = no limit.
-    pub max_payload_length: c_uint,
-    pub auto_pong: bool,
-    pub skip_utf8_validation: bool,
-    /// Whether this context's sockets use permessage-deflate.
-    pub compression: bool,
-    pub open: uws_websocket_handler,
-    pub message: uws_websocket_message_handler,
-    pub drain: uws_websocket_handler,
-    pub ping: uws_websocket_ping_pong_handler,
-    pub pong: uws_websocket_ping_pong_handler,
-    pub close: uws_websocket_close_handler,
 }
 
 /// User-data type stored on a uWS WebSocket.
@@ -467,24 +454,38 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
+    /// Settings for a `ws` package socket context. uWS's `wsPackageContext()` overrides the fields
+    /// left at their defaults. `max_payload_length` is in bytes, 0 = no limit. `compression` is
+    /// whether this context's sockets use permessage-deflate.
+    ///
     /// These contexts aren't bound to a route, so `Server` is unused. Call it as `Wrap::<(), T, SSL>`.
     pub fn ws_package(
         max_payload_length: c_uint,
         auto_pong: bool,
         skip_utf8_validation: bool,
         compression: bool,
-    ) -> WsPackageBehavior {
-        WsPackageBehavior {
-            max_payload_length,
+    ) -> WebSocketBehavior {
+        WebSocketBehavior {
+            compression: if compression {
+                c::SHARED_COMPRESSOR | c::SHARED_DECOMPRESSOR
+            } else {
+                0
+            },
+            // The frame parser uses 32-bit lengths, so u32::MAX is effectively no limit.
+            max_payload_length: if max_payload_length == 0 {
+                c_uint::MAX
+            } else {
+                max_payload_length
+            },
             auto_pong,
             skip_utf8_validation,
-            compression,
             open: Some(Self::on_open),
             message: Some(Self::on_message),
             drain: Some(Self::on_drain),
             ping: Some(Self::on_ping),
             pong: Some(Self::on_pong),
             close: Some(Self::on_close),
+            ..Default::default()
         }
     }
 }
@@ -531,6 +532,8 @@ where
             reset_idle_timeout_on_send: behavior.reset_idle_timeout_on_send,
             send_pings_automatically: behavior.send_pings_automatically,
             max_lifetime: behavior.max_lifetime,
+            auto_pong: behavior.auto_pong,
+            skip_utf8_validation: behavior.skip_utf8_validation,
             upgrade: Some(Self::on_upgrade),
             open: Some(Self::on_open),
             message: if T::HAS_ON_MESSAGE {
@@ -566,6 +569,8 @@ pub mod c {
     use super::*;
 
     pub(crate) type uws_compress_options_t = i32;
+    pub const SHARED_COMPRESSOR: i32 = 1;
+    pub const SHARED_DECOMPRESSOR: i32 = 1 << 8;
 
     // `RawWebSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` —
     // `&RawWebSocket`/`&mut RawWebSocket` are ABI-identical to a non-null
@@ -587,7 +592,7 @@ pub mod c {
         pub(crate) fn uws_app_ws_package_context(
             ssl: i32,
             app: *mut uws_app_t,
-            behavior: *const WsPackageBehavior,
+            behavior: *const WebSocketBehavior,
         ) -> *mut WebSocketUpgradeContext;
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);

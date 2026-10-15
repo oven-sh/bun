@@ -12,12 +12,12 @@ import {
   implementations,
   nextEvent,
   openClient,
+  openEvents,
   openServer,
   runScript,
   scriptTimeout,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 const readOnlyAttributes = ["bufferedAmount", "extensions", "isPaused", "protocol", "readyState", "url"];
 const writableAttributes = ["binaryType", "onclose", "onerror", "onmessage", "onopen"];
@@ -273,26 +273,6 @@ describe.each(implementations)("ws API shape ($name)", ({ ws: implementation, bu
       expect(Object.getPrototypeOf(ws)).toBe(WebSocket.prototype);
       expect(Object.prototype.toString.call(ws)).toBe("[object Object]");
       expect([ws.send, ws.close]).toEqual([WebSocket.prototype.send, WebSocket.prototype.close]);
-    });
-
-    test("uses the class passed as the `WebSocket` option", async () => {
-      class CustomWebSocket extends WebSocket {
-        hello() {
-          return "hi";
-        }
-      }
-      await using server = await openServer(implementation, { WebSocket: CustomWebSocket });
-      expect(server.ws).toBeInstanceOf(CustomWebSocket);
-      expect((server.ws as CustomWebSocket).hello()).toBe("hi");
-    });
-
-    test("_socket is the upgrade request's socket", async () => {
-      await using server = await openServer(implementation);
-      const ws: any = server.ws;
-      expect(ws._socket).toBe(server.req.socket);
-      expect(ws._socket.remoteAddress).toBe("127.0.0.1");
-      expect(ws._socket.remotePort).toBe(server.client.socket.localPort);
-      expect([ws._isServer, ws._closeCode]).toEqual([true, 1006]);
     });
   });
 

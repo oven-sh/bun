@@ -3,15 +3,18 @@ import { describe, expect, test } from "bun:test";
 import { on, once } from "node:events";
 import zlib from "node:zlib";
 import {
+  abnormalClose,
   type ClientOptions,
   closePayload,
   createPeer,
+  deflate,
   encodeFrame,
   type FrameOptions,
   implementations,
   nextEvent,
   OP,
   openClient,
+  openEvents,
   type Payload,
   type PeerOptions,
   runScript,
@@ -20,16 +23,11 @@ import {
   showFrame,
 } from "./ws-raw-peer";
 
-const openEvents = ["upgrade 101 rs=0", "open rs=1"];
-const abnormalClose = "close 1006 Buffer() rs=3";
 const bytes = (...values: number[]) => Buffer.from(values);
 const repeatA = (count: number) => Buffer.alloc(count, "a");
 
 // Peer options for a server that accepts permessage-deflate.
 const withDeflate: PeerOptions = { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] };
-// Compresses a payload the way permessage-deflate does: raw deflate, sync flush, trailing 00 00 ff ff removed.
-const compress = (data: Payload, options: zlib.ZlibOptions = {}) =>
-  zlib.deflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH, ...options }).subarray(0, -4);
 
 // @types/ws is missing "blob" and `autoPong`.
 const blob = "blob" as any;
@@ -98,8 +96,8 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       await using client = await openClient(implementation, {}, withDeflate);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
-      conn.text(compress("compressed-😶"), { rsv1: true });
-      conn.binary(compress(bytes(1, 2, 3)), { rsv1: true });
+      conn.text(deflate("compressed-😶"), { rsv1: true });
+      conn.binary(deflate(bytes(1, 2, 3)), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
         ...openEvents,
@@ -438,7 +436,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       conn.text("plain");
-      conn.text(compress("compressed hello"), { rsv1: true });
+      conn.text(deflate("compressed hello"), { rsv1: true });
       conn.text("plain again");
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
@@ -452,7 +450,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
     test("inflates a fragmented message with a Ping between its fragments", async () => {
       await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
-      const payload = compress("fragmented and compressed");
+      const payload = deflate("fragmented and compressed");
       conn.text(payload.subarray(0, 5), { fin: false, rsv1: true });
       conn.ping("mid");
       conn.send(OP.continuation, payload.subarray(5, 9), { fin: false });
@@ -468,8 +466,8 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
     test("inflates an empty message, with and without its empty deflate block", async () => {
       await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
-      expect(compress("")).toEqual(bytes(0));
-      conn.text(compress(""), { rsv1: true });
+      expect(deflate("")).toEqual(bytes(0));
+      conn.text(deflate(""), { rsv1: true });
       conn.text("", { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([...openEvents, "message Buffer() text rs=1", "message Buffer() text rs=1"]);
@@ -480,8 +478,8 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       const { conn, events } = client;
       const text = "the same words again";
       // Using the first message as the dictionary produces what a compressor with context takeover would send next.
-      const first = compress(text);
-      const second = compress(text, { dictionary: Buffer.from(text) });
+      const first = deflate(text);
+      const second = deflate(text, { dictionary: Buffer.from(text) });
       expect(second.length).toBeLessThan(first.length / 2);
       conn.text(first, { rsv1: true });
       conn.text(second, { rsv1: true });
@@ -497,7 +495,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       conn.text(zlib.deflateRawSync("final block"), { rsv1: true });
-      conn.text(compress("next"), { rsv1: true });
+      conn.text(deflate("next"), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
         ...openEvents,
@@ -514,7 +512,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       conn.binary(repeatA(100));
       conn.binary(repeatA(60), { fin: false });
       conn.send(OP.continuation, repeatA(40));
-      conn.binary(compress(repeatA(100)), { rsv1: true });
+      conn.binary(deflate(repeatA(100)), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       const message = "message Buffer(100 bytes) binary rs=1";
       expect(events).toEqual([...openEvents, message, message, message]);
@@ -617,7 +615,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       },
       {
         label: "RSV1 on a continuation frame",
-        sent: [text(compress("ab"), { fin: false, rsv1: true }), continuation("x", { rsv1: true })],
+        sent: [text(deflate("ab"), { fin: false, rsv1: true }), continuation("x", { rsv1: true })],
         peer: withDeflate,
         ...unexpectedRsv1,
       },
@@ -664,7 +662,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       },
       {
         label: "a compressed text message with invalid UTF-8",
-        sent: [text(compress(bytes(0xff, 0xfe)), { rsv1: true })],
+        sent: [text(deflate(bytes(0xff, 0xfe)), { rsv1: true })],
         peer: withDeflate,
         ...invalidUtf8,
       },
@@ -684,7 +682,7 @@ describe.each(implementations)("ws client receive ($name)", ({ ws: implementatio
       },
       {
         label: "a compressed message that inflates to more than maxPayload",
-        sent: [binary(compress(repeatA(200)), { rsv1: true })],
+        sent: [binary(deflate(repeatA(200)), { rsv1: true })],
         options: max100,
         peer: withDeflate,
         ...payloadTooBig,

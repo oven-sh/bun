@@ -11,7 +11,15 @@ import * as path from "node:path";
 import tls from "node:tls";
 import { Worker } from "node:worker_threads";
 import { type ClientOptions, WebSocket as NodeWS, WebSocketServer } from "ws";
-import { clientEvents, failingSession, startRecordingProxy, startRenegotiatingWssServer } from "./proxy-test-utils";
+import {
+  clientEvents,
+  echoCloseFrame,
+  failingSession,
+  ignoreAmbientNoProxy,
+  startRecordingProxy,
+  startRenegotiatingWssServer,
+} from "./proxy-test-utils";
+import { createPeer, RawSocket, response101 } from "./raw-peer";
 function test(
   label: string,
   fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
@@ -294,21 +302,6 @@ describe("WebSocket", () => {
   });
 });
 
-// Builds the echo for the first Close frame in `frames` (masked client frames with 7-bit lengths).
-// Returns undefined until that frame has fully arrived.
-function closeFrameEcho(frames: Buffer) {
-  for (let offset = 0; offset + 6 <= frames.length;) {
-    const length = frames[offset + 1] & 0x7f;
-    if (offset + 6 + length > frames.length) return;
-    if ((frames[offset] & 0x0f) === 0x8) {
-      const mask = frames.subarray(offset + 2, offset + 6);
-      const payload = frames.subarray(offset + 6, offset + 6 + length).map((byte, i) => byte ^ mask[i % 4]);
-      return Buffer.concat([Buffer.from([0x88, length]), payload]);
-    }
-    offset += 6 + length;
-  }
-}
-
 describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
   // `received` collects every frame the server gets, as [kind, bytes].
   async function withOpenSocket(fn: (ws: WebSocket, received: [string, number[]][]) => void | Promise<void>) {
@@ -444,39 +437,6 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
   });
 });
 
-// Completes the upgrade, then calls `onFrames` with all the client bytes received so far.
-async function startRawServer(onFrames: (socket: net.Socket, frames: Buffer) => void = () => {}) {
-  const sockets = new Set<net.Socket>();
-  const server = createServer(socket => {
-    sockets.add(socket);
-    socket.on("error", () => {});
-    let request = "";
-    let frames: Buffer | undefined;
-    socket.on("data", chunk => {
-      if (frames) return onFrames(socket, (frames = Buffer.concat([frames, chunk])));
-      request += chunk.toString("latin1");
-      if (!request.includes("\r\n\r\n")) return;
-      const key = /sec-websocket-key: *([^\r\n]+)/i.exec(request)![1];
-      const accept = createHash("sha1")
-        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-        .digest("base64");
-      socket.write(
-        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
-          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
-      );
-      frames = Buffer.alloc(0);
-    });
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  return {
-    url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}/`,
-    [Symbol.dispose]() {
-      for (const socket of sockets) socket.destroy();
-      server.close();
-    },
-  };
-}
-
 function waitForOpen(ws: WebSocket) {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   ws.addEventListener("open", () => resolve(), { once: true });
@@ -485,34 +445,8 @@ function waitForOpen(ws: WebSocket) {
 }
 
 describe.concurrent("WebSocket closing handshake", () => {
-  it.each([
-    ["close()", [], [0x88, 0], { code: 1005, reason: "", wasClean: true }],
-    [
-      "close(undefined, 'r')",
-      [undefined, "r"],
-      [0x88, 3, 0x03, 0xe8, 0x72],
-      { code: 1000, reason: "r", wasClean: true },
-    ],
-    ["close(3001)", [3001], [0x88, 2, 0x0b, 0xb9], { code: 3001, reason: "", wasClean: true }],
-  ] as const)("%s", async (_label, args, frame, event) => {
-    const echoes: number[][] = [];
-    using server = await startRawServer((socket, frames) => {
-      const echo = closeFrameEcho(frames);
-      if (!echo || !socket.writable) return;
-      echoes.push([...echo]);
-      socket.end(echo);
-    });
-    const ws = new WebSocket(server.url);
-    const events = clientEvents(ws);
-    await waitForOpen(ws);
-    ws.close(...(args as readonly [number?, string?]));
-    expect(ws.readyState).toBe(WebSocket.CLOSING);
-    expect(await events).toEqual([event]);
-    expect(echoes).toEqual([[...frame]]);
-  });
-
   it("terminate() ends a closing handshake the peer never completes", async () => {
-    using server = await startRawServer();
+    await using server = await createPeer();
     const ws = new WebSocket(server.url);
     const events = clientEvents(ws);
     await waitForOpen(ws);
@@ -526,9 +460,11 @@ describe.concurrent("WebSocket closing handshake", () => {
   });
 
   it("pause() returns false and isPaused stays false unless CONNECTING or OPEN", async () => {
-    using server = await startRawServer((socket, frames) => {
-      const echo = closeFrameEcho(frames);
-      if (echo && socket.writable) socket.end(echo);
+    await using server = await createPeer({
+      respond(connection) {
+        echoCloseFrame(connection);
+        return response101(connection);
+      },
     });
     const tryPause = (ws: WebSocket) => ({ isPaused: ws.isPaused, pause: ws.pause(), isPausedAfter: ws.isPaused });
     const notPausable = { isPaused: false, pause: false, isPausedAfter: false };
@@ -1132,23 +1068,6 @@ describe("WebSocket handshake Connection header token list", () => {
   });
 });
 
-// NO_PROXY applies to explicit proxies too. An ambient
-// NO_PROXY=localhost,127.0.0.1,... would bypass the proxy tests in the calling describe block.
-function ignoreAmbientNoProxy() {
-  const prevNoProxy = process.env.NO_PROXY;
-  const prevNoProxyLower = process.env.no_proxy;
-  beforeAll(() => {
-    process.env.NO_PROXY = "";
-    process.env.no_proxy = "";
-  });
-  afterAll(() => {
-    if (prevNoProxy === undefined) delete process.env.NO_PROXY;
-    else process.env.NO_PROXY = prevNoProxy;
-    if (prevNoProxyLower === undefined) delete process.env.no_proxy;
-    else process.env.no_proxy = prevNoProxyLower;
-  });
-}
-
 describe.concurrent("WebSocket Proxy-Authorization", () => {
   ignoreAmbientNoProxy();
 
@@ -1237,15 +1156,10 @@ describe("WebSocket TLS server identity", () => {
       },
       socket => {
         let buffered = "";
-        let frames: Buffer | undefined;
-        socket.on("data", chunk => {
+        let connection: RawSocket | undefined;
+        socket.on("data", (chunk: Buffer) => {
           applicationData += chunk.toString("latin1");
-          if (frames) {
-            frames = Buffer.concat([frames, chunk]);
-            const close = closeFrameEcho(frames);
-            if (close && socket.writable) socket.end(close);
-            return;
-          }
+          if (connection) return connection.push(chunk);
           buffered += chunk.toString("latin1");
           const end = buffered.indexOf("\r\n\r\n");
           if (end === -1) return;
@@ -1266,7 +1180,8 @@ describe("WebSocket TLS server identity", () => {
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
               `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
           );
-          frames = Buffer.alloc(0);
+          connection = new RawSocket(socket, false);
+          echoCloseFrame(connection);
         });
         socket.on("error", () => {});
         socket.on("close", () => connectionEnded.resolve());

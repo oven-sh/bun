@@ -109,8 +109,9 @@ describe.each(implementations)("ws server events ($name)", ({ ws: implementation
       readable: true,
       writable: true,
     });
+    const socketClosed = nextEvent(server.req.socket, "close");
     server.req.socket.destroy();
-    await server.closed;
+    await Promise.all([server.closed, socketClosed]);
     expect(server.events).toEqual(["close 1006 Buffer() rs=3"]);
     expect(await server.client.remainingFrames()).toEqual([]);
   });

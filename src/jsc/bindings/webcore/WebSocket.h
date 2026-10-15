@@ -354,6 +354,24 @@ private:
     bool shouldDispatchFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
     bool canPause() const { return m_state == CONNECTING || shouldDispatchFrames(); }
 
+    // TLS and ProxyTLS both hold a TLS socket to the next hop.
+    bool usesTLSSocket() const { return m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS; }
+
+    // Calls Plain or TLS with the connected native client as the first argument. Without a client, returns a default-constructed result.
+    template<auto Plain, auto TLS, class... Args>
+    auto callClient(Args... args) const
+    {
+        switch (m_connectedWebSocketKind) {
+        case ConnectedWebSocketKind::Client:
+            return Plain(m_connectedWebSocket.client, args...);
+        case ConnectedWebSocketKind::ClientSSL:
+            return TLS(m_connectedWebSocket.clientSSL, args...);
+        case ConnectedWebSocketKind::None:
+            break;
+        }
+        return decltype(Plain(m_connectedWebSocket.client, args...))();
+    }
+
     void sendWebSocketString(const String& message, Opcode, uint8_t flags);
     void sendWebSocketData(std::span<const uint8_t>, Opcode, uint8_t flags);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);

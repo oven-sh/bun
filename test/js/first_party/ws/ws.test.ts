@@ -11,8 +11,7 @@ import net, { AddressInfo, connect } from "net";
 import fs from "node:fs";
 import path from "node:path";
 import tls, { type TLSSocket } from "tls";
-// @ts-expect-error @types/ws: no ESM `Server`
-import { type ClientOptions, Server, WebSocket, WebSocketServer } from "ws";
+import { type ClientOptions, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {
@@ -474,11 +473,6 @@ describe("WebSocketServer", () => {
   });
 });
 
-// Bun-only: npm ws has `Server` only on its CommonJS export.
-it("Server is a named export", () => {
-  expect(Server).toBe(WebSocketServer);
-});
-
 it("isBinary", async () => {
   const wss = new WebSocketServer({ port: 0 });
   let isDone = false;
@@ -505,55 +499,6 @@ it("isBinary", async () => {
   });
 
   await promise;
-});
-
-// send(data, { binary }) overrides the frame type that's otherwise picked from the data type.
-describe("send() with { binary }", () => {
-  const sends = [
-    { data: Buffer.from("sent as text"), opts: { binary: false } },
-    { data: "sent as binary", opts: { binary: true } },
-  ] as const;
-  const expected = [
-    { data: Buffer.from("sent as text"), isBinary: false },
-    { data: Buffer.from("sent as binary"), isBinary: true },
-  ];
-
-  function receiveAll(ws: WebSocket) {
-    const { promise, resolve, reject } = Promise.withResolvers<{ data: unknown; isBinary: boolean }[]>();
-    const received: { data: unknown; isBinary: boolean }[] = [];
-    ws.on("message", (data, isBinary) => {
-      received.push({ data, isBinary });
-      if (received.length === sends.length) resolve(received);
-    });
-    ws.on("error", reject);
-    ws.on("close", () => reject(new Error(`closed after ${received.length} of ${sends.length} messages`)));
-    return promise;
-  }
-
-  // Connects a client to a new server, sends `sends` from one side and returns what the other side received.
-  async function exchange(from: "client" | "server") {
-    const wss = new WebSocketServer({ port: 0 });
-    try {
-      const connection = once(wss, "connection");
-      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
-      clients.push(client);
-      const [[serverSide]] = (await Promise.all([connection, once(client, "open")])) as [[WebSocket], unknown[]];
-      const [sender, receiver] = from === "client" ? [client, serverSide] : [serverSide, client];
-      const received = receiveAll(receiver);
-      for (const { data, opts } of sends) sender.send(data, opts);
-      return await received;
-    } finally {
-      wss.close();
-    }
-  }
-
-  it("from the client", async () => {
-    expect(await exchange("client")).toEqual(expected);
-  });
-
-  it("from the server", async () => {
-    expect(await exchange("server")).toEqual(expected);
-  });
 });
 
 it("onmessage", done => {

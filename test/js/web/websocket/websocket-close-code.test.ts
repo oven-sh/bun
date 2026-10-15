@@ -343,6 +343,8 @@ describe.concurrent("WebSocket closing handshake", () => {
     ["close()", (ws: WebSocket) => ws.close(), "close", closeFrame(), 1005],
     ["close(1000)", (ws: WebSocket) => ws.close(1000), "close 1000", closeFrame(1000), 1000],
     ["close(3001, 'bye')", (ws: WebSocket) => ws.close(3001, "bye"), "close 3001 bye", closeFrame(), 1005],
+    // A reason without a code is sent with 1000.
+    ["close(undefined, 'r')", (ws: WebSocket) => ws.close(undefined, "r"), "close 1000 r", closeFrame(1000), 1000],
   ] as const)("%s sends exactly that code and reason", async (_label, act, sent, reply, code) => {
     using server = await startPeer();
     const ws = new WebSocket(server.url);

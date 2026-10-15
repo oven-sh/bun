@@ -7,10 +7,16 @@ import https from "node:https";
 import zlib from "node:zlib";
 import type { ServerOptions, WebSocket } from "ws";
 import {
+  abnormalClose,
   closePayload,
+  deflate,
+  deflateWithContext,
   encodeFrame,
   type FrameOptions,
   implementations,
+  invalidFrame,
+  invalidUTF8,
+  MiB,
   nextEvent,
   OP,
   openServer,
@@ -19,15 +25,11 @@ import {
   runScript,
   scriptTimeout,
   serve,
+  tooBig,
   tryCall,
   upgradeRequest,
 } from "./ws-raw-peer";
 
-const MiB = 1024 * 1024;
-const abnormalClose = "close 1006 Buffer() rs=3";
-const tooBig = 'RangeError "Max payload size exceeded" WS_ERR_UNSUPPORTED_MESSAGE_LENGTH';
-const invalidFrame = (what: string, code: string) => `RangeError "Invalid WebSocket frame: ${what}" ${code}`;
-const invalidUTF8 = 'Error "Invalid WebSocket frame: invalid UTF-8 sequence" WS_ERR_INVALID_UTF8';
 const rsv1MustBeClear = invalidFrame("RSV1 must be clear", "WS_ERR_UNEXPECTED_RSV_1");
 
 const offerDeflate: RequestOptions = { headers: { "Sec-WebSocket-Extensions": "permessage-deflate" } };
@@ -45,26 +47,6 @@ function frameHeader(opcode: number, length: number | bigint) {
   header[1] = 0x80 | 127;
   header.writeBigUInt64BE(BigInt(length), 2);
   return header;
-}
-
-/** Compresses one message payload with a fresh context, so it doesn't depend on earlier messages. */
-function deflate(data: Payload) {
-  return zlib.deflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).subarray(0, -4);
-}
-
-/** Compresses messages with context takeover: they share one window, so later ones back-reference earlier ones. */
-async function deflateWithContext(messages: string[]) {
-  const stream = zlib.createDeflateRaw();
-  const chunks: Buffer[] = [];
-  stream.on("data", chunk => chunks.push(chunk));
-  const payloads: Buffer[] = [];
-  for (const message of messages) {
-    stream.write(message);
-    await new Promise<void>(resolve => stream.flush(zlib.constants.Z_SYNC_FLUSH, resolve));
-    payloads.push(Buffer.concat(chunks.splice(0)).subarray(0, -4));
-  }
-  stream.destroy();
-  return payloads;
 }
 
 type Connection = Pick<Awaited<ReturnType<typeof openServer>>, "client" | "events" | "closed">;

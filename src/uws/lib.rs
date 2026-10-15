@@ -70,8 +70,7 @@ impl ResponseKind {
     }
 }
 
-pub const SHARED_COMPRESSOR: i32 = 1;
-pub const SHARED_DECOMPRESSOR: i32 = 1 << 8;
+pub use bun_uws_sys::web_socket::c::{SHARED_COMPRESSOR, SHARED_DECOMPRESSOR};
 pub const DEDICATED_DECOMPRESSOR_2KB: i32 = 11 << 8;
 pub const DEDICATED_DECOMPRESSOR_4KB: i32 = 12 << 8;
 pub const DEDICATED_DECOMPRESSOR_8KB: i32 = 13 << 8;

@@ -1,10 +1,10 @@
 import { type Socket, TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import net, { type AddressInfo } from "node:net";
-import { basename, join } from "node:path";
 import { WebSocket } from "ws";
+import { openOrFailure } from "./proxy-test-utils";
 
 const hostname = process.env.HOST || "127.0.0.1";
 const port = parseInt(process.env.PORT || "0");
@@ -64,17 +64,6 @@ function listen(respond: (socket: RawSocket, request: string) => unknown) {
     url: `ws://127.0.0.1:${server.port}/`,
     [Symbol.dispose]: () => server.stop(true),
   };
-}
-
-/** Resolves to "open", or to the `error` event's message without the "... failed: " prefix. */
-function openOrFailure(ws: NativeWebSocket): Promise<string> {
-  const { promise, resolve } = Promise.withResolvers<string>();
-  ws.addEventListener("open", () => resolve("open"));
-  ws.addEventListener("error", event =>
-    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
-  );
-  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
-  return promise.finally(() => ws.terminate());
 }
 
 /**
@@ -446,107 +435,6 @@ describe("Sec-WebSocket-Extensions in the 101", () => {
   test("rejects permessage-deflate when the client didn't offer it", async () => {
     const line = "Sec-WebSocket-Extensions: permessage-deflate";
     expect(await negotiate([line], { perMessageDeflate: false })).toBe(UNSUPPORTED);
-  });
-});
-
-describe("upgrade request", () => {
-  test("sends header values as latin1, like fetch()", async () => {
-    // path.basename returns a UTF-16 string here even though every code unit is below 0x100.
-    const headers = { "X-Latin1": "vàlüé-ñ", "X-Utf16": basename("/tmp/café.txt"), "Host": "hôte" };
-    let request = "";
-    using server = listen((socket, received) => {
-      request = received;
-      write(socket, head101(received));
-    });
-    expect(await openOrFailure(new NativeWebSocket(server.url, { headers }))).toBe("open");
-    const sent = Object.fromEntries(
-      request
-        .split("\r\n")
-        .map(line => line.split(": "))
-        .filter(([name]) => name in headers),
-    );
-    expect(sent).toEqual(headers);
-  });
-});
-
-describe("the error event reports why the connection failed", () => {
-  function failure(ws: NativeWebSocket) {
-    const { promise, resolve, reject } = Promise.withResolvers<{ code: unknown; message: string }>();
-    ws.addEventListener("open", () => reject(new Error("opened")));
-    ws.addEventListener("error", event => {
-      const { error, message } = event as ErrorEvent;
-      resolve({ code: error.code, message: message.replace(/^WebSocket connection to '[^']*' failed: /, "") });
-    });
-    return promise.finally(() => ws.terminate());
-  }
-
-  test("ECONNREFUSED when nothing is listening on the port", async () => {
-    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const { port } = server;
-    server.stop(true);
-    expect(await failure(new NativeWebSocket(`ws://127.0.0.1:${port}/`))).toEqual({
-      code: "ECONNREFUSED",
-      message: "Failed to connect",
-    });
-  });
-
-  test("ENOTFOUND when the hostname doesn't resolve", async () => {
-    // getaddrinfo rejects DNS labels longer than 63 bytes without sending a query.
-    const host = Buffer.alloc(64, "a").toString() + ".com";
-    expect(await failure(new NativeWebSocket(`ws://${host}/`))).toEqual({
-      code: "ENOTFOUND",
-      message: "Failed to connect",
-    });
-  });
-
-  test.each([
-    ["a FIN", (socket: net.Socket) => void socket.end(), "Connection ended"],
-    ["a reset", (socket: net.Socket) => void socket.resetAndDestroy(), "Connection ended: read ECONNRESET"],
-  ])("ECONNRESET when the server sends %s instead of a response", async (_, drop, message) => {
-    const server = net.createServer(socket => socket.on("error", () => {}).once("data", () => drop(socket)));
-    try {
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const ws = new NativeWebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/`);
-      expect(await failure(ws)).toEqual({ code: "ECONNRESET", message });
-    } finally {
-      server.close();
-    }
-  });
-
-  // connect(2) fails synchronously inside the constructor. Skipped on Windows because Winsock doesn't set errno.
-  test.skipIf(isWindows)("ENOENT when the unix socket doesn't exist", async () => {
-    using dir = tempDir("ws-missing-unix-socket", {});
-    const ws = new NativeWebSocket(`ws+unix://${join(String(dir), "missing.sock")}`);
-    expect(ws.readyState).toBe(NativeWebSocket.CONNECTING);
-    expect(await failure(ws)).toEqual({ code: "ENOENT", message: "Failed to connect" });
-  });
-
-  describe("TLS", () => {
-    const serve = () =>
-      Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: tlsCert,
-        fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("no", { status: 400 })),
-        websocket: { message() {} },
-      });
-
-    test("untrusted certificate", async () => {
-      await using server = serve();
-      expect(await failure(new NativeWebSocket(`wss://127.0.0.1:${server.port}/`))).toEqual({
-        code: "DEPTH_ZERO_SELF_SIGNED_CERT",
-        message: "TLS handshake failed: self signed certificate",
-      });
-    });
-
-    test("certificate hostname mismatch", async () => {
-      await using server = serve();
-      const tls = { ca: tlsCert.cert, serverName: "evil.test" };
-      expect(await failure(new NativeWebSocket(`wss://127.0.0.1:${server.port}/`, { tls }))).toEqual({
-        code: "ERR_TLS_CERT_ALTNAME_INVALID",
-        message: "TLS handshake failed: Hostname/IP does not match certificate's altnames",
-      });
-    });
   });
 });
 

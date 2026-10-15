@@ -31,6 +31,7 @@ use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
+use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
@@ -113,8 +114,7 @@ fn is_upgrade(response: &picohttp::Response) -> bool {
         if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
             has_upgrade |= !header.value().is_empty();
         } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
-            connection_has_upgrade |= HeaderValueIterator::init(header.value())
-                .any(|option| strings::eql_case_insensitive_ascii(option, b"upgrade", true));
+            connection_has_upgrade |= header_has_token(header.value(), b"upgrade");
         }
     }
     response.status_code == 101 && has_upgrade && connection_has_upgrade
@@ -488,50 +488,26 @@ where
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
         let this = client.this_ptr();
 
-        // Unix domain socket path (ws+unix:// / wss+unix://)
-        if let Some(usp) = &unix_socket_path_slice {
-            let socket = Socket::<SSL>::connect_unix_group(
+        let sock = match &unix_socket_path_slice {
+            // ws+unix:// / wss+unix://. C++ never passes a proxy with these.
+            Some(path) => Socket::<SSL>::connect_unix_group(
                 group,
                 kind,
                 secure_ptr,
-                usp.slice(),
+                path.slice(),
                 client.as_ptr(),
                 false,
-            )
-            .inspect_err(|_| *connect_error_code = last_connect_error_code())
-            .ok()?;
-            this.tcp.set(socket);
-            if this.state.get() == State::Failed {
-                socket.take_ext_owner::<Self>();
-                return None;
-            }
-            bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-            if SSL {
-                // A user-supplied Host header does NOT affect SNI.
-                let sni: &[u8] = match &server_name {
-                    Some(name) => name,
-                    None => bun_http::strip_ipv6_brackets(host_slice.slice()),
-                };
-                if !sni.is_empty() {
-                    this.hostname.set(ZBox::from_bytes(sni));
-                }
-            }
-
-            socket.set_timeout(this.handshake_timeout());
-            this.state.set(State::Reading);
-            return Some(Self::connected(client, websocket));
+            ),
+            None => Socket::<SSL>::connect_group(
+                group,
+                kind,
+                secure_ptr,
+                display_host,
+                c_int::from(connect_port),
+                client.as_ptr(),
+                false,
+            ),
         }
-
-        let sock = Socket::<SSL>::connect_group(
-            group,
-            kind,
-            secure_ptr,
-            display_host,
-            c_int::from(connect_port),
-            client.as_ptr(),
-            false,
-        )
         .inspect_err(|_| *connect_error_code = last_connect_error_code())
         .ok()?;
         this.tcp.set(sock);
@@ -543,6 +519,7 @@ where
         bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         if SSL {
+            // A user-supplied Host header does NOT affect SNI.
             // Through a proxy this socket's peer is the proxy; `server_name` names the target.
             let sni: &[u8] = match &server_name {
                 Some(name) if !using_proxy => name,
@@ -1315,10 +1292,7 @@ where
                         b"Connection",
                     ) {
                         connection_header_seen = true;
-                        connection_has_upgrade |=
-                            HeaderValueIterator::init(header.value()).any(|t| {
-                                strings::eql_case_insensitive_ascii_check_length(t, b"upgrade")
-                            });
+                        connection_has_upgrade |= header_has_token(header.value(), b"upgrade");
                     }
                 }
                 len if len == b"Upgrade".len() => {

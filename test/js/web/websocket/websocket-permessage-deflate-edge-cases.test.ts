@@ -3,6 +3,7 @@ import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
 import { deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
+import { createPeer, RawSocket } from "./raw-peer";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -228,12 +229,14 @@ test("WebSocket client rejects decompression bombs", async () => {
     socket.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
     });
+    const connection = new RawSocket(socket, false);
+    accepted.resolve(connection);
     let buffer = Buffer.alloc(0);
     let upgraded = false;
 
     socket.on("data", (data: Buffer) => {
+      if (upgraded) return connection.push(data);
       buffer = Buffer.concat([buffer, data]);
-      if (upgraded) return;
 
       // Look for end of HTTP headers
       const headerEnd = buffer.indexOf("\r\n\r\n");
@@ -241,7 +244,6 @@ test("WebSocket client rejects decompression bombs", async () => {
       upgraded = true;
 
       const headers = buffer.slice(0, headerEnd).toString();
-      buffer = buffer.subarray(headerEnd + 4);
 
       // Extract Sec-WebSocket-Key
       const keyMatch = headers.match(/Sec-WebSocket-Key: ([A-Za-z0-9+/=]+)/i);
@@ -300,10 +302,9 @@ test("WebSocket client rejects decompression bombs", async () => {
       const frame = Buffer.concat([Buffer.from(frameHeader), compressed]);
       socket.write(frame);
     });
-    socket.on("close", () => clientCloseFrame.resolve(parseClientFrame(buffer)));
   });
 
-  const clientCloseFrame = Promise.withResolvers<ReturnType<typeof parseClientFrame>>();
+  const accepted = Promise.withResolvers<RawSocket>();
   let client: WebSocket | null = null;
   let messageReceived = false;
 
@@ -337,7 +338,7 @@ test("WebSocket client rejects decompression bombs", async () => {
     // The client fails the connection. It sends Close 1009 (Message Too Big) to the server, then fires
     // an error event and a 1006 close event.
     expect({ error, ...result }).toEqual({ error: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH", code: 1006, reason: "" });
-    expect((await clientCloseFrame.promise)?.payload).toEqual(Buffer.from([1009 >> 8, 1009 & 0xff]));
+    expect(await (await accepted.promise).next()).toBe("close 1009");
   } finally {
     // Ensure cleanup happens even on test failure/timeout
     if (client && client.readyState !== WebSocket.CLOSED) {
@@ -362,33 +363,17 @@ function frame(opcode: number, payload: Uint8Array, { fin = true, rsv1 = false }
   return bytes;
 }
 
-/** `error` is the error event's `error.code`. `sent` is the status code of the Close frame the client sent. */
-type Outcome = { error?: string; code: number; reason: string; messages: unknown[]; sent?: number };
+/** `error` is the error event's `error.code`. `sent` is the first frame the client sent, e.g. "close 1002". */
+type Outcome = { error?: string; code: number; reason: string; messages: unknown[]; sent?: string };
 
 /** The outcome when the client fails the connection with `error.code === error` and sends Close `sent`. */
-const failedWith = (error: string, sent: number): Outcome => ({ error, code: 1006, reason: "", messages: [], sent });
-
-/** Parses and unmasks one client frame. Returns `null` while it's incomplete. */
-function parseClientFrame(bytes: Buffer): { fin: boolean; rsv1: boolean; opcode: number; payload: Buffer } | null {
-  if (bytes.length < 2) return null;
-  if (!(bytes[1] & 0x80)) throw new Error("client frame is not masked");
-  let length = bytes[1] & 0x7f;
-  let offset = 2;
-  if (length === 126) {
-    if (bytes.length < 4) return null;
-    length = bytes.readUInt16BE(2);
-    offset = 4;
-  } else if (length === 127) {
-    if (bytes.length < 10) return null;
-    length = Number(bytes.readBigUInt64BE(2));
-    offset = 10;
-  }
-  if (bytes.length < offset + 4 + length) return null;
-  const mask = bytes.subarray(offset, offset + 4);
-  const payload = Buffer.from(bytes.subarray(offset + 4, offset + 4 + length));
-  for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
-  return { fin: (bytes[0] & 0x80) !== 0, rsv1: (bytes[0] & 0x40) !== 0, opcode: bytes[0] & 0x0f, payload };
-}
+const failedWith = (error: string, sent: number): Outcome => ({
+  error,
+  code: 1006,
+  reason: "",
+  messages: [],
+  sent: `close ${sent}`,
+});
 
 /**
  * Complete a WebSocket handshake by hand, write `frames`, and report how the
@@ -399,51 +384,15 @@ async function sendRawFrames(
   frames: Uint8Array[],
   { negotiateDeflate }: { negotiateDeflate: boolean },
 ): Promise<Outcome> {
-  let handshake = "";
-  let handshakeComplete = false;
   const messages: unknown[] = [];
-  let client: WebSocket | undefined;
-  let clientBytes = Buffer.alloc(0);
-  const clientDisconnected = Promise.withResolvers<void>();
-
-  const server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      error() {},
-      close() {
-        clientDisconnected.resolve();
-      },
-      data(socket, data) {
-        if (handshakeComplete) {
-          clientBytes = Buffer.concat([clientBytes, data]);
-          return;
-        }
-        handshake += data.toString();
-        if (!handshake.includes("\r\n\r\n")) return;
-
-        const key = /Sec-WebSocket-Key:\s*(\S+)/i.exec(handshake);
-        if (!key) throw new Error("client did not send Sec-WebSocket-Key");
-        const accept = new Bun.CryptoHasher("sha1").update(key[1] + WEBSOCKET_GUID).digest("base64");
-        handshakeComplete = true;
-
-        socket.write(
-          "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            `Sec-WebSocket-Accept: ${accept}\r\n` +
-            (negotiateDeflate ? "Sec-WebSocket-Extensions: permessage-deflate\r\n" : "") +
-            "\r\n",
-        );
-        for (const bytes of frames) socket.write(bytes);
-        socket.flush();
-      },
-    },
+  await using peer = await createPeer({
+    headers: negotiateDeflate ? ["Sec-WebSocket-Extensions: permessage-deflate"] : [],
+    afterUpgrade: Buffer.concat(frames),
   });
+  const client = new WebSocket(peer.url);
 
   try {
     const { promise, resolve } = Promise.withResolvers<Outcome>();
-    client = new WebSocket(`ws://127.0.0.1:${server.port}`);
     // Settle on whichever comes first: a delivered message means the client
     // accepted frames it should have rejected.
     client.onmessage = event => {
@@ -455,14 +404,12 @@ async function sendRawFrames(
       error = (event as ErrorEvent).error?.code;
     };
     client.onclose = async event => {
-      await clientDisconnected.promise;
-      const sent = parseClientFrame(clientBytes)?.payload.readUInt16BE(0);
+      const sent = await (await peer.connection()).next();
       resolve({ error, code: event.code, reason: event.reason, messages, sent });
     };
     return await promise;
   } finally {
-    client?.close();
-    server.stop(true);
+    client.close();
   }
 }
 
@@ -662,46 +609,14 @@ test("WebSocket client honors client_max_window_bits=8", async () => {
   // Rejected if the connection fails before the events below arrive; every
   // await below races against it.
   const failed = Promise.withResolvers<never>();
-  const clientFrame = Promise.withResolvers<NonNullable<ReturnType<typeof parseClientFrame>>>();
-  let clientBytes = Buffer.alloc(0);
-  let handshakeComplete = false;
-  const server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: {
-      error(_, error) {
-        failed.reject(error);
-      },
-      data(socket, data) {
-        clientBytes = Buffer.concat([clientBytes, data]);
-        if (!handshakeComplete) {
-          const end = clientBytes.indexOf("\r\n\r\n");
-          if (end < 0) return;
-          const key = /Sec-WebSocket-Key:\s*(\S+)/i.exec(clientBytes.subarray(0, end).toString("latin1"));
-          if (!key) throw new Error("client did not send Sec-WebSocket-Key");
-          const accept = new Bun.CryptoHasher("sha1").update(key[1] + WEBSOCKET_GUID).digest("base64");
-          handshakeComplete = true;
-          clientBytes = clientBytes.subarray(end + 4);
-          socket.write(
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-              "Upgrade: websocket\r\n" +
-              "Connection: Upgrade\r\n" +
-              `Sec-WebSocket-Accept: ${accept}\r\n` +
-              "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=8\r\n" +
-              "\r\n",
-          );
-          socket.write(serverFrame);
-          socket.flush();
-        }
-        const parsed = parseClientFrame(clientBytes);
-        if (parsed) clientFrame.resolve(parsed);
-      },
-    },
+  await using peer = await createPeer({
+    headers: ["Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=8"],
+    afterUpgrade: Buffer.from(serverFrame),
   });
 
   const opened = Promise.withResolvers<void>();
   const serverMessage = Promise.withResolvers<string>();
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  const ws = new WebSocket(peer.url);
   ws.onopen = () => opened.resolve();
   ws.onmessage = event => serverMessage.resolve(event.data);
   ws.onclose = event => failed.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
@@ -713,8 +628,10 @@ test("WebSocket client honors client_max_window_bits=8", async () => {
 
     expect(await Promise.race([serverMessage.promise, failed.promise])).toBe("hello from the server");
 
-    const { payload, ...header } = await Promise.race([clientFrame.promise, failed.promise]);
-    expect(header).toEqual({ fin: true, rsv1: true, opcode: OPCODE_TEXT });
+    const connection = await peer.connection();
+    const { fin, rsv, opcode, masked, payload } = (await Promise.race([connection.nextFrame(), failed.promise]))!;
+    // 0b100 is RSV1 alone.
+    expect({ fin, rsv, opcode, masked }).toEqual({ fin: true, rsv: 0b100, opcode: OPCODE_TEXT, masked: true });
     // Inflate with the window the server negotiated. The small chunkSize makes
     // zlib resolve back-references through that 256-byte window rather than
     // through the output buffer, so a longer distance fails here as it would on
@@ -727,6 +644,5 @@ test("WebSocket client honors client_max_window_bits=8", async () => {
     expect(inflated.toString("latin1")).toBe(clientMessage);
   } finally {
     ws.close();
-    server.stop(true);
   }
 });

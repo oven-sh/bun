@@ -27,7 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
+const {
+  hideFromStack,
+  hasObserver,
+  enqueueNodeEntry,
+  PerformanceNodeEntry,
+  ErrnoException,
+} = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -376,6 +382,9 @@ const kSetHeader = Symbol("setHeader");
 const kAppendHeader = Symbol("appendHeader");
 const kAborted = Symbol("aborted");
 const kSetStreamId = Symbol("setStreamId");
+// ClientHttp2Session getter: the socket is connected, so a request with no id waits for a stream
+// slot. Node gives that request its id and native handle in request(); before connect it does not.
+const kConnected = Symbol("connected");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
@@ -2060,6 +2069,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // close() ran while the stream had no id, with a reset that node submits at once. If the
+  // stream still waits for a stream slot when a slot opens, it is finished and never submitted.
+  ResetWhilePending = 1 << 9,
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2249,6 +2261,29 @@ function streamOnResume(this: Http2Stream) {
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
   setImmediate(rstNextTick.bind(session, this.id, code));
 }
+// A request that close() reset while it waited for a stream slot is finished when a slot opens,
+// with the code of that reset: node's onStreamClose for a stream whose queued HEADERS nghttp2
+// dropped (lib/internal/http2/core.js).
+function finishResetWhilePending(this: Http2Stream) {
+  if (this.rstCode === NGHTTP2_NO_ERROR && this.readable) {
+    this.once("end", destroySelfOnEnd);
+    this.push(null);
+    this.read(0);
+  } else {
+    this.destroy();
+  }
+}
+let UV_ECANCELED: number | undefined;
+// A write that waits for 'ready' on a request that is never submitted: node completes it with
+// ECANCELED after 'close' (Http2Stream::Destroy, src/node_http2.cc). A Writable has at most one
+// write in flight.
+function cancelParkedWrite(stream: Http2Stream) {
+  const state = stream._writableState;
+  if (state.writing) {
+    UV_ECANCELED ??= $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)() as number;
+    state.onwrite(new ErrnoException(UV_ECANCELED, "write"));
+  }
+}
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
 }
@@ -2304,6 +2339,8 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
+  writing: boolean;
+  onwrite(err?: Error | null): void;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {
@@ -2570,7 +2607,21 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+      const pending = this.pending;
+      // A request that waits for a stream slot parks nothing on 'ready' or 'finish': the session
+      // finishes it when a slot opens and never submits it.
+      let waitsForSlot = false;
+      if (
+        pending &&
+        // node submits the reset at once, except for code 0 on an ended writable that still holds
+        // data. That reset waits for 'finish', so the request is sent first.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2033-L2040
+        (!this._writableState.ending || code !== NGHTTP2_NO_ERROR || this.writableLength === 0)
+      ) {
+        this[bunHTTP2StreamStatus] |= StreamState.ResetWhilePending;
+        waitsForSlot = (session as ClientHttp2Session)[kConnected];
+      }
+      if (!waitsForSlot && (pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL)) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
@@ -2586,9 +2637,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
       this.rstCode = code;
       markStreamClosed(this);
-      if (this.pending) {
-        // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
-        // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
+      if (waitsForSlot) return;
+      if (pending) {
+        // No id yet (the HEADERS frame waits for the socket to connect, or the reset waits for
+        // 'finish'): the RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
@@ -2633,7 +2685,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     let rstCode = this.rstCode;
     if (!rstCode) {
       if (err != null) {
-        if (err.code === "ABORT_ERR") {
+        if ((this[bunHTTP2StreamStatus] & StreamState.ResetWhilePending) !== 0) {
+          // close(0) already reset this stream. As in node, the error that destroys it later
+          // (a session error) does not replace that code.
+          rstCode = 0;
+        } else if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.
           rstCode = NGHTTP2_CANCEL;
         } else {
@@ -2676,15 +2732,18 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
-    if (
-      session &&
-      typeof this.#id === "number" &&
-      !this[kNeverAnnounced] &&
-      // A cleanly closed stream the native side already freed has nothing to send:
-      // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
-    ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+    if (typeof this.#id === "number") {
+      if (
+        !this[kNeverAnnounced] &&
+        // A cleanly closed stream the native side already freed has nothing to send:
+        // the deferred rstStream would be a guaranteed no-op host call per request.
+        (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
+      ) {
+        setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      }
+    } else if (this._writableState.writing && (session as ClientHttp2Session)[kConnected]) {
+      // The request waited for a stream slot and is never submitted.
+      setImmediate(cancelParkedWrite, this);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -5325,13 +5384,20 @@ class ClientHttp2Session extends Http2Session {
       // retry on a fresh connection instead of reporting a cancellation.
       self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
-      // be submitted on this session, so reject them the same way.
+      // be submitted on this session, so reject them the same way. A request that close() reset
+      // while it waited for a slot is not rejected: it stays queued and keeps its own code.
       const pendingRequests = self.#pendingRequests;
       self.#pendingRequests = null;
       if (pendingRequests !== null) {
         for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
+          const entry = pendingRequests[i];
+          if (self.#connected && (entry.req[bunHTTP2StreamStatus] & StreamState.ResetWhilePending) !== 0) {
+            (self.#pendingRequests ??= []).push(entry);
+          } else {
+            streamRejectedByGoawaySession(entry.req);
+          }
         }
+        self.#flushPendingRequests();
       }
       // A GOAWAY carrying an error code is a session error: the session and every open stream
       // error with ERR_HTTP2_SESSION_ERROR; like Node, our own goaway goes out with
@@ -5442,7 +5508,7 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     // Requests made while the socket was still connecting were queued; submit them now.
-    this.#flushPendingRequests();
+    this.#flushPendingRequests(true);
   }
 
   #onClose() {
@@ -5871,24 +5937,29 @@ class ClientHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
       this.#closed = true;
-      this.#connected = false;
       {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
         // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
-        // as its cause).
+        // as its cause). A request that close() reset while it waited for a slot is a closed
+        // stream in node: it keeps its code and gets the session error.
         const pendingRequests = this.#pendingRequests;
         this.#pendingRequests = null;
         if (pendingRequests !== null && pendingRequests.length > 0) {
           const cancelError = createPendingStreamCancelError(error);
           for (let i = 0; i < pendingRequests.length; i++) {
             const req = pendingRequests[i].req;
-            if (!req.destroyed) {
+            if (this.#connected && (req[bunHTTP2StreamStatus] & StreamState.ResetWhilePending) !== 0) {
+              destroyStreamForSessionDestroy(error ?? undefined, 0, req);
+            } else if (!req.destroyed) {
               req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
               req.destroy(cancelError);
             }
           }
         }
       }
+      // Cleared after the loop: a queued request's _destroy reads it to tell a slot wait from a
+      // connect wait.
+      this.#connected = false;
       if (socket) {
         if (!this[kGoawaySent] || code) {
           // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
@@ -6332,8 +6403,9 @@ class ClientHttp2Session extends Http2Session {
   }
 
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
-  // are available, in the order they were made.
-  #flushPendingRequests() {
+  // are available, in the order they were made. `afterConnect` marks the flush of the requests
+  // that waited for the socket to connect.
+  #flushPendingRequests(afterConnect?: boolean) {
     const queue = this.#pendingRequests;
     if (queue === null || queue.length === 0) return;
     while (queue.length > 0) {
@@ -6352,9 +6424,14 @@ class ClientHttp2Session extends Http2Session {
         break;
       }
       const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift()!;
-      // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
-      // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
+      // nghttp2 drops a request that was reset while its HEADERS waited for a stream slot:
+      // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L1458-L1462
+      // A request closed before the socket connected is still submitted: its RST_STREAM follows.
+      if (afterConnect !== true && (req[bunHTTP2StreamStatus] & StreamState.ResetWhilePending) !== 0) {
+        runInFrame(req[bunHTTP2AsyncContextFrame], finishResetWhilePending, req);
+        continue;
+      }
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {
         process.nextTick(emitOutofStreamErrorNT, req);
@@ -6385,6 +6462,16 @@ class ClientHttp2Session extends Http2Session {
       this.#trackActiveRequest(req);
       process.nextTick(emitEventNT, req, "ready");
     }
+    // A gracefully closed session waits for its queue. If the last queued requests were given
+    // up, no stream closes after this flush to finish that close.
+    if (queue.length === 0 && this.#closed && this.#connections === 0 && !this.destroyed) {
+      if (this.#pendingSettingsAckCount > 0 || (this.#pingCallbacks !== null && this.#pingCallbacks.length > 0)) {
+        scheduleSettingsAckGraceNT(this);
+      } else {
+        captureHttp2PerfFrameSnapshot(this, this.#parser);
+        setImmediate(destroyIfNotDestroyedNT, this);
+      }
+    }
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);
@@ -6392,6 +6479,10 @@ class ClientHttp2Session extends Http2Session {
 
   get [bunHTTP2Native]() {
     return this.#parser;
+  }
+
+  get [kConnected]() {
+    return this.#connected;
   }
 }
 

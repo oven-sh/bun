@@ -1770,12 +1770,13 @@ impl Lockfile {
             let buf = self.buffers.string_bytes.as_slice();
             let url = pkg_res.npm().url.slice(buf);
             let locked_integrity = pkg_metas[i].integrity;
-            let is_described = url.is_empty()
+            let is_from_registry = url.is_empty()
                 || bun_lock::url_is_under_registry(
                     url,
                     &crate::yarn_berry::registry_without_auth(scope.url.href()),
                 )
-                || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                || url == pkg.package.tarball_url.slice(&manifest.string_buf);
+            let is_described = is_from_registry
                 || if locked_integrity.tag.is_supported()
                     && locked_integrity.tag == pkg.package.integrity.tag
                 {
@@ -1828,7 +1829,9 @@ impl Lockfile {
                     pkg_meta.libc = pkg.package.libc;
                 }
             }
+            // The path alone does not say that a mirror has the registry's bytes.
             if fill_integrity
+                && is_from_registry
                 && !pkg_meta.integrity.tag.is_supported()
                 && pkg.package.integrity.tag.is_supported()
             {

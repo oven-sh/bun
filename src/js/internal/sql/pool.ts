@@ -37,6 +37,8 @@ interface NativeConnection {
   unhold(): void;
   /// a boolean: the server's word after its last complete reply
   readonly inTransaction: unknown;
+  /// PostgreSQL, a boolean: the server asked for SASL in the login that is under way or was refused
+  readonly sasl?: unknown;
 }
 
 /// A driver ignores the trailing arguments it does not take.
@@ -155,8 +157,9 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
     if (this.state === PooledConnectionState.closed) {
       return;
     }
+    const connection = this.connection;
     this.connection = null;
-    if (this.state === PooledConnectionState.connecting && tryOtherPassword(this, err)) {
+    if (this.state === PooledConnectionState.connecting && tryOtherPassword(this, err, connection)) {
       this.dial();
       return;
     }
@@ -372,9 +375,9 @@ interface Login {
   otherPassword?: boolean;
 }
 
-/// Whether to dial once more after `err`.
-function tryOtherPassword(login: Login, err: Error | null): boolean {
-  if (!login.otherPassword || (err as any)?.errno !== "28P01") {
+/// Whether to dial once more after `err`, which closed `connection`. The other methods send the password as it is.
+function tryOtherPassword(login: Login, err: Error | null, connection: Pick<NativeConnection, "sasl"> | null): boolean {
+  if (!login.otherPassword || (err as any)?.errno !== "28P01" || connection?.sasl !== true) {
     return false;
   }
   login.otherPassword = false;

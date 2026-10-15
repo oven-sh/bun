@@ -1293,6 +1293,14 @@ impl PostgresSQLConnection {
         )
     }
 
+    /// Of the login that is under way or was refused.
+    pub fn get_sasl(&self, _: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(matches!(
+            self.authentication_state.get(),
+            AuthenticationState::Sasl(_) | AuthenticationState::SaslVerified { .. }
+        ))
+    }
+
     fn close(&self) {
         // `disconnect()` only tears down connected sockets.
         if matches!(

@@ -584,8 +584,9 @@ class ListenConnection {
             adapter.ownerCallback(err => {
               err ??= adapter.connectionClosedError();
               if (live === null) {
+                const handshake = this.#handshake;
                 this.#handshake = null;
-                return tryOtherPassword(login, err) ? resolve(this.#connect(login)) : reject(err);
+                return tryOtherPassword(login, err, handshake) ? resolve(this.#connect(login)) : reject(err);
               }
               if (this.#conn === live) {
                 this.#conn = null;

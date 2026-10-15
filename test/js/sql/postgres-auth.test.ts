@@ -119,6 +119,25 @@ for (const { image, tls, logins, verifiers } of services) {
       expect(await rejection(sql`select 1 as x`)).toMatchObject(refused(username));
     });
 
+    // The other methods send the password as it is. The function is asked once for each login.
+    test.each(logins)(
+      "%s: a wrong password that SASLprep changes costs a second login with SCRAM only",
+      async (method, username, password) => {
+        await container.ready;
+        for (const logIn of [
+          (sql: SQL) => sql`select 1 as x`,
+          (sql: SQL) => sql.listen("bun_sql_test_wrong_password", () => {}),
+        ]) {
+          let asked = 0;
+          await using sql = connect(username, () => (asked++, password + "\u00aa"));
+          expect([await rejection(logIn(sql)), asked]).toMatchObject([
+            refused(username),
+            method.startsWith("scram") ? 2 : 1,
+          ]);
+        }
+      },
+    );
+
     test.each(logins)("%s: no password is refused", async (method, username) => {
       await container.ready;
       await using sql = connect(username);

@@ -39,6 +39,9 @@ for (const type of types) {
               ref: {
                 fn: "doRef",
               },
+              sasl: {
+                getter: "getSasl",
+              },
               onnotification: {
                 getter: "getOnNotification",
                 setter: "setOnNotification",

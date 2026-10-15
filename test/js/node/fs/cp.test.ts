@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, type DirectoryTree, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { isAbsolute, join } from "path";
+import { basename, isAbsolute, join, sep } from "path";
 
 const impls = [
   ["cpSync", fs.cpSync],
@@ -474,6 +474,17 @@ for (const [name, copy] of impls) {
         expect(listTree(src)).toEqual(["sub/"]);
       });
 
+      test.skipIf(isWindows)("an existing dest whose parent resolves to src through a symlink and '..'", async () => {
+        using dir = tempDir("cp-own-dotdot-merge", { "src": { "sub": {}, [deep]: {} } });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"));
+
+        const err = await copyShouldThrow(src, `${base}/alias/../${deep}`, { recursive: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(base)).toEqual(["alias", "src/", `src/${deep}/`, "src/sub/"]);
+      });
+
       test("dereference: a symlink inside an existing dest points into src", async () => {
         using dir = tempDir("cp-own-deref-dest", { "src/sub": { [deep]: {} }, "dest": {} });
         const base = String(dir);
@@ -515,6 +526,31 @@ for (const [name, copy] of impls) {
         );
       });
 
+      test("dereference: src is a symlink to the directory that holds dest", async () => {
+        using dir = tempDir("cp-own-deref-self", { "P/file.txt": "payload" });
+        const base = String(dir);
+        const src = join(base, "P", "self");
+        fs.symlinkSync(join(base, "P"), src, "junction");
+
+        const err = await copyShouldThrow(src, join(base, "P", deep), { recursive: true, dereference: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(join(base, "P"))).toEqual(["file.txt", "self"]);
+      });
+
+      test("dereference: a filter that skips the output keeps a copy made inside src legal", async () => {
+        using dir = tempDir("cp-own-deref-self-filter", { "P/file.txt": "payload" });
+        const base = String(dir);
+        const src = join(base, "P", "self");
+        fs.symlinkSync(join(base, "P"), src, "junction");
+
+        await copy(src, join(base, "P", "out"), {
+          recursive: true,
+          dereference: true,
+          filter: (s: string) => s === src || !["out", "self"].includes(basename(s)),
+        });
+        expect(listTree(join(base, "P"))).toEqual(["file.txt", "out/", "out/file.txt", "self"]);
+      });
+
       // The filter is asked first, so a copy that skips its own output still succeeds, as in Node.js.
       test("a filter that skips the output directory keeps the copy legal", async () => {
         using dir = tempDir("cp-own-filter", { "src/file.txt": "payload", "src/sub": {} });
@@ -524,6 +560,33 @@ for (const [name, copy] of impls) {
 
         await copy(src, join(base, "alias", "copy"), { recursive: true, filter: (s: string) => !s.endsWith("copy") });
         expect(listTree(join(src, "sub"))).toEqual(["copy/", "copy/file.txt", "copy/sub/"]);
+      });
+
+      test("a filter that prunes everything below the output ends the copy, as in Node.js", async () => {
+        using dir = tempDir("cp-own-filter-prune", { "src/file.txt": "payload", "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+
+        const filter = (s: string) => !s.includes(`${sep}out${sep}`);
+        await copy(src, join(base, "alias", "out"), { recursive: true, filter });
+        expect(listTree(join(src, "sub"))).toEqual(["out/", "out/file.txt", "out/sub/", "out/sub/out/"]);
+      });
+
+      test("a filter that keeps everything cannot make the copy re-enter its output", async () => {
+        using dir = tempDir("cp-own-filter-all", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+
+        const err = await copyShouldThrow(src, join(base, "alias", deep), { recursive: true, filter: () => true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(join(src, "sub"))).toEqual([
+          `${deep}/`,
+          `${deep}/sub/`,
+          `${deep}/sub/${deep}/`,
+          `${deep}/sub/${deep}/sub/`,
+        ]);
       });
 
       test("dest through a symlink that leads outside src is copied", async () => {

@@ -177,14 +177,16 @@ interface CpFrame {
   up: CpFrame | null;
 }
 
-// One per recursive directory copy: the directory a new root was made in, and that root's frame while unread.
+// One per recursive directory copy.
 interface CpWalk {
-  parent: BigIntStats | undefined;
-  root: CpFrame | null;
+  parent: BigIntStats | undefined; // the directory a new root was made in
+  root: CpFrame | null; // that root's frame, while its stat is unread
+  rootInSrc: boolean; // src is that directory, so the walk starts inside it
+  entered: boolean; // a filter let the walk into its own output once
 }
 
 function newCpWalk(): CpWalk {
-  return { parent: undefined, root: null };
+  return { parent: undefined, root: null, rootInSrc: false, entered: false };
 }
 
 function isOwnOutput(frame: CpFrame | null, srcStat: BigIntStats) {
@@ -202,6 +204,13 @@ function followedLink(dirent, opts: CpOptions) {
 function unreadRootIn(walk: CpWalk, srcStat: BigIntStats) {
   const root = walk.root;
   return root !== null && root.stat === null && areIdentical(srcStat, walk.parent) ? root : null;
+}
+
+// Only a filter can end a walk of the copy's own output, so only then is the first entry let through.
+function enterOnce(walk: CpWalk, opts: CpOptions) {
+  if (!opts.filter || walk.entered) return false;
+  walk.entered = true;
+  return true;
 }
 
 interface CpOptions {
@@ -294,7 +303,7 @@ function checkPathsSync(
         const root = unreadRootIn(walk, srcStat);
         if (root !== null) root.stat = lstatSync(root.path, { bigint: true });
       }
-      own = isOwnOutput(frame, srcStat);
+      own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
     }
     if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
@@ -446,18 +455,20 @@ function cpSyncFn(src, dest, opts, checked?) {
 
 function checkParentDir(destStat, src, dest, opts, walk?: CpWalk, srcStat?: BigIntStats) {
   const destParent = dirname(dest);
-  if (walk === undefined || destStat) {
+  if (walk === undefined) {
     if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
-    return getStats(destStat, src, dest, opts, walk, null);
+    return getStats(destStat, src, dest, opts);
   }
   let parent = statSync(destParent, { bigint: true, throwIfNoEntry: false });
   if (parent === undefined) {
     mkdirSync(destParent, { recursive: true });
     parent = statSync(destParent, { bigint: true });
   } else if (areIdentical(srcStat, parent)) {
-    throw fsCpSubdirOfSelfError(src, dest);
+    // With no filter the walk is certain to reach the root, unless the copy stops first on the existing dest.
+    if (!opts.filter && !(destStat && opts.errorOnExist && !opts.force)) throw fsCpSubdirOfSelfError(src, dest);
+    walk.rootInSrc = true;
   }
-  walk.parent = parent;
+  if (!destStat) walk.parent = parent;
   return getStats(destStat, src, dest, opts, walk, null);
 }
 
@@ -576,8 +587,10 @@ function onDir(srcStat, destStat, src, dest, opts, walk: CpWalk, frame: CpFrame 
 function mkDirAndCopy(srcMode, src, dest, opts, walk: CpWalk, frame: CpFrame | null) {
   mkdirSync(dest);
   if (frame === null) {
-    frame = { stat: null, path: dest, up: null };
+    frame = { stat: walk.rootInSrc ? lstatSync(dest, { bigint: true }) : null, path: dest, up: null };
     if (walk.parent !== undefined) walk.root = frame;
+  } else if (walk.entered) {
+    frame = { stat: lstatSync(dest, { bigint: true }), path: dest, up: frame };
   } else if (opts.dereference) {
     frame = { stat: null, path: dest, up: frame };
   }
@@ -673,4 +686,5 @@ export default {
   isOwnOutput,
   followedLink,
   unreadRootIn,
+  enterOnce,
 };

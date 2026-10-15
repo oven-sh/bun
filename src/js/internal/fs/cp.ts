@@ -18,6 +18,7 @@ const {
   isOwnOutput,
   followedLink,
   unreadRootIn,
+  enterOnce,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -83,7 +84,7 @@ async function checkPaths(src, dest, opts, walk?, frame?, dirent?) {
         const root = unreadRootIn(walk, srcStat);
         if (root !== null) root.stat = await lstat(root.path, { bigint: true });
       }
-      own = isOwnOutput(frame, srcStat);
+      own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
     }
     if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
@@ -228,20 +229,22 @@ async function cpFn(src, dest, opts, checked?) {
 
 async function checkParentDir(destStat, src, dest, opts, walk?, srcStat?) {
   const destParent = dirname(dest);
-  if (walk === undefined || destStat) {
+  if (walk === undefined) {
     const dirExists = await pathExists(destParent);
-    if (dirExists) return getStatsForCopy(destStat, src, dest, opts, walk, null);
+    if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
     await mkdir(destParent, { recursive: true });
-    return getStatsForCopy(destStat, src, dest, opts, walk, null);
+    return getStatsForCopy(destStat, src, dest, opts);
   }
   let parent = await PromisePrototypeThen.$call(stat(destParent, { bigint: true }), undefined, parentStatRejected);
   if (parent === undefined) {
     await mkdir(destParent, { recursive: true });
     parent = await stat(destParent, { bigint: true });
   } else if (areIdentical(srcStat, parent)) {
-    throw fsCpSubdirOfSelfError(src, dest);
+    // With no filter the walk is certain to reach the root, unless the copy stops first on the existing dest.
+    if (!opts.filter && !(destStat && opts.errorOnExist && !opts.force)) throw fsCpSubdirOfSelfError(src, dest);
+    walk.rootInSrc = true;
   }
-  walk.parent = parent;
+  if (!destStat) walk.parent = parent;
   return getStatsForCopy(destStat, src, dest, opts, walk, null);
 }
 
@@ -383,8 +386,10 @@ function onDir(srcStat, destStat, src, dest, opts, walk, frame) {
 async function mkDirAndCopy(srcMode, src, dest, opts, walk, frame) {
   await mkdir(dest);
   if (frame === null) {
-    frame = { stat: null, path: dest, up: null };
+    frame = { stat: walk.rootInSrc ? await lstat(dest, { bigint: true }) : null, path: dest, up: null };
     if (walk.parent !== undefined) walk.root = frame;
+  } else if (walk.entered) {
+    frame = { stat: await lstat(dest, { bigint: true }), path: dest, up: frame };
   } else if (opts.dereference) {
     frame = { stat: null, path: dest, up: frame };
   }

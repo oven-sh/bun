@@ -1035,12 +1035,11 @@ impl Run<'_> {
             Ok(only) => only,
             Err(Fatal(error)) => return self.refuse_flag(&error),
         };
-        let staged = || only.as_ref().map(|it| it.already_read(false));
-        store.provide(staged().unwrap_or_default());
-        let inferred = (options.infer_globals == Some(true) || by_options).then(|| {
-            let staged = staged().unwrap_or_default();
-            Inferred::new(environment, pool.threads(), by_options, staged)
-        });
+        if let Some(only) = &only {
+            store.provide(only.already_read(false));
+        }
+        let inferred = (options.infer_globals == Some(true) || by_options)
+            .then(|| Inferred::new(environment, pool.threads(), by_options));
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,

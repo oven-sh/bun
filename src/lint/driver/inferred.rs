@@ -14,7 +14,7 @@ use bun_lint::linter::globals::{
 };
 use bun_sema::resolve::to_path;
 use bun_sema::util::{AppendVec, FxHashMap};
-use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
+use bun_sema_driver::host::{Provided, from_native, to_native};
 use bun_sema_driver::outline::{Outline, Outlines};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
@@ -22,8 +22,6 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct Inferred<'e> {
     environment: &'e Environment<'e>,
     threads: usize,
-    /// `git::Files::already_read`
-    staged: AlreadyRead,
     /// The files of the run that can ask, each as [`bun_lint::ast::File::path`] has it.
     paths: OnceLock<Vec<Vec<u8>>>,
     tables: OnceLock<Tables>,
@@ -159,12 +157,10 @@ impl<'e> Inferred<'e> {
         environment: &'e Environment<'e>,
         threads: usize,
         by_options: bool,
-        staged: AlreadyRead,
     ) -> Inferred<'e> {
         Inferred {
             environment,
             threads,
-            staged,
             paths: OnceLock::new(),
             tables: OnceLock::new(),
             searched: OnceLock::new(),
@@ -275,11 +271,7 @@ impl<'e> Inferred<'e> {
             after_file: None,
             declaration_file_emitted: None,
         };
-        let provided = Provided {
-            already_read: self.staged.clone(),
-            ..Default::default()
-        };
-        bun_sema_driver::check_provided_then(&request, provided, |report| {
+        bun_sema_driver::check_provided_then(&request, Provided::default(), |report| {
             let mut tables = Tables {
                 is_case_sensitive: report.is_case_sensitive,
                 of_file: FxHashMap::default(),

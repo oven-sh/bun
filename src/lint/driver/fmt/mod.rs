@@ -19,7 +19,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
+use bun_format::options::{Code, Goal, LineEnding, ParsePart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -1837,6 +1837,10 @@ impl Run<'_> {
                     ]
                     .concat()
                 })?;
+                if is_partly_staged(target) {
+                    // Git can store other line endings than it checks out.
+                    options.options.line_ending = LineEnding::Auto;
+                }
                 let kind = Kind::with_options(&target.path, &options.options);
                 tailwind::only_where_sorted(&mut options.options, kind);
                 let formatted = match format(

@@ -698,6 +698,65 @@ describe.concurrent("bun lint --staged reads a partly staged file as it's staged
   });
 });
 
+test.concurrent(
+  "bun fmt --staged doesn't judge the line endings that git stores for a partly staged file",
+  async () => {
+    using repo = await repository({ ".gitattributes": "*.js text eol=crlf\n", "partly.js": tidy, "whole.js": tidy });
+    const { root } = repo;
+    const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+    for (const name of ["partly.js", "whole.js"]) write(root, name, crlf(tidy + tidy.replace("a", "b")));
+    await git(root, "add", "-A");
+    write(root, "partly.js", crlf(tidy));
+    // The index has them with LF.
+    expect(await git(root, "show", ":partly.js")).not.toContain("\r");
+    for (const flags of [["--check"], []]) {
+      const { stderr, exitCode } = await bun(root, ["fmt", "--staged", "--end-of-line", "crlf", ...flags]);
+      expect(stderr).not.toContain("partly.js");
+      expect(exitCode).toBe(0);
+    }
+  },
+);
+
+test.concurrent.each(commands)("bun %s --staged only reads from the index what it has a use for", async command => {
+  using repo = await repository({ "asset.bin": "1", "other.js": tidy, "whole.js": tidy });
+  const { root } = repo;
+  write(root, "whole.js", tidy + tidy.replace("a", "b"));
+  await git(root, "add", "-A");
+  const looking = command === "lint" ? ["lint"] : ["fmt", "--check"];
+  async function reads() {
+    using trace = tempDir("bun-lint-git-trace", {});
+    const { exitCode } = await bun(root, [...looking, "--staged"], { GIT_TRACE: join(String(trace), "trace") });
+    expect(exitCode).toBe(0);
+    return read(String(trace), "trace").includes("cat-file");
+  }
+  expect(await reads()).toBe(false);
+  // Not staged, and nothing can import it.
+  write(root, "asset.bin", "2");
+  expect(await reads()).toBe(false);
+  write(root, "other.js", tidy + "\n");
+  expect(await reads()).toBe(true);
+});
+
+test.concurrent("bun lint --staged reads a file with a conflict from the disk", async () => {
+  using repo = await repository({ "conflict.js": tidy, "whole.js": tidy });
+  const { root } = repo;
+  await git(root, "checkout", "-q", "-b", "other");
+  write(root, "conflict.js", "export const theirs = 1;\n");
+  write(root, "whole.js", 'import { both } from "./conflict.js";\nexport { both };\n');
+  await commit(root);
+  await git(root, "checkout", "-q", "main");
+  write(root, "conflict.js", "export const ours = 1;\n");
+  await commit(root);
+  await run(["git", "merge", "other"], root);
+  expect(await git(root, "status", "--porcelain")).toBe("UU conflict.js\nM  whole.js\n");
+  // Resolved, but not staged yet.
+  write(root, "conflict.js", "export const both = 1;\n");
+  expect(await selected(root, root, ["lint", "--staged"])).toEqual(["whole.js"]);
+  const { stdout, exitCode } = await bun(root, ["lint", "--staged", "--rule", "import/named: error", "-f", "unix"]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows).concurrent.each(commands)(
   "bun %s --staged skips a file that is staged as a symlink",
   async command => {

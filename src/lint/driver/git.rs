@@ -5,9 +5,11 @@
 //! external diff, no textconv, no submodule scan, no fetch.
 
 use crate::args::{UsageError, error};
+use crate::embedded::Framework;
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
+use bun_sema::resolve::ScriptKind;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, as_read, from_native};
 use std::borrow::Cow;
@@ -135,7 +137,8 @@ pub(crate) struct Files<'e> {
     top: Vec<u8>,
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
-    /// For `--staged`: what the index has of each file that is different on disk, or gone from it.
+    /// For `--staged`: what the index has of a file that is different on disk, or gone from it. It has the files in `named`,
+    /// and those that one of them can import. The text is as git stores it: a checkout can give it other line endings.
     in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
 }
 
@@ -242,46 +245,47 @@ impl<'e> Files<'e> {
         }
         // `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
         let mut parts = strings::split(&finished.stdout, b"\0");
-        let mut different = Vec::new();
+        let (mut is_no_file, mut wanted) = (FxHashSet::default(), Vec::new());
         while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
             let mut fields = strings::split(entry, b" ");
-            let (Some(mode), Some(id), Some(path)) = (fields.next(), fields.nth(1), parts.next())
+            let (Some(mode), Some(id), Some(name)) = (fields.next(), fields.nth(1), parts.next())
             else {
                 return Err(self.unreadable(&finished));
             };
-            let path = paths::join(top, path);
-            match mode.starts_with(b":100") {
-                true => different.push((path, id.to_vec())),
-                false => _ = self.named.remove(&path),
+            let path = paths::join(top, name);
+            // A conflict has no mode, and a second entry with "our" side of it.
+            if !mode.starts_with(b":100") || is_no_file.contains(&path) {
+                self.named.remove(&path);
+                is_no_file.insert(path);
+                continue;
+            }
+            let can_be_imported = ScriptKind::from_file_name(name).is_some()
+                || name.ends_with(b".json")
+                || Framework::of(name).is_some();
+            if can_be_imported || self.named.contains(&path) {
+                wanted.push((path, id));
             }
         }
-        self.in_the_index = self.blobs(different)?;
-        Ok(())
-    }
-
-    /// Reads blobs. Takes and returns paths, each with its blob's ID and then with its blob's content.
-    fn blobs(&self, wanted: Vec<(Vec<u8>, Vec<u8>)>) -> Result<FxHashMap<Vec<u8>, Vec<u8>>, Fatal> {
-        let mut blobs = FxHashMap::default();
         if wanted.is_empty() {
-            return Ok(blobs);
+            return Ok(());
         }
-        let ids: Vec<&[u8]> = wanted.iter().map(|it| &it.1[..]).collect();
+        let ids: Vec<&[u8]> = wanted.iter().map(|it| it.1).collect();
         let input = [&ids.join(&b'\n')[..], b"\n"].concat();
-        let finished = self.git(&[b"cat-file", b"--batch"], &input)?;
-        let mut rest = &finished.stdout[..];
+        let read = self.git(&[b"cat-file", b"--batch"], &input)?;
+        let mut rest = &read.stdout[..];
         for (path, _) in wanted {
             // `<ID> blob <size>`, a line break, the content, a line break.
             let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
                 let size = strings::rsplit_once_char(first, b' ')?.1;
                 after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
             });
-            let Some((content, after)) = content.filter(|_| finished.is_ok) else {
-                return Err(self.unreadable(&finished));
+            let Some((content, after)) = content.filter(|_| read.is_ok) else {
+                return Err(self.unreadable(&read));
             };
-            blobs.insert(path, content.to_vec());
+            self.in_the_index.insert(path, content.to_vec());
             rest = after.get(1..).unwrap_or_default();
         }
-        Ok(blobs)
+        Ok(())
     }
 
     /// Resolves `written` to a commit ID. Later git calls only get the ID, because they could parse `written` as a flag

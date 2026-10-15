@@ -16,7 +16,7 @@ import {
   tls as tlsCert,
   tmpdirSync,
 } from "harness";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -35,7 +35,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -2229,6 +2229,198 @@ describe.concurrent("typeOfService option", () => {
       expect(got).toEqual({ viaConnect: 0x10, viaSocket: 0x10, plain: 0 });
     } finally {
       server.close();
+    }
+  });
+});
+
+// Node's handle of a unix socket is a Pipe, which has no type of service: the net.Socket keeps the value,
+// never throws, and applies it when it later connects over TCP. Every value below is what node v26.3.0 gives.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L661-L710
+// Not on Windows: there the two methods report no error on any kind of socket.
+describe.skipIf(isWindows)("type of service of a unix socket", () => {
+  let paths = 0;
+  const socketPath = () => join(socket_domain, `tos${paths++}.sock`);
+  // [before, setTypeOfService() returned the socket, after], or what was thrown.
+  const setAndGet = (socket: Socket, value: number) => {
+    try {
+      return [socket.getTypeOfService(), socket.setTypeOfService(value) === socket, socket.getTypeOfService()];
+    } catch (e) {
+      const { code, syscall } = e as NodeJS.ErrnoException;
+      return `${code} (${syscall})`;
+    }
+  };
+
+  for (const secure of [false, true]) {
+    it(`is kept while connecting, once connected and on the accepting side${secure ? " of a TLS socket" : ""}`, async () => {
+      const accepted = Promise.withResolvers<unknown>();
+      const onConnection = (socket: Socket) => {
+        socket.on("error", () => {});
+        accepted.resolve(setAndGet(socket, 0x30));
+      };
+      const server = secure ? createTLSServer(tlsCert, onConnection) : createServer(onConnection);
+      const path = socketPath();
+      await once(server.listen(path), "listening");
+      try {
+        const client = secure ? tlsConnect({ path, rejectUnauthorized: false }) : connect(path);
+        const connecting = setAndGet(client, 0x10);
+        await once(client, secure ? "secureConnect" : "connect");
+        const got = {
+          connecting,
+          connected: setAndGet(client, 0x20),
+          sameValue: setAndGet(client, 0x20),
+          accepted: await accepted.promise,
+        };
+        client.destroy();
+        await once(client, "close");
+        expect({ ...got, closed: client.getTypeOfService() }).toEqual({
+          connecting: [0, true, 0x10],
+          connected: [0x10, true, 0x20],
+          sameValue: [0x20, true, 0x20],
+          accepted: [0, true, 0x30],
+          closed: 0x20,
+        });
+      } finally {
+        server.close();
+      }
+    });
+  }
+
+  it("keeps a value set before connect() and the typeOfService option", async () => {
+    const path = socketPath();
+    const server = createServer(socket => socket.on("error", () => {}).resume());
+    await once(server.listen(path), "listening");
+    try {
+      const preset = new Socket().setTypeOfService(0x10).connect(path);
+      const viaOption = connect({ path, typeOfService: 0x20 });
+      const read = () => [setAndGet(preset, 0x10), setAndGet(viaOption, 0x20)];
+      const connecting = read();
+      await Promise.all([once(preset, "connect"), once(viaOption, "connect")]);
+      const got = { connecting, connected: read() };
+      for (const socket of [preset, viaOption]) socket.destroy();
+      const kept = [
+        [0x10, true, 0x10],
+        [0x20, true, 0x20],
+      ];
+      expect(got).toEqual({ connecting: kept, connected: kept });
+    } finally {
+      server.close();
+    }
+  });
+
+  // 'connectionAttempt' runs before the dial starts, 'close' after the handle is gone.
+  it("is kept in every listener of a dial", async () => {
+    const path = socketPath();
+    const server = createServer(socket => socket.on("error", () => {}).end("bye"));
+    await once(server.listen(path), "listening");
+    try {
+      const socket = new Socket();
+      const seen: Record<string, unknown> = {};
+      let value = 1;
+      for (const event of ["connectionAttempt", "connect", "ready", "data", "end", "close"]) {
+        socket.once(event, () => {
+          seen[event] = setAndGet(socket, value++);
+        });
+      }
+      socket.connect(path);
+      await once(socket, "close");
+      expect(seen).toEqual({
+        connectionAttempt: [0, true, 1],
+        connect: [1, true, 2],
+        ready: [2, true, 3],
+        data: [3, true, 4],
+        end: [4, true, 5],
+        close: [5, true, 6],
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The socket sent its FIN first, so its native handle can be closed already when 'end' arrives.
+  it("is kept in the 'end' listener of a socket that ended first", async () => {
+    const path = socketPath();
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      socket
+        .on("error", () => {})
+        .on("end", () => socket.end())
+        .resume();
+    });
+    await once(server.listen(path), "listening");
+    try {
+      const socket = connect({ path, allowHalfOpen: true }, () => socket.end());
+      let inEnd: unknown;
+      socket.on("end", () => {
+        inEnd = setAndGet(socket, 0x10);
+      });
+      socket.resume();
+      await once(socket, "close");
+      expect(inEnd).toEqual([0, true, 0x10]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // An extra stdio pipe is a Pipe handle in node too: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
+  it("is kept by an extra stdio pipe of a child process", async () => {
+    const child = spawn(bunExe(), ["-e", "require('fs').writeSync(3, 'x')"], {
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "inherit", "pipe"],
+    });
+    const pipe = child.stdio[3] as Socket;
+    const got: Record<string, unknown> = { beforeData: setAndGet(pipe, 0x10), data: "" };
+    pipe.on("data", chunk => {
+      got.data += String(chunk);
+      got.inData ??= setAndGet(pipe, 0x20);
+    });
+    const [[exitCode]] = await Promise.all([once(child, "exit"), once(pipe, "close")]);
+    expect({ ...got, exitCode }).toEqual({
+      beforeData: [0, true, 0x10],
+      data: "x",
+      inData: [0x10, true, 0x20],
+      exitCode: 0,
+    });
+  });
+
+  it("belongs to the socket: set over a unix socket, applied over TCP, kept back over a unix socket", async () => {
+    const path = socketPath();
+    const pipeServer = createServer(socket => socket.on("error", () => {}).resume());
+    const tcpServer = createServer(socket => socket.on("error", () => {}).resume());
+    await Promise.all([
+      once(pipeServer.listen(path), "listening"),
+      once(tcpServer.listen(0, "127.0.0.1"), "listening"),
+    ]);
+    try {
+      const socket = connect(path);
+      await once(socket, "connect");
+      const overPipe = setAndGet(socket, 0x20);
+      socket.destroy();
+      await once(socket, "close");
+
+      socket.connect((tcpServer.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      // A TCP handle that is not connected yet answers for itself, also after a unix socket.
+      const tcpConnecting = setAndGet(socket, 0x20);
+      await once(socket, "connect");
+      // The kernel may rewrite the two ECN bits; the upper six (DSCP) are what was asked for.
+      const overTcp = socket.getTypeOfService() & 0xfc;
+      socket.setTypeOfService(0x40);
+      socket.destroy();
+      await once(socket, "close");
+
+      socket.connect(path);
+      const backOverPipe = setAndGet(socket, 0x60);
+      await once(socket, "connect");
+      const got = { overPipe, tcpConnecting, overTcp, backOverPipe, connected: socket.getTypeOfService() };
+      socket.destroy();
+      expect(got).toEqual({
+        overPipe: [0, true, 0x20],
+        tcpConnecting: "EBADF (getTypeOfService)",
+        overTcp: 0x20,
+        backOverPipe: [0x40, true, 0x60],
+        connected: 0x60,
+      });
+    } finally {
+      pipeServer.close();
+      tcpServer.close();
     }
   });
 });

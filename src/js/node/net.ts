@@ -262,7 +262,7 @@ let BlockList, SocketAddress;
 function lazyBlockList() {
   return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 }
-const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
+const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 2);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
@@ -277,6 +277,8 @@ const checkServerIdentityInHandshake = $newRustFunction(
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
+// Node's `handle instanceof Pipe`: a unix socket or a named pipe. One native class backs both kinds of handle here.
+const isPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
@@ -1995,8 +1997,8 @@ function Socket(options?): void {
   const typeOfService = opts.typeOfService;
   if (typeOfService !== undefined) {
     validateInt32(typeOfService, "options.typeOfService", 0, 255);
+    this[kSetTOS] = typeOfService;
   }
-  this[kSetTOS] = typeOfService;
 
   this[khandlers] = SocketHandlers2;
   this[kDestroyOnRead] = false;
@@ -2443,7 +2445,7 @@ Socket.prototype.connect = function connect(...args) {
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
-    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
+    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function", pipe);
     initSocketHandle(this);
   }
 
@@ -2915,7 +2917,8 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
     const err = this._handle.setTypeOfService(tos);
     // Windows often restricts TOS or reports errors even when partially
     // applied - best-effort there, the way Node treats it.
-    if (err && process.platform !== "win32") {
+    // Node's Pipe handle has no setTypeOfService: the socket only keeps the value.
+    if (err && process.platform !== "win32" && !isPipeSocket(this._handle)) {
       throw new ErrnoException(err, "setTypeOfService");
     }
   }
@@ -2929,8 +2932,8 @@ Socket.prototype.getTypeOfService = function getTypeOfService() {
   const res = this._handle.getTypeOfService();
   if (typeof res === "number" && res < 0) {
     // getsockopt(IP_TOS) commonly fails on Windows: fall back to the cached
-    // value the way Node does.
-    if (process.platform === "win32") {
+    // value the way Node does. A pipe has only the cached value.
+    if (process.platform === "win32" || isPipeSocket(this._handle)) {
       return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
     }
     throw new ErrnoException(res, "getTypeOfService");

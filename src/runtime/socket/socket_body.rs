@@ -875,6 +875,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         log!("setTypeOfService({})", tos);
+        if let Some(errno) = this.open_pipe_type_of_service_errno() {
+            return Ok(JSValue::from(errno));
+        }
         Ok(JSValue::from(this.socket.get().set_tos(tos)))
     }
 
@@ -888,7 +891,57 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         log!("getTypeOfService()");
+        if let Some(errno) = this.open_pipe_type_of_service_errno() {
+            return Ok(JSValue::from(errno));
+        }
         Ok(JSValue::from(this.socket.get().get_tos()))
+    }
+
+    /// usockets answers `-EINVAL` for an open unix socket, after a
+    /// `getsockname` to learn the family. When the state already says the
+    /// socket is one, this is that answer without the syscall.
+    fn open_pipe_type_of_service_errno(&self) -> Option<i32> {
+        let socket = self.socket.get();
+        (self.pipe_from_state() == Some(true)
+            && matches!(socket.socket, uws::InternalSocket::Connected(_))
+            && !socket.is_closed())
+        .then_some(-(sys::SystemErrno::EINVAL as i32))
+    }
+
+    /// `Some` when the state says, with no syscall, whether Node's handle for
+    /// this socket is a `Pipe` (a unix socket or a named pipe) or a `TCP`.
+    /// The last dial wrote `connection`. An accepted socket has its listener.
+    fn pipe_from_state(&self) -> Option<bool> {
+        use super::listener::UnixOrHost;
+        if self.socket.get().is_named_pipe() {
+            return Some(true);
+        }
+        match self.connection.get() {
+            Some(UnixOrHost::Unix(_)) => return Some(true),
+            Some(UnixOrHost::Host { .. }) => return Some(false),
+            Some(UnixOrHost::Fd(_)) | None => {}
+        }
+        match &self.handlers.get().as_ref()?.listener()?.connection {
+            UnixOrHost::Unix(_) => Some(true),
+            UnixOrHost::Host { .. } => Some(false),
+            UnixOrHost::Fd(_) => None,
+        }
+    }
+
+    /// Whether Node's handle for this socket is a `Pipe`, which has none of
+    /// the TCP-only methods. A socket whose state does not say (an adopted
+    /// fd, a socket of an fd listener, the raw half of a TLS upgrade) asks the
+    /// kernel, and a pipe keeps the answer in `connection`.
+    pub(crate) fn is_pipe(&self) -> bool {
+        if let Some(pipe) = self.pipe_from_state() {
+            return pipe;
+        }
+        if !fd_is_pipe(self.socket.get().fd()) {
+            return false;
+        }
+        self.connection
+            .set(Some(super::listener::UnixOrHost::Unix(Box::default())));
+        true
     }
 
     /// `handle.resumeSNI(secureContextOrNull, isError)` - resumes a server
@@ -5029,6 +5082,54 @@ pub(crate) fn js_is_named_pipe_socket(
         return Ok(JSValue::from(this.socket.get().is_named_pipe()));
     }
     Ok(JSValue::FALSE)
+}
+
+/// node:net's stand-in for Node's `handle instanceof Pipe`: one native class
+/// backs both kinds of handle here.
+#[bun_jsc::host_fn]
+pub(crate) fn js_is_pipe_socket(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+
+    let [socket, _, _] = callframe.arguments_as_array::<3>();
+    if callframe.arguments_count() < 1 {
+        return Err(global.throw_not_enough_arguments(
+            "isPipeSocket",
+            1,
+            callframe.arguments_count() as usize,
+        ));
+    }
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        return Ok(JSValue::from(this.is_pipe()));
+    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+        return Ok(JSValue::from(this.is_pipe()));
+    }
+    Ok(JSValue::FALSE)
+}
+
+/// Whether Node would wrap `fd` in a `Pipe`: it is a unix socket, or not a
+/// socket at all (a FIFO). An fd that cannot be asked is not one.
+#[cfg(not(windows))]
+fn fd_is_pipe(fd: sys::Fd) -> bool {
+    if !fd.is_valid() {
+        return false;
+    }
+    let mut storage: libc::sockaddr_storage = bun_core::ffi::zeroed();
+    let mut len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+    // SAFETY: getsockname(2) writes at most `len` bytes into `storage`.
+    let rc = unsafe { libc::getsockname(fd.native(), (&raw mut storage).cast(), &raw mut len) };
+    if rc == 0 {
+        c_int::from(storage.ss_family) == libc::AF_UNIX
+    } else {
+        sys::last_errno() == sys::SystemErrno::ENOTSOCK as c_int
+    }
+}
+
+#[cfg(windows)]
+fn fd_is_pipe(_fd: sys::Fd) -> bool {
+    false
 }
 
 #[bun_jsc::host_fn]

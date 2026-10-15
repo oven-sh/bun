@@ -172,7 +172,8 @@ public:
     // Any call that runs user JS can detach or resize a buffer, so this reads it again on
     // every call. Do not hold the result across such a call.
     std::span<const uint8_t> span() const;
-    // Node's CheckSizeInt32(): INT_MAX bytes, which maxVectorSize also is. Tests can lower it.
+    // Node's CheckSizeInt32(), https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_util.h#L673
+    // maxVectorSize is INT_MAX too, and tests can lower it.
     bool isTooBig() const { return span().size() > Bun::maxVectorSize<uint8_t>(); }
     [[nodiscard]] std::optional<ncrypto::DataPointer> tryCopy() const { return tryCopyBytes(span()); }
     // For a job context. A job that runs on the work pool owns a copy, and nullopt means the

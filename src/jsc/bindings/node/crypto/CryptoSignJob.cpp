@@ -278,8 +278,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // The option getters and the key parsing below run user JS, so the bytes of `data` and
-    // `signature` are read after them, as Node does.
+    // The option getters and the key parsing below run user JS. Node reads the bytes of `data`
+    // and `signature` after them, in native code, so they are read at the end here too.
     inputs.data = borrowArrayBufferOrView(globalObject, scope, dataValue, "data"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -344,6 +344,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_sig.cc#L601-L605
     if (inputs.data.isTooBig()) [[unlikely]] {
         ERR::OUT_OF_RANGE(scope, globalObject, "data is too big"_s);
         return {};
@@ -421,6 +422,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     }
 
     if (mode == Mode::Verify) {
+        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_sig.cc#L648-L653
         if (inputs.signature.isTooBig()) [[unlikely]] {
             ERR::OUT_OF_RANGE(scope, globalObject, "signature is too big"_s);
             return {};

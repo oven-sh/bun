@@ -293,7 +293,8 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
     auto keyInput = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // No size bound: HMAC_Init_ex takes a size_t here. Node fails past INT_MAX only because OpenSSL's takes an int.
+    // No size limit. Node fails past INT_MAX bytes only because it passes the length as an int:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_hmac.cc#L71-L101
     hmac->init(globalObject, scope, algorithm, keyInput.span());
     RETURN_IF_EXCEPTION(scope, {});
 

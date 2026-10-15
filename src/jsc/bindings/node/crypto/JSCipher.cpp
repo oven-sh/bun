@@ -180,6 +180,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_cipher.cc#L868-L872
     if (oaepLabel.isTooBig()) [[unlikely]] {
         ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "oaepLabel is too big"_s);
         return {};

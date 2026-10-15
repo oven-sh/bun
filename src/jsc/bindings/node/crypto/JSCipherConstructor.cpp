@@ -142,7 +142,8 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     WTF::String cipherString = cipherValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The authTagLength getter above runs user JS, so the key bytes are read only now.
+    // The authTagLength getter above runs user JS. Node reads the key after it:
+    // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_cipher.cc#L303-L310
     auto keyData = keyInput.span();
     if (keyData.size() > Bun::maxVectorSize<uint8_t>()) [[unlikely]] {
         return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s);

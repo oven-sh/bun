@@ -22,7 +22,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     auto input = KeyObject::prepareSecretKey(lexicalGlobalObject, scope, keyValue, encodingValue, true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // A KeyObject owns a snapshot of the bytes, so this is the one caller that copies them.
+    // A KeyObject owns a snapshot of the bytes, so this caller copies them. No size limit, like
+    // Node: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_keys.cc#L1119-L1120
     auto copy = input.bytes.tryCopy();
     if (!copy) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, scope);

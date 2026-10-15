@@ -164,6 +164,8 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
     JSValue infoValue = callFrame->argument(3);
     JSValue lengthValue = callFrame->argument(4);
 
+    // The checks run in Node's order. In JS: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/hkdf.js#L54-L113
+    // Then in native code: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_hkdf.cc#L59-L103
     V::validateString(scope, lexicalGlobalObject, hashValue, "digest"_s);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -201,7 +203,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
         return std::nullopt;
     }
 
-    // Like Node: after the digest, and a KeyObject ikm has no limit.
+    // A KeyObject ikm has no limit.
     if (inputs.key.isTooBig()) [[unlikely]] {
         ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "key is too big"_s);
         return std::nullopt;

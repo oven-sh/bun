@@ -52,13 +52,13 @@ fn read(name: &[u8]) -> Option<Cow<'static, [u8]>> {
     text.ok().map(Cow::Owned)
 }
 
-pub(crate) const BUNDLED: BundledLibs = BundledLibs {
+pub const BUNDLED: BundledLibs = BundledLibs {
     has: |name| frame(name).is_some(),
     read,
 };
 
 /// `process.versions.typescript`
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__typescript_version() -> *const core::ffi::c_char {
+#[bun_core::feature::behind(bun_runtime::features::Bun__typescript_version, check, lint, fmt)]
+extern "C" fn typescript_version() -> *const core::ffi::c_char {
     bun_sema_driver::TYPESCRIPT_VERSION.as_ptr()
 }

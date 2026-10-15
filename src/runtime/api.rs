@@ -16,8 +16,6 @@ pub(crate) use crate::socket::Listener;
 pub(crate) use crate::socket::NewSocket;
 pub(crate) use crate::socket::SocketAddress;
 
-pub(crate) use crate::crypto;
-
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
 // Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
 // the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
@@ -37,8 +35,6 @@ pub(crate) mod crash_handler_jsc;
 pub(crate) mod cron;
 #[path = "api/cron_parser.rs"]
 pub(crate) mod cron_parser;
-#[path = "api/csrf_jsc.rs"]
-pub(crate) mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]
 pub(crate) mod filesystem_router;
 #[path = "api/glob.rs"]

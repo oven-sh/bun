@@ -22,7 +22,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { assert } from "./error.ts";
+import { assert, BuildError } from "./error.ts";
 import {
   bunIncludes,
   computeFlags,
@@ -35,6 +35,7 @@ import {
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
+import { clangFeatureFlags, crateOfSource, emitFeatureCheck } from "./rust/features.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
@@ -177,22 +178,36 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, depsByName);
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
   depsByName.set(rustArgon2.name, rustArgon2Dep);
-  const rustObjects = emitRust(n, cfg, {
+  const {
+    rlibs: rustObjects,
+    featureCrates,
+    islands,
+  } = emitRust(n, cfg, {
     codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
     shimValidations: emitShimVerify(n, cfg),
   });
 
+  const crateOf = (source: string) => crateOfSource(featureCrates, codegen.crateOfCpp, source);
+
   // ─── Step 2: resolve all deps ───
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
+  // Of what the link takes: its island.
+  const islandOf = new Map<string, number | undefined>();
   for (const dep of allDeps) {
-    const resolved = depsByName.get(dep.name) ?? resolveDep(n, cfg, dep, depsByName);
+    const crate = featureCrates.find(it => it.name === dep.crate);
+    // Before cargo has planned, nothing is known of the crates. ninja configures again once it has.
+    if (dep.crate !== undefined && crate === undefined && rustObjects.length > 0) {
+      throw new BuildError(`${dep.name} is for ${dep.crate}, which is not a crate of a feature`);
+    }
+    const resolved = depsByName.get(dep.name) ?? resolveDep(n, cfg, dep, depsByName, crate);
     if (resolved !== null) {
       deps.push(resolved);
       depsByName.set(dep.name, resolved);
+      if (crate !== undefined) for (const object of resolved.objects) islandOf.set(object, crate.island);
     }
   }
 
@@ -281,8 +296,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // separate — those are already large single TUs (ZigGeneratedClasses.cpp
   // is 3.3 MB) and bundling them would serialize work. Always called so
   // stale bundles are pruned even with --unifiedSources=false.
-  const split = generateUnifiedSources(cfg, sources.cxx);
-  const cxxSources = [...split.unified, ...split.standalone];
+  // What is a feature's is not bundled: a bundle is compiled for the features of all that is in it.
+  const ofFeatures = sources.cxx.filter(src => crateOf(src) !== undefined);
+  const split = generateUnifiedSources(
+    cfg,
+    sources.cxx.filter(src => !ofFeatures.includes(src)),
+  );
+  const cxxSources = [...split.unified, ...split.standalone, ...ofFeatures];
   const cSources = [...sources.c];
 
   // Sources that must NOT use the PCH. Anything that needs to set defines
@@ -354,8 +374,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
+    const crate = crateOf(src);
+    const forFeatures = clangFeatureFlags(cfg, crate);
+    // A file of a crate includes what is beside it by name, also through a header of elsewhere (hwy/foreach_target.h).
+    const beside = crate === undefined ? [] : [`-I${crate.directory}`];
     const opts: Parameters<typeof cxx>[3] = {
-      flags: [...cxxFlagsFull, ...extraFlags],
+      flags: [...cxxFlagsFull, ...extraFlags, ...beside, ...forFeatures.flags],
+      implicitInputs: forFeatures.inputs,
     };
     if (!noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
@@ -364,20 +389,24 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
       // Per-file PCH opt-out — this cxx needs the dep signal directly.
-      opts.implicitInputs = depHeaderSignal;
+      opts.implicitInputs = [...depHeaderSignal, ...forFeatures.inputs];
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    cxxObjects.push(cxx(n, cfg, src, opts));
+    const object = cxx(n, cfg, src, opts);
+    islandOf.set(object, crate?.island);
+    cxxObjects.push(object);
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
   const compileC = (src: string): string => {
+    const forFeatures = clangFeatureFlags(cfg, crateOf(src));
     const obj = cc(n, cfg, src, {
-      flags: cFlagsFull,
-      implicitInputs: depHeaderSignal,
+      flags: [...cFlagsFull, ...forFeatures.flags],
+      implicitInputs: [...depHeaderSignal, ...forFeatures.inputs],
       orderOnlyInputs: codegenOrderOnly,
     });
+    islandOf.set(obj, crateOf(src)?.island);
     cObjects.push(obj);
     return obj;
   };
@@ -429,6 +458,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
+  for (const input of [...linkObjects, ...depLink.lazy, ...depLibs]) {
+    islandOf.set(input, islandOf.get(input) ?? featureCrates.find(crate => crate.rlib === input)?.island);
+  }
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     lazyObjects: depLink.lazy,
@@ -439,7 +471,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutputs: linkerMapOutputs(cfg),
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
-    validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
+    validations: [
+      ...depChecks,
+      ...emitFeatureCheck(n, cfg, islands, islandOf, resolve(cfg.buildDir, exeName + cfg.exeSuffix)),
+      ...postLinkChecks(cfg, exeName),
+    ],
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───

@@ -42,6 +42,7 @@ import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
+import { featureCratesOf, manifestOf } from "./rust/classes.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { generateXmlByteClass } from "./xmlByteClass.ts";
 
@@ -236,6 +237,9 @@ export interface CodegenOutputs {
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
 
+  /** Of those, the ones that are a feature's: the name of the crate that each is compiled with. */
+  crateOfCpp: Map<string, string>;
+
   /**
    * Generated headers that are #included by hand-written .cpp files.
    * The PCH order-depends on all of these, and cxx waits on PCH — so
@@ -297,6 +301,7 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources): Cod
     generatedTypes: [],
     rustInputs: [],
     cppSources: [],
+    crateOfCpp: new Map(),
     cppHeaders: [],
     cppAll: [],
     bindgenV2Cpp: [],
@@ -724,12 +729,22 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // rebuild that crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
+  // The same for the classes of a feature, which are compiled with its crate.
+  for (const crate of featureCratesOf(sources.zigGeneratedClasses)) {
+    o.crateOfCpp.set(resolve(cfg.codegenDir, crate.cpp), crate.name);
+    outputs.push(resolve(cfg.codegenDir, crate.cpp), resolve(cfg.codegenDir, crate.rust));
+  }
   const types = resolve(cfg.typesDir, "ZigGeneratedClasses.d.ts");
 
   n.build({
     outputs: [...outputs, types],
     rule: "codegen",
     inputs: [script, ...sources.zigGeneratedClasses],
+    // Which crate's a class is, is in the manifests.
+    implicitInputs: [
+      resolve(cfg.cwd, "scripts", "build", "rust", "classes.ts"),
+      ...new Set(sources.zigGeneratedClasses.map(manifestOf)),
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -741,7 +756,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.all.push(...outputs, types);
   o.generatedTypes.push(types);
   o.rustInputs.push(...outputs);
-  o.cppSources.push(outputs[1]!); // .cpp
+  o.cppSources.push(outputs[1]!, ...o.crateOfCpp.keys()); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
 }
 

@@ -9,7 +9,7 @@
 //!
 //! # The message
 //!
-//! [`analyze`] returns `u32` words for `jsLintCodePaths` in `src/jsc/bindings/LintNodes.cpp`.
+//! [`analyze`] returns `u32` words for `jsLintCodePaths` in `src/lint_command/LintNodes.cpp`.
 //!
 //! | Part | Words |
 //! | --- | --- |

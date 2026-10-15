@@ -7,6 +7,11 @@
       "JsPoster"
     ]
   },
+  "src/image/Image.rs": {
+    "unsafe impl Send": [
+      "PipelineTask"
+    ]
+  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [
@@ -71,6 +76,13 @@
       "Store"
     ]
   },
+  "src/lint_command/lint_js.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
+  },
   "src/runtime/api/JSTranspiler.rs": {
     "unsafe impl Send": [
       "TransformTask"
@@ -94,13 +106,6 @@
       "DotenvSingleton"
     ]
   },
-  "src/runtime/cli/lint_js.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "Posted",
-      "Shared"
-    ]
-  },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },
@@ -115,11 +120,6 @@
     "unsafe impl Send": [
       "GlobalCache",
       "SendPtr<T>"
-    ]
-  },
-  "src/runtime/image/Image.rs": {
-    "unsafe impl Send": [
-      "PipelineTask"
     ]
   },
   "src/runtime/napi/napi_body.rs": {

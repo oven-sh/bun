@@ -1295,9 +1295,9 @@ JSC_DEFINE_HOST_FUNCTION(callSourceCode, (JSGlobalObject * globalObject, CallFra
 // In ESLint's order.
 struct Property {
     ASCIILiteral name;
-    GetValueFunc getter;
+    GetValueFunc::Ptr getter;
 };
-const Property properties[] = {
+constexpr Property properties[] = {
     { "isESTree"_s, nullptr },
     { "hasBOM"_s, jsLintSourceCodeHasBOM },
     { "text"_s, jsLintSourceCodeText },

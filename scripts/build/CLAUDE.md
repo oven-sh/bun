@@ -273,7 +273,7 @@ What is on CI's build and test machines, and the generator of what bakes them. `
 
 ## Key types
 
-**`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github-archive`, `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
+**`Dependency`** (`source.ts`) — `{name, crate?, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github-archive`, `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
 
 **`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time, and every output whose relative and absolute spellings differ is also declared under the absolute one (implicit output) so compiler depfiles, which name headers by absolute path, resolve to the producing edge.
 

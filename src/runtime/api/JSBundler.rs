@@ -247,6 +247,8 @@ pub(crate) mod js_bundler {
         pub(crate) windows_copyright: OwnedString,
         pub(crate) outfile: OwnedString,
         pub(crate) assets: Vec<Box<[u8]>>,
+        /// `compile.excludeFeatures`: features of the runtime to leave out of the executable.
+        pub(crate) exclude_features: Vec<Box<[u8]>>,
         pub(crate) autoload_dotenv: bool,
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
@@ -272,6 +274,7 @@ pub(crate) mod js_bundler {
                 windows_copyright: OwnedString::default(),
                 outfile: OwnedString::default(),
                 assets: Vec::new(),
+                exclude_features: Vec::new(),
                 autoload_dotenv: true,
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
@@ -427,6 +430,14 @@ pub(crate) mod js_bundler {
                 while let Some(arg) = iter.next()? {
                     let slice = arg.to_utf8(global_this)?;
                     this.assets.push(Box::from(slice.slice()));
+                }
+            }
+
+            if let Some(exclude_features) = object.get_own_array(global_this, "excludeFeatures")? {
+                let mut iter = exclude_features.array_iterator(global_this)?;
+                while let Some(arg) = iter.next()? {
+                    let slice = arg.to_utf8(global_this)?;
+                    this.exclude_features.push(Box::from(slice.slice()));
                 }
             }
 
@@ -898,6 +909,11 @@ pub(crate) mod js_bundler {
                 this.module_preload = module_preload;
             }
             if let Some(check) = config.get_boolean_loose(global_this, "check")? {
+                if check && !bun_core::feature!(check) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "check: this executable was built without type checking"
+                    )));
+                }
                 this.check = check;
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()

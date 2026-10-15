@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { inspect } from "util";
+import { featureCrateOf, featureCratesOf } from "../../scripts/build/rust/classes.ts";
 import jsclasses from "./../jsc/bindings/js_classes.ts";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
 import { writeIfNotChanged } from "./helpers.ts";
@@ -2098,11 +2099,33 @@ function generateLazyClassStructureHeader(typeName, { klass = {}, proto = {} }) 
 // All generated classes share one `initLater` callback: it recovers the class's
 // index from the `LazyClassStructure`'s position in `m_generatedLazyClasses` and
 // calls through this table, instead of instantiating a callback per class.
-function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false }) {
+function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noConstructor = false, crate }) {
   const name = className(typeName);
-  return `{ WebCore::${name}::createPrototype, WebCore::${name}::createStructure, ${
-    noConstructor ? "nullptr" : `WebCore::${name}::createConstructor`
+  const create = what => (crate ? behindTheDoor(crate, name, what) : `WebCore::${name}::${what}`);
+  return `{ ${create("createPrototype")}, ${create("createStructure")}, ${
+    noConstructor ? "nullptr" : create("createConstructor")
   } },`;
+}
+
+/**
+ * What Bun makes a class of a feature with, by the name of what is behind a door (src/bun_core_macros). Only what is the
+ * feature's asks for the class, so nothing asks here whether the feature is there.
+ */
+function behindTheDoor(crate, name, what) {
+  return `bun_feature_${crate.feature}_${name}_${what}`;
+}
+
+/** Those, each followed by what `after` makes of its name and arguments: ";" declares it. */
+function behindTheDoors({ name: typeName, noConstructor = false, crate }, after) {
+  const name = className(typeName);
+  const one = (result, what, parameters, args) =>
+    `extern "C" ${result} ${behindTheDoor(crate, name, what)}(${parameters})${after(`WebCore::${name}::${what}`, args)}`;
+  const ofPrototype = ["JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue prototype", "vm, global, prototype"];
+  return [
+    one("JSC::JSObject*", "createPrototype", "JSC::VM& vm, WebCore::JSDOMGlobalObject* global", "vm, global"),
+    one("JSC::Structure*", "createStructure", ...ofPrototype),
+    noConstructor ? "" : one("JSC::JSObject*", "createConstructor", ...ofPrototype),
+  ].join("\n");
 }
 
 function generateLazyClassStructureHeaderTail(classes) {
@@ -2280,8 +2303,10 @@ ${classes
 `;
 }
 
-function initLazyClasses(initTableRows) {
+function initLazyClasses(initTableRows, declarations) {
   return `
+${declarations.join("\n")}
+
 struct GeneratedLazyClassInit {
     JSC::JSObject* (*createPrototype)(JSC::VM&, WebCore::JSDOMGlobalObject*);
     JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
@@ -2360,7 +2385,10 @@ const classes: ClassDefinition[] = [];
       console.log(`  - ${name}` + props);
     }
 
-    for (const def of result.default) def._classesFilePath = filepath;
+    for (const def of result.default) {
+      def._classesFilePath = filepath;
+      def.crate = featureCrateOf(filepath);
+    }
     classes.push(...result.default);
   }
 
@@ -2472,10 +2500,16 @@ function writeCppSerializers() {
     totalSyms += symbols.length;
     return src;
   });
+  for (const crate of featureCratesOf(files)) {
+    await writeIfNotChanged(`${outBase}/${crate.rust}`, [
+      RUST_GENERATED_CLASSES_HEADER,
+      ...blocks.filter((_, i) => rustClasses[i].crate?.name === crate.name),
+    ]);
+  }
   await writeIfNotChanged(`${outBase}/generated_classes.rs`, [
     RUST_GENERATED_CLASSES_HEADER,
-    ...blocks,
-    `\n// classes: ${rustClasses.length} (${resolved} structs found, ${rustClasses.length - resolved} unresolved), exported symbols: ${totalSyms}\n`,
+    ...blocks.filter((_, i) => rustClasses[i].crate === undefined),
+    `\n// classes, with those of features: ${rustClasses.length} (${resolved} structs found, ${rustClasses.length - resolved} unresolved), exported symbols: ${totalSyms}\n`,
   ]);
   console.log(
     `generated_classes.rs: ${rustClasses.length} classes (${resolved} resolved), ${totalSyms} exported symbols`,
@@ -2484,19 +2518,42 @@ function writeCppSerializers() {
 
 // ── C++ output: ZigGeneratedClasses.{h,cpp,+*.h} and the .d.ts twin ────────
 {
-  const allHeaders = classes.map(a => generateHeader(a.name, a));
+  // What a class declares of Rust's goes where the class does.
+  const generated = classes.map(a => {
+    const start = externs.length;
+    const [header, impl] = [generateHeader(a.name, a), generateImpl(a.name, a)];
+    return { a, header, impl, externs: externs.slice(start) };
+  });
+  const allHeaders = generated.map(it => it.header);
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
     ...GENERATED_CLASSES_HEADER,
     ...allHeaders,
     GENERATED_CLASSES_FOOTER,
   ]);
 
-  const allImpls = classes.map(a => generateImpl(a.name, a));
+  for (const crate of featureCratesOf(files)) {
+    const ofTheCrate = generated.filter(it => it.a.crate?.name === crate.name);
+    await writeIfNotChanged(`${outBase}/${crate.cpp}`, [
+      GENERATED_CLASSES_IMPL_HEADER_PRE,
+      ofTheCrate
+        .map(it => it.externs)
+        .join("")
+        .trim(),
+      GENERATED_CLASSES_IMPL_HEADER_POST,
+      ofTheCrate.map(it => it.impl).join("\n"),
+      GENERATED_CLASSES_IMPL_FOOTER,
+      ofTheCrate.map(it => behindTheDoors(it.a, (f, args) => ` { return ${f}(${args}); }`)).join("\n"),
+    ]);
+  }
+  const ofBun = generated.filter(it => it.a.crate === undefined);
   await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
     GENERATED_CLASSES_IMPL_HEADER_PRE,
-    externs.trim(),
+    ofBun
+      .map(it => it.externs)
+      .join("")
+      .trim(),
     GENERATED_CLASSES_IMPL_HEADER_POST,
-    allImpls.join("\n"),
+    ofBun.map(it => it.impl).join("\n"),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
     jsInheritsCppImpl(),
@@ -2521,7 +2578,12 @@ function writeCppSerializers() {
 
   await writeIfNotChanged(
     `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
-    initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
+    initLazyClasses(
+      classes.map(a => generateLazyClassStructureImpl(a.name, a)),
+      classes.filter(a => a.crate).map(a => behindTheDoors(a, () => ";")),
+    ) +
+      "\n" +
+      visitLazyClasses(classes),
   );
 
   await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);

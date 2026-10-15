@@ -134,6 +134,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bun_all"
+version = "0.0.0"
+dependencies = [
+ "bun_check_command",
+ "bun_csrf_jsc",
+ "bun_format_command",
+ "bun_image",
+ "bun_lint_command",
+ "bun_runtime",
+ "bun_semver_jsc",
+]
+
+[[package]]
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
@@ -329,6 +342,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_check_command"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_bundler",
+ "bun_clap",
+ "bun_core",
+ "bun_glob",
+ "bun_jsc",
+ "bun_options_types",
+ "bun_paths",
+ "bun_resolver",
+ "bun_runtime",
+ "bun_sema_baselines",
+ "bun_sema_driver",
+ "bun_sys",
+ "bun_threading",
+ "bun_typescript_libs",
+]
+
+[[package]]
 name = "bun_clap"
 version = "0.0.0"
 dependencies = [
@@ -432,6 +467,19 @@ dependencies = [
  "bun_core",
  "bun_sha_hmac",
  "strum",
+]
+
+[[package]]
+name = "bun_csrf_jsc"
+version = "0.0.0"
+dependencies = [
+ "bun_analytics",
+ "bun_boringssl_sys",
+ "bun_core",
+ "bun_csrf",
+ "bun_jsc",
+ "bun_runtime",
+ "bun_sha_hmac",
 ]
 
 [[package]]
@@ -545,10 +593,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_exe_features"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_exe_format",
+]
+
+[[package]]
 name = "bun_exe_format"
 version = "0.0.0"
 dependencies = [
  "bstr",
+ "bun_collections",
  "bun_core",
  "bun_sha_hmac",
  "bun_sys",
@@ -575,6 +633,19 @@ dependencies = [
  "bun_threading",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_format_command"
+version = "0.0.0"
+dependencies = [
+ "bun_bunfig",
+ "bun_core",
+ "bun_format_conformance",
+ "bun_lint_command",
+ "bun_lint_driver",
+ "bun_options_types",
+ "bun_runtime",
 ]
 
 [[package]]
@@ -689,6 +760,25 @@ dependencies = [
  "bytemuck",
  "enumset",
  "strum",
+]
+
+[[package]]
+name = "bun_image"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_base64",
+ "bun_core",
+ "bun_jsc",
+ "bun_opaque",
+ "bun_ptr",
+ "bun_runtime",
+ "bun_sys",
+ "libc",
+ "scopeguard",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]
@@ -1012,6 +1102,31 @@ dependencies = [
  "bun_zstd",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_command"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_bunfig",
+ "bun_clap",
+ "bun_core",
+ "bun_dotenv",
+ "bun_event_loop",
+ "bun_jsc",
+ "bun_lint",
+ "bun_lint_driver",
+ "bun_options_types",
+ "bun_paths",
+ "bun_runtime",
+ "bun_sema_driver",
+ "bun_spawn",
+ "bun_sys",
+ "bun_threading",
+ "bun_typescript_libs",
+ "bun_which",
 ]
 
 [[package]]
@@ -1455,14 +1570,12 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
- "bun_csrf",
  "bun_css",
  "bun_css_jsc",
  "bun_dns",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
- "bun_format_conformance",
  "bun_glob",
  "bun_hash",
  "bun_highway",
@@ -1480,7 +1593,6 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
- "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
  "bun_node_path",
@@ -1498,10 +1610,7 @@ dependencies = [
  "bun_router",
  "bun_s3_signing",
  "bun_safety",
- "bun_sema_baselines",
- "bun_sema_driver",
  "bun_semver",
- "bun_semver_jsc",
  "bun_sha_hmac",
  "bun_shell_parser",
  "bun_simdutf_sys",
@@ -1658,6 +1767,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_jsc",
+ "bun_runtime",
  "bun_semver",
 ]
 
@@ -1834,6 +1944,7 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_errno",
+ "bun_exe_features",
  "bun_exe_format",
  "bun_http",
  "bun_libarchive",
@@ -1931,6 +2042,16 @@ name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
  "bun_bundler",
+]
+
+[[package]]
+name = "bun_typescript_libs"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_runtime",
+ "bun_sema_driver",
+ "bun_zstd",
 ]
 
 [[package]]

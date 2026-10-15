@@ -102,6 +102,8 @@ export interface MetadataPackage {
   /** Declared features (keys) — what `--check-cfg cfg(feature, values(...))` lists. */
   features: Record<string, string[]>;
   source: string | null;
+  /** `[package.metadata.bun] feature` (features.ts). */
+  feature: string | null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -173,7 +175,7 @@ export interface RustPlan {
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 5;
+export const PLAN_VERSION = 7;
 
 /** `dir`: the graph's directory under the build directory — `rust-target/` for bun_runtime, `rust-target/shim/` for the Windows shim. */
 export function planPath(dir: string): string {
@@ -364,12 +366,12 @@ function main(): void {
   const meta = JSON.parse(
     run(cargo, ["metadata", "--format-version=1", "--locked", ...platforms], { inheritStderr: true }),
   ) as {
-    packages: MetadataPackage[];
+    packages: (MetadataPackage & { metadata?: { bun?: { feature?: string } } | null })[];
     workspace_root: string;
   };
   // Only what is read (the `MetadataPackage` fields): dependency lists, test targets and `[package.metadata]` would
   // otherwise make an edit to any of them a new plan, and a reconfigure, for nothing.
-  const facts = (p: MetadataPackage): MetadataPackage => ({
+  const facts = (p: MetadataPackage & { metadata?: { bun?: { feature?: string } } | null }): MetadataPackage => ({
     id: p.id,
     name: p.name,
     version: p.version,
@@ -386,6 +388,7 @@ function main(): void {
     edition: p.edition,
     features: p.features,
     source: p.source,
+    feature: p.metadata?.bun?.feature ?? null,
   });
   for (const p of meta.packages) packages[p.id] = facts(p);
   if (unitGraph.units.some(u => u.is_std)) {

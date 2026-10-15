@@ -3,6 +3,9 @@ name = "bun_semver_jsc"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.bun]
+feature = "semver"
+
 [lib]
 path = "lib.rs"
 
@@ -14,3 +17,4 @@ bun_core.workspace = true
 bstr.workspace = true
 bun_jsc.workspace = true
 bun_semver.workspace = true
+bun_runtime.workspace = true

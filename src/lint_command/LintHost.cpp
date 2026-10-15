@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintEndFile, (JSGlobalObject * globalObject, CallFram
     return JSValue::encode(jsUndefined());
 }
 
-// For src/runtime/cli/lint_js.rs, which frees what the spans point to right after this.
+// For src/lint_command/lint_js.rs, which frees what the spans point to right after this.
 extern "C" void Bun__Lint__endFile(JSGlobalObject* globalObject)
 {
     LintHost::from(globalObject)->endFile(globalObject->vm());
@@ -192,9 +192,10 @@ void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)
     addLintTokenFunctions(globalObject, native);
 }
 
-JSObject* createLintHost(VM& vm, JSGlobalObject* globalObject)
-{
-    return LintHost::create(vm, globalObject);
-}
-
 } // namespace Bun
+
+// Behind the door `Bun__Lint__createHost` of src/runtime/features.rs.
+extern "C" JSC::JSObject* bun_feature_lint_fmt_Bun__Lint__createHost(JSC::JSGlobalObject* globalObject)
+{
+    return Bun::LintHost::create(globalObject->vm(), globalObject);
+}

@@ -75,7 +75,7 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
 }
 
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
-pub(crate) enum ReadBytesResult {
+pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
@@ -83,7 +83,7 @@ pub(crate) enum ReadBytesResult {
 
 /// Handler trait for `read_bytes_to_handler` — the body only requires
 /// `on_read_bytes`.
-pub(crate) trait ReadBytesHandler {
+pub trait ReadBytesHandler {
     /// Invoked exactly once, on the JS thread, with the `ctx` given to
     /// `read_bytes_to_handler`; ownership of `*this` comes back to the handler
     /// here, and a heap-allocated one reclaims itself (`heap::take(this)`).
@@ -656,10 +656,9 @@ impl BlobExt for Blob {
 
     /// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
     /// the proto entry covers Blob/BunFile/S3File in one place; the actual
-    /// construction is `Image::from_blob_js` so Blob.rs doesn't grow image
-    /// knowledge.
+    /// construction is behind a door, in `bun_image`.
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        Image::from_blob_js(global, cf.this(), cf.argument(0))
+        crate::features::image_of_blob(global, cf.this(), cf.argument(0))
     }
 
     fn do_read_file_internal<C, F: InternalReadFileFn<C>>(
@@ -3467,7 +3466,6 @@ impl BlobExt for Blob {
 // ──────────────────────────────────────────────────────────────────────────
 
 use crate::api::archive::Archive;
-use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;

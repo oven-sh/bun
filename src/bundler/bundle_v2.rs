@@ -3397,6 +3397,10 @@ pub mod bv2_impl {
                     }
                     _ => None,
                 };
+            this.linker
+                .options
+                .compile_exclude_features
+                .clone_from(&this.transpiler.options.compile_exclude_features);
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything

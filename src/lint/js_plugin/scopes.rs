@@ -2,7 +2,7 @@
 //!
 //! [`crate::semantic`] does the analysis. This module turns the result into what `eslint-scope` or
 //! `@typescript-eslint/scope-manager` report under ESLint, in their order, with ESTree nodes by number.
-//! `src/jsc/bindings/LintScopes.cpp` only builds objects from the arrays.
+//! `src/lint_command/LintScopes.cpp` only builds objects from the arrays.
 //!
 //! oxlint analyzes every file with typescript-eslint's scope manager, without the libraries of TypeScript, and adds the globals
 //! itself: [`Builder::add_globals_of_oxlint`].

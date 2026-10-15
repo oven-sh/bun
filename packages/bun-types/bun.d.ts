@@ -3751,6 +3751,28 @@ declare module "bun" {
      */
     assets?: string[];
     /**
+     * Features of the Bun runtime to remove from the executable. An excluded
+     * command reports that the executable was built without it, an excluded
+     * API is `undefined`, and a method that needs one throws.
+     *
+     * A built-in module that is written in JavaScript and that Bun itself
+     * never loads can be excluded by name, like `"node:http2"`. Importing it
+     * then throws, also from another built-in module.
+     *
+     * Passing a name that does not exist fails and lists the ones that do.
+     *
+     * Equivalent CLI flag: `--compile-exclude-features` (repeatable, or separated by commas)
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./app.ts"],
+     *   compile: { excludeFeatures: ["lint", "fmt", "check"] },
+     * });
+     * ```
+     */
+    excludeFeatures?: string[];
+    /**
      * Whether the standalone executable loads .env files when it runs
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`

@@ -722,7 +722,7 @@ impl Encoding {
         }
     }
 
-    pub(crate) fn from_js_with_default_on_empty(
+    pub fn from_js_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -751,7 +751,7 @@ impl Encoding {
 
     /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
     /// `EVP_MAX_MD_SIZE` etc.
-    pub(crate) fn encode_with_max_size(
+    pub fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
         max_size: usize,

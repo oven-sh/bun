@@ -474,6 +474,7 @@ impl JSBundleCompletionTask {
             } else {
                 Some(&compile_options.executable_path.list)
             },
+            &compile_options.exclude_features,
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
@@ -1097,7 +1098,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.module_preload = config.module_preload;
         transpiler.options.type_check = config
             .check
-            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+            .then_some(crate::features::check_for_bun_build as options::TypeCheck);
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1158,6 +1159,12 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
+        if let Some(compile) = &config.compile {
+            transpiler
+                .options
+                .compile_exclude_features
+                .clone_from(&compile.exclude_features);
+        }
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)

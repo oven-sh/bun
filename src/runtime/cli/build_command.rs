@@ -162,7 +162,7 @@ impl BuildCommand {
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+            if !crate::features::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
@@ -170,8 +170,7 @@ impl BuildCommand {
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         } else if ctx.bundler_options.check {
-            this_transpiler.options.type_check =
-                Some(crate::cli::check_command::check_for_build_command);
+            this_transpiler.options.type_check = Some(crate::features::check_for_build_command);
         }
 
         this_transpiler.options.source_map =
@@ -490,6 +489,10 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
+        this_transpiler
+            .options
+            .compile_exclude_features
+            .clone_from(&ctx.bundler_options.compile_exclude_features);
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode
@@ -936,6 +939,7 @@ impl BuildCommand {
                         .as_deref()
                         .unwrap_or(b""),
                     ctx.bundler_options.compile_executable_path.as_deref(),
+                    &ctx.bundler_options.compile_exclude_features,
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                         let mut flags = Flags::default();

@@ -19,7 +19,7 @@ pub(crate) struct CPUTimes {
     pub irq: u64,
 }
 
-pub(crate) fn freemem() -> u64 {
+pub fn freemem() -> u64 {
     // OsBinding.cpp
     unsafe extern "C" {
         safe fn Bun__Os__getFreeMemory() -> u64;

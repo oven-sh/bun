@@ -129,7 +129,7 @@ const noUnify: readonly string[] = [
   // bundled after highway_strings.cpp it doesn't re-expand and only the
   // baseline ISA namespace exists for image_resize → HWY_EXPORT can't find
   // N_AVX2/N_AVX3/etc. variants.
-  "src/jsc/bindings/image_resize.cpp",
+  "src/image/image_resize.cpp",
   // Third highway TU — same foreach_target.h include-guard reason as
   // image_resize.cpp: it must expand its own per-ISA namespaces so
   // HWY_EXPORT(HashLong) resolves the N_AVX2/N_AVX3/etc. variants.
@@ -144,11 +144,11 @@ const noUnify: readonly string[] = [
   // Declares its own minimal CGRect/kCFStringEncodingUTF8/kCFNumberDoubleType
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
-  "src/jsc/bindings/image_coregraphics_shim.cpp",
+  "src/image/image_coregraphics_shim.cpp",
   // Includes <windows.h> + <ocidl.h> for the real VARIANT/IPropertyBag2 ABI;
   // keeping it out of unified bundles avoids the macro pollution (`min`/`max`
   // /`ERROR`/etc.) leaking into siblings.
-  "src/jsc/bindings/image_wic_shim.cpp",
+  "src/image/image_wic_shim.cpp",
 ];
 
 /**

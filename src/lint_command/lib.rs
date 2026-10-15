@@ -5,18 +5,49 @@
 
 use bstr::BStr;
 
-use bun_core::{Global, Output, ZStr};
+use bun_core::{Global, Output, ZStr, feature, pretty};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
-use super::check_command::working_directory;
-use super::command::{ContextData, Tag};
 use bun_bunfig::Above;
+use bun_options_types::command_tag::Tag;
+use bun_options_types::context::ContextData;
+use bun_runtime::features::{self, working_directory};
 
-pub(crate) struct LintCommand;
+mod lint_js;
 
-pub(crate) use bun_lint_driver::cli::HELP;
+struct LintCommand;
+
+#[feature::behind(features::exec_lint, lint)]
+fn exec_lint(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+    LintCommand::exec(ctx, args)
+}
+
+#[feature::behind(features::is_flag_of_lint, lint)]
+fn is_flag_of_lint(flag: &[u8]) -> bool {
+    LintCommand::has_flag(flag)
+}
+
+#[feature::behind(features::print_flags_of_lint, lint)]
+fn print_flags_of_lint(all: bool) {
+    print_flags(&bun_lint_driver::cli::HELP, all);
+}
+
+/// Prints the flags for `bun lint --help` and `bun fmt --help`: the common ones, or with `all`, every flag by group.
+pub fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
+    if all {
+        for group in help.groups {
+            pretty!("\n<b>{}:<r>", group.title);
+            bun_clap::simple_help(group.params);
+            pretty!("\n");
+        }
+        return;
+    }
+    pretty!("\n<b>Flags:<r>");
+    bun_clap::simple_help(&help.common());
+    pretty!("\n");
+}
 
 /// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
 /// build has none of it.
@@ -67,7 +98,7 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
 /// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory
 /// and whether `--config` names it: the one in the working directory, then those above it, from the nearest, for as long as
 /// `read` wants the next. With `--config` there is only that file. Call this after `--cwd`.
-pub(crate) fn read_bunfigs(
+pub fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
@@ -96,7 +127,7 @@ pub(crate) fn read_bunfigs(
 fn disallow_code_generation_before(command: &[u8]) {
     let argv = bun_core::argv().to_vec();
     let flags = argv.iter().take_while(|it| it.as_bytes() != command);
-    super::arguments::disallow_code_generation_from_strings_as_compiled(
+    features::disallow_code_generation_from_strings_as_compiled(
         &flags.copied().collect::<Vec<_>>(),
     );
 }
@@ -105,7 +136,8 @@ fn disallow_code_generation_before(command: &[u8]) {
 const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 
 /// In such a process: reads the program.
-pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
+#[feature::behind(features::read_program_of_script, lint, fmt)]
+fn read_program_of_script(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
         && File::stdin().read_to_end_into(&mut program).is_ok()
@@ -195,8 +227,8 @@ fn run_to_end(
     cwd: &[u8],
     adapt: &dyn Fn(&mut bun_dotenv::Map) -> bool,
     input: &[&[u8]],
-) -> Result<crate::api::bun::process::sync::Result, Vec<u8>> {
-    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
+) -> Result<bun_spawn::process::sync::Result, Vec<u8>> {
+    use bun_spawn::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let mut variables = bun_dotenv::Loader::init();
     let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
     let Some(envp) = is_ready
@@ -222,7 +254,7 @@ fn run_to_end(
         cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
-        windows: crate::api::bun::process::WindowsOptions {
+        windows: bun_spawn::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
                 None, None,
             )),
@@ -246,7 +278,7 @@ fn run_to_end(
 }
 
 /// Reports that the command line of `bun <command>` cannot be used.
-pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
+pub fn usage_error(command: &str, message: &[u8]) -> ! {
     Output::err_generic("{}", (BStr::new(message),));
     bun_core::note!("run 'bun {} --help' for more information", command);
     // As ESLint.
@@ -255,7 +287,7 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 
 /// Calls `run` with what it takes from this process, prints what it returns, and exits.
 /// `command`: `lint` or `format`. `cwd`: its `--cwd`.
-pub(crate) fn run_and_exit(
+pub fn run_and_exit(
     command: &[u8],
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
@@ -278,7 +310,7 @@ pub(crate) fn run_and_exit(
         run_git(command)
     };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
-    let js_engine = super::lint_js::Engines::default();
+    let js_engine = lint_js::Engines::default();
     // `path.win32.resolve` asks for it where a path names another drive than its base.
     bun_paths::fs::FileSystem::init(&working_directory());
     let environment = Environment {
@@ -291,16 +323,16 @@ pub(crate) fn run_and_exit(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
-        columns: super::run_command::RunCommand::columns_of_stdout,
+        columns: features::columns_of_stdout,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
-        libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
+        libs: bun_sema_driver::Libs::Bundled(bun_typescript_libs::BUNDLED),
         run_script: &run_script,
         run_git: &run_git,
         command_line: &command_line,
         js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
-        memory: super::lint_js::memory(),
+        memory: lint_js::memory(),
     };
     let outcome = run(&environment);
     // The report is the output. Everything else is printed separately.
@@ -313,12 +345,12 @@ pub(crate) fn run_and_exit(
 
 impl LintCommand {
     /// Whether `bun lint <flag>` is a valid command line.
-    pub(crate) fn has_flag(flag: &[u8]) -> bool {
+    fn has_flag(flag: &[u8]) -> bool {
         Options::parse(&[flag]).is_ok()
     }
 
     /// `args`: what follows `lint`.
-    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+    fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
             run_and_exit(b"lint", None, |environment| Outcome {
@@ -346,7 +378,7 @@ impl LintCommand {
             }),
         };
         if options.help {
-            crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
+            features::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {

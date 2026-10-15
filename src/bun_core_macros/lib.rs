@@ -685,3 +685,151 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// bun_core::feature
+// ───────────────────────────────────────────────────────────────────────────
+
+mod feature {
+    include!("../bun_core/feature/ids.rs");
+}
+
+/// `lint, fmt` → [2, 3], sorted
+fn numbers_of(
+    features: &syn::punctuated::Punctuated<syn::Ident, Token![,]>,
+) -> syn::Result<Vec<u32>> {
+    let mut numbers = Vec::new();
+    for name in features {
+        let Some(index) = feature::NAMES.iter().position(|known| name == known) else {
+            let known = feature::NAMES.join(", ");
+            return Err(syn::Error::new(
+                name.span(),
+                format!("no such feature. There are: {known}"),
+            ));
+        };
+        numbers.push(index as u32 + 1);
+    }
+    numbers.sort_unstable();
+    numbers.dedup();
+    match numbers.is_empty() {
+        true => Err(syn::Error::new(Span::call_site(), "of which feature?")),
+        false => Ok(numbers),
+    }
+}
+
+/// What the function behind `door` is called by the linker. A door and a function that do not agree on the features do not
+/// find each other.
+fn symbol_behind(features: &[u32], door: &syn::Ident) -> String {
+    let names: Vec<&str> = (features
+        .iter()
+        .map(|number| feature::NAMES[*number as usize - 1]))
+    .collect();
+    format!("bun_feature_{}_{door}", names.join("_"))
+}
+
+/// `[2, 3]` → whether one of them is there
+fn is_present(features: &[u32]) -> proc_macro2::TokenStream {
+    let numbers = features.iter().map(|number| *number as usize);
+    quote!((#(::bun_core::feature::is_present(#numbers))||*))
+}
+
+/// See `bun_core::feature`.
+#[proc_macro_attribute]
+pub fn door(features: TokenStream, function: TokenStream) -> TokenStream {
+    let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
+    let features = parse_macro_input!(features with parser);
+    let syn::ItemFn {
+        attrs,
+        vis,
+        sig,
+        block,
+    } = parse_macro_input!(function as syn::ItemFn);
+    let numbers = match numbers_of(&features) {
+        Ok(numbers) => numbers,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let symbol = symbol_behind(&numbers, &sig.ident);
+    let mut behind = sig.clone();
+    behind.ident = syn::Ident::new("behind", sig.ident.span());
+    let abi = behind.abi.take().and_then(|abi| abi.name);
+    let abi = abi.unwrap_or_else(|| LitStr::new("Rust", Span::call_site()));
+    let arguments = sig.inputs.iter().map(|input| match input {
+        syn::FnArg::Typed(argument) => quote::ToTokens::to_token_stream(&argument.pat),
+        syn::FnArg::Receiver(receiver) => quote::ToTokens::to_token_stream(&receiver.self_token),
+    });
+    let is_present = is_present(&numbers);
+    quote! {
+        #(#attrs)*
+        #vis #sig {
+            unsafe extern #abi {
+                #[link_name = #symbol]
+                #behind;
+            }
+            if #is_present {
+                // SAFETY: `#[feature::behind]` has checked that it has the signature of this one, and it is there.
+                unsafe { behind(#(#arguments),*) }
+            } else #block
+        }
+    }
+    .into()
+}
+
+struct Behind {
+    door: syn::Path,
+    features: syn::punctuated::Punctuated<syn::Ident, Token![,]>,
+}
+
+impl Parse for Behind {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let door = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let features = syn::punctuated::Punctuated::parse_terminated(input)?;
+        Ok(Self { door, features })
+    }
+}
+
+/// See `bun_core::feature`.
+#[proc_macro_attribute]
+pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
+    let Behind { door, features } = parse_macro_input!(door as Behind);
+    let function = parse_macro_input!(function as syn::ItemFn);
+    let numbers = match numbers_of(&features) {
+        Ok(numbers) => numbers,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let symbol = symbol_behind(&numbers, &door.segments.last().unwrap().ident);
+    let syn::Signature {
+        unsafety,
+        abi,
+        inputs,
+        output,
+        ..
+    } = &function.sig;
+    let types = inputs.iter().map(|input| match input {
+        syn::FnArg::Typed(argument) => &*argument.ty,
+        syn::FnArg::Receiver(receiver) => &*receiver.ty,
+    });
+    let names = features.iter().map(|name| name.to_string());
+    quote! {
+        // The door is open for as long as one of its features is there, so this has to be too. Bun's build says what needs
+        // this crate (scripts/build/rust/features.ts). Cargo alone does not.
+        #[cfg(all(bun_needed_by, not(all(#(bun_needed_by = #names),*))))]
+        compile_error!("one of the features of the door does not depend on this crate");
+        const _: #unsafety #abi fn(#(#types),*) #output = #door;
+        #[unsafe(export_name = #symbol)]
+        #[inline(never)]
+        #function
+    }
+    .into()
+}
+
+/// `feature!(lint)`: whether this executable has the feature. See `bun_core::feature`.
+#[proc_macro]
+pub fn feature(features: TokenStream) -> TokenStream {
+    let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
+    let features = parse_macro_input!(features with parser);
+    match numbers_of(&features) {
+        Ok(numbers) => is_present(&numbers).into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}

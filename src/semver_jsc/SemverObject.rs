@@ -6,7 +6,8 @@ use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_semver::{SlicedString, Version, query};
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+#[bun_core::feature::behind(bun_runtime::features::semver_object, semver)]
+fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global,
         &[
@@ -111,8 +112,8 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 /// `bun:internal-for-testing`: `Group::intersects` on two range strings.
-#[bun_jsc::host_fn]
-pub fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_core::feature::behind(bun_runtime::features::semver_intersects_for_testing, semver)]
+fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let left = frame.argument(0).to_utf8(global)?;
     let right = frame.argument(1).to_utf8(global)?;
     let (Ok(left_group), Ok(right_group)) = (

@@ -23,9 +23,9 @@ const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 
 const MH_MAGIC_64: u32 = 0xfeed_facf;
-const MACHO_SECTNAME: &[u8] = b"__bun_builtins";
-const ELF_SECTION_NAME: &[u8] = b".bun_builtins";
-const PE_SECTION_NAME: [u8; 8] = *b".bunblt\0";
+pub const MACHO_SECTNAME: &[u8] = b"__bun_builtins";
+pub const ELF_SECTION_NAME: &[u8] = b".bun_builtins";
+pub const PE_SECTION_NAME: [u8; 8] = *b".bunblt\0";
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr, PartialEq, Eq)]
 pub enum BuiltinsError {
@@ -61,6 +61,8 @@ pub struct Builtins<'a> {
     records: &'a [u8],
     dep_offsets: &'a [u8],
     deps: &'a [u8],
+    /// Empty in an executable from before it said.
+    roots: &'a [u8],
     data: &'a [u8],
 }
 
@@ -92,6 +94,7 @@ impl<'a> Builtins<'a> {
         let dep_offsets = sub(section, dep_offsets_offset, (n + 1) * 2)?;
         let deps_len = u16_at(dep_offsets, n * 2) as usize;
         let deps = sub(section, deps_offset, deps_len * 2)?;
+        let roots = sub(section, field(8) as usize, field(9) as usize * 2)?;
         let data = sub(section, data_offset, data_len)?;
 
         for i in 0..n {
@@ -112,8 +115,8 @@ impl<'a> Builtins<'a> {
             }
             prev = off;
         }
-        for i in 0..deps_len {
-            if u16_at(deps, i * 2) as u32 >= count {
+        for ids in [deps, roots] {
+            if (0..ids.len() / 2).any(|i| u16_at(ids, i * 2) as u32 >= count) {
                 return Err(Invalid);
             }
         }
@@ -124,6 +127,7 @@ impl<'a> Builtins<'a> {
             records,
             dep_offsets,
             deps,
+            roots,
             data,
         })
     }
@@ -140,6 +144,52 @@ impl<'a> Builtins<'a> {
             url: span(1),
             source: span(2),
         })
+    }
+
+    /// Whether each module can be loaded, if those of `is_absent` cannot: by Bun itself, or by a program, which can import all
+    /// but `internal:…`.
+    fn loaded(&self, by_a_program: bool, is_absent: impl Fn(Module<'a>) -> bool) -> Vec<bool> {
+        let module = |id| self.module(id).expect("the id of a module");
+        let roots = (0..self.roots.len() / 2).map(|i| u16_at(self.roots, i * 2) as u32);
+        let public = (0..self.count).filter(|&id| by_a_program && !is_internal(module(id).name));
+        let mut todo: Vec<u32> = roots.chain(public).collect();
+        let mut is_loaded = vec![false; self.count as usize];
+        while let Some(id) = todo.pop() {
+            if !is_absent(module(id)) && !core::mem::replace(&mut is_loaded[id as usize], true) {
+                todo.extend(self.dependencies(id));
+            }
+        }
+        is_loaded
+    }
+
+    /// The modules that `--compile-exclude-features` takes: those that a program can import and Bun itself does not load.
+    pub fn can_be_excluded(&self) -> Vec<&'a [u8]> {
+        if self.roots.is_empty() {
+            return Vec::new();
+        }
+        let bun_loads = self.loaded(false, |_| false);
+        (0..self.count)
+            .filter(|&id| !bun_loads[id as usize])
+            .filter_map(|id| self.module(id))
+            .map(|module| module.name)
+            .filter(|name| !is_internal(name))
+            .collect()
+    }
+
+    /// The modules that an executable without `excluded` does not have: those, whatever imports them, those that it was already
+    /// without, and what nothing can load then.
+    pub fn without(&self, excluded: &[&[u8]]) -> Vec<u32> {
+        let is_absent = |it: Module<'a>| it.source.is_empty() || excluded.contains(&it.name);
+        let is_loaded = match self.roots.is_empty() {
+            true => (0..self.count)
+                .filter_map(|id| self.module(id))
+                .map(|it| !is_absent(it))
+                .collect(),
+            false => self.loaded(true, is_absent),
+        };
+        (0..self.count)
+            .filter(|&id| !is_loaded[id as usize])
+            .collect()
     }
 
     /// The id of the module whose registry specifier is exactly `name`.
@@ -160,6 +210,56 @@ impl<'a> Builtins<'a> {
         let deps = self.deps;
         (start..end).map(move |i| u16_at(deps, i * 2) as u32)
     }
+}
+
+/// Takes the sources of `gone` out of `section`, which [`Builtins::parse`] accepted, and moves what follows them up. Nothing
+/// but the records says where something is. Returns the length of what is left; the rest of the section is zero.
+pub fn remove(section: &mut [u8], gone: &[u32]) -> usize {
+    let field = |section: &[u8], i: usize| u32_at(section, 8 + i * 4) as usize;
+    let (count, records, data, length) = (
+        field(section, 2),
+        field(section, 3),
+        field(section, 6),
+        field(section, 7),
+    );
+    let span_at = |section: &[u8], at: usize| {
+        (
+            u32_at(section, at) as usize,
+            u32_at(section, at + 4) as usize,
+        )
+    };
+
+    let mut holes: Vec<(usize, usize)> = (gone.iter())
+        .map(|&id| span_at(section, records + id as usize * RECORD_SIZE + 16))
+        .collect();
+    bun_collections::index_sort::sort_slice_unstable(&mut holes);
+    for &id in gone {
+        section[records + id as usize * RECORD_SIZE + 16..][..8].fill(0);
+    }
+    for at in (0..count * 3).map(|span| records + span * 8) {
+        let offset = u32_at(section, at) as usize;
+        let before: usize = holes
+            .iter()
+            .take_while(|hole| hole.0 < offset)
+            .map(|hole| hole.1)
+            .sum();
+        section[at..at + 4].copy_from_slice(&((offset - before) as u32).to_le_bytes());
+    }
+
+    let mut end = data;
+    let mut from = 0;
+    for (offset, size) in holes.into_iter().chain([(length, 0)]) {
+        section.copy_within(data + from..data + offset, end);
+        end += offset - from;
+        from = offset + size;
+    }
+    section[end..data + length].fill(0);
+    section[8 + 7 * 4..][..4].copy_from_slice(&((end - data) as u32).to_le_bytes());
+    end
+}
+
+fn is_internal(name: &[u8]) -> bool {
+    name.starts_with(b"internal:")
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {

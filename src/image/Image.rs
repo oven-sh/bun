@@ -12,20 +12,19 @@ use core::cell::Cell;
 use core::mem;
 
 use crate::generated_classes::PropertyName;
-use crate::webcore::Blob;
-use crate::webcore::BlobExt as _;
-use crate::webcore::blob::store as blob_store;
-use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
-use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{EncodedSlice, ZStr, strings};
 use bun_jsc::bun_string_jsc;
+use bun_jsc::node_path::PathOrFileDescriptor;
+use bun_jsc::webcore_types::Blob;
+use bun_jsc::webcore_types::store as blob_store;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
     JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
+use bun_runtime::features::{ReadBytesHandler, ReadBytesResult};
 use bun_sys as sys;
 
 use super::codecs;
@@ -51,7 +50,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 // `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
 // provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
-// `generated_classes.rs::js_Image`; re-export that module here so callers use
+// `generated_classes.bun_image.rs::js_Image`; re-export that module here so callers use
 // `js::source_js_set_cached` / `js::source_js_get_cached`.
 pub(crate) use crate::generated_classes::js_Image as js;
 
@@ -1302,7 +1301,7 @@ impl<'a> BlobReadChain<'a> {
         // dispatch hands it to `on_read_bytes` below exactly once, also when it
         // returns `Err` (an exception left pending while delivering synchronously,
         // i.e. after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, cx) }?;
+        unsafe { bun_runtime::features::read_bytes_of_blob(blob, raw, cx) }?;
         Ok(promise)
     }
 
@@ -1830,7 +1829,7 @@ impl PipelineTask {
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
                         let blob = Blob::init(owned, global);
                         blob.content_type
-                            .set(crate::webcore::blob::BlobContentType::Static(
+                            .set(bun_jsc::webcore_types::BlobContentType::Static(
                                 format.mime().as_bytes(),
                             ));
                         blob.content_type_was_set.set(true);
@@ -1893,28 +1892,11 @@ impl PipelineTask {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };
-                        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
-                        // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
-                        let args = [dest_js];
-                        let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
-                            global,
-                            &mut arg_slice,
-                        ) {
-                            Ok(p) => p,
-                            Err(e) => return promise.reject(global, Err(e)),
-                        };
-                        // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
-                        // and frees on Drop — no explicit `path.deinit()` needed.
-                        let write_promise = match crate::webcore::blob::write_file_internal(
-                            cx,
-                            &mut path_or_blob,
-                            data,
-                            Default::default(),
-                        ) {
-                            Ok(p) => p,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                        };
+                        let write_promise =
+                            match bun_runtime::features::write(cx, global, dest_js, data) {
+                                Ok(p) => p,
+                                Err(e) => return promise.reject(global, Err(e)),
+                            };
                         promise.resolve(global, write_promise)?;
                     }
                 }

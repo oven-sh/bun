@@ -17,7 +17,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
 import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
-import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
+import { createInternalModuleRegistry, loadedByNativeCode } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
 const BASE = path.join(import.meta.dir, "../js");
@@ -413,9 +413,10 @@ writeIfNotChanged(
 //
 // Layout (little-endian u32 unless noted; offsets in the index are relative to `data`):
 //   header:  magic[8] "BUNBLTNS", version, sourceStamp, moduleCount, modulesOffset,
-//            depOffsetsOffset, depsOffset, dataOffset, dataLength, 0, 0
+//            depOffsetsOffset, depsOffset, dataOffset, dataLength, rootsOffset, rootsCount
 //   modules: moduleCount × { nameOffset, nameLength, urlOffset, urlLength, codeOffset, codeLength }
 //   depOffsets: u16[moduleCount + 1], deps: u16[]  (see internalModuleDependencyTable)
+//   roots:   u16[rootsCount]  (see internalModuleRoots)
 //   data:    [builtin functions combined source][\0][module 0][\0][module 1][\0]...[name\0url\0]...
 // WebCoreJSBuiltins.cpp's internalCombinedSource is the span at data offset 0.
 //
@@ -432,9 +433,9 @@ const internalModulesStamp = sourceStamp(
 
 // require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
 // --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.
+const requireRe = /internalModuleRegistry, ?(\d+)/g;
 const internalModuleDependencyTable = (() => {
   const jsModules = moduleList.slice(0, nativeStartIndex);
-  const requireRe = /internalModuleRegistry, ?(\d+)/g;
   const offsets: number[] = [];
   const flat: number[] = [];
   jsModules.forEach((id, n) => {
@@ -452,6 +453,27 @@ const internalModuleDependencyTable = (() => {
   });
   offsets.push(flat.length);
   return { offsets, flat };
+})();
+
+// The modules that something other than a module loads, whatever the program does: the builtin functions and native code.
+// `bun build --compile --compile-exclude-features` leaves those in, and what they can require.
+const internalModuleRoots = (() => {
+  const jsModules = moduleList.slice(0, nativeStartIndex);
+  const roots = new Set(loadedByNativeCode.map(file => jsModules.indexOf(file)));
+  if (roots.has(-1)) throw new Error("loadedByNativeCode has a file that is not a module");
+  for (const m of functionsSource.matchAll(requireRe)) {
+    if (Number(m[1]) < nativeStartIndex) roots.add(Number(m[1]));
+  }
+
+  const { offsets, flat } = internalModuleDependencyTable;
+  const loaded = new Set(roots);
+  jsModules.forEach((id, n) => idToPublicSpecifierOrEnumName(id).startsWith("internal:") || loaded.add(n));
+  for (const n of loaded) for (const dep of flat.slice(offsets[n], offsets[n + 1])) loaded.add(dep);
+  const never = jsModules.filter((_, n) => !loaded.has(n));
+  if (never.length > 0) {
+    throw new Error(`Nothing loads ${never.join(", ")}. What native code loads goes into loadedByNativeCode.`);
+  }
+  return [...roots].sort((a, b) => a - b);
 })();
 
 let blob: Buffer;
@@ -491,7 +513,8 @@ let blobDataOffset: number;
   const modulesOffset = BUILTINS_HEADER_SIZE;
   const depOffsetsOffset = modulesOffset + records.length * 4;
   const depsOffset = depOffsetsOffset + internalModuleDependencyTable.offsets.length * 2;
-  blobDataOffset = align(depsOffset + internalModuleDependencyTable.flat.length * 2, 16);
+  const rootsOffset = depsOffset + internalModuleDependencyTable.flat.length * 2;
+  blobDataOffset = align(rootsOffset + internalModuleRoots.length * 2, 16);
 
   blob = Buffer.alloc(blobDataOffset + data.length);
   blob.write("BUNBLTNS", 0, "latin1");
@@ -504,12 +527,13 @@ let blobDataOffset: number;
     depsOffset,
     blobDataOffset,
     data.length,
-    0,
-    0,
+    rootsOffset,
+    internalModuleRoots.length,
   ].forEach((v, i) => blob.writeUInt32LE(v >>> 0, 8 + i * 4));
   records.forEach((v, i) => blob.writeUInt32LE(v, modulesOffset + i * 4));
   internalModuleDependencyTable.offsets.forEach((v, i) => blob.writeUInt16LE(v, depOffsetsOffset + i * 2));
   internalModuleDependencyTable.flat.forEach((v, i) => blob.writeUInt16LE(v, depsOffset + i * 2));
+  internalModuleRoots.forEach((v, i) => blob.writeUInt16LE(v, rootsOffset + i * 2));
   data.copy(blob, blobDataOffset);
 }
 
@@ -562,7 +586,8 @@ struct Header {
   uint32_t depsOffset;
   uint32_t dataOffset;
   uint32_t dataLength;
-  uint32_t reserved[2];
+  uint32_t rootsOffset;
+  uint32_t rootsCount;
 };
 static_assert(sizeof(Header) == ${BUILTINS_HEADER_SIZE});
 

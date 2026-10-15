@@ -43,6 +43,7 @@ pub(crate) mod webcore;
 
 pub(crate) mod bake;
 pub(crate) mod cli;
+pub mod features;
 pub(crate) mod shell;
 // `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of
@@ -70,7 +71,6 @@ pub(crate) mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_
 pub(crate) mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub(crate) mod dns_jsc;
-pub(crate) mod image;
 pub(crate) mod test_runner;
 pub(crate) mod valkey_jsc;
 

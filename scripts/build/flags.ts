@@ -1076,6 +1076,13 @@ export const linkerFlags: Flag[] = [
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
   },
   {
+    // feature-pass.cpp has a function be in an island by its section prefix, `.text$bun7.m`. LLVM gives one that is cold a
+    // prefix of its own when it generates code, `.text$unlikely`, whatever it had. With LTO that is in the linker.
+    flag: "/mllvm:-profile-guided-section-prefix=false",
+    when: c => c.windows,
+    desc: "Leave the section prefix of a cold function as it is",
+  },
+  {
     // lld-link's spelling of the symbol ordering file (the Linux entry below
     // explains it): one COMDAT leader name per line, laid out first in .text.
     // Every function is its own COMDAT here — /Gy for bun's C++ and for the
@@ -1189,6 +1196,13 @@ export const linkerFlags: Flag[] = [
     flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c)}`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
+  },
+  {
+    // `bun build --compile --compile-exclude-features` leaves pages out of `__TEXT`, which takes a load command for
+    // each stretch that stays (src/exe_features/macho.rs). The linker leaves no room for any.
+    flag: "-Wl,-headerpad,0x2000",
+    when: c => c.darwin,
+    desc: "Room for more load commands",
   },
   {
     // Mach-O keeps DWARF in the input .o files and records their paths in
@@ -1382,6 +1396,14 @@ export const linkerFlags: Flag[] = [
     flag: c => `-Wl,--icf=${icfMode(c)}`,
     when: c => c.linux || c.freebsd,
     desc: "Identical-code-folding (safe in release; perf symbolication uses the linker-map)",
+  },
+  {
+    // What is given the name of a section is otherwise one piece per compilation unit, of which the linker can neither
+    // drop nor fold a function or a constant. feature-pass.cpp names the sections of all that is compiled for a feature.
+    // clang's -fseparate-named-sections, said to the linker because with LTO that is where code is generated.
+    flag: "-Wl,-mllvm,-separate-named-sections",
+    when: c => c.linux || c.freebsd,
+    desc: "A section of its own for each function and constant in a named section",
   },
   {
     flag: c => `-Wl,-Map=${linkerMapPath(c)}`,

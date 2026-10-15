@@ -1,11 +1,11 @@
-// Writes src/runtime/cli/typescript_libs.bin: TypeScript's `lib.*.d.ts` files, which `bun check` has built in.
+// Writes src/typescript_libs/typescript_libs.bin: TypeScript's `lib.*.d.ts` files, which `bun check` has built in.
 //
 //   bun scripts/update-typescript-libs.ts [directory of the lib.*.d.ts files]
 //
 // Without an argument, they are those of the `typescript7` package that test/package.json installs. They have to be of
 // the version of typescript-go that the type checker is a port of. test/cli/check/check.test.ts compares them.
 //
-// The format is described in src/runtime/cli/typescript_libs.rs.
+// The format is described in src/typescript_libs/lib.rs.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
@@ -56,6 +56,6 @@ for (const [i, name] of names.entries()) {
   offset += frames[i].length;
 }
 
-const to = join(import.meta.dir, "..", "src", "runtime", "cli", "typescript_libs.bin");
+const to = join(import.meta.dir, "..", "src", "typescript_libs", "typescript_libs.bin");
 writeFileSync(to, Buffer.concat([header, ...frames]));
 console.log(`${names.length} files from ${from}, ${offset} bytes`);

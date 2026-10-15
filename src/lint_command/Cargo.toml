@@ -1,0 +1,34 @@
+[package]
+name = "bun_lint_command"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.bun]
+feature = "lint"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_runtime.workspace = true
+bun_typescript_libs.workspace = true
+bun_core.workspace = true
+bun_lint_driver.workspace = true
+bun_lint.workspace = true
+bun_sema_driver.workspace = true
+bun_sys.workspace = true
+bun_dotenv.workspace = true
+bun_paths.workspace = true
+bun_which.workspace = true
+bun_threading.workspace = true
+bun_jsc.workspace = true
+bun_event_loop.workspace = true
+bun_bunfig.workspace = true
+bun_ast.workspace = true
+bun_options_types.workspace = true
+bun_clap.workspace = true
+bstr.workspace = true
+bun_spawn.workspace = true

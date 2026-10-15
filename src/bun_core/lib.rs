@@ -1,4 +1,5 @@
 #![feature(allocator_api)]
+#![feature(used_with_arg)] // what `feature` has for `bun build --compile` to read stays though nothing refers to it
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -19,6 +20,7 @@ pub mod atomic_cell;
 pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
+pub mod feature;
 pub mod hint;
 pub mod result;
 pub mod thread_id;
@@ -628,7 +630,7 @@ impl ErrnoNames {
 
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
-pub use bun_core_macros::{EnumTag, pretty_fmt};
+pub use bun_core_macros::{EnumTag, feature, pretty_fmt};
 
 /// Build-time configuration values. Written at
 /// configure time by `scripts/build/buildOptionsRs.ts` from the resolved

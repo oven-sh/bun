@@ -157,7 +157,7 @@ bun_core::comptime_string_map! {
 // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
 
 /// ASCII-case-insensitive name → `Algorithm`.
-pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
+pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
     ALGORITHM_MAP.get_ascii_case_insensitive(bytes).copied()
 }
 

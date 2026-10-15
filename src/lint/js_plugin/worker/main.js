@@ -359,7 +359,7 @@ async function loadPlugin([location, position, firstRule]) {
 
 // The text of the file, without the byte order mark.
 let text = "";
-// ESLint's `SourceCode`: src/jsc/bindings/LintSourceCode.cpp. What a `sourceCode` says is about the file that is being linted.
+// ESLint's `SourceCode`: src/lint_command/LintSourceCode.cpp. What a `sourceCode` says is about the file that is being linted.
 const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
@@ -643,7 +643,7 @@ function configure(id, position) {
   // A function is a rule without `meta`, as for ESLint until version 8.
   const rule = typeof found === "function" ? { create: found } : found;
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
-  // `reporter`: `{ position, meta, report }`, where `report` is `context.report`. See src/jsc/bindings/LintReport.cpp.
+  // `reporter`: `{ position, meta, report }`, where `report` is `context.report`. See src/lint_command/LintReport.cpp.
   const entry = { rule, ruleId, own: null, position: 0, once: null, reporter: native.reporter(rule.meta) };
   entry.own = {
     id: ruleId,

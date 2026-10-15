@@ -2,6 +2,19 @@ import fs from "fs";
 import path from "path";
 import { readdirRecursive, resolveSyncOrNull } from "./helpers";
 
+/**
+ * The modules that native code loads whatever the program does (`requireId` in src/jsc/bindings), so no executable is without
+ * them (`bun build --compile --compile-exclude-features`). One that it loads because the program asks for it, like `bun/sql.ts`
+ * for `Bun.sql`, is not among them. test/internal/source-lints/native-module-loads.test.ts has every place where it loads one.
+ */
+export const loadedByNativeCode = [
+  "node/util.ts",
+  "internal/debugger.ts",
+  "internal/html.ts",
+  "internal/process/pre_execution.ts",
+  "internal/test/binding.ts",
+];
+
 export function createInternalModuleRegistry(basedir: string) {
   const moduleList = ["bun", "node", "thirdparty", "internal"]
     .flatMap(dir => readdirRecursive(path.join(basedir, dir)))

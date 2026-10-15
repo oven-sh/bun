@@ -2485,14 +2485,22 @@ mod draft {
                             )
                         });
 
+                    // `--compile-exclude-features` leaves pages out of `__TEXT`, which makes it several segments:
+                    // `__TEXT`, `__TEXT.1`, ... Everything in them is where it was, so addresses count from the first.
+                    let mut text_start = None;
                     while let Some(cmd) = it.next() {
                         match cmd.cmd() {
                             bun_sys::macho::LC_SEGMENT_64 => {
                                 let segment_cmd =
                                     cmd.cast::<bun_sys::macho::segment_command_64>().unwrap();
-                                if segment_cmd.seg_name() != b"__TEXT" {
+                                if segment_cmd.seg_name() == b"__TEXT" {
+                                    text_start = Some(segment_cmd.vmaddr as usize);
+                                } else if !segment_cmd.seg_name().starts_with(b"__TEXT.") {
                                     continue;
                                 }
+                                let Some(text_start) = text_start else {
+                                    continue;
+                                };
 
                                 let original_address = address - vmaddr_slide;
                                 let seg_start = segment_cmd.vmaddr as usize;
@@ -2502,7 +2510,7 @@ mod draft {
                                     let stable_address: usize = address - vmaddr_slide;
 
                                     if i == 0 {
-                                        let image_relative_address = stable_address - seg_start;
+                                        let image_relative_address = stable_address - text_start;
                                         if image_relative_address > i32::MAX as usize {
                                             return None;
                                         }

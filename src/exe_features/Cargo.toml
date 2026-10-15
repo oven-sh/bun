@@ -1,0 +1,15 @@
+[package]
+name = "bun_exe_features"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_exe_format.workspace = true

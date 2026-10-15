@@ -1,0 +1,16 @@
+[package]
+name = "bun_typescript_libs"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_sema_driver.workspace = true
+bun_zstd.workspace = true
+bun_core.workspace = true
+bun_runtime.workspace = true

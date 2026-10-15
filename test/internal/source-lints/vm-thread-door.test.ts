@@ -36,7 +36,15 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/vm-thread-door.inventory.json";
 
-const SCOPED = ["src/jsc/", "src/runtime/", "src/event_loop/", "src/sql_jsc/", "src/http_jsc/"];
+const SCOPED = [
+  "src/jsc/",
+  "src/runtime/",
+  "src/lint_command/",
+  "src/image/",
+  "src/event_loop/",
+  "src/sql_jsc/",
+  "src/http_jsc/",
+];
 // The door itself.
 const DOOR = new Set(["src/jsc/VmHandle.rs", "src/jsc/job.rs"]);
 

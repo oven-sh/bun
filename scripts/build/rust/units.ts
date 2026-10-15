@@ -24,6 +24,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
+import { featureFlags, featurePassSource, featuresThatNeed, islandsOf, type Islands } from "./features.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
 export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
@@ -90,8 +91,11 @@ export interface RustUnit {
 
 export interface RustGraph {
   units: RustUnit[];
-  /** What the graph was planned for: the `bun_runtime` library, or the Windows shim's `bin`. */
+  /** What the graph was planned for: the `bun_all` library, or the Windows shim's `bin`. */
   root: RustUnit;
+  /** The units that are a feature's, with the features that need them (features.ts). */
+  neededBy: Map<RustUnit, string[]>;
+  islands: Islands;
   /** The graph's own directory under the build directory (`rust-target/`, `rust-target/shim/`): plan, unit manifests, artifacts. */
   dir: string;
   hostDeps: string;
@@ -180,6 +184,8 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       }
     }
   });
+  const neededBy = featuresThatNeed(units, units[g.roots[0]!]!);
+  const islands = islandsOf(plan.workspaceRoot, neededBy);
 
   // Hashes, computed topologically over the DAG. `symbolHash` (→ `-C metadata`) must differ wherever two builds
   // of one crate name can meet in a link — host vs target, sysroot std vs build-std std, feature sets — and must
@@ -207,6 +213,10 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       unit.platform,
       u.mode,
       [...unit.features].sort(),
+      // rustc does not know that the pass is an input, and would take what it compiled with another from its incremental cache.
+      neededBy.has(unit)
+        ? [neededBy.get(unit), islands.of.get(unit), readFileSync(featurePassSource(plan.workspaceRoot), "utf8")]
+        : null,
       u.profile,
       unit.isStd,
       plan.rustc.version,
@@ -292,6 +302,8 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
   return {
     units,
     root,
+    neededBy,
+    islands,
     dir,
     hostDeps: join(dir, "host", "deps"),
     targetDeps: join(dir, plan.target.triple, "deps"),
@@ -534,6 +546,8 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
   // CARGO_ENCODED_RUSTFLAGS.
   if (!isHost) args.push(...plan.plannedWith.rustflags);
+  const ofFeatures = featureFlags(cfg, unit, graph.neededBy, graph.islands);
+  args.push(...ofFeatures.args);
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");
@@ -544,6 +558,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   const env: Record<string, string> = {
     ...ctx.baseEnv,
     ...packageEnv(unit.pkg, ctx.cargo),
+    ...ofFeatures.env,
     CARGO_CRATE_NAME: unit.crateName,
   };
   // cargo: every unit of a package named on the command line (`-p bun_runtime`), its build script included.

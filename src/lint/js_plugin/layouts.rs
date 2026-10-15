@@ -216,7 +216,7 @@ fn fields_in_order(
 }
 
 /// In the place of the number of a type that nothing here makes: `u32::MAX` less what its visitor keys are. The order is that of
-/// `keysOfOtherTypes` in src/jsc/bindings/LintNodes.cpp.
+/// `keysOfOtherTypes` in src/lint_command/LintNodes.cpp.
 const ARGUMENT: u32 = 0;
 const NO_KEYS: u32 = 1;
 const EXPRESSION: u32 = 2;
@@ -287,7 +287,7 @@ fn visitor_key_order_of_oxlint(mut all: Vec<(&'static [u8], u32)>) -> Vec<(&'sta
     all
 }
 
-/// For src/jsc/bindings/LintNodes.cpp.
+/// For src/lint_command/LintNodes.cpp.
 ///
 /// Words: how many types there are, how many of [`STRINGS`], how many words come before the names, how many layouts there are, how
 /// many words [`visitor_key_order`] takes. Then

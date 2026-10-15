@@ -6,7 +6,8 @@ use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
-use bun_core::{Global, Output, ZStr, env_var};
+use bun_core::{Global, Output, ZStr, env_var, feature};
+use bun_runtime::features::{self, EntryPoint, working_directory};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -16,7 +17,7 @@ use bun_sema_driver::{
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
-pub(crate) struct CheckCommand;
+struct CheckCommand;
 
 #[derive(Default)]
 struct Options {
@@ -61,7 +62,7 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--no-emit"),
     clap::param!("<POS>..."),
 ];
-pub(crate) const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
+const PARAMS: &[clap::Param<clap::Help>] = clap::concat_params!(PROJECT, PRETTY, OTHERS);
 /// A compiler option is not in the table: see `unknown_long_flags_are_positional`.
 static TABLE: &clap::ConvertedTable =
     clap::comptime_table!(clap::concat_params!(PROJECT, OTHERS), cold);
@@ -101,7 +102,7 @@ fn parse(args: &[&ZStr]) -> Options {
         }
     };
     if parsed.flag(b"--help") {
-        crate::cli::command::tag_print_help(crate::cli::command::Tag::CheckCommand, true);
+        features::tag_print_help(bun_options_types::command_tag::Tag::CheckCommand, true);
         Global::exit(0);
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
@@ -176,17 +177,6 @@ fn reject(rejected: &RejectedFlag) -> ! {
             "{flag} must be one of: {}",
             BStr::new(&allowed.join(&b", "[..]))
         )),
-    }
-}
-
-pub(crate) fn working_directory() -> Vec<u8> {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    match bun_core::getcwd(&mut buf) {
-        Ok(cwd) => cwd.as_bytes().to_vec(),
-        Err(err) => {
-            Output::err(err, "Could not read the working directory", ());
-            Global::exit(1);
-        }
     }
 }
 
@@ -344,7 +334,7 @@ fn request<'a>(
         conditions: entries.conditions,
         compiler_options,
         threads,
-        libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
+        libs: bun_sema_driver::Libs::Bundled(bun_typescript_libs::BUNDLED),
         progress,
         only: None,
         order: 1,
@@ -421,8 +411,23 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
 const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
+#[feature::behind(features::exec_check, check)]
+fn exec_check(args: &[&ZStr]) -> ! {
+    CheckCommand::exec(args)
+}
+
+#[feature::behind(features::exec_check_without_arguments, check)]
+fn exec_check_without_arguments() -> ! {
+    CheckCommand::exec_without_arguments()
+}
+
+#[feature::behind(features::print_flags_of_check, check)]
+fn print_flags_of_check() {
+    clap::simple_help(PARAMS);
+}
+
 impl CheckCommand {
-    pub(crate) fn exec(args: &[&ZStr]) -> ! {
+    fn exec(args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
             && let [first, rest @ ..] = args
             && first.as_bytes() == b"--run-typescript-tests"
@@ -436,7 +441,7 @@ impl CheckCommand {
 
     /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
     /// those of `bun`, which has read them.
-    pub(crate) fn exec_without_arguments() -> ! {
+    fn exec_without_arguments() -> ! {
         Self::exec_with(&Options {
             command_line: CommandLine {
                 project: tsconfig_override().map(<[u8]>::to_vec),
@@ -524,29 +529,10 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
     Global::exit(u32::from(!report.is_ok()));
 }
 
-/// What is run.
-#[derive(Clone, Copy)]
-pub(crate) struct EntryPoint<'a> {
-    pub(crate) path: &'a [u8],
-    /// What it is loaded with. `None`: what its name says.
-    pub(crate) loader: Option<bun_ast::Loader>,
-    /// It is not in a file: `-e`, or what is read from stdin.
-    pub(crate) text: Option<&'a [u8]>,
-}
-
-impl<'a> EntryPoint<'a> {
-    pub(crate) fn file(path: &'a [u8]) -> EntryPoint<'a> {
-        EntryPoint {
-            path,
-            loader: None,
-            text: None,
-        }
-    }
-}
-
 /// Type checks `entry_points` and everything they import before they are run. Returns whether they
 /// have no errors. Reports the errors on stderr, which leaves stdout to the program.
-pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
+#[feature::behind(features::check_before, check)]
+fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
     let cwd = working_directory();
     // `--loader`, `--conditions`
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
@@ -602,7 +588,8 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 /// check reads it, so a change during the check starts the process again, like a change after it.
 /// That is every file outside `node_modules`: some only have types, some are configuration files.
 /// `None` without a file watcher.
-pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
+#[feature::behind(features::watching, check)]
+fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
@@ -629,12 +616,14 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 }
 
 /// `BundleOptions::type_check` for `bun build --check`.
-pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+#[feature::behind(features::check_for_build_command, check)]
+fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
     check_for_build(checked, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
-pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
+#[feature::behind(features::check_for_bun_build, check)]
+fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
     check_for_build(checked, log, false)
 }
 
@@ -745,7 +734,7 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
 
 /// By its name. A file that is neither TypeScript nor JavaScript has no types to check: a
 /// stylesheet, a page.
-pub(crate) fn has_types(path: &[u8]) -> bool {
+fn has_types(path: &[u8]) -> bool {
     use bun_ast::Loader;
     Loader::from_string(bun_paths::extension(path)).is_some_and(Loader::is_javascript_like)
 }
@@ -836,7 +825,8 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
-pub(crate) fn check_project_before() -> bool {
+#[feature::behind(features::check_project_before, check)]
+fn check_project_before() -> bool {
     check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
 }
 

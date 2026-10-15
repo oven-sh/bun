@@ -142,6 +142,19 @@ suspicious = "warn"
 perf = "warn"
 ```
 
+A category includes the React, Next.js, Jest and Vitest rules only if your `package.json` lists that package. See [`lint.categories`](/runtime/bunfig#lint-categories).
+
+### Turn a plugin on or off
+
+Use `*` as the rule name to set every rule of a plugin. A setting for a single rule overrides it.
+
+```toml bunfig.toml icon="settings"
+[lint.rules]
+"jsx-a11y/*" = "off"
+"unicorn/*" = "warn"
+"unicorn/no-null" = "off"
+```
+
 ## Ignore files
 
 ```toml bunfig.toml icon="settings"

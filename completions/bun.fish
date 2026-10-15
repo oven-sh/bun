@@ -222,7 +222,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the w
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule: --rule 'eqeqeq: [error, smart]'"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule, or a plugin's rules: --rule 'eqeqeq: [error, smart]', --rule 'unicorn/*: off'"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rules" -d "List the built-in rules"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "explain" -r -d "Print the documentation of a rule"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "init" -d "Add a [lint] section to bunfig.toml"
@@ -269,7 +269,7 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -s "p" -l "project" -r -F 
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "parser-options" -r -d "Set parser options: --parser-options projectService:true"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "parser" -r -d "Parse files with this package"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "plugin" -r -d "Load these plugins"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "native-plugin-rules" -r -d "Use the built-in rules for these plugins only: import,react-hooks (default: all)"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "native-plugin-rules" -r -d "Of the ESLint plugins a config loads, run only these natively: import,react-hooks (default: all)"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-native-plugin-rules" -d "Run plugin rules from the installed packages, in JavaScript"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "report-unused-disable-directives-severity" -r -d "Report unused eslint-disable comments as off, warn or error"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "report-unused-inline-configs" -r -d "Report config comments that change nothing"

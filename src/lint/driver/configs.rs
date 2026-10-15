@@ -30,7 +30,7 @@ use bun_lint::linter::{
     oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
-use bun_lint::rule::{Plugin, minor_of};
+use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -95,7 +95,7 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ];
 
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
-/// `Reader::grade_by_kind`, for `$forReact` see `ResolvedConfig::outside_of_react`, for `$withoutWarnings` see
+/// `Reader::grade_by_kind`, for `$framework` see `Config::get_with_frameworks`, for `$withoutWarnings` see
 /// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
 /// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
 ///
@@ -186,7 +186,7 @@ const BUILT_IN: &[u8] = br#"[
     },
     { "rules": { "react/jsx-uses-react": "error" } },
     {
-        "$forReact": true,
+        "$framework": "react",
         "rules": {
             "react-hooks/rules-of-hooks": "error",
             "react-hooks/exhaustive-deps": "warn",
@@ -310,18 +310,32 @@ fn is_written_for_oxlint(path: &[u8]) -> bool {
         || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
-/// Checks `directory/package.json` for React in `dependencies`, `devDependencies` or `peerDependencies`.
+/// Reads `directory/package.json` and returns the [`Frameworks`] it lists in `dependencies`, `devDependencies` or
+/// `peerDependencies`.
 ///
 /// Returns `None` when this file can't decide and the caller should use the next one up: it doesn't exist, isn't a JSON
 /// object, or has none of the three fields (a nested `{ "type": "module" }`, for example). An empty `"dependencies": {}`
 /// still counts as a decision.
-pub(crate) fn depends_on_react(directory: &[u8]) -> Option<bool> {
+pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
     let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
     let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
     let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
-    let mut declared = fields.iter().filter_map(|it| package.get(it)).peekable();
-    declared.peek()?;
-    Some(declared.any(|it| it.get(b"react").is_some()))
+    let fields: Vec<&Json> = fields.iter().filter_map(|it| package.get(it)).collect();
+    if fields.is_empty() {
+        return None;
+    }
+    let is_listed = |name: &str| fields.iter().any(|it| it.get(name.as_bytes()).is_some());
+    let listed = Frameworks::PACKAGES.iter().filter(|it| is_listed(it.0));
+    Some(listed.map(|it| it.1).collect())
+}
+
+/// Combines a directory's `own` [`read_frameworks`] result with its `parent` directory's frameworks. The closest
+/// package.json wins, except that test runners are also inherited from the parent.
+pub(crate) fn inherit_frameworks(parent: Frameworks, own: Option<Frameworks>) -> Frameworks {
+    match own {
+        Some(own) => own | (parent & Frameworks::TEST_RUNNERS),
+        None => parent,
+    }
 }
 
 /// A configuration that has been read.
@@ -421,8 +435,8 @@ pub(crate) struct Loader<'l> {
     /// `Inferred` need not ask the system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
-    /// Cache for [`Loader::is_of_react`], keyed by directory.
-    of_react: Guarded<FxHashMap<Vec<u8>, bool>>,
+    /// Cache for [`Loader::detect_frameworks`], keyed by directory.
+    frameworks: Guarded<FxHashMap<Vec<u8>, Frameworks>>,
 }
 
 fn strings_of(items: &[Vec<u8>]) -> Json {
@@ -742,7 +756,7 @@ impl<'l> Loader<'l> {
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
             tsconfigs: Default::default(),
-            of_react: Default::default(),
+            frameworks: Default::default(),
         }
     }
 
@@ -1036,7 +1050,9 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        first.push((b"rules", Json::Object(rules_of(options, self.cwd()))));
+        let mut rules = rules_of(options, self.cwd());
+        let flag_rules = native::take_flag_rules(options, &mut rules);
+        first.push((b"rules", Json::Object(rules)));
         if !options.settings.is_empty() {
             first.push((b"settings", Json::Object(options.settings.clone())));
         }
@@ -1068,6 +1084,9 @@ impl<'l> Loader<'l> {
             }
         }
         let mut all = vec![object(first)];
+        if !flag_rules.is_empty() {
+            all.push(object(vec![(b"rules", Json::Object(flag_rules))]));
+        }
         all.extend(self.overrides(Shape::Flat, base_path));
         if let Some(extensions) = &options.ext {
             let patterns = extensions.iter().map(|extension| {
@@ -1371,6 +1390,9 @@ impl<'l> Loader<'l> {
     /// Loads what `plugins` in bunfig.toml and `--plugin` name. They add to whatever the configuration is.
     fn named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, Fatal> {
         let checked = self.load_named_plugins(flavor).and_then(|plugins| {
+            if flavor != Flavor::BuiltIn {
+                native::reject_plugin_wildcards(self.options)?;
+            }
             // What is wrong with their rules in bunfig.toml is said of bunfig.toml. ESLint 8 takes more than the others: any options
             // for a rule without a schema, and a rule that does not exist is a finding.
             if matches!(flavor, Flavor::Eslint | Flavor::Oxlint) {
@@ -1689,6 +1711,7 @@ impl<'l> Loader<'l> {
         )];
         let mut of_user = native::categories(self.linter.registry(), self.options);
         of_user.extend(self.added(b"/"));
+        native::expand_plugin_wildcards(self.linter.registry(), &plugins, &mut of_user);
         objects.extend(self.split_pairs(of_user));
         let mut config = self.flat(b"/", Json::Array(objects), false, plugins)?;
         // Without a word: where the run has types, which then cost nothing more.
@@ -2598,28 +2621,27 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
     }
 
-    /// Returns true if the closest package.json that [lists dependencies](depends_on_react), from `directory` up, has React.
-    /// Only the built-in defaults care, so this is always false with an ESLint or oxlint config.
-    pub(crate) fn is_of_react(&self, loaded: &Loaded, directory: &[u8]) -> bool {
+    /// Detects the frameworks used by files in `directory`, from its package.json and the ones above it.
+    /// Only Bun's built-in config needs this, so the result is empty with an ESLint or oxlint config.
+    pub(crate) fn detect_frameworks(&self, loaded: &Loaded, directory: &[u8]) -> Frameworks {
         if loaded.flavor != Flavor::BuiltIn {
-            return false;
+            return Frameworks::empty();
         }
-        if let Some(known) = self.of_react.lock().get(directory) {
-            return *known;
+        if let Some(cached) = self.frameworks.lock().get(directory) {
+            return *cached;
         }
-        let found = paths::ancestors(directory).find_map(depends_on_react) == Some(true);
-        self.of_react.lock().insert(directory.to_vec(), found);
-        found
+        let parent = Some(paths::dirname(directory)).filter(|it| it.len() < directory.len());
+        let parent = parent.map_or(Frameworks::empty(), |it| self.detect_frameworks(loaded, it));
+        let detected = inherit_frameworks(parent, read_frameworks(directory));
+        (self.frameworks.lock()).insert(directory.to_vec(), detected);
+        detected
     }
 
-    /// Resolves the config for one file. Use this instead of `loaded.config.get()`, which doesn't know about React projects.
+    /// Resolves the config for one file. Use this instead of `loaded.config.get()`, which doesn't know which frameworks the
+    /// project uses.
     pub(crate) fn config_of(&self, loaded: &Loaded, path: &[u8]) -> FileConfig {
-        match loaded.config.get(self.linter.registry(), path) {
-            FileConfig::Matched(config) if !self.is_of_react(loaded, paths::dirname(path)) => {
-                FileConfig::Matched(config.outside_of_react())
-            }
-            config => config,
-        }
+        let detected = self.detect_frameworks(loaded, paths::dirname(path));
+        (loaded.config).get_with_frameworks(self.linter.registry(), path, detected)
     }
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.

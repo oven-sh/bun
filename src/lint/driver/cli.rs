@@ -16,7 +16,7 @@ const RULES: &[Param] = &[
     clap::param!("-c, --config <path>             Use this config file instead of looking for one"),
     clap::param!("--no-config-lookup              Do not look for a config file"),
     clap::param!(
-        "--rule <rule>...                Set a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
+        "--rule <rule>...                Set a rule, or a plugin's rules: <b>--rule 'eqeqeq: [error, smart]'<r>, <b>--rule 'unicorn/*: off'<r>"
     ),
     clap::param!("--rules                         List the built-in rules"),
     clap::param!("--explain <rule>                Print the documentation of a rule"),
@@ -125,7 +125,7 @@ const OF_ESLINT: &[Param] = &[
     clap::param!("--parser <name>                 Parse files with this package"),
     clap::param!("--plugin <name>...              Load ESLint plugins: paths or package names"),
     clap::param!(
-        "--native-plugin-rules <plugins>  Use the built-in rules for these plugins only: <b>import,react-hooks<r> <d>(default: all)<r>"
+        "--native-plugin-rules <plugins>  Of the ESLint plugins a config loads, run only these natively: <b>import,react-hooks<r> <d>(default: all)<r>"
     ),
     clap::param!(
         "--no-native-plugin-rules        Run plugin rules from the installed packages, in JavaScript"

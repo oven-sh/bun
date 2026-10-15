@@ -288,6 +288,19 @@ impl Plugin {
         Plugin::ALL.iter().copied().filter(has)
     }
 
+    /// The framework or test runner this plugin's rules target. Empty for general-purpose plugins.
+    pub const fn framework(self) -> Frameworks {
+        match self {
+            Plugin::React | Plugin::ReactHooks | Plugin::ReactPerf | Plugin::JsxA11y => {
+                Frameworks::REACT
+            }
+            Plugin::Nextjs => Frameworks::NEXT,
+            Plugin::Jest => Frameworks::JEST,
+            Plugin::Vitest => Frameworks::VITEST,
+            _ => Frameworks::empty(),
+        }
+    }
+
     /// The plugin of oxlint that has the rules of this one: those of `react-hooks` are in its `react`.
     pub const fn in_oxlint(self) -> Plugin {
         match self {
@@ -295,6 +308,30 @@ impl Plugin {
             plugin => plugin,
         }
     }
+}
+
+bitflags::bitflags! {
+    /// Frameworks and test runners that have their own lint plugin. `bun lint` detects them from package.json, so that
+    /// `[lint.categories]` doesn't enable Next.js rules in a project that doesn't use Next.js.
+    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Frameworks: u8 {
+        const REACT = 1 << 0;
+        const NEXT = 1 << 1;
+        const JEST = 1 << 2;
+        const VITEST = 1 << 3;
+        /// Monorepos usually list these only in the root package.json, so nested packages inherit them.
+        const TEST_RUNNERS = Self::JEST.bits() | Self::VITEST.bits();
+    }
+}
+
+impl Frameworks {
+    /// The npm package name for each flag.
+    pub const PACKAGES: [(&'static str, Frameworks); 4] = [
+        ("react", Frameworks::REACT),
+        ("next", Frameworks::NEXT),
+        ("jest", Frameworks::JEST),
+        ("vitest", Frameworks::VITEST),
+    ];
 }
 
 /// The major and the minor version in `version`.

@@ -3331,14 +3331,9 @@ impl<'a> LinkerContext<'a> {
         if self.options.output_format != Format::Esm {
             return None;
         }
+        let targets = self.graph.ast.items_target();
         // A browser has no `require`. A browser file in a server build (HTML import) would get the server's.
-        if self.graph.ast.items_target()[source_index as usize] == Target::Browser {
-            return None;
-        }
-        // Each chunk prints every live runtime part, and Node's `__require` part imports `node:module`.
-        if self.options.target == Target::Node
-            && self.parse_graph().html_imports.server_source_indices.len() > 0
-        {
+        if targets[source_index as usize] == Target::Browser {
             return None;
         }
         let scope = &self.graph.ast.items_module_scope()[source_index as usize];
@@ -3346,7 +3341,19 @@ impl<'a> LinkerContext<'a> {
             return None;
         }
         let ref_ = scope.members.get(&b"require"[..])?.ref_;
-        (self.graph.symbols.get_const(ref_)?.kind == bun_ast::symbol::Kind::Unbound).then_some(ref_)
+        if self.graph.symbols.get_const(ref_)?.kind != bun_ast::symbol::Kind::Unbound {
+            return None;
+        }
+        // Every chunk prints the runtime `__require` part, and Node's imports `node:module`: a browser chunk would not load.
+        let entry_points = self.graph.entry_points.items_source_index();
+        if self.options.target == Target::Node
+            && entry_points
+                .iter()
+                .any(|&entry| targets[entry as usize] == Target::Browser)
+        {
+            return None;
+        }
+        Some(ref_)
     }
 
     /// Note: returns `'static` so callers can hold the source across a

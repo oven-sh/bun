@@ -1492,26 +1492,45 @@ describe("bundler", () => {
     outdir: "/out",
     target: "bun",
     onAfterBundle(api) {
-      expect(jsChunks(api).filter(name => declaresRequire(api, name))).toEqual(["server.js"]);
+      const chunks = jsChunks(api);
+      expect(chunks).toHaveLength(2);
+      expect(chunks.filter(name => declaresRequire(api, name))).toEqual(["server.js"]);
     },
     run: { stdout: "function string" },
   });
 
   // Node's __require part imports node:module, and each chunk prints every
   // live runtime part. The browser chunk must still load, so nothing changes.
+  const expectNoRequireInServerAndBrowserChunk = (api: BundlerTestBundleAPI) => {
+    const chunks = jsChunks(api);
+    expect(chunks).toHaveLength(2);
+    for (const name of chunks) {
+      api.expectFile("/out/" + name).not.toContain("__require");
+      api.expectFile("/out/" + name).not.toContain("node:module");
+    }
+  };
+
   itBundled("cjs/DirectEvalNodeBuildWithHtmlImport", {
     files: htmlImportFiles,
     entryPoints: ["/server.js"],
     outdir: "/out",
     target: "node",
     format: "esm",
-    onAfterBundle(api) {
-      const chunks = jsChunks(api);
-      expect(chunks).toHaveLength(2);
-      for (const name of chunks) {
-        api.expectFile("/out/" + name).not.toContain("__require");
-        api.expectFile("/out/" + name).not.toContain("node:module");
-      }
+    onAfterBundle: expectNoRequireInServerAndBrowserChunk,
+  });
+
+  itBundled("cjs/DirectEvalNodeBuildWithHtmlEntryPoint", {
+    files: {
+      ...htmlImportFiles,
+      "/server.js": /* js */ `
+        import probe from "./probe.cjs";
+        console.log(probe);
+      `,
     },
+    entryPoints: ["/index.html", "/server.js"],
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    onAfterBundle: expectNoRequireInServerAndBrowserChunk,
   });
 });

@@ -26,14 +26,15 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cxx: "/fake/llvm/bin/clang++",
     hostCc: undefined,
     hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
     ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "23.1.1",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
@@ -102,7 +103,9 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+    // A Windows target has nothing to strip: its `bun` is a copy.
+    const strip = cfg.windows ? "copy_exe" : "strip";
+    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}`);
   });
 
   // `ci` comes from the config alone (resolveConfig never reads the

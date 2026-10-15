@@ -121,6 +121,17 @@ pub enum Protocol {
     Http3,
 }
 
+/// Which redirects the request's credential headers survive.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum RedirectCredentialsPolicy {
+    /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+    #[default]
+    SameOrigin,
+    /// `bun install`: also http -> https on the same hostname, from port 80 to port 443 or on one port.
+    HttpsUpgrade,
+}
+
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
     HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
@@ -223,6 +234,7 @@ pub struct Flags {
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
+    pub redirect_credentials: RedirectCredentialsPolicy,
 }
 
 impl Default for Flags {
@@ -246,6 +258,7 @@ impl Default for Flags {
             forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
+            redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
         }
     }
 }
@@ -936,6 +949,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
@@ -1035,6 +1049,26 @@ bun_core::comptime_string_map! {
     };
 }
 
+#[derive(Copy, Clone)]
+struct RedirectHop {
+    same_origin: bool,
+    /// http -> https on one hostname, from port 80 to port 443 or on one port.
+    https_upgrade: bool,
+}
+
+impl RedirectHop {
+    fn between(from: &URL<'_>, to: &URL<'_>) -> Self {
+        let (from_port, to_port) = (from.get_port_auto(), to.get_port_auto());
+        Self {
+            same_origin: is_same_origin_url(from, to),
+            https_upgrade: from.is_http()
+                && to.is_https()
+                && strings::eql_case_insensitive_ascii(from.hostname, to.hostname, true)
+                && (from_port == to_port || (from_port == 80 && to_port == 443)),
+        }
+    }
+}
+
 // ── shared per-thread buffers ───────────────────────────────────────────
 // All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
 // is the alias-safe static cell per docs/PORTING.md §Global mutable state.
@@ -1099,7 +1133,7 @@ pub enum AlpnOffer {
 
 /// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
-/// from `on_open` for every TLS socket — must run even when the hostname is an
+/// before a TLS socket's first handshake. It must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
 ///
 // `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
@@ -1385,7 +1419,7 @@ pub(crate) fn print_request(
         "> {} {} {}",
         ver,
         BStr::new(request.method),
-        bun_core::fmt::redacted_npm_url(url),
+        EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
     );
     for header in request.headers {
         let name = header.name();
@@ -1396,8 +1430,8 @@ pub(crate) fn print_request(
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
                 "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
-                BStr::new(name),
-                BStr::new(&value[..scheme_len]),
+                escape_control_chars(name),
+                escape_control_chars(&value[..scheme_len]),
             );
         } else {
             bun_core::pretty_errorln!("> {}", header);
@@ -1456,7 +1490,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// than the certificate (`packages/bun-usockets/src/crypto/openssl.c`) when the
 /// peer went away. The other one, -71, is a fatal protocol error such as a peer
 /// that does not speak TLS. Certificate problems are the positive `X509_V_ERR_*`.
-const US_HANDSHAKE_ECONNRESET: i32 = -46;
+const US_HANDSHAKE_ECONNRESET: i32 = uws::us_bun_verify_error_t::PEER_DISCONNECTED;
 
 /// Why a TLS handshake that reported failure failed.
 pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {
@@ -1538,7 +1572,10 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         59 => CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM,
         60 => CertError::SUITE_B_LOS_NOT_ALLOWED,
         61 => CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-        62 => CertError::HOSTNAME_MISMATCH,
+        // The verdict of the in-handshake server identity check.
+        uws::us_bun_verify_error_t::HOSTNAME_MISMATCH => {
+            return crate::Error::ERR_TLS_CERT_ALTNAME_INVALID;
+        }
         63 => CertError::EMAIL_MISMATCH,
         64 => CertError::IP_ADDRESS_MISMATCH,
         65 => CertError::INVALID_CALL,
@@ -1671,6 +1708,15 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Whether the outer socket's peer carries the name `check_server_identity` matches after the handshake.
+    pub(crate) fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+        let native = self.socket_verification() == PeerVerification::Native;
+        boringssl::server_identity(
+            ssl,
+            native.then(|| get_tls_hostname(self, self.http_proxy.is_some())),
+        )
+    }
+
     /// `PooledSocket::verification` to record when releasing the outer socket.
     fn pooled_socket_verification(&self) -> PeerVerification {
         self.flags
@@ -1759,8 +1805,7 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         // we check with native code if the cert is valid
                         // fast path
-                        // SAFETY: x509 is a live *mut X509 borrowed from cert_chain
-                        if boringssl::check_x509_server_identity(unsafe { &mut *x509 }, hostname) {
+                        if uws::check_server_identity(ssl, hostname) {
                             return true;
                         }
                     }
@@ -1833,14 +1878,21 @@ impl<'a> HTTPClient<'a> {
             self.state.request_stage = RequestStage::Opened;
         }
 
+        if !IS_SSL {
+            self.first_call::<IS_SSL>(socket);
+        }
+        Ok(())
+    }
+
+    /// Valid only before the handshake starts, so [`Self::on_connect`] is the only caller.
+    fn configure_tls<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if IS_SSL {
             // SAFETY: socket.get_native_handle() returns a valid *mut SSL on TLS sockets
             let ssl_ptr: *mut boringssl::c::SSL = socket
                 .get_native_handle()
                 .map(|p| p.cast())
                 .unwrap_or(core::ptr::null_mut());
-            // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
-            if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
+            if !ssl_ptr.is_null() {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
@@ -1849,7 +1901,7 @@ impl<'a> HTTPClient<'a> {
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char =
-                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                    if !bun_core::ip_address::is_ip_host(raw_hostname) {
                         // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
                         let temp = scratch::temp_hostname();
                         if raw_hostname.len() < temp.len() {
@@ -1874,15 +1926,24 @@ impl<'a> HTTPClient<'a> {
                     self.alpn_offer(),
                 );
 
-                if crate::session_cache::eligible(self) {
+                if self.flags.reject_unauthorized {
+                    socket.set_inline_reject();
+                }
+
+                if let Some(raw_socket) = socket
+                    .socket
+                    .get()
+                    .filter(|_| crate::session_cache::eligible(self))
+                {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
-                    // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
-                    // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
-                    // the static `https_context` or the heap context this
+                    // SAFETY: `ssl_ptr` is live and pre-handshake (uSockets starts
+                    // the handshake when the open callback returns); `get_ssl_ctx`
+                    // returns the static `https_context` or the heap context this
                     // client holds a strong ref on, both of which outlive
                     // every SSL attached to their socket group.
                     unsafe {
                         crate::session_cache::install(
+                            raw_socket,
                             ssl_ptr,
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
@@ -1897,10 +1958,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
             }
-        } else {
-            self.first_call::<IS_SSL>(socket);
         }
-        Ok(())
     }
 
     /// Runs once per connection, from the uSockets open callback. A socket
@@ -1934,7 +1992,12 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
-        self.on_open::<IS_SSL>(socket)
+        self.on_open::<IS_SSL>(socket)?;
+        // `on_open` starts the request on a plain socket, which can free `self`.
+        if IS_SSL {
+            self.configure_tls::<IS_SSL>(socket);
+        }
+        Ok(())
     }
 
     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
@@ -4117,14 +4180,22 @@ impl<'a> HTTPClient<'a> {
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let max_output = self.decompress_output_cap();
-        // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
-        if max_output != usize::MAX
-            && self.state.encoding.is_compressed()
-            && self.signals.is_receive_paused()
-        {
-            self.state.flags.decompress_output_pending = true;
-            return Ok(false);
+        let mut max_output = self.decompress_output_cap();
+        if max_output != usize::MAX && self.state.encoding.is_compressed() {
+            // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
+            if self.signals.is_receive_paused() {
+                self.state.flags.decompress_output_pending = true;
+                return Ok(false);
+            }
+            // A body that one libdeflate call can inflate waits whole for its consumer.
+            if is_final_chunk && self.state.wants_exact_size_inflate() {
+                if self.signals.hold_for_consumer() {
+                    self.state.flags.decompress_output_pending = true;
+                    return Ok(false);
+                }
+                // A consumer attached after the cap was read.
+                max_output = self.decompress_output_cap();
+            }
         }
         // `process_body_buffer` takes `&mut self.state`, so the bytes move out first.
         let buffer = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4700,11 +4771,11 @@ impl<'a> HTTPClient<'a> {
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
+            // A body that arrived whole keeps the libdeflate fast path: it may be held.
+            if !is_final_chunk {
+                self.state.flags.is_libdeflate_fast_path_disabled = true;
+            }
             let processed = self.process_received_body(is_final_chunk)?;
-
-            // We can only use the libdeflate fast path when we are not streaming
-            // If we ever call processBodyBuffer again, it cannot go through the fast path.
-            self.state.flags.is_libdeflate_fast_path_disabled = true;
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);
@@ -5077,7 +5148,7 @@ impl<'a> HTTPClient<'a> {
                 {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
-                let is_same_origin;
+                let hop: RedirectHop;
 
                 {
                     if let Some(i) = strings::index_of(location, b"://") {
@@ -5141,7 +5212,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&new_url, &self.url);
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
                         // until doRedirect releases the socket, so park it in
@@ -5192,7 +5263,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&new_url, &self.url);
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect =
@@ -5216,7 +5287,7 @@ impl<'a> HTTPClient<'a> {
                         // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                         // below, which lives as long as `self` (≥ `'a`).
                         self.url = unsafe { parsed_url.erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&self.url, &original_url);
+                        hop = RedirectHop::between(&original_url, &self.url);
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
                     }
@@ -5258,13 +5329,17 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                if !is_same_origin && self.header_entries.len() > 0 {
+                // The credential headers (all but `host`) follow `Flags::redirect_credentials`.
+                if !hop.same_origin && self.header_entries.len() > 0 {
+                    let strip_credentials = !hop.https_upgrade
+                        || self.flags.redirect_credentials == RedirectCredentialsPolicy::SameOrigin;
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);
                         if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
                             .get_ascii_case_insensitive(name)
                             .is_some()
+                            && (strip_credentials || name.eq_ignore_ascii_case(b"host"))
                         {
                             let _ = self.header_entries.ordered_remove(i);
                         } else {

@@ -118,7 +118,7 @@ enum Backend {
 }
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct CompressionStreamCoder {
+pub(crate) struct CompressionStreamCoder {
     backend: Backend,
     /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
     /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
@@ -784,7 +784,7 @@ impl AsyncInput {
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
-pub extern "C" fn CompressionStreamCoder__create(
+pub(crate) extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
     high_water_mark: usize,
@@ -803,8 +803,7 @@ pub extern "C" fn CompressionStreamCoder__create(
 
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -816,8 +815,7 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transform(
+pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -888,8 +886,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// native JSSink `sink_ptr`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformInto(
+pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -956,7 +953,7 @@ unsafe extern "C" {
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
-pub struct CompressionAsyncCtx {
+pub(crate) struct CompressionAsyncCtx {
     /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
     /// writes, so nothing else touches the coder while the pool has it.
     coder: bun_ptr::RefPtr<CompressionStreamCoder>,
@@ -973,7 +970,7 @@ pub struct CompressionAsyncCtx {
 unsafe impl Send for CompressionAsyncCtx {}
 
 #[derive(bun_jsc::JsAffine)]
-pub struct CompressionAsyncJs {
+pub(crate) struct CompressionAsyncJs {
     /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
     /// flag defers the eager ClearAlgorithms release while this task holds it,
     /// and its `m_codecPromise` WriteBarrier keeps the pending
@@ -1025,8 +1022,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn CompressionStreamCoder__transformAsync(
+pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     stream_cell: JSValue,

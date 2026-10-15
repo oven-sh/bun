@@ -40,7 +40,7 @@ type Socket = uws::AnySocket;
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct SubscriptionCtx {
+pub(crate) struct SubscriptionCtx {
     pub(crate) is_subscriber: bool,
     pub(crate) original_enable_offline_queue: bool,
     pub(crate) original_enable_auto_pipelining: bool,
@@ -49,7 +49,7 @@ pub struct SubscriptionCtx {
 /// The generate-classes.ts output emits a
 /// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
-pub use crate::generated_classes::js_RedisClient as Js;
+pub(crate) use crate::generated_classes::js_RedisClient as Js;
 
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
@@ -305,7 +305,7 @@ impl JSValkeyClient {
 // — see `connect()` below).
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
-pub struct JSValkeyClient {
+pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
@@ -333,7 +333,7 @@ pub struct JSValkeyClient {
 /// [`disarm`]: Self::disarm
 /// [`take_fire_ref`]: Self::take_fire_ref
 #[repr(C)]
-pub struct RefCountedTimer {
+pub(crate) struct RefCountedTimer {
     // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
     // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
     event_loop_timer: JsCell<Timer::EventLoopTimer>,
@@ -1049,11 +1049,15 @@ impl JSValkeyClient {
     //
     // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
     // connection's events arrive in (and nothing, outside a graph).
-    pub fn get_on_connect(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_connect(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         Js::onconnect_get_cached(this_value)
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub fn set_on_connect(
+    pub(crate) fn set_on_connect(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -1065,11 +1069,15 @@ impl JSValkeyClient {
             value.with_graph_context_if_needed(global),
         );
     }
-    pub fn get_on_close(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_close(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         Js::onclose_get_cached(this_value)
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub fn set_on_close(
+    pub(crate) fn set_on_close(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -1455,7 +1463,7 @@ impl JSValkeyClient {
         self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.stop_timers();
         self.this_value.with_mut(|t| t.finalize());
         self.client_mut().flags.finalized = true;
@@ -1558,9 +1566,8 @@ impl JSValkeyClient {
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
         // Socket keep-alive ref. Forgotten once there is a socket to own it;
         // adopted by the guard at the entry of the socket's close event
-        // (`SocketHandler::on_close`, `SocketHandler::on_connect_error`, or
-        // `ValkeyClient::close()` for a half-open socket), which is the one
-        // event uSockets delivers for every socket this returns.
+        // (`SocketHandler::on_close` or `SocketHandler::on_connect_error`),
+        // which is the one event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_guard();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
@@ -1716,8 +1723,16 @@ impl JSValkeyClient {
 // SocketHandler
 // ───────────────────────────────────────────────────────────────────────────
 
+struct UpdatePollRefOnDrop<'a>(&'a JSValkeyClient);
+
+impl Drop for UpdatePollRefOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.update_poll_ref();
+    }
+}
+
 /// uWS socket-event handler for the Valkey client (kind = `.valkey[_tls]`).
-pub struct SocketHandler<const SSL: bool>;
+pub(crate) struct SocketHandler<const SSL: bool>;
 
 // Inherent associated types are unstable in Rust, so use a module-level alias
 // and refer to it as `SocketType<SSL>` inside the impl.
@@ -1736,13 +1751,68 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub(crate) fn on_open(this: &JSValkeyClient, socket: SocketType<SSL>) -> JsResult<()> {
+        if SSL {
+            let client = this.client.get();
+            if client.tls.reject_unauthorized(client.vm) {
+                socket.set_inline_reject();
+            }
+            // RFC 6066 section 3: an IP literal is not sent as SNI.
+            let sni = Self::configured_hostname(this);
+            if !sni.is_empty()
+                && !bun_core::ip_address::is_ip_host(sni)
+                && let Some(ssl) = socket.ssl_mut()
+            {
+                ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());
+            }
+        }
         this.client_mut().socket = Self::socket(socket);
         this.client_mut().on_open(Self::socket(socket))
     }
 
+    /// `on_handshake`'s name check, asked inside the handshake.
+    pub(crate) fn server_identity(
+        this: &JSValkeyClient,
+        ssl: &mut boringssl::c::SSL,
+    ) -> boringssl::ServerIdentity {
+        let client = this.client.get();
+        let rejects = client.tls.reject_unauthorized(client.vm);
+        let hostname = rejects.then(|| Self::configured_hostname(this));
+        boringssl::server_identity(ssl, hostname)
+    }
+
+    /// The SNI and the name to match: `tls.serverName`, else the URL host. Empty for a unix socket with neither.
+    fn configured_hostname(this: &JSValkeyClient) -> &[u8] {
+        let client = this.client.get();
+        let hostname = match (client.tls.server_name(), &client.address) {
+            (Some(server_name), _) => server_name,
+            (None, valkey::Address::Host { host, .. }) => &host[..],
+            (None, valkey::Address::Unix(_)) => b"",
+        };
+        // URL.host() keeps the brackets of an IPv6 literal ("[::1]"); without them it matches IP SAN entries.
+        bun_core::ip_address::strip_ipv6_brackets(hostname)
+    }
+
+    fn fail_handshake_with_altname_error(
+        this: &JSValkeyClient,
+        vm: &VirtualMachine,
+        hostname: &[u8],
+    ) -> JsResult<()> {
+        let err = this
+            .global_object
+            .err(
+                jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
+                format_args!(
+                    "Hostname/IP does not match certificate's altnames: Host: {}",
+                    bstr::BStr::new(hostname)
+                ),
+            )
+            .to_js();
+        Self::fail_handshake(this, vm, err)
+    }
+
     pub(crate) fn on_handshake(
         this: &JSValkeyClient,
-        _socket: SocketType<SSL>,
+        socket: SocketType<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
@@ -1763,8 +1833,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         );
         let handshake_success = success == 1;
         let _guard = this.ref_guard();
-        let _update = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _update = UpdatePollRefOnDrop(this);
         let vm = this.client.get().vm;
+        let ssl_ptr: *mut boringssl::c::SSL = socket.ssl().unwrap_or(core::ptr::null_mut());
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {
                 // only reject the connection if reject_unauthorized == true
@@ -1774,52 +1845,25 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 }
 
                 // Certificate chain is valid; verify the hostname matches the
-                // certificate. Prefer the SNI servername if one was set, otherwise
-                // fall back to the host from the connection URL. Unix-domain
-                // sockets have no hostname to verify, so skip the identity check
-                // for redis+tls+unix:// / valkey+tls+unix:// connections.
-                let ssl_ptr: *mut boringssl::c::SSL = this
-                    .client
-                    .get()
-                    .socket
-                    .get_native_handle()
-                    .unwrap_or(core::ptr::null_mut())
-                    .cast();
-                // SAFETY: SSL_get_servername returns null or NUL-terminated.
-                let mut hostname: &[u8] = if let Some(servername) =
-                    unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() }
-                {
-                    // SAFETY: NUL-terminated
-                    unsafe { bun_core::ffi::cstr(std::ptr::from_ref(servername).cast()) }.to_bytes()
-                } else {
-                    match &this.client.get().address {
-                        valkey::Address::Host { host, .. } => &host[..],
-                        valkey::Address::Unix(_) => b"",
-                    }
-                };
-                // URL.host() serialises IPv6 literals with surrounding brackets
-                // (e.g. "[::1]"). Strip them so checkServerIdentity can recognise
-                // the value as an IP and match against IP SAN entries.
-                hostname = bun_core::ip_address::strip_ipv6_brackets(hostname);
-                if !hostname.is_empty()
-                    // SAFETY: in the TLS handshake-success path the socket's native
-                    // handle is a live `SSL*`.
-                    && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
-                {
-                    let err = this
-                        .global_object
-                        .err(
-                            jsc::ErrorCode::TLS_CERT_ALTNAME_INVALID,
-                            format_args!(
-                                "Hostname/IP does not match certificate's altnames: Host: {}",
-                                bstr::BStr::new(hostname)
-                            ),
-                        )
-                        .to_js();
-                    return Self::fail_handshake(this, vm, err);
+                // certificate.
+                let hostname = Self::configured_hostname(this);
+                // With no `SSL*` there is no certificate to match: fail closed.
+                let identity_ok = hostname.is_empty()
+                    || (!ssl_ptr.is_null()
+                        && uws::check_server_identity(
+                            // SAFETY: non-null, so the dispatched socket's live `SSL*`.
+                            unsafe { &mut *ssl_ptr },
+                            hostname,
+                        ));
+                if !identity_ok {
+                    return Self::fail_handshake_with_altname_error(this, vm, hostname);
                 }
             }
             this.client_mut().start()?;
+        } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
+            // The same check, made inside the handshake (`server_identity`).
+            let hostname = Self::configured_hostname(this);
+            return Self::fail_handshake_with_altname_error(this, vm, hostname);
         } else {
             // if we are here is because the server rejected us, and the error_no is the cause of
             // this no matter if reject_unauthorized is false, because we were disconnected by the
@@ -1853,7 +1897,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         fn(&JSValkeyClient, SocketType<SSL>, i32, uws::us_bun_verify_error_t) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake) } else { None };
 
-    pub fn on_close(
+    pub(crate) fn on_close(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         _code: i32,
@@ -1995,7 +2039,7 @@ impl Options {
             } else if tls.is_object() {
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
-                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
+                    SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
                 } else {

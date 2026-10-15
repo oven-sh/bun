@@ -1,7 +1,10 @@
 // Linux only. Makes the read at child exit the one that delivers a terminal's bytes, every round: the child writes
-// nothing, this script blocks until the child is a zombie (its exit is then queued in epoll and not yet dispatched),
+// nothing, this script blocks until the child has exited (its exit is then queued in epoll and not yet dispatched),
 // and only then writes to the pty slave itself. Each round has its own terminal, so no earlier read has left the pty
 // master on epoll's ready list ahead of the exit. Prints one JSON line with the counts per mode.
+//
+// Where bun cannot open a pidfd, a thread reaps the child and posts the exit, and its order against the pty's poll is
+// not fixed: `inExitRead` can then be lower, and `waiterThread` says so.
 import { closeSync, constants, openSync, readdirSync, readFileSync, readlinkSync, writeSync } from "node:fs";
 
 const rounds = 10;
@@ -27,9 +30,15 @@ const ptySlaves = () =>
     })
     .filter(path => path.startsWith("/dev/pts/"));
 
-function waitUntilZombie(pid: number) {
+// Returns once the child is a zombie, or is gone because the waiter thread has reaped it.
+function waitUntilExited(pid: number) {
   for (;;) {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    let stat: string;
+    try {
+      stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    } catch {
+      return;
+    }
     if (stat.slice(stat.lastIndexOf(")") + 2)[0] === "Z") return;
   }
 }
@@ -66,7 +75,7 @@ async function run(mode: "plain" | "close" | "throw") {
     const slave = openSync(slavePath, constants.O_WRONLY | constants.O_NOCTTY);
     try {
       proc = Bun.spawn(["true"], { terminal });
-      waitUntilZombie(proc.pid);
+      waitUntilExited(proc.pid);
       writeSync(slave, marker + "\n");
       await proc.exited;
       if (!output.includes(marker)) counts.late++;
@@ -81,5 +90,12 @@ async function run(mode: "plain" | "close" | "throw") {
   return counts;
 }
 
-const report = { rounds, plain: await run("plain"), close: await run("close"), throw: await run("throw") };
-console.log(JSON.stringify(report));
+const counts = { plain: await run("plain"), close: await run("close"), throw: await run("throw") };
+const waiterThread = readdirSync("/proc/self/task").some(task => {
+  try {
+    return readFileSync(`/proc/self/task/${task}/comm`, "utf8").trim() === "Waitpid";
+  } catch {
+    return false;
+  }
+});
+console.log(JSON.stringify({ rounds, waiterThread, ...counts }));

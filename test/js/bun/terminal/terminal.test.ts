@@ -1670,12 +1670,16 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     });
   });
 
-  // The fixture puts the bytes in the pty after the child's exit is queued, so the read at child exit is the only thing
-  // that can deliver them before `exited`. Its `close` mode closes the terminal from `data`, its `throw` mode throws.
-  test.skipIf(!isLinux)("existing terminal: the read at child exit delivers, and data may close or throw", async () => {
+  // The fixture puts the bytes in the pty after the child has exited, so the read at child exit is what delivers them
+  // before `exited`. Its `close` mode closes the terminal from `data`, its `throw` mode throws. With the waiter thread
+  // the poll can also deliver first, so the count of rounds that the exit read served is not fixed there.
+  test.skipIf(!isLinux).each([
+    ["the exit event of a pidfd", {}],
+    ["the waiter thread", { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_GARBAGE_COLLECTOR_LEVEL: "1" }],
+  ])("existing terminal: the read at child exit delivers, and data may close or throw, with %s", async (_, env) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "terminal-exit-read-fixture.ts")],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1685,12 +1689,15 @@ describe.concurrent("Bun.spawn with terminal option", () => {
       report = JSON.parse(stdout);
     } catch {}
     const rounds = 10;
+    const waiterThread = (report as { waiterThread?: unknown })?.waiterThread === true;
+    const inExitRead = waiterThread ? expect.any(Number) : rounds;
     expect({ report, stderr, exitCode }).toEqual({
       report: {
         rounds,
-        plain: { late: 0, inExitRead: rounds, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: 0 },
-        close: { late: 0, inExitRead: rounds, closedAtExited: rounds, exitCallbacks: rounds, reportedAtExited: 0 },
-        throw: { late: 0, inExitRead: rounds, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: rounds },
+        waiterThread: "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD" in env ? true : expect.any(Boolean),
+        plain: { late: 0, inExitRead, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: 0 },
+        close: { late: 0, inExitRead, closedAtExited: rounds, exitCallbacks: rounds, reportedAtExited: 0 },
+        throw: { late: 0, inExitRead, closedAtExited: 0, exitCallbacks: rounds, reportedAtExited: rounds },
       },
       stderr: expect.any(String),
       exitCode: 0,

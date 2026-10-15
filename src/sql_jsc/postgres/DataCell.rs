@@ -139,7 +139,7 @@ enum ElementKind {
     Uint4,
     Float,
     Bool,
-    /// `date`: no time of day, so `Date.parse` reads it.
+    /// `date`: `Date.parse` reads it.
     Date,
     /// `timestamp` and `timestamptz`.
     Timestamp,
@@ -186,36 +186,39 @@ fn after_element(slice: &[u8], len: usize, separator: u8) -> Option<&[u8]> {
     }
 }
 
-/// Length of the JSON number `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` at the start of `text`, or 0.
-fn json_number_len(text: &[u8]) -> usize {
-    let digits = |from: usize| {
+/// The JSON number `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` at the start of `text`: its length, and whether it is an integer.
+#[inline(never)] // inlined, it costs every other element kind in parse_array a few instructions
+fn json_number(text: &[u8]) -> Option<(usize, bool)> {
+    #[inline(always)]
+    fn digits(text: &[u8], from: usize) -> usize {
         text[from..]
             .iter()
             .take_while(|byte| byte.is_ascii_digit())
             .count()
-    };
+    }
     let mut len = usize::from(text.first() == Some(&b'-'));
-    let integer = digits(len);
+    let integer = digits(text, len);
     if integer == 0 || (integer > 1 && text[len] == b'0') {
-        return 0;
+        return None;
     }
     len += integer;
+    let integer_len = len;
     if text.get(len) == Some(&b'.') {
-        let fraction = digits(len + 1);
+        let fraction = digits(text, len + 1);
         if fraction == 0 {
-            return 0;
+            return None;
         }
         len += 1 + fraction;
     }
     if let Some(b'e' | b'E') = text.get(len) {
         let sign = usize::from(matches!(text.get(len + 1), Some(b'+' | b'-')));
-        let exponent = digits(len + 1 + sign);
+        let exponent = digits(text, len + 1 + sign);
         if exponent == 0 {
-            return 0;
+            return None;
         }
         len += 1 + sign + exponent;
     }
-    len
+    Some((len, len == integer_len))
 }
 
 fn parse_array(
@@ -426,12 +429,23 @@ fn parse_array(
                 }
                 // parse_f64 also takes `inf`, `nan`, `+1` and `.5`, so the JSON number grammar is checked first.
                 (b'-' | b'0'..=b'9', ElementKind::Json) => {
-                    let len = json_number_len(slice);
-                    if len > 0
+                    if let Some((len, integer)) = json_number(slice)
                         && let Some(rest) = after_element(slice, len, separator)
-                        && let Some(number) = bun_core::fmt::parse_f64(&slice[..len])
                     {
-                        array.push(SQLDataCell::float8(number));
+                        let number = &slice[..len];
+                        // Up to 9 digits fit the int cell. `-0` and every other number is a double, as in JSON.parse.
+                        if integer
+                            && len <= 9
+                            && number != b"-0"
+                            && let Some(int) = bun_core::fmt::parse_decimal::<i32>(number)
+                        {
+                            array.push(SQLDataCell::int4(int));
+                        } else {
+                            array.push(SQLDataCell::float8(
+                                bun_core::fmt::parse_f64(number)
+                                    .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
+                            ));
+                        }
                         slice = rest;
                         continue;
                     }
@@ -450,52 +464,50 @@ fn parse_array(
             };
             let element = &slice[..end];
             // Each kind takes the parser `from_bytes` uses for the scalar type. Text it refuses rejects the row.
-            match kind {
-                ElementKind::Int4 => array.push(SQLDataCell::int4(
+            let cell = match kind {
+                ElementKind::Int4 => SQLDataCell::int4(
                     bun_core::fmt::parse_decimal::<i32>(element)
                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                )),
-                ElementKind::Int8 => array.push(SQLDataCell::int8(
+                ),
+                ElementKind::Int8 => SQLDataCell::int8(
                     bun_core::fmt::parse_decimal::<i64>(element)
                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                )),
-                ElementKind::Uint4 => array.push(SQLDataCell::uint4(
+                ),
+                ElementKind::Uint4 => SQLDataCell::uint4(
                     bun_core::fmt::parse_decimal::<u32>(element)
                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                )),
-                ElementKind::Float => array.push(SQLDataCell::float8(
+                ),
+                ElementKind::Float => SQLDataCell::float8(
                     bun_core::fmt::parse_f64(element)
                         .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                )),
-                ElementKind::Date => array.push(SQLDataCell::date(
-                    match crate::postgres::types::date::parse_infinity(element) {
-                        Some(inf) => inf,
-                        None => {
-                            let str = BunString::from_bytes(element);
-                            bun_string_jsc::parse_date(&str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?
-                        }
-                    },
-                )),
-                // A timestamp has a space, so it is quoted. Other text reads as the quoted one does.
-                ElementKind::Timestamp => array.push(SQLDataCell::date(
+                ),
+                ElementKind::Date if ch.is_ascii_digit() => {
+                    let str = BunString::from_bytes(element);
+                    SQLDataCell::date(
+                        bun_string_jsc::parse_date(&str, global_object)
+                            .map_err(crate::jsc::js_error_to_postgres)?,
+                    )
+                }
+                // `infinity` in another letter case, or text that the server always quotes: it reads as the quoted text does.
+                ElementKind::Date | ElementKind::Timestamp => SQLDataCell::date(
                     match crate::postgres::types::date::parse_infinity(element) {
                         Some(inf) => inf,
                         None => parse_date_time_text(array_type, element, global_object)?,
                     },
-                )),
+                ),
                 // A JSON string or object is always quoted and the scalars are matched above, so this is a JSON array.
-                ElementKind::Json if ch == b'[' => array.push(SQLDataCell::json(element)),
+                ElementKind::Json if ch == b'[' => SQLDataCell::json(element),
                 // the only escape sequence possible here is \b
-                ElementKind::Text if element == b"\\b" => array.push(SQLDataCell::string(b"\x08")),
-                ElementKind::Text => array.push(SQLDataCell::string(element)),
+                ElementKind::Text if element == b"\\b" => SQLDataCell::string(b"\x08"),
+                ElementKind::Text => SQLDataCell::string(element),
                 // `t`, `f`, an integer and a JSON scalar are matched above. Nothing else is one of these.
                 ElementKind::Bool | ElementKind::Int8String | ElementKind::Json => {
                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                 }
                 // bytea_output=hex starts with a backslash, so it is always quoted
                 ElementKind::Bytea => return Err(AnyPostgresError::UnsupportedByteaFormat),
-            }
+            };
+            array.push(cell);
             slice = &slice[end + usize::from(next == separator)..];
             continue;
         }

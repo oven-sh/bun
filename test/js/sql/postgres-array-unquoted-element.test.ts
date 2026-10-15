@@ -118,6 +118,23 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     });
   });
 
+  // An integer of up to 9 digits takes the int cell, every other number is a double. The values do not differ.
+  test.each(paths)("jsonb[] integers around the int cell limit (%s)", async path => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1 });
+
+    expect(
+      await decode(
+        sql,
+        "array['0', '7', '-7', '999999999', '-99999999', '1000000000', '-999999999', '2147483647', '2147483648']::jsonb[]",
+        path,
+      ),
+    ).toEqual({
+      v: [0, 7, -7, 999999999, -99999999, 1000000000, -999999999, 2147483647, 2147483648],
+      wire: "{0,7,-7,999999999,-99999999,1000000000,-999999999,2147483647,2147483648}",
+    });
+  });
+
   // array_out quotes a JSON array only when it has a comma or a space, and a null only at the top level.
   test.each(paths)("json[] and jsonb[] null inside an unquoted JSON array (%s)", async path => {
     await container.ready;

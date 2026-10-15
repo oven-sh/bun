@@ -37,6 +37,7 @@ pub mod internal_state;
 pub mod lshpack;
 #[path = "ProxyTunnel.rs"]
 pub mod proxy_tunnel;
+pub mod retry;
 #[path = "SendFile.rs"]
 pub mod send_file;
 #[path = "session_cache.rs"]

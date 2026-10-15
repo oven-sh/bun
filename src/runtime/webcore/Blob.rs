@@ -4302,16 +4302,11 @@ fn write_file_with_empty_source_to_destination(
             let promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = promise.value();
             s3_client::upload(
-                &aws_options.credentials,
                 cx.context(),
-                s3.path(),
+                &destination_store,
+                &aws_options,
                 b"",
                 destination_blob.content_type_or_mime_type(),
-                aws_options.content_disposition.as_deref(),
-                aws_options.content_encoding.as_deref(),
-                aws_options.acl,
-                aws_options.storage_class,
-                aws_options.request_payer,
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
@@ -4561,16 +4556,11 @@ pub(crate) fn write_file_with_source_destination(
                     let promise = jsc::JSPromiseStrong::init(cx.global());
                     let promise_value = promise.value();
                     s3_client::upload(
-                        &aws_options.credentials,
                         cx.context(),
-                        s3.path(),
+                        &destination_store,
+                        &aws_options,
                         bytes.slice(),
                         destination_blob.content_type_or_mime_type(),
-                        aws_options.content_disposition.as_deref(),
-                        aws_options.content_encoding.as_deref(),
-                        aws_options.acl,
-                        aws_options.storage_class,
-                        aws_options.request_payer,
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),

@@ -3,8 +3,9 @@
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use bun_core::{Output, strings};
+use bun_core::Output;
 use bun_http::HTTPClientResult;
+use bun_http::retry::{backoff, retry_after};
 use bun_threading::{Condition, Guarded};
 
 use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
@@ -36,11 +37,7 @@ pub(crate) fn retry(
     attempt: u16,
     response: &HTTPClientResult<'static>,
 ) -> Duration {
-    let base_ms = manager
-        .env()
-        .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
-        .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
-        .unwrap_or(250);
+    let base_ms = bun_http::retry::base_ms(manager.env().get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF"));
     // Under auto-install the JS thread is blocked on this request.
     if base_ms == 0 || manager.options.runtime_auto_install {
         enqueue::enqueue_network_task(manager, task);
@@ -67,21 +64,6 @@ pub(crate) fn retry(
     }
     manager.retry_queue.0.push((due, task));
     wait
-}
-
-/// +-20%, so that a fleet of installs does not retry in step.
-fn backoff(base_ms: u32, attempt: u16) -> Duration {
-    let base = u64::from(base_ms);
-    let ms = (base << attempt.saturating_sub(1).min(6)).min(base * 40);
-    let jitter = ms / 5;
-    Duration::from_millis(ms - jitter + bun_core::fast_random() % (2 * jitter + 1))
-}
-
-/// `Retry-After: <seconds>`, at most a minute. The HTTP-date form is ignored.
-fn retry_after(response: &HTTPClientResult<'static>) -> Option<Duration> {
-    let value = response.metadata.as_ref()?.header(b"retry-after")?;
-    let secs = bun_core::parse_unsigned::<u64>(strings::trim(value, b" \t"), 10).ok()?;
-    Some(Duration::from_secs(secs.min(60)))
 }
 
 struct Timer {

@@ -46,6 +46,7 @@ use crate::webcore::s3::simple_request as s3_simple_request;
 
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
+use crate::webcore::blob::store::Store;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
@@ -56,6 +57,9 @@ use bun_io::StreamBuffer;
 use bun_jsc::CallFrame;
 
 bun_core::declare_scope!(S3UploadStream, visible);
+
+/// `retry` is documented for uploads: a read, a HEAD, a DELETE and a listing are sent once.
+const SENT_ONCE: s3_simple_request::Retry = s3_simple_request::Retry::Never;
 
 pub(crate) fn stat(
     this: &S3Credentials,
@@ -75,6 +79,7 @@ pub(crate) fn stat(
             request_payer,
             ..Default::default()
         },
+        SENT_ONCE,
         s3_simple_request::Callback::Stat(callback),
         callback_context,
     )
@@ -98,6 +103,7 @@ pub(crate) fn download(
             request_payer,
             ..Default::default()
         },
+        SENT_ONCE,
         s3_simple_request::Callback::Download(callback),
         callback_context,
     )
@@ -142,6 +148,7 @@ pub(crate) fn download_slice(
             request_payer,
             ..Default::default()
         },
+        SENT_ONCE,
         s3_simple_request::Callback::Download(callback),
         callback_context,
     )
@@ -165,6 +172,7 @@ pub(crate) fn delete(
             request_payer,
             ..Default::default()
         },
+        SENT_ONCE,
         s3_simple_request::Callback::Delete(callback),
         callback_context,
     )
@@ -305,6 +313,9 @@ pub(crate) fn list_objects(
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
+        method: bun_http::Method::GET,
+        // As `SENT_ONCE`.
+        resend: None,
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -371,35 +382,47 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
+/// One PUT of `content` to the key of `store`, sent again up to `options.options.retry` times.
 pub(crate) fn upload(
-    this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
-    path: &[u8],
+    store: &RefPtr<Store>,
+    options: &S3CredentialsWithOptions,
     content: &[u8],
     content_type: Option<&[u8]>,
-    content_disposition: Option<&[u8]>,
-    content_encoding: Option<&[u8]>,
-    acl: Option<ACL>,
-    storage_class: Option<StorageClass>,
-    request_payer: bool,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    let s3 = store.data.as_s3();
+    // The request holds on to what signs it: the store's credentials, or a copy of its own
+    // when this call's options changed them.
+    let changed;
+    let credentials = if options.changed_credentials {
+        changed = options.credentials.dupe();
+        &changed
+    } else {
+        s3.get_credentials()
+    };
     s3_simple_request::execute_simple_s3_request(
-        this,
+        credentials,
         context,
         s3_simple_request::Options {
-            path,
+            path: s3.path(),
             method: bun_http::Method::PUT,
             body: content,
             content_type,
-            content_disposition,
-            content_encoding,
-            acl,
-            storage_class,
-            request_payer,
+            content_disposition: options.content_disposition.as_deref(),
+            content_encoding: options.content_encoding.as_deref(),
+            acl: options.acl,
+            storage_class: options.storage_class,
+            request_payer: options.request_payer,
             ..Default::default()
         },
+        s3_simple_request::Retry::Budget(s3_simple_request::Resend {
+            attempts: options.options.retry,
+            sent_again: 0,
+            credentials: credentials.clone(),
+            key: s3_simple_request::Key::Store(store.clone()),
+        }),
         s3_simple_request::Callback::Upload(callback),
         callback_context,
     )

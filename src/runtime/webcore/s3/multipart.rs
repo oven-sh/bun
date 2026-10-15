@@ -113,13 +113,16 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
-    S3UploadResult, execute_simple_s3_request,
+    self as s3_simple_request, Key, Resend, Retry, S3CommitResult, S3DeleteResult,
+    S3DownloadResult, S3PartResult, S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
+
+/// The callback of such a request sends it again itself, so it is not also sent again below.
+const RETRIED_BY_CALLBACK: Retry = Retry::Never;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
@@ -393,6 +396,7 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
+            RETRIED_BY_CALLBACK,
             s3_simple_request::S3Callback::Part(Self::on_part_response),
             std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>(),
         )
@@ -478,6 +482,7 @@ impl MultiPartUpload {
                             request_payer: self_.request_payer,
                             ..Default::default()
                         },
+                        RETRIED_BY_CALLBACK,
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                         this.cast::<c_void>(),
                     )
@@ -905,6 +910,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
+            RETRIED_BY_CALLBACK,
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             self.as_ctx_ptr(),
         )
@@ -938,6 +944,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
+            RETRIED_BY_CALLBACK,
             s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
         )
@@ -974,6 +981,13 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
+                Retry::Budget(Resend {
+                    attempts: self.options.get().retry,
+                    sent_again: 0,
+                    credentials: self.credentials.clone(),
+                    // SAFETY: `root_ptr()` is this live upload.
+                    key: Key::Upload(unsafe { RefPtr::init_ref(self.root_ptr()) }),
+                }),
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 self.as_ctx_ptr(),
             )?;
@@ -1115,6 +1129,7 @@ impl MultiPartUpload {
                     request_payer: self.request_payer,
                     ..Default::default()
                 },
+                RETRIED_BY_CALLBACK,
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self.as_ctx_ptr(),
             ); // TODO: properly propagate exception upwards

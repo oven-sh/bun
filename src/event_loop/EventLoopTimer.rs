@@ -209,6 +209,7 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    S3RequestRetry,
 }
 
 impl Tag {

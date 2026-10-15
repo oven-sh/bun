@@ -86,6 +86,7 @@ use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+use crate::webcore::s3::simple_request::Wait as S3RequestRetryWait;
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -1294,6 +1295,9 @@ pub(crate) unsafe fn __bun_fire_timer(
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
             Ok(())
+        }
+        EventLoopTimerTag::S3RequestRetry => {
+            S3RequestRetryWait::fire(owner!(S3RequestRetryWait, timer))
         }
     };
     fired

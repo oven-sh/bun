@@ -652,6 +652,16 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
     .map(JSValue::protected)
 }
 
+/// What the config handed to [`NewServer::on_reload_from_zig`] is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReloadScope {
+    /// `server.reload(options)`: the carry-over rules `FromJSOptions` describes.
+    Partial,
+    /// A `Bun.serve()` that takes a live server over under `--hot`: the whole
+    /// server, so the `fetch`, `error` and `routes` it leaves out are cleared.
+    Complete,
+}
+
 /// Single point of truth for "wrap a handler callback and mirror it into the
 /// wrapper's WriteBarrier slot". If `*shadow` is unset (empty/undefined/null),
 /// normalize it to `ZERO` and clear the slot; otherwise apply the

@@ -2069,8 +2069,12 @@ where
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
+        scope: super::ReloadScope,
     ) {
         httplog!("onReload");
+
+        let replace_omitted =
+            scope == super::ReloadScope::Complete && self.can_replace_whole(new_config);
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -2080,7 +2084,8 @@ where
         });
 
         // `on_request` / `on_error` keep their previous value when the reload
-        // config omits them. The async-context re-wrap is unconditional:
+        // config omits them, unless it replaces what it omits (then
+        // `wrap_handler_slot` clears them). The async-context re-wrap is unconditional:
         // `with_async_context_if_needed` is a no-op when no ALS frame is
         // active, so re-wrapping on every reload keeps the captured frame in
         // sync with the call-time context. `on_reload` is a host_fn — the
@@ -2088,7 +2093,7 @@ where
         // `js_value` was downgraded after stop(). The slot writes must reach
         // it so the new handlers are GC-rooted.
         let server_js = self.js_value_assert_alive();
-        if !new_config.on_request.is_empty_or_undefined_or_null() {
+        if replace_omitted || !new_config.on_request.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
                 &mut new_config.on_request,
                 server_js,
@@ -2119,7 +2124,7 @@ where
             );
             self.config.on_node_http_request = new_config.on_node_http_request;
         }
-        if !new_config.on_error.is_empty_or_undefined_or_null() {
+        if replace_omitted || !new_config.on_error.is_empty_or_undefined_or_null() {
             super::wrap_handler_slot(
                 &mut new_config.on_error,
                 server_js,
@@ -2152,7 +2157,8 @@ where
         self.config.static_routes = core::mem::take(&mut new_config.static_routes);
         self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
 
-        if new_config.had_routes_object {
+        let replace_routes = replace_omitted || new_config.had_routes_object;
+        if replace_routes {
             self.config.user_routes_to_build =
                 core::mem::take(&mut new_config.user_routes_to_build);
             // `UserRoute`'s owned `RouteDeclaration` drops via `Vec::clear`.
@@ -2160,7 +2166,7 @@ where
         }
 
         let route_list_value = self.set_routes();
-        if new_config.had_routes_object {
+        if replace_routes {
             Self::js_gc_route_list_set(server_js, global, route_list_value);
         }
 
@@ -2172,6 +2178,39 @@ where
                 ));
             }
         }
+    }
+
+    /// Whether a `Complete` reload may clear what `new_config` leaves out.
+    /// When it may not, it carries over what a `Partial` one does.
+    fn can_replace_whole(&self, new_config: &ServerConfig) -> bool {
+        // `clear_routes()` does not reach the routers `listen()` gave
+        // `tls.serverName` and each SNI entry (#38636). They still dispatch to
+        // the handlers and routes this reload would clear.
+        let named = |ssl: &server_config::SSLConfig| {
+            ssl.server_name_cstr()
+                .is_some_and(|name| !name.to_bytes().is_empty())
+        };
+        if self.config.ssl_config.as_ref().is_some_and(named)
+            || self
+                .config
+                .sni
+                .as_ref()
+                .is_some_and(|sni| sni.iter().any(named))
+        {
+            return false;
+        }
+        // A config that names no handler this server can install (node:http's
+        // on a `Bun.serve()` server, a bake app) must not leave it with none.
+        !new_config.on_request.is_empty_or_undefined_or_null()
+            || !new_config.user_routes_to_build.is_empty()
+            || new_config
+                .static_routes
+                .iter()
+                .any(|entry| !matches!(entry.route, AnyRoute::FrameworkRouter))
+            || (self.config.is_node_http_server
+                && !new_config
+                    .on_node_http_request
+                    .is_empty_or_undefined_or_null())
     }
 
     pub(crate) fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
@@ -2223,7 +2262,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global, super::ReloadScope::Partial);
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }

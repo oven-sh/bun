@@ -1613,6 +1613,195 @@ it("--hot reload of a node:http server fires 'connection' once per socket", asyn
   expect(exitCode).toBe(0);
 });
 
+// Under --hot a Bun.serve() re-run takes the running server over with the
+// whole config of the new module generation. What that config leaves out used
+// to keep answering from the generation before.
+describe.concurrent("--hot takeover by a Bun.serve() re-run", () => {
+  const prelude = `
+    import { readFileSync, writeFileSync } from "node:fs";
+
+    globalThis.generation ??= 0;
+    const generation = globalThis.generation++;
+    const nextGeneration = () => {
+      const self = new URL(import.meta.url);
+      writeFileSync(self, readFileSync(self, "utf8"));
+    };
+  `;
+
+  /** A server file that serves `generations[n]` on its n-th evaluation and prints what `paths` answer. */
+  const serveFixture = (generations: string[], paths: string[]) => `
+    ${prelude}
+    const options = [${generations.map(source => `() => (${source})`).join(", ")}][generation]();
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: false, ...options });
+
+    async function ask(path) {
+      if (path === "websocket") {
+        const { promise, resolve } = Promise.withResolvers();
+        const url = new URL(server.url);
+        url.protocol = "ws:";
+        const ws = new WebSocket(url);
+        ws.onopen = () => ws.send("hi");
+        ws.onmessage = event => resolve("message " + event.data);
+        ws.onclose = event => resolve("close " + event.code);
+        return promise.finally(() => ws.close());
+      }
+      const response = await fetch(new URL(path, server.url));
+      return response.status + " " + (await response.text());
+    }
+
+    const answers = {};
+    for (const path of ${JSON.stringify(paths)}) answers[path] = await ask(path);
+    console.log(JSON.stringify(answers));
+
+    if (generation === ${generations.length - 1}) process.exit(0);
+    nextGeneration();
+  `;
+
+  async function runHot(source: string) {
+    using dir = tempDir("serve-hot-takeover", { "server.mjs": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "server.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it("drops the routes of the previous generation when the new config has no routes", async () => {
+    const { lines, stderr, exitCode } = await runHot(
+      serveFixture(
+        [
+          `{
+            routes: { "/static": new Response("static 0"), "/fn": () => new Response("fn 0"), "/skip/*": () => new Response("skip 0"), "/skip/this": false },
+            fetch: () => new Response("fetch 0"),
+          }`,
+          `{ fetch: () => new Response("fetch 1") }`,
+        ],
+        ["/static", "/fn", "/skip/this", "/other"],
+      ),
+    );
+    expect(lines.map(line => JSON.parse(line))).toEqual([
+      { "/static": "200 static 0", "/fn": "200 fn 0", "/skip/this": "200 fetch 0", "/other": "200 fetch 0" },
+      { "/static": "200 fetch 1", "/fn": "200 fetch 1", "/skip/this": "200 fetch 1", "/other": "200 fetch 1" },
+    ]);
+    expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("drops fetch and error of the previous generation when the new config has only routes", async () => {
+    const routes = generation => `{
+      "/route": () => new Response("route ${generation}"),
+      "/throw": () => { throw new Error("thrown by generation ${generation}"); },
+    }`;
+    const { lines, exitCode } = await runHot(
+      serveFixture(
+        [
+          `{
+            routes: ${routes(0)},
+            fetch: () => new Response("fetch 0"),
+            error: error => new Response("error 0 handled: " + error.message, { status: 500 }),
+          }`,
+          `{ routes: ${routes(1)} }`,
+        ],
+        ["/route", "/other", "/throw"],
+      ),
+    );
+    expect(lines.map(line => JSON.parse(line))).toEqual([
+      { "/route": "200 route 0", "/other": "200 fetch 0", "/throw": "500 error 0 handled: thrown by generation 0" },
+      { "/route": "200 route 1", "/other": "404 ", "/throw": "500 Something went wrong!" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Sockets that are open across the save still need their handlers, and a
+  // server that is started in two steps (Bun.serve, then server.reload with
+  // the websocket handlers) passes no websocket object in its first step.
+  it("keeps the websocket handlers when the new config has no websocket", async () => {
+    const fetch = generation =>
+      `(request, server) => server.upgrade(request) ? undefined : new Response("fetch ${generation}")`;
+    const { lines, stderr, exitCode } = await runHot(
+      serveFixture(
+        [
+          `{ fetch: ${fetch(0)}, websocket: { message: (ws, message) => ws.send("websocket 0 got " + message) } }`,
+          `{ fetch: ${fetch(1)} }`,
+        ],
+        ["/", "websocket"],
+      ),
+    );
+    expect(lines.map(line => JSON.parse(line))).toEqual([
+      { "/": "200 fetch 0", "websocket": "message websocket 0 got hi" },
+      { "/": "200 fetch 1", "websocket": "message websocket 0 got hi" },
+    ]);
+    expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A Bun.serve() server cannot become a node:http one, so the handler of the
+  // new generation is not installed. The takeover must not clear the handler
+  // that is still installed and leave the server with none.
+  it("keeps the server answering when the new generation listens with node:http", async () => {
+    const { lines, stderr, exitCode } = await runHot(`
+      ${prelude}
+      import { once } from "node:events";
+      import { createServer } from "node:http";
+
+      let port;
+      if (generation === 0) {
+        port = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve 0") }).port;
+      } else {
+        const server = createServer((request, response) => response.end("node:http 1"));
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        port = server.address().port;
+      }
+      const response = await fetch("http://127.0.0.1:" + port + "/");
+      console.log(response.status + " " + (await response.text()));
+
+      if (generation === 1) process.exit(0);
+      nextGeneration();
+    `);
+    expect(lines[0]).toBe("200 Bun.serve 0");
+    expect(["200 Bun.serve 0", "200 node:http 1"]).toContain(lines[1]);
+    expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The router that listen() gives tls.serverName is not rebuilt by a reload,
+  // so it still dispatches to the routes of the first generation. Clearing
+  // them under it aborted the process on the next request that sent that name.
+  it("does not clear routes under the router of tls.serverName", async () => {
+    const tlsOptions = `{ cert: ${JSON.stringify(tls.cert)}, key: ${JSON.stringify(tls.key)}, serverName: "localhost" }`;
+    const { lines, stderr, exitCode } = await runHot(`
+      ${prelude}
+      const options = [
+        () => ({ routes: { "/fn": () => new Response("fn 0") }, fetch: () => new Response("fetch 0") }),
+        () => ({ fetch: () => new Response("fetch 1") }),
+      ][generation]();
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: ${tlsOptions}, ...options });
+
+      const answers = {};
+      for (const path of ["/fn", "/other"]) {
+        const response = await fetch("https://127.0.0.1:" + server.port + path, {
+          tls: { rejectUnauthorized: false, serverName: "localhost" },
+        });
+        answers[path] = response.status + " " + (await response.text());
+      }
+      console.log(JSON.stringify(answers));
+
+      if (generation === 1) process.exit(0);
+      nextGeneration();
+    `);
+    const [first, second] = lines.map(line => JSON.parse(line));
+    expect(first).toEqual({ "/fn": "200 fn 0", "/other": "200 fetch 0" });
+    expect(["200 fn 0", "200 fetch 1"]).toContain(second["/fn"]);
+    expect(second["/other"]).toBe("200 fetch 1");
+    expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native
   // per-socket block; a reload that smuggles in the node:http handler used by

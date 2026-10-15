@@ -151,6 +151,8 @@ Bun.serve({
 });
 ```
 
+The `Bun.serve()` call in the reloaded file replaces the `fetch` handler, the `error` handler and the `routes` of the running server. If the new call leaves one of them out, the previous one is removed. The `websocket` handlers stay until a reload passes a new `websocket` object.
+
 <Note>
 Support for Vite's `import.meta.hot` is planned, to enable better lifecycle management for hot reloading and to align with the ecosystem.
 

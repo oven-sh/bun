@@ -929,6 +929,26 @@ pub mod fs {
         }
     }
 
+    /// One read of a directory for the cache: what `RealFS::read_listing`
+    /// reads, and what it may do with the handle.
+    pub(crate) struct ListingRead<'a> {
+        /// The stale listing that this read replaces. It keeps its name, and
+        /// the read uses its entry slots again.
+        pub(crate) in_place: Option<*mut DirEntry>,
+        /// The name of a new listing, followed by a separator when
+        /// `dir_needs_sep`.
+        pub(crate) dir_path: &'a [u8],
+        pub(crate) dir_needs_sep: bool,
+        pub(crate) generation: Generation,
+        /// The caller opened the handle for this read and holds it nowhere
+        /// else, so a read that is tried again may replace it.
+        pub(crate) owns_handle: bool,
+        /// The listing keeps the handle in `DirEntry::fd`.
+        pub(crate) store_fd: bool,
+        /// The number of entries to make room for before the read.
+        pub(crate) reserve: usize,
+    }
+
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
@@ -1061,33 +1081,34 @@ pub mod fs {
             Ok(())
         }
 
-        /// Read `handle` to the end and return the listing of `dir_path`.
+        /// Read `handle` to the end and return the listing that `read` names.
         /// Every listing that `commit_listing` publishes comes from here, so
         /// the cache never holds the names of a read that stopped early.
         ///
-        /// A new listing is named `dir_path`, followed by a separator when
-        /// `dir_needs_sep`. A stale one (`in_place`) keeps its name.
-        ///
         /// A read that fails is tried once more, on a handle opened again by
         /// path, so a transient error does not reach the caller. When
-        /// `owns_handle`, that handle replaces `*handle` and the old one is
-        /// closed; otherwise `*handle` is left as it is. A non-void iterator
-        /// has already been handed entries, so its read is not tried again.
+        /// `read.owns_handle`, that handle replaces `*handle` and the old one
+        /// is closed; otherwise `*handle` is left as it is. A non-void
+        /// iterator has already been handed entries, so its read is not tried
+        /// again.
         ///
         /// On `Err` nothing is stored and the caller still owns `*handle`.
         /// The caller holds `entries_mutex`.
         pub(crate) fn read_listing<I: DirEntryIterator>(
             &mut self,
-            in_place: Option<*mut DirEntry>,
-            dir_path: &[u8],
-            dir_needs_sep: bool,
-            generation: Generation,
+            read: ListingRead<'_>,
             handle: &mut Fd,
-            owns_handle: bool,
-            store_fd: bool,
-            reserve: usize,
             iterator: I,
         ) -> crate::CrateResult<DirEntry> {
+            let ListingRead {
+                in_place,
+                dir_path,
+                dir_needs_sep,
+                generation,
+                owns_handle,
+                store_fd,
+                reserve,
+            } = read;
             let (dir, mut interned) = self.listing_dir(in_place, dir_path, dir_needs_sep)?;
             let mut listing = DirEntry::init(dir, generation);
             listing.data.reserve(reserve);
@@ -1421,18 +1442,20 @@ pub mod fs {
             // without a trailing slash, and rewriting `dir` to the other spelling
             // races every unlocked `Entry::dir()` reader.
             let listing = match self.read_listing(
-                in_place,
-                if had_handle {
-                    dir
-                } else {
-                    dir_maybe_trail_slash
+                ListingRead {
+                    in_place,
+                    dir_path: if had_handle {
+                        dir
+                    } else {
+                        dir_maybe_trail_slash
+                    },
+                    dir_needs_sep: false,
+                    generation,
+                    owns_handle: !had_handle,
+                    store_fd,
+                    reserve: 0,
                 },
-                false,
-                generation,
                 &mut handle,
-                !had_handle,
-                store_fd,
-                0,
                 iterator,
             ) {
                 Ok(listing) => listing,
@@ -1747,14 +1770,16 @@ pub mod fs {
                         }
                     };
                     let read = self.read_listing(
-                        Some(e_ptr),
-                        dir,
-                        false,
-                        generation,
+                        ListingRead {
+                            in_place: Some(e_ptr),
+                            dir_path: dir,
+                            dir_needs_sep: false,
+                            generation,
+                            owns_handle: true,
+                            store_fd: false,
+                            reserve: 0,
+                        },
                         &mut handle,
-                        true,
-                        false,
-                        0,
                         (),
                     );
                     let _ = bun_sys::close(handle);

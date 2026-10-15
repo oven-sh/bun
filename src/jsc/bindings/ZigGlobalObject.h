@@ -500,7 +500,7 @@ public:
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
-    V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                      \
+    V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \

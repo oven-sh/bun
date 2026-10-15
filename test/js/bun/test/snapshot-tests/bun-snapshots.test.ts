@@ -119,7 +119,9 @@ describe("property matchers on an object that appears more than once", () => {
 
   it("leaves the received object unchanged when the match fails", () => {
     const received = { a: { id: 1 }, b: { id: "2" } };
-    expect(() => expect(received).toMatchSnapshot({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } })).toThrow();
+    expect(() =>
+      expect(received).toMatchSnapshot({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } }),
+    ).toThrow();
     expect(received.a.id).toBe(1);
   });
 });

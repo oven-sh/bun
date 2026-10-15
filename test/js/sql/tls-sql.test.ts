@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, describeWithContainer, nodeExe, tls as tlsCert } from "harness";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
@@ -703,4 +703,118 @@ test.each([
     server.close();
     terminator.close();
   }
+});
+
+// A node process: a TLS server in Bun cannot renegotiate. It takes every login, answers query n with "n rows", and
+// asks for a new handshake when it has read the second query, before it answers it. Line 1 of its output is its port.
+// When its stdin ends, it prints what it received.
+const renegotiatingServer = /* js */ `
+  const net = require("net");
+  const { PROTOCOL, GREETING, SERVER_CERT: cert, SERVER_KEY: key } = process.env;
+  const received = [];
+  process.stdin.on("end", () => console.log(JSON.stringify(received))).resume();
+  const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n); return b; };
+  const pg = (type, body) => Buffer.concat([Buffer.from(type), int32(body.length + 4), body]);
+  const protocols = {
+    // 3 bytes of length, a sequence number, the payload. COM_QUERY is 0x03 and the text.
+    mysql: {
+      sslRequest: first => 4 + first.readUIntLE(0, 3),
+      sslAnswer: Buffer.alloc(0),
+      length: (pending, loggedIn) => 4 + pending.readUIntLE(0, 3),
+      name: (message, loggedIn) => !loggedIn ? "login" : message[4] === 0x03 ? message.toString("latin1", 5) : "?",
+      answer: (message, rows) => Buffer.from([7, 0, 0, message[3] + 1, 0x00, rows, 0, 0x02, 0, 0, 0]),
+    },
+    // A type, but for the first message, and 4 bytes of length that count themselves. Q is the text and a NUL.
+    postgres: {
+      sslRequest: () => 8,
+      sslAnswer: Buffer.from("S"),
+      length: (pending, loggedIn) => loggedIn ? 1 + pending.readInt32BE(1) : pending.readInt32BE(0),
+      name: (message, loggedIn) => !loggedIn ? "login" : message[0] === 0x51 ? message.toString("latin1", 5, message.length - 1) : "?",
+      answer: (message, rows, loggedIn) => Buffer.concat([
+        loggedIn ? pg("C", Buffer.from("INSERT 0 " + rows + "\\0")) : pg("R", int32(0)),
+        pg("Z", Buffer.from("I")),
+      ]),
+    },
+  };
+  const protocol = protocols[PROTOCOL];
+  const secure = require("tls").createServer({ cert, key, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" }, socket => {
+    socket.on("error", () => {});
+    let pending = Buffer.alloc(0), loggedIn = false;
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= 5 && pending.length >= protocol.length(pending, loggedIn)) {
+        const message = pending.subarray(0, protocol.length(pending, loggedIn));
+        pending = pending.subarray(message.length);
+        const name = protocol.name(message, loggedIn);
+        received.push(name);
+        const reply = protocol.answer(message, Number(/^do (\\d)$/.exec(name)?.[1] ?? 0), loggedIn);
+        loggedIn = true;
+        if (name === "do 2") socket.renegotiate({}, err => (err ? socket.destroy(err) : socket.write(reply)));
+        else socket.write(reply);
+      }
+    });
+  });
+  secure.listen(0, "127.0.0.1");
+  // In plaintext up to the end of the client's request for TLS.
+  const server = net.createServer(plain => {
+    plain.on("error", () => {});
+    plain.write(Buffer.from(GREETING, "hex"));
+    plain.once("data", first => {
+      plain.pause();
+      plain.write(protocol.sslAnswer);
+      const inner = net.connect(secure.address().port, "127.0.0.1", () => {
+        inner.write(first.subarray(protocol.sslRequest(first)));
+        plain.pipe(inner).pipe(plain);
+      });
+      inner.on("error", () => {});
+    });
+  });
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
+
+// The end of every handshake is reported. What follows the first one, the login, must not go out again: the reply to
+// it would be taken for the reply to the next query.
+test.skipIf(!nodeExe()).each([
+  ["mysql", mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }).toString("hex")],
+  ["postgres", ""],
+])("%s logs in once to a server that renegotiates", async (protocol, greeting) => {
+  await using server = Bun.spawn({
+    cmd: [nodeExe()!, "-e", renegotiatingServer],
+    env: { ...bunEnv, PROTOCOL: protocol, GREETING: greeting, SERVER_CERT: tlsCert.cert, SERVER_KEY: tlsCert.key },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const lines = (async function* () {
+    let output = "";
+    for await (const chunk of server.stdout.pipeThrough(new TextDecoderStream())) {
+      output += chunk;
+      for (let end; (end = output.indexOf("\n")) !== -1; output = output.slice(end + 1)) yield output.slice(0, end);
+    }
+  })();
+  const port = Number((await lines.next()).value);
+
+  await using sql = new SQL(`${protocol}://user:secret@127.0.0.1:${port}/db`, {
+    max: 1,
+    tls: { ca: tlsCert.cert, serverName: "localhost" },
+  });
+  const rows: unknown[] = [];
+  for (let n = 1; n <= 4; n++) {
+    rows.push(
+      await sql
+        .unsafe(`do ${n}`)
+        .simple()
+        .then(
+          result => result.affectedRows ?? result.count,
+          err => err.message,
+        ),
+    );
+  }
+  server.stdin.end();
+  const received: string[] = JSON.parse((await lines.next()).value!);
+  // MySQL: the session is set up with a query of the client's own.
+  expect({ rows, received: received.filter(name => !name.startsWith("SET ")) }).toEqual({
+    rows: [1, 2, 3, 4],
+    received: ["login", "do 1", "do 2", "do 3", "do 4"],
+  });
 });

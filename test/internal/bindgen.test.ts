@@ -238,15 +238,28 @@ describe("dictionaries", () => {
   });
 
   it("a default written in the schema reaches every member, the nested ones included", () => {
-    expect(bindgen.describeDefaults()).toBe("inner: a=true b=7 name=inner; value: undefined; choice: none");
-    expect(bindgen.describeDefaults(undefined)).toBe("inner: a=true b=7 name=inner; value: undefined; choice: none");
-    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none");
-    expect(bindgen.describeDefaults({ inner: {} })).toBe(
-      "inner: a=true b=7 name=inner; value: undefined; choice: none",
-    );
-    expect(bindgen.describeDefaults({ inner: { a: false, name: "n" }, value: null, choice: true })).toBe(
-      "inner: a=false b=7 name=n; value: given; choice: true",
-    );
+    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; counter: false";
+    expect(bindgen.describeDefaults()).toBe(defaults);
+    expect(bindgen.describeDefaults(undefined)).toBe(defaults);
+    expect(bindgen.describeDefaults({ inner: {} })).toBe(defaults);
+    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none; counter: false");
+    expect(
+      bindgen.describeDefaults({
+        inner: { a: false, name: "n" },
+        value: null,
+        choice: true,
+        counter: new (bindgen as any).TestCounter(),
+      }),
+    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; counter: true");
+  });
+
+  it("a member that is absent is absent, whatever was on the stack before", () => {
+    const counter = new (bindgen as any).TestCounter();
+    for (let i = 0; i < 100; i++) {
+      expect(bindgen.describeDefaults({ counter })).toEndWith("counter: true");
+      expect(bindgen.describeDefaults({})).toEndWith("counter: false");
+      expect(bindgen.describeDefaults({ counter: null })).toEndWith("counter: false");
+    }
   });
 
   it("returns ordinary objects", () => {

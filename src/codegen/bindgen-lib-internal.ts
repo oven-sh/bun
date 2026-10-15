@@ -794,8 +794,9 @@ export class OptionalType extends Type {
   get convertsInPlace(): boolean {
     return this.payload.convertsInPlace;
   }
-  /** A default-constructed `target` is the null value. */
+  /** What converts in place is null when default-constructed. Not everything else is: a pointer to a class instance. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
     const provided = {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,

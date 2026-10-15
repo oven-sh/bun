@@ -128,7 +128,8 @@ pub fn describe_defaults(options: TestOuter<'_>) -> Vec<u8> {
         TestChoice::None => "none".to_owned(),
         TestChoice::Flag(flag) => flag.to_string(),
     };
-    format!("inner: {inner}; value: {value}; choice: {choice}").into_bytes()
+    let counter = options.counter.is_some();
+    format!("inner: {inner}; value: {value}; choice: {choice}; counter: {counter}").into_bytes()
 }
 
 pub fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {

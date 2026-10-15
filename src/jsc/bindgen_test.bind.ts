@@ -181,6 +181,7 @@ export const TestOuter = b.dictionary({
   inner: TestInner.nullable,
   value: b.any,
   choice: TestChoice,
+  counter: TestCounter.nullable,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({

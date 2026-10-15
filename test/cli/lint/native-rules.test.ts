@@ -1239,6 +1239,37 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
     });
   });
 
+  // A format rule needs `[fmt]`, so `bun lint` keeps looking for it in the bunfig.toml files above, and one it can't parse
+  // is an error. For other rules `[fmt]` is optional, and the search ends there quietly.
+  test.each([
+    ["no-var", 0],
+    ["bun/format", 2],
+    ["bun/*", 2],
+    ["prettier/prettier", 2],
+    ["prettier/*", 2],
+  ])("%s looks for [fmt] like the format rule it includes", async (id, expected) => {
+    const files = { "bunfig.toml": "[fmt\n", "project/a.js": "export const a = 1;\n" };
+    const run = async (bunfig: string, args: string[]) => {
+      using dir = tempDir("bun-lint-native", { ...files, "project/bunfig.toml": bunfig });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", ...args],
+        env: bunEnv,
+        cwd: join(String(dir), "project"),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return await proc.exited;
+    };
+    const override = `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "${id}" = "error" }\n`;
+    expect(
+      await Promise.all([
+        run(`[lint.rules]\n"${id}" = "error"\n`, []),
+        run(`[lint]\nignorePatterns = []\n`, ["--rule", `${id}: error`]),
+        run(override, []),
+      ]),
+    ).toEqual([expected, expected, expected]);
+  });
+
   test("a wildcard can't turn on a rule that requires options", async () => {
     const files = { "a.js": `import "fs";\n` };
     const run = (lines: string) => lint({ ...files, "bunfig.toml": `[lint.rules]\n${lines}\n` }, ["-f", "json"]);

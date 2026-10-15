@@ -431,8 +431,8 @@ describe("the callback of a PerformanceObserver", () => {
     assert.strictEqual(exitCode, 0);
   });
 
-  // (Starts a process and a worker in it, which takes seconds on a debug build.)
-  test("and to the uncaughtException of a worker thread", { timeout: 30_000 }, async () => {
+  // (In a process of its own: under `bun test`, what is thrown in a worker fails the test that is running.)
+  test("and to the uncaughtException of a worker thread", async () => {
     const worker = throwsFromContext(`require("node:worker_threads").parentPort.postMessage(reported);`);
     const { stdout, stderr, exitCode } = await run(`
       const { Worker } = require("node:worker_threads");
@@ -1067,8 +1067,7 @@ if (typeof Bun !== "undefined") {
   const node = nodeExe();
 
   describe("Node.js compatibility", () => {
-    // The timeout is for one Node.js process that runs every test of this file.
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 30_000 }, async () => {
+    (node ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       const child = spawn(node!, ["--v8-pool-size=1", fileURLToPath(import.meta.url)], {

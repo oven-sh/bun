@@ -19,7 +19,7 @@ Values may reference environment variables. Bun replaces `${NAME}` with the vari
 
 As in npm, an unquoted value ends at the first `;` or `#` (write `\;` or `\#` to keep the character), and whitespace around keys and values is dropped.
 
-[Auto-install](/runtime/auto-install#registries) reads the default registry, the scoped registries, and the registry credentials from `.npmrc`. The other options on this page apply to `bun install` and the other package manager commands only.
+[Auto-install](/runtime/auto-install#registries) reads the default registry, the scoped registries, the registry credentials, and [`ca` / `cafile`](#ca-and-cafile-configure-ca-certificates) from `.npmrc`. The other options on this page apply to `bun install` and the other package manager commands only.
 
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more

@@ -45,7 +45,7 @@ When the registry answers that a package does not exist (404), Bun does not ask 
 
 ## Registries
 
-Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, and their credentials from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
+Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, their credentials, and their CA certificates from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
 
 ```ini .npmrc icon="npm"
 @myorg:registry=https://npm.myorg.com/
@@ -53,6 +53,16 @@ Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unl
 ```
 
 Bun reads the user's `.npmrc`, then `.npmrc` in the directory where you started `bun`. It does not search parent directories. A value in `bunfig.toml` overrides the same value in `.npmrc`. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only.
+
+If a private certificate authority signs a registry's certificate, name it with [`ca` or `cafile`](/runtime/bunfig#install-ca-and-install-cafile):
+
+```toml bunfig.toml icon="settings"
+[install]
+registry = "https://npm.myorg.com/"
+cafile = "myorg-ca.pem"
+```
+
+Auto-install then verifies its registries against those certificates instead of the default ones, as `bun install` does. `fetch()` and the other requests of your code do not use them. A relative `cafile` is relative to the directory where you started `bun`. Bun reads the certificates at the first request to an `https://` registry. If Bun cannot load them, the import fails and the error says why.
 
 Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
 

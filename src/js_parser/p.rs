@@ -6764,6 +6764,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: &[u8],
         opts: IdentifierOpts,
     ) -> bool {
+        let mut is_namespace_local_read = false;
         let base = match target.data {
             js_ast::ExprData::EImportIdentifier(id) => id.ref_,
             // Not an import item until `parse_entry` decides it is one, but
@@ -6780,10 +6781,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // A file with no `require()` / `import()` local stops here.
             _ if self.dynamic_import_namespace_locals.is_empty() => return false,
             js_ast::ExprData::EIdentifier(id) => {
-                return self.can_record_import_property_use(opts)
-                    && self
-                        .namespace_local_import_item(id.ref_, name)
-                        .is_some_and(|item| self.existing_part_use(item).is_some());
+                let Some(item) = self.namespace_local_import_item(id.ref_, name) else {
+                    return false;
+                };
+                is_namespace_local_read = true;
+                item
             }
             // `ns.a.b` reads `b` off the import item of `ns.a`.
             js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
@@ -6794,8 +6796,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => return false,
         };
-        if !self.can_record_import_property_use(opts) {
+        if !self.options.bundle
+            || self.is_control_flow_dead
+            || opts.assign_target() != js_ast::AssignTarget::None
+            || opts.is_delete_target()
+        {
             return false;
+        }
+        // `maybe_rewrite_property_access` counted the import item of the read.
+        if is_namespace_local_read {
+            return self.existing_part_use(base).is_some();
         }
         // Same node visited again (const inlining); already counted.
         if self.is_revisit_for_substitution {
@@ -6818,13 +6828,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         inner_use.count_estimate += 1;
         inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
-    }
-
-    fn can_record_import_property_use(&self, opts: IdentifierOpts) -> bool {
-        self.options.bundle
-            && !self.is_control_flow_dead
-            && opts.assign_target() == js_ast::AssignTarget::None
-            && !opts.is_delete_target()
     }
 
     /// The import item of `ns.name`, where `ns` holds a `require()` / `import()` namespace.

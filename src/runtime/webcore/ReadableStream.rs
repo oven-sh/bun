@@ -192,7 +192,8 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
+    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked),
+    /// except a stream over an fd store: that one is a per-Blob singleton and only lends its fd.
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -223,6 +224,14 @@ impl ReadableStream {
                 }
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
+                // A stream over an fd (`Bun.stdin.stream()`) is one cached object per
+                // Blob (`get_stream_with_cache`). The caller takes the fd, not the
+                // stream's bytes, so the stream stays unread for its next user.
+                if let webcore::blob::store::Data::File(file) = &store.data {
+                    if let webcore::node_types::PathOrFileDescriptor::Fd(_) = file.pathlike {
+                        return Some(webcore::blob::Any::Blob(blob));
+                    }
+                }
                 webcore::blob::Any::Blob(blob)
             }
             Source::Bytes(_) => {

@@ -8,6 +8,7 @@ use bstr::BStr;
 use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
+use crate::prune::LinkedNodeModules;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -500,6 +501,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     let Ok(node_modules) = bun_sys::Dir::open(b"node_modules") else {
         return;
     };
+    let is_behind_link = LinkedNodeModules::is_at(bun_core::zstr!("node_modules")) == Some(true);
     let buffers = &manager.lockfile.buffers;
     for request in manager.update_requests.iter() {
         // A path or URL has no name here.
@@ -518,7 +520,10 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
                     .any(|(dep, &id)| dep.name_hash == hash && id != crate::invalid_package_id)
             }
         };
-        if !left {
+        if !left
+            || (is_behind_link
+                && LinkedNodeModules::keeps(&node_modules, request.name, request.name))
+        {
             continue;
         }
         // Not through a link at `@scope`.

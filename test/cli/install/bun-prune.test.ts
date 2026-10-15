@@ -3645,6 +3645,28 @@ test.concurrent("isolated: the fallback link of a removed version goes to the ve
   expect((await prune(dir, "--production", "--check", "--linker", "isolated")).exitCode).toBe(0);
 });
 
+// A folder has its name among the fallback links without a link, so none goes when the folder goes.
+test.concurrent("isolated: the fallback name of a removed file: folder goes to the version that stays", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  await write(join(dir, "vendor", "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" }));
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0" },
+      devDependencies: { "no-deps": "file:./vendor/no-deps" },
+    }),
+  );
+  await install(dir, "--linker", "isolated");
+  const fallback = () => nodeModulesTree(dir, { storeBins: false })["node_modules/.bun/node_modules/no-deps"];
+  expect(fallback()).toBeUndefined();
+
+  const { exitCode } = await prune(dir, "--production", "--linker", "isolated");
+  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0"]);
+  expect(fallback()).toBe("-> node_modules/.bun/no-deps@1.0.1/node_modules/no-deps");
+  expect(exitCode).toBe(0);
+});
+
 // Of two packages with one command, the first by name has the link.
 test.concurrent.each(linkers)("%s: the command of a removed package goes to the package that stays", async linker => {
   const dir = await setupWithLinker(linker, {

@@ -32,6 +32,7 @@ use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
 use crate::patch_install::{self, PatchTask};
 use crate::postinstall_optimizer::{self, PostinstallOptimizer};
+use crate::prune::LinkedNodeModules;
 use crate::resolution::{self, Resolution};
 use crate::{
     DependencyID, DependencyInstallContext, ExtractData, PackageID, PackageNameHash,
@@ -368,21 +369,29 @@ impl NodeModulesFolder {
         }
     }
 
-    fn make_and_open_dir(&self, root: &Dir, lockfile: &Lockfile) -> crate::Result<Dir> {
+    /// True with it: an importer's, and it was not there.
+    fn make_and_open_dir(&self, root: &Dir, lockfile: &Lockfile) -> crate::Result<(Dir, bool)> {
         #[cfg(unix)]
         {
             if lockfile.is_importer_tree_id(self.tree_id) {
-                return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
+                let path = self.path.as_slice();
+                return match root.open_at(path) {
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                        root.make_path(path)?;
+                        Ok((root.open_at(path)?, true))
+                    }
+                    opened => Ok((opened?, false)),
+                };
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let path = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
-            Ok(package_install::make_open_real_dir(root, path)?)
+            Ok((package_install::make_open_real_dir(root, path)?, false))
         }
 
         #[cfg(not(unix))]
         {
             let _ = lockfile;
-            Ok(Dir::from_fd(
+            let dir = Dir::from_fd(
                 bun_sys::open_dir_at_windows_a(
                     root.fd(),
                     self.path.as_slice(),
@@ -393,7 +402,8 @@ impl NodeModulesFolder {
                     },
                 )
                 .map_err(|e| e.to_zig_err())?,
-            ))
+            );
+            Ok((dir, false))
         }
     }
 }
@@ -431,6 +441,8 @@ pub struct TreeContext {
     pub(crate) replaced: Vec<DependencyID>,
     /// Inside an ancestor's `replaced` folder: what is on disk here goes away, so never skip.
     pub(crate) inside_replaced_folder: bool,
+    /// Of an importer's tree: see `PackageInstaller::is_behind_link`.
+    pub(crate) is_behind_link: Option<bool>,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -1186,6 +1198,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// Made if need be and kept open for the next package. `alias` is about to be replaced in it.
+    /// The flag is `make_and_open_dir`'s.
     fn open_tree_dir(
         lockfile: &Lockfile,
         deferred: &mut Option<DeferredLinks>,
@@ -1193,20 +1206,24 @@ impl<'a> PackageInstaller<'a> {
         node_modules: &NodeModulesFolder,
         root_node_modules_folder: &Dir,
         alias: &[u8],
-    ) -> crate::Result<Fd> {
+    ) -> crate::Result<(Fd, bool)> {
         let tree_id = node_modules.tree_id;
         let kept = deferred.as_mut().and_then(|deferred| {
             (deferred.tree_dirs.iter_mut().rev()).find(|open| open.tree_id == tree_id)
         });
+        let mut made = false;
         let open = match kept {
             Some(open) => open,
             None => {
                 if (tree_dir.as_ref()).is_none_or(|open| open.tree_id != tree_id) {
                     // Closes the other tree's first.
                     *tree_dir = None;
+                    let (dir, is_new) =
+                        node_modules.make_and_open_dir(root_node_modules_folder, lockfile)?;
+                    made = is_new;
                     *tree_dir = Some(TreeDir {
                         tree_id,
-                        dir: node_modules.make_and_open_dir(root_node_modules_folder, lockfile)?,
+                        dir,
                         scope: Vec::new(),
                     });
                 }
@@ -1230,7 +1247,58 @@ impl<'a> PackageInstaller<'a> {
             open.scope.clear();
             open.scope.extend_from_slice(scope);
         }
-        Ok(open.dir.fd())
+        Ok((open.dir.fd(), made))
+    }
+
+    /// See `LinkedNodeModules`. The `node_modules` of the importer that `tree_id` is below is looked
+    /// at once, when a package is about to be laid, unless this install made it: the project's
+    /// (`made_root`), or that of `tree_id` (`made`, see `make_and_open_dir`).
+    fn is_behind_link(
+        lockfile: &Lockfile,
+        trees: &mut [TreeContext],
+        tree_id: lockfile::tree::Id,
+        made_root: bool,
+        made: bool,
+    ) -> bool {
+        let mut importer = tree_id;
+        while !lockfile.is_importer_tree_id(importer) {
+            importer = lockfile.buffers.trees[importer as usize].parent;
+        }
+        let is_new = if importer == 0 {
+            made_root
+        } else {
+            made && importer == tree_id
+        };
+        *trees[importer as usize]
+            .is_behind_link
+            .get_or_insert_with(|| {
+                if is_new {
+                    return false;
+                }
+                let string_buf = lockfile.buffers.string_bytes.as_slice();
+                let mut path = abs_node_modules_path(lockfile, string_buf, importer);
+                LinkedNodeModules::is_at(path.slice_z()) == Some(true)
+            })
+    }
+
+    /// Whether the folder that the `node_modules` of the current tree is in is the package's.
+    fn is_in_laid_package(&self) -> bool {
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let tree = &lockfile.buffers.trees[self.current_tree_id as usize];
+        let alias = lockfile.buffers.dependencies[tree.dependency_id as usize].name;
+        let package_id = lockfile.buffers.resolutions[tree.dependency_id as usize];
+        let Some(name) = self.names.slice().get(package_id as usize) else {
+            return false;
+        };
+        let path = abs_node_modules_path(lockfile, string_buf, tree.parent);
+        Dir::open(path.slice()).is_ok_and(|node_modules| {
+            LinkedNodeModules::holds_package(
+                &node_modules,
+                alias.slice(string_buf),
+                name.slice(string_buf),
+            )
+        })
     }
 
     /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
@@ -2091,8 +2159,22 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
+            // Its own install failed, and said so: what is there is not the package.
+            if !self.lockfile().is_importer_tree_id(self.current_tree_id)
+                && Self::is_behind_link(
+                    self.lockfile(),
+                    &mut self.trees,
+                    self.current_tree_id,
+                    self.skip_delete,
+                    false,
+                )
+                && !self.is_in_laid_package()
+            {
+                return self.fail(is_pending_package_install, log_level);
+            }
+
             // creating this directory now, right before installing package
-            let destination_fd = match Self::open_tree_dir(
+            let (destination_fd, made) = match Self::open_tree_dir(
                 self.lockfile(),
                 &mut self.deferred,
                 &mut self.tree_dir,
@@ -2100,7 +2182,7 @@ impl<'a> PackageInstaller<'a> {
                 &self.root_node_modules_folder,
                 alias.slice(string_buf!()),
             ) {
-                Ok(fd) => fd,
+                Ok(opened) => opened,
                 Err(err) => {
                     if log_level != Options::LogLevel::Silent {
                         Output::err(
@@ -2119,10 +2201,31 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
+            let is_behind_link = Self::is_behind_link(
+                self.lockfile(),
+                &mut self.trees,
+                self.current_tree_id,
+                self.skip_delete,
+                made,
+            );
+            // There an earlier install can be in a `node_modules` that is new to the project.
+            let skip_delete = self.skip_delete && !is_behind_link;
 
             let install_result: package_install::InstallResult = match resolution.tag {
+                _ if is_behind_link
+                    && LinkedNodeModules::keeps(
+                        destination_dir,
+                        alias.slice(string_buf!()),
+                        pkg_name.slice(string_buf!()),
+                    ) =>
+                {
+                    package_install::InstallResult::fail(
+                        crate::Error::Sys(bun_errno::SystemErrno::EEXIST),
+                        package_install::Step::OpeningDestDir,
+                    )
+                }
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(self.skip_delete, destination_dir)
+                    installer.install_from_link(skip_delete, destination_dir)
                 }
                 _ => 'result: {
                     let staging = self
@@ -2146,7 +2249,7 @@ impl<'a> PackageInstaller<'a> {
                         {
                             break 'result installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2183,7 +2286,7 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(self.skip_delete, destination_dir)
+                            installer.install_from_link(skip_delete, destination_dir)
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // What a package ships inside itself is linked where it is.
                             let mut shipped_buf = bun_paths::path_buffer_pool::get();
@@ -2206,7 +2309,7 @@ impl<'a> PackageInstaller<'a> {
                         } else {
                             installer.install(
                                 staging,
-                                self.skip_delete,
+                                skip_delete,
                                 destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
@@ -2249,7 +2352,7 @@ impl<'a> PackageInstaller<'a> {
                                 alias.slice(string_buf!()),
                             ),
                             copy,
-                            skip_delete: self.skip_delete,
+                            skip_delete,
                             random: bun_core::fast_random(),
                             resolution_tag: resolution.tag,
                             result: Default::default(),
@@ -2262,7 +2365,7 @@ impl<'a> PackageInstaller<'a> {
                     };
                     break 'result installer.install(
                         staging,
-                        self.skip_delete,
+                        skip_delete,
                         destination_dir,
                         method,
                         resolution.tag,

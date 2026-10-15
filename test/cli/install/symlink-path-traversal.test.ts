@@ -2192,4 +2192,148 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     expect(stderr).toContain("EEXIST");
     expect(exitCode).toBe(1);
   });
+
+  describe("has the name of a package, with the hoisted linker", () => {
+    const hoisted = (cwd: string, root: string, ...args: string[]) =>
+      runBun(cwd, [...args, "--ignore-scripts", "--linker", "hoisted"], join(root, "cache"));
+    const failed = (name: string) => `EEXIST: failed opening node_modules/package dir for package ${name}`;
+
+    /** Every entry below `dir`: a file with its text, a link with where it leads. */
+    async function contentsOf(dir: string) {
+      const entries = await readdir(dir, { recursive: true, withFileTypes: true });
+      const contents = entries.map(async entry => {
+        const path = join(entry.parentPath, entry.name);
+        const content = entry.isSymbolicLink() ? await readlink(path) : entry.isFile() && (await Bun.file(path).text());
+        return [relative(dir, path), content] as const;
+      });
+      return (await Promise.all(contents)).sort(([a], [b]) => (a < b ? -1 : 1));
+    }
+
+    /** `owner`: whose `node_modules` is the link to `outside`. */
+    async function linked(root: string, where: string, mine: Record<string, string>) {
+      const outside = await plant(root, mine);
+      const repo = await workspace(root);
+      const owner = where === "the project's" ? repo : join(repo, "packages", "app");
+      await symlink(relative(owner, outside), join(owner, "node_modules"));
+      return { outside, repo, owner };
+    }
+
+    const kinds: Record<string, Record<string, string>> = {
+      "a folder": { "dep/chapter.tex": KEEP, "extra/chapter.tex": KEEP },
+      "a file": { "dep": KEEP, "extra": KEEP },
+      "another package": {
+        "dep/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+        "dep/index.js": KEEP,
+        "extra/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+      },
+    };
+    const rows = ["the project's", "a workspace's"].flatMap(where => [
+      ...Object.keys(kinds).map(kind => [where, kind, "install"]),
+      ...["install --force", "update"].map(command => [where, "a folder", command]),
+    ]);
+    // What a workspace adds goes to the project's.
+    rows.push(["the project's", "a folder", "add"]);
+
+    it.each(rows)("behind %s node_modules, %s stays: bun %s", async (where, kind, command) => {
+      using root = tempDir("nm-outside-name", {});
+      const { outside, repo, owner } = await linked(String(root), where, kinds[kind]);
+      const mine = async () => (await contentsOf(outside)).filter(([path]) => /^(dep|extra)(\/|$)/.test(path));
+      const before = await mine();
+
+      const { stderr, exitCode } =
+        command === "add"
+          ? await hoisted(owner, String(root), "add", relative(owner, join(repo, "extra.tgz")))
+          : await hoisted(repo, String(root), ...command.split(" "));
+
+      expect(stderr).toContain(failed(command === "add" ? "extra" : "dep"));
+      expect(await mine()).toEqual(before);
+      expect(exitCode).toBe(1);
+    });
+
+    it.each(["the project's", "a workspace's"])("behind %s node_modules, an older version is replaced", async where => {
+      using root = tempDir("nm-outside-older", {});
+      const older = { "dep/package.json": JSON.stringify({ name: "dep", version: "0.1.0" }), "dep/old.js": "" };
+      const { outside, repo } = await linked(String(root), where, { ...MINE, ...older });
+
+      const { stderr, exitCode } = await hoisted(repo, String(root), "install");
+
+      expect(stderr).not.toContain("EEXIST");
+      expect((await readdir(join(outside, "dep"))).sort()).toEqual([".bun-tag", "index.js", "package.json"]);
+      expect(await Bun.file(join(outside, "dep", "package.json")).json()).toMatchObject({
+        name: "dep",
+        version: where === "the project's" ? "1.0.0" : "2.0.0",
+      });
+      expect(await read(outside)).toEqual(MINE);
+      expect(exitCode).toBe(0);
+    });
+
+    it.each(["the project's", "a workspace's"])("behind %s node_modules, what a link leads to stays", async where => {
+      using root = tempDir("nm-outside-link", {});
+      const { outside, repo } = await linked(String(root), where, MINE);
+      await symlink("thesis", join(outside, "dep"));
+
+      const { exitCode } = await hoisted(repo, String(root), "install");
+
+      expect(await read(outside)).toEqual(MINE);
+      expect(await readdir(join(outside, "thesis"))).toEqual(["chapter.tex"]);
+      expect(await Bun.file(join(outside, "dep", "package.json")).json()).toMatchObject({ name: "dep" });
+      expect(exitCode).toBe(0);
+    });
+
+    // `host` needs another version of `dep` than the project, so it has a `node_modules` of its own.
+    async function nested(root: string, mine: Record<string, string>) {
+      const outside = await plant(root, mine);
+      const repo = join(root, "repo");
+      await Promise.all([outside, join(repo, "host")].map(dir => mkdir(dir, { recursive: true })));
+      const host = { name: "host", version: "1.0.0", dependencies: { dep: "file:../dep2.tgz" } };
+      await Promise.all([
+        writeTarball(join(repo, "dep1.tgz"), "dep", "1.0.0", "module.exports = 1"),
+        writeTarball(join(repo, "dep2.tgz"), "dep", "2.0.0", "module.exports = 2"),
+        writeFile(join(repo, "host", "package.json"), JSON.stringify(host)),
+        writeFile(
+          join(repo, "package.json"),
+          JSON.stringify({ name: "root", dependencies: { dep: "file:./dep1.tgz", host: "file:./host" } }),
+        ),
+      ]);
+      await symlink("../outside", join(repo, "node_modules"));
+      return { outside, repo };
+    }
+
+    it("in the node_modules of a package that is installed there, it stays", async () => {
+      using root = tempDir("nm-outside-nested", {});
+      const { outside, repo } = await nested(String(root), {});
+      expect((await hoisted(repo, String(root), "install")).exitCode).toBe(0);
+      const place = join(outside, "host", "node_modules", "dep");
+      await rm(place, { recursive: true });
+      await plant(String(root), { "host/node_modules/dep/chapter.tex": KEEP });
+
+      const { stderr, exitCode } = await hoisted(repo, String(root), "install");
+
+      expect(stderr).toContain(failed("dep"));
+      expect(await contentsOf(place)).toEqual([["chapter.tex", KEEP]]);
+      expect(exitCode).toBe(1);
+    });
+
+    it("nothing is laid in a folder that stays", async () => {
+      using root = tempDir("nm-outside-nested-in", {});
+      const { outside, repo } = await nested(String(root), { "host/chapter.tex": KEEP });
+
+      const { stderr, exitCode } = await hoisted(repo, String(root), "install");
+
+      expect(stderr).toContain(failed("host"));
+      expect(await contentsOf(join(outside, "host"))).toEqual([["chapter.tex", KEEP]]);
+      expect(exitCode).toBe(1);
+    });
+
+    it.each(["hoisted", "isolated"])("bun remove leaves it (%s)", async linker => {
+      using root = tempDir("nm-outside-remove", {});
+      const outside = await plant(String(root), { "dep/chapter.tex": KEEP });
+      const repo = await projectWith(String(root), "dep", "thesis");
+      await symlink("../outside", join(repo, "node_modules"));
+
+      await runBun(repo, ["remove", "dep", "--ignore-scripts", "--linker", linker]);
+
+      expect(await contentsOf(join(outside, "dep"))).toEqual([["chapter.tex", KEEP]]);
+    });
+  });
 });

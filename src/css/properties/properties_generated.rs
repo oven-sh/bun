@@ -1717,11 +1717,21 @@ pub enum Property {
     FlexDirection((flex::FlexDirection, VendorPrefix)),
     FlexWrap((flex::FlexWrap, VendorPrefix)),
     FlexFlow((flex::FlexFlow, VendorPrefix)),
-    FlexGrow((css::css_values::number::CSSNumber, VendorPrefix)),
-    FlexShrink((css::css_values::number::CSSNumber, VendorPrefix)),
+    FlexGrow(
+        (
+            NonNegative<css::css_values::number::CSSNumber>,
+            VendorPrefix,
+        ),
+    ),
+    FlexShrink(
+        (
+            NonNegative<css::css_values::number::CSSNumber>,
+            VendorPrefix,
+        ),
+    ),
     FlexBasis(
         (
-            css::css_values::length::LengthPercentageOrAuto,
+            NonNegative<css::css_values::length::LengthPercentageOrAuto>,
             VendorPrefix,
         ),
     ),
@@ -1743,7 +1753,12 @@ pub enum Property {
     BoxDirection((flex::BoxDirection, VendorPrefix)),
     BoxOrdinalGroup((css::css_values::number::CSSInteger, VendorPrefix)),
     BoxAlign((flex::BoxAlign, VendorPrefix)),
-    BoxFlex((css::css_values::number::CSSNumber, VendorPrefix)),
+    BoxFlex(
+        (
+            NonNegative<css::css_values::number::CSSNumber>,
+            VendorPrefix,
+        ),
+    ),
     BoxFlexGroup((css::css_values::number::CSSInteger, VendorPrefix)),
     BoxPack((flex::BoxPack, VendorPrefix)),
     BoxLines((flex::BoxLines, VendorPrefix)),
@@ -1752,11 +1767,21 @@ pub enum Property {
     FlexAlign((flex::BoxAlign, VendorPrefix)),
     FlexItemAlign((flex::FlexItemAlign, VendorPrefix)),
     FlexLinePack((flex::FlexLinePack, VendorPrefix)),
-    FlexPositive((css::css_values::number::CSSNumber, VendorPrefix)),
-    FlexNegative((css::css_values::number::CSSNumber, VendorPrefix)),
+    FlexPositive(
+        (
+            NonNegative<css::css_values::number::CSSNumber>,
+            VendorPrefix,
+        ),
+    ),
+    FlexNegative(
+        (
+            NonNegative<css::css_values::number::CSSNumber>,
+            VendorPrefix,
+        ),
+    ),
     FlexPreferredSize(
         (
-            css::css_values::length::LengthPercentageOrAuto,
+            NonNegative<css::css_values::length::LengthPercentageOrAuto>,
             VendorPrefix,
         ),
     ),
@@ -3080,18 +3105,23 @@ impl Property {
                 }
             }
             PropertyId::FlexGrow(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_value::<NonNegative<css::css_values::number::CSSNumber>>(input, options)
+                {
                     return Ok(Property::FlexGrow((c, pre)));
                 }
             }
             PropertyId::FlexShrink(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_value::<NonNegative<css::css_values::number::CSSNumber>>(input, options)
+                {
                     return Ok(Property::FlexShrink((c, pre)));
                 }
             }
             PropertyId::FlexBasis(pre) => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::FlexBasis((c, pre)));
                 }
@@ -3189,7 +3219,9 @@ impl Property {
                 }
             }
             PropertyId::BoxFlex(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_value::<NonNegative<css::css_values::number::CSSNumber>>(input, options)
+                {
                     return Ok(Property::BoxFlex((c, pre)));
                 }
             }
@@ -3236,18 +3268,23 @@ impl Property {
                 }
             }
             PropertyId::FlexPositive(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_value::<NonNegative<css::css_values::number::CSSNumber>>(input, options)
+                {
                     return Ok(Property::FlexPositive((c, pre)));
                 }
             }
             PropertyId::FlexNegative(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_value::<NonNegative<css::css_values::number::CSSNumber>>(input, options)
+                {
                     return Ok(Property::FlexNegative((c, pre)));
                 }
             }
             PropertyId::FlexPreferredSize(pre) => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::FlexPreferredSize((c, pre)));
                 }

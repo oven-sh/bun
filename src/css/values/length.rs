@@ -59,10 +59,6 @@ pub enum LengthPercentageOrAuto {
 impl LengthPercentageOrAuto {
     // to_css — provided by #[derive(css::ToCss)]. is_compatible KEPT.
 
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
-        Self::parse_with_range(input, NumericRange::All)
-    }
-
     pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"auto"))

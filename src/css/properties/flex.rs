@@ -5,7 +5,8 @@ use bun_alloc::ArenaVecExt as _;
 use crate::properties::{Property, PropertyId};
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
-use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
+use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns, NonNegative};
+use css::generic::Parse as _;
 use css::prefixes::Feature as PrefixFeature;
 use css::{PrintErr, Printer, VendorPrefix};
 
@@ -111,11 +112,11 @@ impl FlexFlow {
 #[derive(Clone, PartialEq)]
 pub struct Flex {
     /// The flex grow factor.
-    pub(crate) grow: CSSNumber,
+    pub(crate) grow: NonNegative<CSSNumber>,
     /// The flex shrink factor.
-    pub(crate) shrink: CSSNumber,
+    pub(crate) shrink: NonNegative<CSSNumber>,
     /// The flex basis.
-    pub(crate) basis: LengthPercentageOrAuto,
+    pub(crate) basis: NonNegative<LengthPercentageOrAuto>,
 }
 
 // Shorthand metadata recorded here for a future shorthand derive (see FlexFlow note):
@@ -129,27 +130,27 @@ impl Flex {
             .is_ok()
         {
             return Ok(Flex {
-                grow: 0.0,
-                shrink: 0.0,
-                basis: LengthPercentageOrAuto::Auto,
+                grow: NonNegative(0.0),
+                shrink: NonNegative(0.0),
+                basis: NonNegative(LengthPercentageOrAuto::Auto),
             });
         }
 
-        let mut grow: Option<CSSNumber> = None;
-        let mut shrink: Option<CSSNumber> = None;
-        let mut basis: Option<LengthPercentageOrAuto> = None;
+        let mut grow: Option<NonNegative<CSSNumber>> = None;
+        let mut shrink: Option<NonNegative<CSSNumber>> = None;
+        let mut basis: Option<NonNegative<LengthPercentageOrAuto>> = None;
 
         loop {
             if grow.is_none() {
-                if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
+                if let Ok(value) = input.try_parse(NonNegative::<CSSNumber>::parse) {
                     grow = Some(value);
-                    shrink = input.try_parse(CSSNumberFns::parse).ok();
+                    shrink = input.try_parse(NonNegative::<CSSNumber>::parse).ok();
                     continue;
                 }
             }
 
             if basis.is_none() {
-                if let Ok(value) = input.try_parse(LengthPercentageOrAuto::parse) {
+                if let Ok(value) = input.try_parse(NonNegative::<LengthPercentageOrAuto>::parse) {
                     basis = Some(value);
                     continue;
                 }
@@ -159,18 +160,18 @@ impl Flex {
         }
 
         Ok(Flex {
-            grow: grow.unwrap_or(1.0),
-            shrink: shrink.unwrap_or(1.0),
-            basis: basis.unwrap_or(LengthPercentageOrAuto::Length(
+            grow: grow.unwrap_or(NonNegative(1.0)),
+            shrink: shrink.unwrap_or(NonNegative(1.0)),
+            basis: basis.unwrap_or(NonNegative(LengthPercentageOrAuto::Length(
                 LengthPercentage::Percentage(css::css_values::percentage::Percentage { v: 0.0 }),
-            )),
+            ))),
         })
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if self.grow == 0.0
-            && self.shrink == 0.0
-            && matches!(self.basis, LengthPercentageOrAuto::Auto)
+        if self.grow.0 == 0.0
+            && self.shrink.0 == 0.0
+            && matches!(self.basis.0, LengthPercentageOrAuto::Auto)
         {
             dest.write_str("none")?;
             return Ok(());
@@ -185,7 +186,7 @@ impl Flex {
 
         // If the basis is unitless 0, we must write all three components to disambiguate.
         // If the basis is 0%, we can omit the basis.
-        let basis_kind = match &self.basis {
+        let basis_kind = match &self.basis.0 {
             LengthPercentageOrAuto::Length(lp) => 'brk: {
                 if let LengthPercentage::Dimension(d) = lp {
                     if d.is_zero() {
@@ -202,19 +203,19 @@ impl Flex {
             _ => ZeroKind::NonZero,
         };
 
-        if self.grow != 1.0 || self.shrink != 1.0 || basis_kind != ZeroKind::NonZero {
-            CSSNumberFns::to_css(self.grow, dest)?;
-            if self.shrink != 1.0 || basis_kind == ZeroKind::Length {
+        if self.grow.0 != 1.0 || self.shrink.0 != 1.0 || basis_kind != ZeroKind::NonZero {
+            CSSNumberFns::to_css(self.grow.0, dest)?;
+            if self.shrink.0 != 1.0 || basis_kind == ZeroKind::Length {
                 dest.write_str(" ")?;
-                CSSNumberFns::to_css(self.shrink, dest)?;
+                CSSNumberFns::to_css(self.shrink.0, dest)?;
             }
         }
 
         if basis_kind != ZeroKind::Percentage {
-            if self.grow != 1.0 || self.shrink != 1.0 || basis_kind == ZeroKind::Length {
+            if self.grow.0 != 1.0 || self.shrink.0 != 1.0 || basis_kind == ZeroKind::Length {
                 dest.write_str(" ")?;
             }
-            self.basis.to_css(dest)?;
+            self.basis.0.to_css(dest)?;
         }
 
         Ok(())
@@ -504,19 +505,19 @@ pub struct FlexHandler {
     /// The box-lines property value and vendor prefix (legacy)
     pub(crate) box_lines: Option<(BoxLines, VendorPrefix)>,
     /// The flex-grow property value and vendor prefix
-    pub(crate) grow: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) grow: Option<(NonNegative<CSSNumber>, VendorPrefix)>,
     /// The box-flex property value and vendor prefix (legacy)
-    pub(crate) box_flex: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) box_flex: Option<(NonNegative<CSSNumber>, VendorPrefix)>,
     /// The flex-positive property value and vendor prefix (legacy)
-    pub(crate) flex_positive: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) flex_positive: Option<(NonNegative<CSSNumber>, VendorPrefix)>,
     /// The flex-shrink property value and vendor prefix
-    pub(crate) shrink: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) shrink: Option<(NonNegative<CSSNumber>, VendorPrefix)>,
     /// The flex-negative property value and vendor prefix (legacy)
-    pub(crate) flex_negative: Option<(CSSNumber, VendorPrefix)>,
+    pub(crate) flex_negative: Option<(NonNegative<CSSNumber>, VendorPrefix)>,
     /// The flex-basis property value and vendor prefix
-    pub(crate) basis: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub(crate) basis: Option<(NonNegative<LengthPercentageOrAuto>, VendorPrefix)>,
     /// The preferred-size property value and vendor prefix (legacy)
-    pub(crate) preferred_size: Option<(LengthPercentageOrAuto, VendorPrefix)>,
+    pub(crate) preferred_size: Option<(NonNegative<LengthPercentageOrAuto>, VendorPrefix)>,
     /// The order property value and vendor prefix
     pub(crate) order: Option<(CSSInteger, VendorPrefix)>,
     /// The box-ordinal-group property value and vendor prefix (legacy)
@@ -671,8 +672,8 @@ impl FlexHandler {
 
         let mut direction: Option<(FlexDirection, VendorPrefix)> = self.direction.take();
         let mut wrap: Option<(FlexWrap, VendorPrefix)> = self.wrap.take();
-        let mut grow: Option<(CSSNumber, VendorPrefix)> = self.grow.take();
-        let mut shrink: Option<(CSSNumber, VendorPrefix)> = self.shrink.take();
+        let mut grow: Option<(NonNegative<CSSNumber>, VendorPrefix)> = self.grow.take();
+        let mut shrink: Option<(NonNegative<CSSNumber>, VendorPrefix)> = self.shrink.take();
         let mut basis = self.basis.take();
         let mut box_orient = self.box_orient.take();
         let mut box_direction = self.box_direction.take();

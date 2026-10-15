@@ -233,6 +233,8 @@ pub mod lib {
                     }
                 }
             }
+            #[cfg(not(unix))]
+            let _ = strategy;
 
             if offset != self.cursor {
                 if offset > self.end {

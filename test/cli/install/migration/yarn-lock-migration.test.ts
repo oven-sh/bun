@@ -3622,9 +3622,6 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
   const lockPackages = (dir: string) =>
     (Bun.JSONC.parse(fs.readFileSync(join(dir, "bun.lock"), "utf8")) as { packages: Record<string, unknown[]> })
       .packages;
-  const bins = (dir: string) => [
-    ...new Set(fs.readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, ""))),
-  ];
 
   test.each(["url", "file", "owner/repo"] as const)(
     "%s: a dependency with the name and version of a registry package stays apart from it",
@@ -3673,10 +3670,9 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     const { stderr, exitCode } = await bun(String(dir), server.url, "install");
     expect(errors(stderr)).toEqual([]);
     expect(server.requests).toEqual([`/o/r/tar.gz/${commit}`]);
-    expect(lockPackages(String(dir))).toEqual({
-      g: [`g@${server.url}o/r/tar.gz/${commit}`, { bin: { g: "cli.js" } }, sri(mine)],
-    });
-    expect(bins(String(dir))).toEqual(["g"]);
+    expect(lockPackages(String(dir)).g[0]).toBe(`g@${server.url}o/r/tar.gz/${commit}`);
+    expect(readJson(String(dir), "node_modules", "g", "package.json").bin).toEqual({ g: "cli.js" });
+    expect(fs.existsSync(join(String(dir), "node_modules", ".bin", "tsc"))).toBe(false);
     expect(exitCode).toBe(0);
   });
 
@@ -3732,33 +3728,4 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       expect(exitCode).toBe(0);
     },
   );
-
-  test.each(["url", "file"] as const)("the bins of a %s tarball are linked and recorded", async kind => {
-    const tool = await tarball({ name: "t", version: "1.0.0", bin: { t: "cli.js" } });
-    using server = await serve([], { "/dl/t-1.0.0.tgz": tool });
-    const range = kind === "url" ? `${server.url}dl/t-1.0.0.tgz` : "file:./t-1.0.0.tgz";
-    // yarn.lock goes by the name of the dependency, which need not be the package's own.
-    using dir = tempDir("yarn-migration-tarball-bins", {
-      "package.json": JSON.stringify({ name: "app", dependencies: { tool: range } }),
-      "t-1.0.0.tgz": tool,
-      "yarn.lock": header + `"tool@${range}":\n  version "1.0.0"\n  resolved "${range}"\n`,
-    });
-
-    // The second time, the tarball is in the cache.
-    for (const _ of ["cold", "warm"]) {
-      const { stderr, exitCode } = await bun(String(dir), server.url, "install");
-      expect(errors(stderr)).toEqual([]);
-      expect(stderr).toContain("migrated lockfile from yarn.lock");
-      expect(lockPackages(String(dir)).tool[1]).toEqual({ bin: { t: "cli.js" } });
-      expect(bins(String(dir))).toEqual(["t"]);
-      expect(exitCode).toBe(0);
-      fs.rmSync(join(String(dir), "node_modules"), { recursive: true });
-      fs.rmSync(join(String(dir), "bun.lock"));
-    }
-
-    const frozen = await bun(String(dir), server.url, "install", "--frozen-lockfile");
-    expect(errors(frozen.stderr)).toEqual([]);
-    expect(bins(String(dir))).toEqual(["t"]);
-    expect(frozen.exitCode).toBe(0);
-  });
 });

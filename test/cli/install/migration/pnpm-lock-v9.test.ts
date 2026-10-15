@@ -3575,53 +3575,6 @@ snapshots:
     expect(exitCode).toBe(0);
   });
 
-  // pnpm-lock.yaml only says `hasBin`, and no registry has a manifest for a tarball.
-  test.concurrent.each(["url", "file"])("the bins of a %s tarball are linked and recorded", async kind => {
-    const tarball = await githubTarball("package", {
-      "package.json": JSON.stringify({ name: "t", version: "1.0.0", bin: { t: "cli.js" } }),
-      "cli.js": "#!/usr/bin/env node\n",
-    });
-    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
-    await using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
-    const [specifier, id] =
-      kind === "url"
-        ? [`${server.url}t-1.0.0.tgz`, `${server.url}t-1.0.0.tgz`]
-        : ["file:./t-1.0.0.tgz", "file:t-1.0.0.tgz"];
-    using dir = tempDir("pnpm-v9-tarball-bins", {
-      "package.json": JSON.stringify({ name: "tarball-bins", dependencies: { t: specifier } }),
-      "t-1.0.0.tgz": tarball,
-      "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-importers:
-
-  .:
-    dependencies:
-      t:
-        specifier: ${specifier}
-        version: ${id}
-
-packages:
-
-  t@${id}:
-    resolution: {integrity: ${integrity}, tarball: ${id}}
-    version: 1.0.0
-    hasBin: true
-
-snapshots:
-
-  t@${id}: {}
-`,
-    });
-
-    const { stderr, exitCode } = await run(String(dir), "install");
-
-    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
-    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-    expect(await bunLockOf(String(dir))).toContain(`{ "bin": { "t": "cli.js" } }, "${integrity}"]`);
-    expect(readdirSync(join(String(dir), "node_modules", ".bin"))).toEqual(isWindows ? ["t.bunx", "t.exe"] : ["t"]);
-    expect(exitCode).toBe(0);
-  });
-
   describe("registry tarball: urls", () => {
     // pnpm/pnpm#13534: GitHub Packages / npm Enterprise tarballs are not on the canonical `/-/` path
     test("recorded under the configured registry is kept", async () => {

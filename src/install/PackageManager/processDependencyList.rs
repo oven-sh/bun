@@ -132,16 +132,9 @@ impl PackageManager {
         data: &ExtractData,
         package_id: &mut PackageID,
     ) -> Package {
-        // yarn.lock names a package after the dependency: the row is bound to it under that name.
-        let buf = self.lockfile.buffers.string_bytes.as_slice();
-        let bound = (self.lockfile.packages.items_resolution())
-            .get(*package_id as usize)
-            .is_some_and(|locked| locked.eql(&package.resolution, buf, buf))
-            .then_some(*package_id);
-        if let Some(existing_id) = self
-            .lockfile
-            .get_package_id(package.name_hash, None, &package.resolution)
-            .or(bound)
+        if let Some(existing_id) =
+            self.lockfile
+                .get_package_id(package.name_hash, None, &package.resolution)
         {
             *package_id = existing_id;
             let mut existing = *self.lockfile.packages.get(existing_id as usize);
@@ -156,12 +149,6 @@ impl PackageManager {
                 _ => false,
             };
             if !(from_lockfile && moved) {
-                // A row that came from yarn.lock or pnpm-lock.yaml lacks these.
-                existing.bin = package.bin;
-                if !existing.meta.integrity.tag.is_supported() {
-                    existing.meta.integrity = data.integrity;
-                }
-                self.lockfile.packages.set(existing_id as usize, existing);
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {

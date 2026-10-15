@@ -37,13 +37,26 @@ struct us_loop_t {
   uv_check_t *uv_check;
   /* Created on first use by us_loop_run. */
   struct us_timer_t *idle_sweep_timer;
+  /* Polls libuv reported ready whose handlers have not run yet, oldest first. */
+  struct us_internal_uv_poll_t *ready_head, *ready_tail;
+};
+
+/* What us_poll_t.uv_p points to. */
+struct us_internal_uv_poll_t {
+  uv_poll_t handle;
+  struct us_loop_t *loop;
+  struct us_internal_uv_poll_t *ready_prev, *ready_next;
+  int ready_status;
+  unsigned char ready_events;
+  unsigned char is_ready;
 };
 
 // it is no longer valid to cast a pointer to us_poll_t to a pointer of
 // uv_poll_t
 struct us_poll_t {
   /* We need to hold a pointer to this uv_poll_t since we need to be able to
-   * resize our block */
+   * resize our block. NULL once us_poll_resize moved it to the new block, or
+   * libuv finished closing it. */
   uv_poll_t *uv_p;
   LIBUS_SOCKET_DESCRIPTOR fd;
   unsigned char poll_type;

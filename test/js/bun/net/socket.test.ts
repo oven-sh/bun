@@ -2336,6 +2336,176 @@ describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop 
   });
 });
 
+// `expect().resolves` blocks on its promise, so the event loop runs inside the
+// handler that calls it. What that inner run closes has to stay valid for the
+// dispatch that is still on the stack, and the inner run has to see every event.
+describe.concurrent("event loop run from inside a socket handler", () => {
+  const prelude = /* js */ `
+    import { expect } from "bun:test";
+
+    function wait(promise) {
+      expect(promise.then(() => {})).resolves.toBeUndefined();
+    }
+  `;
+
+  // A freed block is only noticed once it is handed out again, hence the rounds.
+  function closeFixture(scenario: string) {
+    return /* js */ `
+      ${prelude}
+      const scenario = ${JSON.stringify(scenario)};
+
+      let onEcho;
+      using echo = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data: (socket, chunk) => void socket.write(chunk) },
+      });
+      const pinger = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: echo.port,
+        socket: { data: () => onEcho() },
+      });
+      // Enough loop iterations for a close to finish.
+      async function turns() {
+        for (let i = 0; i < 4; i++) {
+          const { promise, resolve } = Promise.withResolvers();
+          onEcho = resolve;
+          pinger.write("x");
+          await promise;
+        }
+      }
+
+      async function round() {
+        let serverSocket;
+        const serverClosed = Promise.withResolvers();
+        const clientClosed = Promise.withResolvers();
+        const done = Promise.withResolvers();
+
+        const listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(socket) {
+              serverSocket = socket;
+              if (scenario === "server open() stops its listener") {
+                listener.stop(true);
+                wait(turns());
+                done.resolve();
+              } else if (scenario !== "client open() closes its socket") {
+                socket.write("x");
+              }
+            },
+            data() {},
+            close() { serverClosed.resolve(); },
+            error() {},
+          },
+        });
+
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            open(socket) {
+              if (scenario === "client open() closes its socket") {
+                socket.terminate();
+                wait(turns());
+                done.resolve();
+              }
+            },
+            data(socket) {
+              if (scenario === "data() closes its socket") {
+                socket.terminate();
+                wait(turns());
+              } else if (scenario === "data() closes its socket and waits for the peer to notice") {
+                socket.terminate();
+                wait(serverClosed.promise);
+              } else if (scenario === "the peer closes the socket while data() waits") {
+                serverSocket.terminate();
+                wait(clientClosed.promise.then(turns));
+              }
+              done.resolve();
+            },
+            close() { clientClosed.resolve(); },
+            error() {},
+          },
+        });
+
+        await Promise.all([done.promise, serverClosed.promise, clientClosed.promise]);
+        listener.stop(true);
+      }
+
+      for (let i = 0; i < 20; i++) await round();
+      pinger.terminate();
+      console.log("OK");
+    `;
+  }
+
+  const otherSocketFixture = /* js */ `
+    ${prelude}
+    const serverSockets = [];
+    const accepted = Promise.withResolvers();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          if (serverSockets.push(socket) === 2) accepted.resolve();
+        },
+        data() {},
+      },
+    });
+
+    const received = [Promise.withResolvers(), Promise.withResolvers()];
+    let waited = false;
+    const clients = await Promise.all(
+      [0, 1].map(i =>
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            data() {
+              received[i].resolve();
+              if (!waited) {
+                waited = true;
+                wait(received[1 - i].promise);
+              }
+            },
+          },
+        }),
+      ),
+    );
+    await accepted.promise;
+
+    // Both become readable before the loop polls again.
+    for (const socket of serverSockets) socket.write("x");
+    await Promise.all(received.map(r => r.promise));
+    for (const client of clients) client.terminate();
+    console.log("OK");
+  `;
+
+  it.each([
+    ...[
+      "data() closes its socket",
+      "data() closes its socket and waits for the peer to notice",
+      "the peer closes the socket while data() waits",
+      "client open() closes its socket",
+      "server open() stops its listener",
+    ].map(scenario => [scenario, closeFixture(scenario)]),
+    ["data() waits for data of another socket that is ready too", otherSocketFixture],
+  ])("%s", async (_, fixture) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toMatchObject({ stdout: "OK", exitCode: 0 });
+  });
+});
+
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
   // socket.reload() reads the new callbacks off the user object property by
   // property, so a getter can run arbitrary JS — including terminating the

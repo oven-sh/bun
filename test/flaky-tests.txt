@@ -11,7 +11,6 @@
 # 80 main builds #104822..#109434 (2026-08-24 to 2026-09-02), plus the files
 # that failed without a retry on the builds of oven-sh/bun#41204.
 
-test/bake/deinitialization.test.ts  # 13 of 80 builds; windows
 test/bake/dev-and-prod.test.ts  # 1 of 80 builds; debian; error: Selector 'body' was not found
 test/bundler/transpiler/decorators.test.ts  # 2 of 80 builds; lowering many decorated instance fields into a large constructor body stays linear: ex...
 test/cli/bun.test.ts  # 20 of 80 builds; mac; completions > installs a bunx symlink: the symlink pointed at bin/bun in the temp dir i...

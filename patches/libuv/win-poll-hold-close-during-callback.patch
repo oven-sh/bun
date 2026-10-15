@@ -1,0 +1,77 @@
+--- a/src/uv-common.h
++++ b/src/uv-common.h
+@@ -136,6 +136,7 @@
+ 
+   /* Only used by uv_poll_t handles. */
+   UV_HANDLE_POLL_SLOW                   = 0x01000000,
++  UV_HANDLE_POLL_IN_CALLBACK            = 0x02000000,
+ 
+   /* Only used by uv_process_t handles. */
+   UV_HANDLE_REAP                        = 0x10000000
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -151,6 +151,21 @@
+ }
+ 
+ 
++/* poll_cb may run the loop again (a nested uv_run) and close the handle in
++ * there. The callers below read the handle after poll_cb returns, so the nested
++ * run must not finish that close: uv__poll_endgame leaves a handle with this
++ * flag alone and the outermost caller queues the endgame again. Streams get the
++ * same guarantee from reqs_pending, which stays raised across their callbacks. */
++static void uv__poll_invoke_cb(uv_poll_t* handle, int status, int events) {
++  unsigned int nested = handle->flags & UV_HANDLE_POLL_IN_CALLBACK;
++
++  handle->flags |= UV_HANDLE_POLL_IN_CALLBACK;
++  handle->poll_cb(handle, status, events);
++  if (!nested)
++    handle->flags &= ~UV_HANDLE_POLL_IN_CALLBACK;
++}
++
++
+ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+     uv_req_t* req) {
+   unsigned char mask_events;
+@@ -174,7 +189,7 @@
+     DWORD error = GET_REQ_SOCK_ERROR(req);
+     if (error != WSAEINTR && handle->events != 0) {
+       handle->events = 0; /* Stop the watcher */
+-      handle->poll_cb(handle, uv_translate_sys_error(error), 0);
++      uv__poll_invoke_cb(handle, uv_translate_sys_error(error), 0);
+     }
+ 
+   } else if (afd_poll_info->NumberOfHandles >= 1) {
+@@ -230,7 +245,7 @@
+     }
+ 
+     if (events != 0) {
+-      handle->poll_cb(handle, 0, events);
++      uv__poll_invoke_cb(handle, 0, events);
+     }
+   }
+ 
+@@ -429,13 +444,13 @@
+     if (handle->events != 0) {
+       err = GET_REQ_ERROR(req);
+       handle->events = 0; /* Stop the watcher */
+-      handle->poll_cb(handle, uv_translate_sys_error(err), 0);
++      uv__poll_invoke_cb(handle, uv_translate_sys_error(err), 0);
+     }
+   } else {
+     /* Got some events. */
+     int events = req->u.io.overlapped.InternalHigh & handle->events & ~mask_events;
+     if (events != 0) {
+-      handle->poll_cb(handle, 0, events);
++      uv__poll_invoke_cb(handle, 0, events);
+     }
+   }
+ 
+@@ -627,5 +642,8 @@
+   assert(handle->submitted_events_1 == 0);
+   assert(handle->submitted_events_2 == 0);
+ 
++  if (handle->flags & UV_HANDLE_POLL_IN_CALLBACK)
++    return;
++
+   uv__handle_close(handle);
+ }

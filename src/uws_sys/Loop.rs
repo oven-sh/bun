@@ -316,6 +316,8 @@ pub struct WindowsLoop {
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
     pub idle_sweep_timer: *mut crate::Timer,
+    pub ready_head: *mut c_void,
+    pub ready_tail: *mut c_void,
 }
 
 #[cfg(windows)]

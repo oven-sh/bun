@@ -1031,6 +1031,101 @@ describe("pending cache", () => {
   });
 });
 
+// `expect().resolves` blocks on its promise, so the event loop runs inside the
+// callback that calls it, which the resolver runs while it handles an event of
+// its socket. c-ares closes that socket once no query is left on it.
+describe.concurrent("event loop run from inside a resolve4() callback", () => {
+  test.each([
+    [
+      "after the socket was closed",
+      `await resolver.resolve4("outer." + round).then(() => {
+         wait(turns());
+       });`,
+    ],
+    [
+      "waiting for the last query of the same socket, which closes it",
+      `const held = resolver.resolve4("held." + round);
+       await resolver.resolve4("outer." + round).then(() => {
+         wait(Promise.all([held, resolver.resolve4("release." + round)]).then(turns));
+       });`,
+    ],
+  ])("%s", async (_, body) => {
+    const socket = dgram.createSocket("udp4");
+    try {
+      // Answers 10.0.0.1, but a "held.*" query only once a "release.*" query arrives.
+      let answerHeld;
+      socket.on("message", (query, rinfo) => {
+        const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+        const question = query.subarray(12, query.indexOf(0, 12) + 5);
+        const record = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 0, 0, 1]);
+        const answer = () => socket.send(Buffer.concat([header, question, record]), rinfo.port, rinfo.address);
+        const label = query.toString("latin1", 13, 13 + query[12]);
+        if (label === "held") {
+          answerHeld = answer;
+          return;
+        }
+        answer();
+        if (label === "release") answerHeld();
+      });
+      socket.bind(0, "127.0.0.1");
+      await once(socket, "listening");
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { expect } from "bun:test";
+           import { Resolver } from "node:dns/promises";
+
+           function wait(promise) {
+             expect(promise.then(() => {})).resolves.toBeUndefined();
+           }
+           const resolver = new Resolver();
+           resolver.setServers(["127.0.0.1:" + process.argv[1]]);
+
+           let onEcho;
+           using echo = Bun.listen({
+             hostname: "127.0.0.1",
+             port: 0,
+             socket: { data: (socket, chunk) => void socket.write(chunk) },
+           });
+           const pinger = await Bun.connect({
+             hostname: "127.0.0.1",
+             port: echo.port,
+             socket: { data: () => onEcho() },
+           });
+           // Enough loop iterations for a close to finish. No new socket: it would
+           // take over the block a finished close freed.
+           async function turns() {
+             for (let i = 0; i < 4; i++) {
+               const { promise, resolve } = Promise.withResolvers();
+               onEcho = resolve;
+               pinger.write("x");
+               await promise;
+             }
+           }
+
+           // A freed block is only noticed once it is handed out again, hence the rounds.
+           for (let i = 0; i < 20; i++) {
+             const round = "round" + i + ".test";
+             ${body}
+           }
+           pinger.terminate();
+           console.log("OK");`,
+          String(socket.address().port),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toMatchObject({ stdout: "OK", exitCode: 0 });
+    } finally {
+      socket.close();
+    }
+  });
+});
+
 // The socket never answers. The QTYPE that reaches it and the syscall the
 // cancelled query reports pin resolve()'s rrtype dispatch to the query that
 // resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.

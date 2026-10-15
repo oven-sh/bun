@@ -60,7 +60,14 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // hold-close-during-callback: a uv_run nested in poll_cb cannot finish the
+  // close of that handle under the libuv frame that still reads it.
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-poll-hold-close-during-callback.patch",
+  ],
 
   build: () => ({
     kind: "direct",

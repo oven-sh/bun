@@ -812,7 +812,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #else
                         /* Windows eof-drain, same as the POSIX branch above:
-                         * poll_cb maps AFD DISCONNECT to the eof hint for a
+                         * dispatch_poll maps AFD DISCONNECT to the eof hint for a
                          * socket whose write side we already shut down, and
                          * AFD reports DISCONNECT with the tail of the peer's
                          * stream still queued in the kernel. Stopping here
@@ -826,7 +826,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                         /* Windows AFD_POLL_ABORT is not level-triggered the way
                          * epoll's EPOLLHUP|EPOLLERR are: a peer RST that lands
-                         * while this poll_cb is on the stack — typically when an
+                         * while this dispatch is on the stack — typically when an
                          * on_data JS handler drainMicrotasks() into a same-process
                          * fetch().abort() so the http-client thread RSTs over
                          * loopback before we return — falls between the completed

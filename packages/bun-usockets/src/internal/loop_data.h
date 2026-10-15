@@ -89,7 +89,8 @@ struct us_internal_loop_data_t {
     /* We do not care if this flips or not, it doesn't matter */
     size_t iteration_nr;
     void* jsc_vm;
-    /* Reentrancy depth of us_loop_run_bun_tick. When >1, we are inside a
+    /* Reentrancy depth of us_loop_run_bun_tick (libuv: of this loop's own
+     * callbacks, since uv_run has other callers). When >1, we are inside a
      * nested tick (e.g. waitForPromise from a poll callback). Freeing closed
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */

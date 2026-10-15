@@ -316,10 +316,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
-// The transpiler prints a CommonJS module as
-//   (function(exports, require, module, __filename, __dirname[, $Bun_import_meta]) {<body>});
-// `bun build` output puts a hashbang and a `// @bun` header line before it. Returns the body,
-// or a null string when the source has no wrapper.
+// Body of `[#!...\n][// @bun...\n](function(exports, require, module, __filename, __dirname[, $Bun_import_meta]) {<body>});`
 static String stripCommonJSWrapper(StringView source)
 {
     size_t start = 0;
@@ -340,9 +337,6 @@ static String stripCommonJSWrapper(StringView source)
 
 static bool isDefaultCompileFunction(JSValue value);
 
-// Runs the module body through `module._compile(body, filename)`: the instance's own override
-// when there is one, else the Module.prototype override. The default _compile is the only caller
-// of evaluateCommonJSModuleOnce that must not come back here.
 static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -350,8 +344,7 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
     if (!compileFunction)
         compileFunction = globalObject->m_modulePrototypeCompileOverride.get();
 
-    // `module._compile = originalCompile` restores the default on the instance.
-    // Node does not run the -e / stdin entry through _compile either; its source has no wrapper.
+    // Node does not run the -e / stdin entry through _compile; its source has no wrapper.
     if (isDefaultCompileFunction(compileFunction) || Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
         return evaluateCommonJSModuleOnce(vm, globalObject, moduleObject, dirname, filename);
 
@@ -382,7 +375,6 @@ static bool evaluateCommonJSModuleWithCompileHook(JSC::VM& vm, Zig::GlobalObject
     return true;
 }
 
-// Every loader path that evaluates a CommonJS module goes through here.
 static bool evaluateCommonJSModule(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     if (!moduleObject->m_overriddenCompile && !globalObject->hasOverriddenModulePrototypeCompile) [[likely]]
@@ -886,7 +878,6 @@ static bool isDefaultCompileFunction(JSValue value)
         && callData.native.function.untaggedPtr() == &functionJSCommonJSModule_compile;
 }
 
-// What `Module.prototype._compile` holds: the user's override, or the default.
 static JSValue modulePrototypeCompileFunction(Zig::GlobalObject* globalObject)
 {
     if (globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]]
@@ -919,7 +910,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
     } else if (sourceString.contains(commonJSImportMetaParameter)) [[unlikely]] {
-        // Transpiled source reaches _compile with `import.meta` lowered to this parameter.
         wrappedString = makeString(commonJSImportMetaWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     } else {
         wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
@@ -1056,7 +1046,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
         return true;
     }
     if (receiver.inherits<JSCommonJSModulePrototype>()) {
-        // Like the _resolveFilename setter: writing the default back is not an override.
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         if (isDefaultCompileFunction(decodedValue)) {
             zigGlobalObject->hasOverriddenModulePrototypeCompile = false;
@@ -1408,8 +1397,6 @@ Structure* createCommonJSModuleStructure(
     return JSCommonJSModule::createStructure(globalObject);
 }
 
-// The structure, prototype and constructor (`require("node:module")`) of CommonJS module
-// objects are one lazy class: `module.constructor` is `Module` before anything loads node:module.
 void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* globalObject = static_cast<Zig::GlobalObject*>(init.global);

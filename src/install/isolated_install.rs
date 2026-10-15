@@ -2059,6 +2059,7 @@ pub(crate) fn install_isolated_packages(
                 ..Default::default()
             },
             task_queue: Default::default(),
+            listed_in_pending_scripts: Vec::new(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
@@ -2173,8 +2174,12 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    let left_pending = installer.left_pending(entry_id);
                     // folders are always hardlinked to keep them up-to-date
-                    if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
+                    if !is_new_bun_modules
+                        && !installer.manager().options.enable.force_install()
+                        && !left_pending
+                    {
                         let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                         installer.append_real_store_path(&mut store_path, entry_id, Which::Final);
                         if let (Ok(src), Ok(dest)) =
@@ -2185,6 +2190,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
                     }
+                    installer.list_pending_scripts(entry_id, left_pending);
                     installer.start_task(entry_id);
                 }
 
@@ -2202,6 +2208,7 @@ pub(crate) fn install_isolated_packages(
                     };
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
+                    let left_pending = !uses_global_store && installer.left_pending(entry_id);
 
                     let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
@@ -2210,6 +2217,7 @@ pub(crate) fn install_isolated_packages(
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
+                        || left_pending
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
@@ -2280,6 +2288,7 @@ pub(crate) fn install_isolated_packages(
                         installer.on_task_complete(entry_id, CompleteState::Skipped);
                         continue;
                     }
+                    installer.list_pending_scripts(entry_id, left_pending);
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z = installer.cached_folder_name(entry_id, None);

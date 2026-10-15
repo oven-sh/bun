@@ -748,6 +748,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         );
         Global::crash();
     }
+    manager
+        .pending_scripts
+        .get_mut()
+        .forget_directory(&ZBox::from_bytes(&folder));
 
     let mut bufn = bun_paths::path_buffer_pool::get();
     let shown_folder: &[u8] = if target.not_in_workspace_root {

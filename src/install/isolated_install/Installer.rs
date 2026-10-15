@@ -104,6 +104,9 @@ pub struct Installer<'a> {
 
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
+
+    /// Main-thread only: the entries this install listed in `PendingScripts` and has not finished.
+    pub(crate) listed_in_pending_scripts: Vec<StoreEntryId>,
 }
 
 /// A task on the pool reads `self` and the store through `Task::installer`.
@@ -593,10 +596,54 @@ impl<'a> Installer<'a> {
         None
     }
 
+    /// The entry's package directory from the project's root: its name in `PendingScripts`.
+    fn pending_scripts_key(&self, entry_id: StoreEntryId) -> Vec<u8> {
+        let mut path = AutoRelPath::init();
+        self.append_store_path(&mut path, entry_id);
+        path.slice().to_vec()
+    }
+
+    /// Main thread. An install that died left the entry in place, its scripts not finished.
+    pub(crate) fn left_pending(&self, entry_id: StoreEntryId) -> bool {
+        let pending = self.manager().pending_scripts.borrow();
+        pending.has_stale() && pending.is_stale(&self.pending_scripts_key(entry_id))
+    }
+
+    /// Main thread, before the entry's package is placed. Lists what a failed script would discard.
+    pub(crate) fn list_pending_scripts(&mut self, entry_id: StoreEntryId, left_pending: bool) {
+        let tag = self.resolution(entry_id).tag;
+        let has_scripts_to_run = !self.entry_uses_global_store(entry_id)
+            && (tag.can_enqueue_install_task() || tag == ResolutionTag::Folder)
+            && self.is_trusted(entry_id);
+        if !has_scripts_to_run && !left_pending {
+            return;
+        }
+        let key = self.pending_scripts_key(entry_id);
+        let mut pending = self.manager().pending_scripts.borrow_mut();
+        if !has_scripts_to_run {
+            pending.done(&key);
+        } else if pending.begin(&key) {
+            self.listed_in_pending_scripts.push(entry_id);
+        }
+    }
+
+    /// Main thread. The entry has no script left to run, or its package is not in place any more.
+    fn forget_pending_scripts(&mut self, entry_id: StoreEntryId) {
+        let listed = &mut self.listed_in_pending_scripts;
+        if let Some(index) = listed.iter().position(|listed| *listed == entry_id) {
+            listed.swap_remove(index);
+            let key = self.pending_scripts_key(entry_id);
+            self.manager().pending_scripts.borrow_mut().done(&key);
+        }
+    }
+
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+        if state != CompleteState::Fail {
+            self.forget_pending_scripts(entry_id);
+        }
 
         if let Some(node) = self.install_node.as_mut() {
             node.complete_one();
@@ -734,6 +781,10 @@ impl<'a> Installer<'a> {
                 || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
             {
                 self.delete_store_copy(entry_id);
+                if self.listed_in_pending_scripts.contains(&entry_id) {
+                    let key = self.pending_scripts_key(entry_id);
+                    self.manager().pending_scripts.borrow_mut().done(&key);
+                }
             }
         }
     }

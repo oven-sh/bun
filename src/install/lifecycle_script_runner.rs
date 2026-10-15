@@ -1128,24 +1128,42 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unfinished.borrow_mut().retain(|(tree, folder_name)| {
                 tree != tree_id || **folder_name != *self.package_name
             });
+            let manager = self.manager();
+            (manager.pending_scripts.borrow_mut()).done(
+                &crate::package_installer::pending_scripts_key(
+                    &manager.lockfile,
+                    *tree_id,
+                    &self.package_name,
+                ),
+            );
         }
     }
 
     /// Both linkers take a package in place for installed: removed, the next install runs them.
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
+        let manager = self.manager();
         if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
             for (tree_id, folder_name) in unfinished.borrow().iter() {
                 crate::package_installer::remove_placed_package(
-                    &self.manager().lockfile,
+                    &manager.lockfile,
                     *tree_id,
                     folder_name,
+                );
+                (manager.pending_scripts.borrow_mut()).done(
+                    &crate::package_installer::pending_scripts_key(
+                        &manager.lockfile,
+                        *tree_id,
+                        folder_name,
+                    ),
                 );
             }
         } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
         {
             installer.discard_entries_with_unfinished_scripts(entry_id);
         }
+        // What is not in place any more needs no record.
+        manager.pending_scripts.borrow_mut().finish();
     }
 
     /// Frees `self`.

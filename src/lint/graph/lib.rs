@@ -451,7 +451,7 @@ impl<'h> Graph<'h> {
                 continue;
             }
             // Hidden ones too, directories too.
-            let is_ignored = |name: &[u8]| name == b"node_modules";
+            let is_ignored = |name: &[u8]| name == b"node_modules" || name == b".bun-cache";
             let (cwd, is_ignored) = (typescript_path(cwd), Some(is_ignored as fn(&[u8]) -> bool));
             let walker = BunGlobWalker::init_with_cwd(
                 project, cwd, true, true, false, false, false, is_ignored,

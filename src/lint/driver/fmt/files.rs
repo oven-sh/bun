@@ -431,7 +431,9 @@ pub(crate) struct Ignored {
 
 impl Ignored {
     pub(crate) fn new(options: &Options, cwd: &[u8], flavor: Flavor) -> Result<Ignored, Fatal> {
-        let mut directories: Vec<&[u8]> = vec![b".git", b".sl", b".svn", b".hg", b".jj"];
+        // `.bun-cache`: the cache of Bun's auto-install when no install cache directory can be used.
+        let mut directories: Vec<&[u8]> =
+            vec![b".git", b".sl", b".svn", b".hg", b".jj", b".bun-cache"];
         if !options.with_node_modules {
             directories.push(b"node_modules");
         }

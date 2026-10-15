@@ -150,6 +150,7 @@ impl Default for Type {
             ignore_dirs: Box::new([
                 Box::<[u8]>::from(b".git".as_slice()),
                 Box::<[u8]>::from(b"node_modules".as_slice()),
+                Box::<[u8]>::from(b".bun-cache".as_slice()),
             ]),
             extensions: Box::default(),
             style: Style::NextjsPages,

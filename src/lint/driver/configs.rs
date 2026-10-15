@@ -2661,12 +2661,12 @@ impl<'l> Loader<'l> {
     }
 
     /// Whether a directory called `name`, which `loaded` ignores, can have a configuration file in it that counts. Nothing
-    /// of a project is in the directories of Git and Jujutsu.
+    /// of a project is in the directories of Git and Jujutsu, or in the cache of Bun's auto-install.
     pub(crate) fn looks_for_configurations_in(&self, loaded: &Loaded, name: &[u8]) -> bool {
         loaded.flavor == Flavor::Oxlint
             && !self.has_one_configuration()
             && !self.options.disable_nested_config
-            && !matches!(name, b".git" | b".jj")
+            && !matches!(name, b".git" | b".jj" | b".bun-cache")
     }
 
     /// Whether `loaded` is what a directory without a configuration file has in a run for an `eslint.config.*`. ESLint has none

@@ -23,6 +23,8 @@ const SKIP_LIST: &[&[u8]] = &[
     b"node_modules",
     // skip .git folder
     b".git",
+    // skip the cache of auto-install
+    b".bun-cache",
 ];
 
 fn glob_ignore_fn(val: &[u8]) -> bool {

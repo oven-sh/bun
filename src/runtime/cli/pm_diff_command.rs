@@ -688,7 +688,7 @@ fn read_dir_tree(
                 Err(err) => fail(err, &prefix),
             };
             let name = entry.name.slice_u8();
-            if name == b"node_modules" || name == b".git" {
+            if name == b"node_modules" || name == b".git" || name == b".bun-cache" {
                 continue;
             }
             let mut rel = prefix.clone();

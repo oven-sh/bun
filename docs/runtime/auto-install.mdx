@@ -91,6 +91,8 @@ Bun installs and caches packages into `<cache>/<pkg>@<version>`, so Bun can cach
 
 A package whose tarball ships a `node_modules` folder (`bundledDependencies`) loads what is in that folder from there, and its other dependencies from the cache.
 
+When Bun cannot use the [global cache](/pm/global-cache) directory, for example because `HOME` is not set, it keeps these packages in `.bun-cache` in the working directory. Set `BUN_INSTALL_CACHE_DIR` to use another directory. With [`install.cache.disable`](/runtime/bunfig#install-cache), auto-install always uses `.bun-cache`.
+
 ---
 
 ## Version specifiers

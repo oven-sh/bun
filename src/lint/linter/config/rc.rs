@@ -1230,10 +1230,11 @@ impl Config {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
             ..ConfigObject::default()
         });
-        // What it ignores by itself. Not `node_modules`: a `.gitignore` has that.
-        let ignored: [&[u8]; 5] = [
+        // What it ignores by itself, and the cache of Bun's auto-install. Not `node_modules`: a `.gitignore` has that.
+        let ignored: [&[u8]; 6] = [
             b"**/.git/",
             b"**/.jj/",
+            b"**/.bun-cache/",
             b"**/*.min.*",
             b"**/*-min.*",
             b"**/*_min.*",

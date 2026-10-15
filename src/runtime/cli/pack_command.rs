@@ -269,6 +269,8 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     // The temporary file that `open_tarball` creates. It can belong to a pack that is running at
     // the same time, or be left over from one that was killed.
     (b".bun-pack.*.tmp", false),
+    // the cache of auto-install
+    (b".bun-cache", false),
 ];
 
 /// The start of the temporary tarball's filename. The rest comes from `FileSystem::tmpname`, which

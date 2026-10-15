@@ -25,6 +25,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # caches
 .eslintcache
 .cache
+.bun-cache
 *.tsbuildinfo
 
 # IntelliJ based IDEs

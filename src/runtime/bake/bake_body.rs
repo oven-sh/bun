@@ -322,7 +322,7 @@ impl Framework {
                 entry_client: Some(Utf8Bytes::Borrowed(b"bun-framework-react/client.tsx")),
                 entry_server: Utf8Bytes::Borrowed(b"bun-framework-react/server.tsx"),
                 ignore_underscores: true,
-                ignore_dirs: literals(&[b"node_modules", b".git"]),
+                ignore_dirs: literals(&[b"node_modules", b".git", b".bun-cache"]),
                 extensions: literals(&[b".tsx", b".jsx"]),
                 style: framework_router::Style::NextjsPages,
                 allow_layouts: true,
@@ -656,7 +656,7 @@ impl Framework {
                         )));
                     }
                 } else {
-                    literals(&[b".git", b"node_modules"])
+                    literals(&[b".git", b"node_modules", b".bun-cache"])
                 };
 
                 file_system_router_types.push(FileSystemRouterType {

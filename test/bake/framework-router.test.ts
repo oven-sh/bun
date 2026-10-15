@@ -133,3 +133,23 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+// `.bun-cache` is where bun's runtime auto-install keeps its cache when no install cache directory can be used.
+test("does not discover routes in .bun-cache", () => {
+  using dir = tempDir("fsr", {
+    "hello.tsx": "1",
+    ".bun-cache/no-deps@2.0.0@@localhost@@@1/package.json": JSON.stringify({
+      name: "no-deps",
+      version: "2.0.0",
+      scripts: { hello: "echo from-cache" },
+    }),
+    ".bun-cache/no-deps@2.0.0@@localhost@@@1/index.js": "var   x = 1 ;debugger;\nmodule.exports=x",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  expect(router.toJSON()).toEqual({
+    part: "/",
+    page: null,
+    layout: null,
+    children: [{ part: "/hello", page: path.join(dir, "hello.tsx"), layout: null, children: [] }],
+  });
+});

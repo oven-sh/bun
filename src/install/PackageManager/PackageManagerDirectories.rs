@@ -384,6 +384,8 @@ fn get_temporary_directory_run(
 #[cold]
 #[inline(never)]
 unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
+    // SAFETY: shared read of `options`; see fn safety contract.
+    let runtime = unsafe { (*this).options.runtime_auto_install };
     loop {
         // SAFETY: field projections through the caller-provided provenance
         // root; see fn safety contract. Project `enable` narrowly so callers
@@ -395,9 +397,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
             let configured = unsafe { (*this).options.cache_directory };
             let opened = fetch_cache_directory_path(env, Some(configured)).and_then(|cache_dir| {
+                let path = if runtime && cache_dir.is_cwd_fallback {
+                    FileSystem::instance().abs(&[RUNTIME_CWD_FALLBACK]).to_vec()
+                } else {
+                    cache_dir.path
+                };
                 // SAFETY: see fn safety contract.
-                unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-                Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                unsafe { (*this).cache_directory_path = ZBox::from_bytes(&path) };
+                Dir::cwd().make_open_path(&path, Default::default())
             });
 
             match opened {
@@ -413,18 +420,26 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
             }
         }
 
+        let fallback: &[u8] = if runtime {
+            RUNTIME_CWD_FALLBACK
+        } else {
+            b"node_modules/.cache"
+        };
         // SAFETY: see fn safety contract.
         unsafe {
             (*this).cache_directory_path =
                 ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    &[b"node_modules", b".cache"],
+                    &[fallback],
                 ))
         };
 
-        return Dir::cwd().make_open_path(b"node_modules/.cache", Default::default());
+        return Dir::cwd().make_open_path(fallback, Default::default());
     }
 }
+
+/// What the runtime has in place of a cache directory below `node_modules`, which turns auto-install off (`GlobalCache::can_use`).
+const RUNTIME_CWD_FALLBACK: &[u8] = b".bun-cache";
 
 pub struct CacheDir {
     pub path: Vec<u8>,

@@ -847,6 +847,7 @@ impl AnyRoute {
                         ignore_dirs: vec![
                             Utf8Bytes::Borrowed(b"node_modules".as_slice()),
                             Utf8Bytes::Borrowed(b".git".as_slice()),
+                            Utf8Bytes::Borrowed(b".bun-cache".as_slice()),
                         ],
                         extensions: vec![
                             Utf8Bytes::Borrowed(b".tsx".as_slice()),

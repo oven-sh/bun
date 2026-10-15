@@ -857,10 +857,10 @@ fn extend_files(base: &[Json], extension: &[Json]) -> Vec<Json> {
     out
 }
 
-/// ESLint's `defaultConfig`.
+/// ESLint's `defaultConfig`, and `.bun-cache`: the cache of Bun's auto-install when no install cache directory can be used.
 const DEFAULT_CONFIG: &[u8] = br#"[
     { "language": "@/js", "linterOptions": { "reportUnusedDisableDirectives": 1 } },
-    { "ignores": ["**/node_modules/", ".git/"] },
+    { "ignores": ["**/node_modules/", ".git/", "**/.bun-cache/"] },
     { "files": ["**/*.js", "**/*.mjs"] },
     { "files": ["**/*.cjs"], "languageOptions": { "sourceType": "commonjs", "ecmaVersion": "latest" } }
 ]"#;

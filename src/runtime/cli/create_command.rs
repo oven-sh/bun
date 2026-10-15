@@ -32,7 +32,7 @@ pub(crate) mod SourceFileProjectGenerator;
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 #[cfg(not(windows))]
-const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
+const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git", b".bun-cache"];
 // `.git` as a file points a worktree or submodule at its repository.
 #[cfg(not(windows))]
 const SKIP_FILES: &[&OSPathSlice] = &[
@@ -42,7 +42,11 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     b".git",
 ];
 #[cfg(windows)]
-const SKIP_DIRS: &[&OSPathSlice] = &[bun_core::w!("node_modules"), bun_core::w!(".git")];
+const SKIP_DIRS: &[&OSPathSlice] = &[
+    bun_core::w!("node_modules"),
+    bun_core::w!(".git"),
+    bun_core::w!(".bun-cache"),
+];
 #[cfg(windows)]
 const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!("package-lock.json"),

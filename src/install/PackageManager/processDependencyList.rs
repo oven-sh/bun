@@ -185,7 +185,7 @@ impl PackageManager {
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: package.dependencies,
                 install_peer: false,
-                logs_errors: false,
+                from_command: false,
             }),
         );
 
@@ -473,11 +473,11 @@ impl PackageManager {
                     is_root,
                 )?;
                 // An import of the runtime has put itself on the list of the task it waits for.
-                if row == enqueue::Row::Waiting && !is_root {
+                if row != enqueue::Row::Done && !is_root {
                     (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                         rows: DependencySlice::new(dependency_id, 1),
                         install_peer,
-                        logs_errors: false,
+                        from_command: false,
                     })?;
                 }
                 if is_root
@@ -503,6 +503,20 @@ impl PackageManager {
             && self.lockfile.scratch.dependency_list_queue.is_empty()
     }
 
+    /// Whether the deferred peers are all that is left to resolve, and are worth resolving.
+    pub(crate) fn is_ready_for_peers(&self) -> bool {
+        self.has_peers_to_process()
+            // An error ends the install, so the peers are not worth their requests.
+            && !self.log_mut().has_errors()
+            // A git or tarball dependency is resolved when its task finishes, and then brings
+            // dependencies of its own. The rows in the list of a failed manifest wait for nothing.
+            && !self.task_queue.iter().any(|(task_id, waiting)| {
+                !self.manifest_failures.contains_key(task_id)
+                    && (waiting.iter())
+                        .any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
+            })
+    }
+
     /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`: the first row
     /// of a name to resolve decides what the others bind to.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
@@ -518,7 +532,7 @@ impl PackageManager {
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: DependencySlice::new(batch[i as usize], 1),
                 install_peer: true,
-                logs_errors: true,
+                from_command: true,
             })?;
         }
         Ok(())

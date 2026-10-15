@@ -38,12 +38,12 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
-use crate::package_manager_real::enqueue::queue_rows;
+use crate::package_manager_real::enqueue::add_dependency_error;
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    UpdateRequest, enqueue_dependency_list, enqueue_patch_task_pre, save_lockfile,
-    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
+    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -1107,6 +1107,9 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
     err: Option<crate::Error>,
+    /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
+    /// still being downloaded then do not hold up the requests that the peers need.
+    stops_for_peers: bool,
 }
 
 impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
@@ -1167,10 +1170,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
             }
         }
 
-        pending_tasks == 0
+        pending_tasks == 0 || (closure.stops_for_peers && this.is_ready_for_peers())
     }
 
-    fn run_and_wait(this: &mut PackageManager) -> crate::Result<()> {
+    fn run_and_wait(this: &mut PackageManager, stops_for_peers: bool) -> crate::Result<()> {
         // Derive the raw pointer first and route *every* manager access through it.
         // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
         // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
@@ -1181,6 +1184,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
             manager: mgr,
             err: None,
+            stops_for_peers,
         };
 
         // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
@@ -1198,13 +1202,16 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 }
 
 fn wait_for_calcing_patch_hashes(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, true>::run_and_wait(this)
+    RunAndWaitClosure::<false, true>::run_and_wait(this, false)
 }
 pub(crate) fn wait_for_everything_except_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<false, false>::run_and_wait(this)
+    RunAndWaitClosure::<false, false>::run_and_wait(this, false)
+}
+fn wait_until_ready_for_peers(this: &mut PackageManager) -> crate::Result<()> {
+    RunAndWaitClosure::<false, false>::run_and_wait(this, true)
 }
 fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
-    RunAndWaitClosure::<true, false>::run_and_wait(this)
+    RunAndWaitClosure::<true, false>::run_and_wait(this, false)
 }
 
 // Outlined cold so the install fast path (`install_with_manager` tail) does not
@@ -1707,9 +1714,12 @@ fn reresolve_owned_rows(
     }
 }
 
-/// `drain_dependency_list` resolves the row, from the resolution that the lockfile has for it then.
 fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
-    queue_rows(manager, lockfile::DependencySlice::new(row, 1));
+    let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
+    let resolution = manager.lockfile.buffers.resolutions[row as usize];
+    if let Err(err) = enqueue_dependency_with_main(manager, row, &dependency, resolution, false) {
+        add_dependency_error(manager, &dependency, err);
+    }
 }
 
 /// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
@@ -2270,7 +2280,7 @@ fn refresh_children_of_named(
 
 fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     if manager.pending_task_count() > 0 {
-        wait_for_everything_except_peers(manager)?;
+        wait_until_ready_for_peers(manager)?;
     }
 
     resolve_peers_without_waiting(manager)?;

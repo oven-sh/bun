@@ -2222,17 +2222,20 @@ impl PackageManager {
 
             // With no task left to finish, nothing would ever try the dependency at the front of
             // the queue again. It stays unresolved, so that the ones behind it get their turn.
-            if self.pending_task_count() > 0
-                || self.lockfile.scratch.dependency_list_queue.is_empty()
-            {
+            if self.pending_task_count() > 0 {
                 break;
             }
+            let queue = &mut self.lockfile.scratch.dependency_list_queue;
+            let Some(head) = queue.head() else {
+                break;
+            };
             // However a request ends, it leaves a manifest or a `ManifestFailure` for `bind_row` to
             // find. A dependency that still waits here has been forgotten by one of those paths.
             if Environment::CI_ASSERT {
                 unreachable!("a queued dependency waits for a task that is not pending");
             }
-            (self.lockfile.scratch.dependency_list_queue).finish_head_row();
+            queue.finish_rows_before(head, head.rows.off + 1);
+            queue.waits_for = None;
         }
     }
 

@@ -989,6 +989,8 @@ impl NetworkTask {
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         self.http_mut().client.flags.redirect_credentials =
             http::RedirectCredentialsPolicy::HttpsUpgrade;
+        // A manifest says what else has to be fetched, so a burst of tarballs must not hold it up.
+        self.http_mut().client.flags.yields_to_other_requests = true;
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }

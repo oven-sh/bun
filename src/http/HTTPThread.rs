@@ -791,6 +791,27 @@ impl HttpThread {
         }
     }
 
+    /// Parks a request that found every connection taken. Parked requests start in the order they
+    /// came, except that the ones with `yields_to_other_requests` start after all the others.
+    fn defer(&mut self, http: NonNull<AsyncHttp<'static>>) {
+        // A parked `AsyncHttp` is alive and nobody else borrows it; see `drain_events`.
+        let yields = |http: &NonNull<AsyncHttp<'static>>| {
+            bun_ptr::ParentRef::from(*http)
+                .client
+                .flags
+                .yields_to_other_requests
+        };
+        // The list keeps the requests that yield at its end, so the last one tells if there are any.
+        if yields(&http) || !self.deferred_tasks.last().is_some_and(yields) {
+            self.deferred_tasks.push(http);
+            return;
+        }
+        let first_that_yields = self
+            .deferred_tasks
+            .partition_point(|parked| !yields(parked));
+        self.deferred_tasks.insert(first_that_yields, http);
+    }
+
     pub(crate) fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
@@ -877,7 +898,7 @@ impl HttpThread {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
-                self.deferred_tasks.push(http);
+                self.defer(http);
                 continue;
             }
             start_queued_task(http.as_ptr(), &mut self.in_flight);

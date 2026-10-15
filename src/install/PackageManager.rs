@@ -356,10 +356,15 @@ pub(crate) enum FailureReport {
 
 /// A dependency that `LookAhead` follows.
 pub(crate) struct Wanted {
-    /// The name in package.json followed by the version range, in one buffer so that one parsed
-    /// `dependency::Version` can point at both.
+    /// The name in package.json, the version range, and the name in the registry. They share a
+    /// buffer so that one parsed `dependency::Version` can point at the first two.
     pub(crate) text: Box<[u8]>,
-    pub(crate) name_len: usize,
+    pub(crate) alias_len: usize,
+    pub(crate) range_len: usize,
+    /// The hash of the name in the registry.
+    pub(crate) name_hash: PackageNameHash,
+    /// It was found in the peer pass, where a peer that nothing provides gets installed.
+    pub(crate) follows_peers: bool,
 }
 
 /// While the dependency at the front of the queue waits for its manifest, nothing behind it can be
@@ -368,13 +373,12 @@ pub(crate) struct Wanted {
 /// those versions depend on. It only fills `PackageManager::manifests`, never the lockfile.
 #[derive(Default)]
 pub(crate) struct LookAhead {
-    /// Hashes of the dependencies and of the versions that were already followed.
-    pub(crate) seen: HashMap<u64, (), bun_collections::IdentityContext<u64>>,
-    /// The versions guessed so far, by package name. A later dependency on the same package is
-    /// expected to share one of them if its range allows, as it would share a resolved version.
-    pub(crate) guessed: HashMap<PackageNameHash, Vec<Semver::Version>>,
-    /// The dependencies to follow once a manifest arrives, by the task that fetches it.
-    pub(crate) waiting: HashMap<Task::Id, Vec<Wanted>>,
+    /// The packages that were looked at, by the hash of their name. One guess per package is
+    /// enough: its versions mostly depend on the same packages, and a second range mostly shares
+    /// the version that the first one picked.
+    pub(crate) seen: HashMap<PackageNameHash, (), bun_collections::IdentityContext<u64>>,
+    /// The dependency to follow once a manifest arrives, by the task that fetches it.
+    pub(crate) waiting: HashMap<Task::Id, Wanted, bun_collections::IdentityContext<Task::Id>>,
     /// The manifest tasks that have finished since `request_ahead` last ran.
     pub(crate) arrived: Vec<Task::Id>,
 }
@@ -555,7 +559,8 @@ pub struct PackageManager {
 
     // Some while `bun install` resolves: the registry's "no" to rows that dedupe may still drop, until log_held.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
-    pub(crate) manifest_failures: HashMap<Task::Id, ManifestFailure>,
+    pub(crate) manifest_failures:
+        HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,
     pub(crate) look_ahead: LookAhead,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.

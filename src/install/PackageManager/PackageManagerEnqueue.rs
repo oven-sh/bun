@@ -87,13 +87,13 @@ fn push_task_callback(
 pub(crate) enum Row {
     /// The dependency is resolved, or it cannot be and the reason is logged.
     Done,
-    /// The dependency needs a manifest that is still being fetched, so it must be tried again.
-    Waiting,
+    /// The dependency needs the manifest that this task is fetching, so it must be tried again.
+    Waiting(Task::Id),
 }
 
-/// Resolves one dependency right away, ahead of the queue. It is for callers that pass an edited
-/// copy of the row and have fetched its manifest beforehand. If the manifest is missing after
-/// all, the row is queued as the lockfile has it.
+/// Resolves a dependency that the command wants resolved. With its manifest at hand that happens
+/// right here, and the code that follows can rely on it. Otherwise the dependency is queued, as the
+/// lockfile has it, and so is every later one: they are resolved in the order they were asked for.
 pub fn enqueue_dependency_with_main(
     this: &mut PackageManager,
     id: DependencyID,
@@ -102,71 +102,89 @@ pub fn enqueue_dependency_with_main(
     resolution: PackageID,
     install_peer: bool,
 ) -> crate::Result<()> {
-    let row = bind_row(
-        this,
-        id,
-        dependency,
-        resolution,
-        install_peer,
-        PackageManager::assign_resolution,
-        false,
-    )?;
-    if row == Row::Waiting {
-        (this.lockfile.scratch.dependency_list_queue).push(Lockfile::QueuedRows {
-            rows: Lockfile::DependencySlice::new(id, 1),
+    if !(this.lockfile.scratch.dependency_list_queue).has_commanded_rows() {
+        let row = bind_row(
+            this,
+            id,
+            dependency,
+            resolution,
             install_peer,
-            logs_errors: true,
-        })?;
+            PackageManager::assign_resolution,
+            false,
+        )?;
+        if row == Row::Done {
+            return Ok(());
+        }
     }
+    (this.lockfile.scratch.dependency_list_queue).push(Lockfile::QueuedRows {
+        rows: Lockfile::DependencySlice::new(id, 1),
+        install_peer,
+        from_command: true,
+    })?;
     Ok(())
-}
-
-/// Queues dependencies that a command wants resolved. `drain_dependency_list` resolves them, in
-/// the order they were queued and before any dependency of the packages they resolve to.
-pub(crate) fn queue_rows(this: &mut PackageManager, rows: Lockfile::DependencySlice) {
-    (this.lockfile.scratch.dependency_list_queue)
-        .push(Lockfile::QueuedRows {
-            rows,
-            install_peer: false,
-            logs_errors: true,
-        })
-        .unwrap_or_oom();
 }
 
 pub fn enqueue_dependency_list(
     this: &mut PackageManager,
     dependencies_list: Lockfile::DependencySlice,
 ) {
-    queue_rows(this, dependencies_list);
+    // Step 1. Go through main dependencies
+    let end = dependencies_list.off.saturating_add(dependencies_list.len);
+    let mut i = dependencies_list.off;
+
+    // we have to be very careful with pointers here
+    while i < end {
+        let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
+        let resolution = this.lockfile.buffers.resolutions[i as usize];
+        if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
+            add_dependency_error(this, &dependency, err);
+        }
+        i += 1;
+    }
+
     this.drain_dependency_list();
 }
 
 /// Resolves the queued dependencies from the front of the queue, and stops at the first one whose
 /// manifest has not arrived. `run_tasks` calls this again after every batch of finished tasks.
 pub(crate) fn advance(this: &mut PackageManager) {
+    // Trying the same dependency again is pointless until the task that it waits for has ended.
+    if let Some(task_id) = this.lockfile.scratch.dependency_list_queue.waits_for
+        && !this.look_ahead.arrived.contains(&task_id)
+        && !this.manifest_failures.contains_key(&task_id)
+    {
+        request_ahead(this);
+        return;
+    }
+    this.lockfile.scratch.dependency_list_queue.waits_for = None;
+
     while let Some(head) = this.lockfile.scratch.dependency_list_queue.head() {
-        let id = head.rows.off;
-        let dependency = this.lockfile.buffers.dependencies[id as usize].clone();
-        let resolution = this.lockfile.buffers.resolutions[id as usize];
-        match bind_row(
-            this,
-            id,
-            &dependency,
-            resolution,
-            head.install_peer,
-            PackageManager::assign_resolution,
-            false,
-        ) {
-            Ok(Row::Done) => {}
-            Ok(Row::Waiting) => {
-                request_ahead(this);
-                return;
+        for id in head.rows.begin()..head.rows.end() {
+            let dependency = this.lockfile.buffers.dependencies[id as usize].clone();
+            let resolution = this.lockfile.buffers.resolutions[id as usize];
+            match bind_row(
+                this,
+                id,
+                &dependency,
+                resolution,
+                head.install_peer,
+                PackageManager::assign_resolution,
+                false,
+            ) {
+                Ok(Row::Done) => {}
+                Ok(Row::Waiting(task_id)) => {
+                    let queue = &mut this.lockfile.scratch.dependency_list_queue;
+                    queue.finish_rows_before(head, id);
+                    queue.waits_for = Some(task_id);
+                    request_ahead(this);
+                    return;
+                }
+                Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
+                // The dependency stays unresolved, which `verify_resolutions` reports if it matters.
+                Err(_) => {}
             }
-            Err(err) if head.logs_errors => add_dependency_error(this, &dependency, err),
-            // The dependency stays unresolved, which `verify_resolutions` reports if it matters.
-            Err(_) => {}
         }
-        (this.lockfile.scratch.dependency_list_queue).finish_head_row();
+        (this.lockfile.scratch.dependency_list_queue).finish_rows_before(head, head.rows.end());
     }
 }
 
@@ -830,14 +848,21 @@ fn enqueue_manifest_download(
 
     let scope = this.scope_for_package_name(name);
     // SAFETY: network_task points to a valid initialized NetworkTask slot
-    unsafe {
+    let built = unsafe {
         (*network_task).for_manifest(
             name,
             scope,
             cached,
             is_optional,
             this.options.minimum_release_age_ms.is_some(),
-        )?;
+        )
+    };
+    if let Err(err) = built {
+        // `for_manifest` has logged why. The next dependency on this package must not wait for a
+        // request that was never sent.
+        let reported = package_manager_real::ManifestFailure::already_reported();
+        let _ = this.manifest_failures.insert(task_id, reported);
+        return Err(err.into());
     }
     enqueue_network_task(this, network_task);
     Ok(())
@@ -962,9 +987,9 @@ fn takes_alias_target(
         return Ok(declared.satisfies(bound, buf, buf));
     }
     let name = name.to_vec();
-    match prefetch_manifest(this, &name, name_hash, None) {
+    match prefetch_manifest(this, &name, name_hash, || None) {
         ManifestState::Ready => {}
-        ManifestState::Requested => return Err(Task::Id::for_manifest(&name)),
+        ManifestState::Requested(task_id) => return Err(task_id),
         // The dependency follows the alias, and then reports why the manifest cannot be read.
         ManifestState::Unavailable => return Ok(true),
     }
@@ -989,19 +1014,19 @@ fn takes_alias_target(
 enum ManifestState {
     /// It is in `PackageManager::manifests` and can be read now.
     Ready,
-    /// A task is fetching it.
-    Requested,
+    /// This task is fetching it.
+    Requested(Task::Id),
     /// It is not in memory and no task will bring it.
     Unavailable,
 }
 
 /// Makes sure that the manifest of `name` is in memory or on its way, without resolving anything.
-/// `exact` is the version of a dependency that asks for exactly one.
+/// `exact` returns the version of a dependency that asks for exactly one.
 fn prefetch_manifest(
     this: &mut PackageManager,
     name: &[u8],
     name_hash: PackageNameHash,
-    exact: Option<Semver::Version>,
+    exact: impl FnOnce() -> Option<Semver::Version>,
 ) -> ManifestState {
     let cache_ctx = this.manifest_disk_cache_ctx();
     let mut expired = false;
@@ -1016,10 +1041,12 @@ fn prefetch_manifest(
     let cached: Option<Npm::PackageManifest> = match cached {
         Some(_) if !expired => return ManifestState::Ready,
         // `bind_row` takes an exact version from an expired manifest without asking the registry.
-        Some(manifest) if exact.is_some_and(|exact| manifest.find_by_version(exact).is_some()) => {
-            return ManifestState::Unavailable;
+        Some(manifest) => {
+            if exact().is_some_and(|exact| manifest.find_by_version(exact).is_some()) {
+                return ManifestState::Unavailable;
+            }
+            Some(manifest.clone())
         }
-        Some(manifest) => Some(manifest.clone()),
         None => None,
     };
     if this.options.offline == OfflineMode::Offline {
@@ -1032,7 +1059,7 @@ fn prefetch_manifest(
         return if this.manifest_failures.contains_key(&task_id) {
             ManifestState::Unavailable
         } else {
-            ManifestState::Requested
+            ManifestState::Requested(task_id)
         };
     }
     if verbose_install() {
@@ -1043,10 +1070,11 @@ fn prefetch_manifest(
     }
     let log_mark = this.log_mut().msgs.len();
     match enqueue_manifest_download(this, task_id, name, cached.as_ref(), true) {
-        Ok(()) => ManifestState::Requested,
+        Ok(()) => ManifestState::Requested(task_id),
         // The dependency that needs the manifest makes the request again and reports the error.
         Err(_) => {
             drop(this.take_log_since(log_mark));
+            let _ = this.manifest_failures.remove(&task_id);
             let _ = this.network_dedupe_map.remove(&task_id);
             ManifestState::Unavailable
         }
@@ -1055,13 +1083,21 @@ fn prefetch_manifest(
 
 /// Starts the downloads of the dependencies that are queued behind the one that `advance` stopped
 /// at, so that they do not have to wait for their turn to ask. Nothing is resolved here.
+#[cold]
+#[inline(never)]
 fn request_ahead(this: &mut PackageManager) {
     while let Some(item) = (this.lockfile.scratch.dependency_list_queue).next_unrequested() {
         for id in item.rows.begin()..item.rows.end() {
-            let dependency = this.lockfile.buffers.dependencies[id as usize].clone();
-            if dependency.behavior.is_optional_peer() {
+            let row = &this.lockfile.buffers.dependencies[id as usize];
+            // Most names come up many times, and one request serves all of them.
+            if row.behavior.is_optional_peer()
+                || (row.version.tag == dependency::version::Tag::Npm
+                    && !row.version.npm().is_alias
+                    && this.look_ahead.seen.contains_key(&row.name_hash))
+            {
                 continue;
             }
+            let dependency = row.clone();
             let Ok(asked) = asked_version(this, id, &dependency, false) else {
                 continue;
             };
@@ -1091,154 +1127,194 @@ fn request_ahead(this: &mut PackageManager) {
                 item.install_peer,
                 latest_for_target,
             );
-            if settled.is_some() {
+            if settled.is_some() || this.look_ahead.seen.insert(asked.name_hash, ()).is_some() {
                 continue;
             }
             let buf = this.lockfile.buffers.string_bytes.as_slice();
-            let name = dependency.name.slice(buf);
-            let range = asked.version.literal.slice(buf);
-            if let Some(wanted) = this.look_ahead.want(dependency.name_hash, name, range) {
-                look_ahead(this, wanted);
-            }
+            let wanted = Wanted::new(
+                dependency.name.slice(buf),
+                asked.version.literal.slice(buf),
+                asked.name.slice(buf),
+                asked.name_hash,
+                item.install_peer,
+            );
+            look_ahead(this, wanted);
         }
     }
     for task_id in core::mem::take(&mut this.look_ahead.arrived) {
-        for wanted in (this.look_ahead.waiting.remove(&task_id)).unwrap_or_default() {
+        if let Some(wanted) = this.look_ahead.waiting.remove(&task_id) {
             look_ahead(this, wanted);
         }
     }
 }
 
-impl package_manager_real::LookAhead {
-    /// `None` if a dependency with this name and this range was followed before.
-    fn want(&mut self, name_hash: PackageNameHash, name: &[u8], range: &[u8]) -> Option<Wanted> {
-        let key = bun_wyhash::hash_with_seed(name_hash, range);
-        self.seen.insert(key, ()).is_none().then(|| Wanted {
-            text: [name, range].concat().into(),
-            name_len: name.len(),
-        })
+impl Wanted {
+    fn new(
+        alias: &[u8],
+        range: &[u8],
+        name: &[u8],
+        name_hash: PackageNameHash,
+        follows_peers: bool,
+    ) -> Wanted {
+        Wanted {
+            text: [alias, range, name].concat().into(),
+            alias_len: alias.len(),
+            range_len: range.len(),
+            name_hash,
+            follows_peers,
+        }
+    }
+
+    /// The name that the registry knows the package by.
+    fn name(&self) -> &[u8] {
+        &self.text[self.alias_len + self.range_len..]
+    }
+
+    /// The strings of the returned version are in `self.text`.
+    fn version(&self) -> Option<dependency::Version> {
+        let (alias, rest) = self.text.split_at(self.alias_len);
+        let range = &rest[..self.range_len];
+        dependency::parse_with_tag(
+            SemverString::init(&self.text, alias),
+            None,
+            range,
+            dependency::version::Tag::infer(dependency::trim_literal(range)),
+            &Semver::SlicedString::init(&self.text, range),
+            None,
+            None,
+        )
     }
 }
 
 /// Requests the manifest of `first`. Once that is in memory, guesses which version `first` will
 /// resolve to, and does the same for everything that version depends on. See `LookAhead`.
-pub(crate) fn look_ahead(this: &mut PackageManager, first: Wanted) {
-    use crate::package_installer::alias_is_safe_install_target as is_safe_name;
-    use dependency::version::Tag;
+fn look_ahead(this: &mut PackageManager, first: Wanted) {
     let mut stack = vec![first];
     while let Some(wanted) = stack.pop() {
-        let (alias, literal) = wanted.text.split_at(wanted.name_len);
-        let Some(version) = dependency::parse_with_tag(
-            SemverString::init(&wanted.text, alias),
-            None,
-            literal,
-            Tag::infer(dependency::trim_literal(literal)),
-            &Semver::SlicedString::init(&wanted.text, literal),
-            None,
-            None,
-        ) else {
-            continue;
-        };
-        let name = match version.tag {
-            Tag::Npm => version.npm().name.slice(&wanted.text),
-            Tag::DistTag => version.dist_tag().name.slice(&wanted.text),
-            // Only the registry is asked on a guess, never a git host or a tarball's server.
-            _ => continue,
-        };
-        // The text comes from a registry manifest, so the name is checked as `unsafe_name` does.
-        if !is_safe_name(name) {
-            continue;
+        let exact = || wanted.version()?.try_npm()?.version.get_exact_version();
+        match prefetch_manifest(this, wanted.name(), wanted.name_hash, exact) {
+            ManifestState::Ready => follow_likely_version(this, &wanted, &mut stack),
+            ManifestState::Requested(task_id) => {
+                let _ = this.look_ahead.waiting.insert(task_id, wanted);
+            }
+            ManifestState::Unavailable => {}
         }
-        let name_hash = Semver::string::Builder::string_hash(name);
-        let exact = (version.tag == Tag::Npm)
-            .then(|| version.npm().version.get_exact_version())
-            .flatten();
-        match prefetch_manifest(this, name, name_hash, exact) {
-            ManifestState::Ready => {}
-            ManifestState::Requested => {
-                let task_id = Task::Id::for_manifest(name);
-                let waiting = this.look_ahead.waiting.entry(task_id).or_default();
-                waiting.push(wanted);
+    }
+}
+
+/// Pushes what the version that `wanted` most likely resolves to depends on, except for the
+/// packages that were looked at before. The manifest of `wanted` is in memory.
+fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut Vec<Wanted>) {
+    use crate::package_installer::alias_is_safe_install_target as is_safe_name;
+    use dependency::version::Tag;
+    let name_hash = wanted.name_hash;
+    let Some(version) = wanted.version() else {
+        return;
+    };
+    let has_patches = has_patched_versions(this);
+
+    // If the lockfile has a version that the range accepts, the dependency most likely shares it,
+    // and what that version depends on is queued already.
+    let lockfile = &*this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    if version.tag == Tag::Npm
+        && lockfile.packages_named(name_hash).iter().any(|&id| {
+            let existing = &resolutions[id as usize];
+            existing.tag == ResolutionTag::Npm
+                && (version.npm().version).satisfies(existing.npm().version, &wanted.text, buf)
+        })
+    {
+        return;
+    }
+
+    let Some(manifest) = (this.manifests).by_name_hash_in_memory(wanted.name(), name_hash) else {
+        return;
+    };
+    let Some(found) = manifest
+        .find_for_dependency(
+            &version,
+            &wanted.text,
+            this.options.minimum_release_age_ms,
+            this.options.minimum_release_age_excludes,
+        )
+        .unwrap()
+    else {
+        return;
+    };
+    let patched = if has_patches {
+        let patched = this.patched_versions.as_deref().unwrap_or_default();
+        patched_version_in_range(patched, manifest, &version, &wanted.text)
+    } else {
+        None
+    };
+    let package = patched.unwrap_or(found).package;
+    if !manifest.is_in_bounds(package) || package.all_dependencies_bundled() {
+        return;
+    }
+
+    let bundled = package.bundled_dependencies.get(&manifest.bundled_deps_buf);
+    for (group, is_peer) in [
+        (package.dependencies, false),
+        (package.optional_dependencies, false),
+        (package.peer_dependencies, true),
+    ] {
+        // Before the peer pass nobody can tell whether the tree will provide a peer.
+        if is_peer && !wanted.follows_peers {
+            break;
+        }
+        let optional_peers = if is_peer {
+            package.non_optional_peer_dependencies_start as usize
+        } else {
+            0
+        };
+        let names = group.name.get(&manifest.external_strings);
+        let ranges = group.value.get(&manifest.external_strings_for_versions);
+        for (alias, range) in names.iter().zip(ranges).skip(optional_peers) {
+            let alias_hash = alias.hash;
+            let alias = alias.slice(&manifest.string_buf);
+            let range = range.slice(&manifest.string_buf);
+            let is_npm_alias = dependency::trim_literal(range).starts_with(b"npm:");
+            if !is_npm_alias && this.look_ahead.seen.contains_key(&alias_hash) {
                 continue;
             }
-            ManifestState::Unavailable => continue,
-        }
-
-        // The dependency most likely shares a version that is in the lockfile already, and what
-        // that version depends on is queued already.
-        let lockfile = &*this.lockfile;
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let resolutions = lockfile.packages.items_resolution();
-        if version.tag == Tag::Npm
-            && lockfile.packages_named(name_hash).iter().any(|&id| {
-                let existing = &resolutions[id as usize];
-                existing.tag == ResolutionTag::Npm
-                    && (version.npm().version).satisfies(existing.npm().version, &wanted.text, buf)
-            })
-        {
-            continue;
-        }
-
-        let guessed = this.look_ahead.guessed.entry(name_hash).or_default();
-        if version.tag == Tag::Npm
-            && guessed
-                .iter()
-                .any(|&guess| (version.npm().version).satisfies(guess, &wanted.text, b""))
-        {
-            continue;
-        }
-
-        let Some(manifest) = this.manifests.by_name_hash_in_memory(name, name_hash) else {
-            continue;
-        };
-        let Some(found) = manifest
-            .find_for_dependency(
-                &version,
-                &wanted.text,
-                this.options.minimum_release_age_ms,
-                this.options.minimum_release_age_excludes,
-            )
-            .unwrap()
-        else {
-            continue;
-        };
-        // The text of a prerelease or build tag is in the manifest, which a later request can
-        // replace, so only plain versions are remembered.
-        if !found.version.tag.has_pre() && !found.version.tag.has_build() {
-            guessed.push(found.version);
-        }
-        if !manifest.is_in_bounds(found.package)
-            || found.package.all_dependencies_bundled()
-            || (this.look_ahead.seen)
-                .insert(Task::Id::for_npm_package(name, found.version).get(), ())
-                .is_some()
-        {
-            continue;
-        }
-
-        let bundled = (found.package.bundled_dependencies).get(&manifest.bundled_deps_buf);
-        for group in [
-            found.package.dependencies,
-            found.package.optional_dependencies,
-        ] {
-            let names = group.name.get(&manifest.external_strings);
-            let ranges = group.value.get(&manifest.external_strings_for_versions);
-            for (name, range) in names.iter().zip(ranges) {
-                let hash = name.hash;
-                let name = name.slice(&manifest.string_buf);
-                // A bundled dependency comes in the tarball of its parent. A name that the project
-                // aliases, overrides or has a workspace for is left to the queued dependency,
-                // because those rules depend on which package the dependency belongs to.
-                if bundled.contains(&hash)
-                    || this.known_npm_aliases.contains_key(&hash)
-                    || lockfile.workspace_paths.contains(&hash)
-                    || lockfile.overrides.contains_name(hash, name, buf)
-                    || !is_safe_name(name)
-                {
+            // A bundled dependency comes in the tarball of its parent. A name that the project
+            // aliases, overrides or has a workspace for is left to the queued dependency, because
+            // those rules depend on which package the dependency belongs to.
+            if bundled.contains(&alias_hash)
+                || this.known_npm_aliases.contains_key(&alias_hash)
+                || lockfile.workspace_paths.contains(&alias_hash)
+                || lockfile.overrides.contains_name(alias_hash, alias, buf)
+                // The running runtime is the `bun` that a package asks for.
+                || (is_peer && (alias == b"bun" || !lockfile.packages_named(alias_hash).is_empty()))
+            {
+                continue;
+            }
+            let follows_peers = wanted.follows_peers;
+            let next = if is_npm_alias {
+                // Only the parser knows where the name in `npm:name@range` ends.
+                let unnamed = Wanted::new(alias, range, b"", 0, follows_peers);
+                let Some(version) = unnamed.version() else {
                     continue;
-                }
-                let range = range.slice(&manifest.string_buf);
-                stack.extend(this.look_ahead.want(hash, name, range));
+                };
+                let name = match version.tag {
+                    Tag::Npm => version.npm().name.slice(&unnamed.text),
+                    Tag::DistTag => version.dist_tag().name.slice(&unnamed.text),
+                    _ => continue,
+                };
+                let name_hash = Semver::string::Builder::string_hash(name);
+                Wanted::new(alias, range, name, name_hash, follows_peers)
+            } else if Tag::infer(dependency::trim_literal(range)).is_npm() {
+                Wanted::new(alias, range, alias, alias_hash, follows_peers)
+            } else {
+                // Only the registry is asked on a guess, never a git host or a tarball's server.
+                continue;
+            };
+            // The name comes from a registry manifest, so it is checked as `unsafe_name` does.
+            if is_safe_name(next.name())
+                && (this.look_ahead.seen.insert(next.name_hash, ())).is_none()
+            {
+                stack.push(next);
             }
         }
     }
@@ -1264,7 +1340,7 @@ fn on_first_resolution(
     (this.lockfile.scratch.dependency_list_queue).push(Lockfile::QueuedRows {
         rows: package.dependencies,
         install_peer: false,
-        logs_errors: false,
+        from_command: false,
     })?;
     Ok(())
 }
@@ -1311,6 +1387,7 @@ struct Asked {
 }
 
 /// `Err`: the answer depends on a manifest that the returned task is still fetching.
+#[inline(always)]
 fn asked_version(
     this: &mut PackageManager,
     id: DependencyID,
@@ -1439,6 +1516,7 @@ fn asked_version(
 
 /// The alias (a future folder) or the registry name of a dependency, if it is unsafe. Such a
 /// dependency is refused before anything is fetched for it or printed about it.
+#[inline(always)]
 fn unsafe_name<'a>(
     lockfile: &'a Lockfile::Lockfile,
     dependency: &'a Dependency,
@@ -1488,7 +1566,7 @@ pub(crate) fn bind_row(
         if is_root {
             waiting.push(TaskCallbackContext::RootDependency(id));
         }
-        Row::Waiting
+        Row::Waiting(task_id)
     };
 
     let asked = match asked_version(this, id, dependency, is_root) {
@@ -2711,19 +2789,29 @@ fn warn_deprecated(
     );
 }
 
-/// A row whose range admits a patched version takes it, whichever versions are in the lockfile.
-fn patched_version_in_range<'m>(
-    this: &mut PackageManager,
-    manifest: &'m Npm::PackageManifest,
-    version: &dependency::Version,
-) -> Option<Npm::FindResult<'m>> {
+/// Fills `PackageManager::patched_versions` if the project has patches. Returns whether it has.
+#[inline]
+fn has_patched_versions(this: &mut PackageManager) -> bool {
+    if this.lockfile.patched_dependencies.count() == 0 {
+        return false;
+    }
     if this.patched_versions.is_none() {
         this.patched_versions = Some(index_patched_versions(this));
     }
+    true
+}
+
+/// A row whose range admits a patched version takes it, whichever versions are in the lockfile.
+/// `patched` is `PackageManager::patched_versions`, and the strings of `version` are in `buf`.
+fn patched_version_in_range<'m>(
+    patched: &[(PackageNameHash, Semver::Version)],
+    manifest: &'m Npm::PackageManifest,
+    version: &dependency::Version,
+    buf: &[u8],
+) -> Option<Npm::FindResult<'m>> {
     let group = &version.try_npm()?.version;
-    let buf = this.lockfile.buffers.string_bytes.as_slice();
     let versions: &[u8] = &manifest.string_buf;
-    (this.patched_versions.iter().flatten())
+    (patched.iter())
         .filter(|&&(name_hash, _)| name_hash == manifest.pkg.name.hash)
         .filter_map(|&(_, patched)| manifest.find_by_version(patched))
         .filter(|found| group.satisfies(found.version, buf, versions))
@@ -2835,11 +2923,15 @@ fn get_or_put_resolved_package_with_find_result(
             return bind_existing(this, dependency_id, id, success_fn);
         }
     }
-    let has_patches = this.lockfile.patched_dependencies.count() > 0;
-    let patched = if !has_patches || latest_for_target || behavior.is_peer() {
+    let patched = if latest_for_target || behavior.is_peer() || !has_patched_versions(this) {
         None
     } else {
-        patched_version_in_range(this, manifest, version)
+        patched_version_in_range(
+            this.patched_versions.as_deref().unwrap_or_default(),
+            manifest,
+            version,
+            this.lockfile.buffers.string_bytes.as_slice(),
+        )
     };
     let find_result = patched.unwrap_or(find_result);
 
@@ -2991,6 +3083,7 @@ enum Settled {
 
 /// `None` if the dependency can only be resolved from its manifest. `request_ahead` asks the same
 /// question as `get_or_put_resolved_package`, so it requests no manifest that resolving would not.
+#[inline(always)]
 fn settle_without_manifest(
     this: &mut PackageManager,
     name_hash: PackageNameHash,

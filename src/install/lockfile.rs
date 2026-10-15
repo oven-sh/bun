@@ -2684,26 +2684,84 @@ pub(crate) struct QueuedRows {
     pub(crate) rows: DependencySlice,
     /// True in the peer pass, where a peer dependency may install a package of its own.
     pub(crate) install_peer: bool,
-    /// True for dependencies that a command queued itself, whose resolve errors are logged.
-    pub(crate) logs_errors: bool,
+    /// True for a dependency that the command itself wants resolved, false for the dependencies
+    /// of a package that was just resolved. An error while resolving the former is logged.
+    pub(crate) from_command: bool,
 }
 
-/// The dependencies that are not resolved yet, in the order in which they will be. Only the one at
-/// the front is ever resolved, so bun.lock does not depend on which manifest arrives first.
-pub(crate) struct DependencyQueue {
+/// One first-in, first-out list of `DependencyQueue`.
+struct Lane {
     items: LinearFifo<QueuedRows, DynamicBuffer<QueuedRows>>,
-    /// How many items have left the queue so far.
+    /// How many items have left the lane so far.
     finished: usize,
     /// Counted like `finished`: every item before this one has started its downloads.
     requested: usize,
 }
 
-impl DependencyQueue {
-    fn init() -> DependencyQueue {
-        DependencyQueue {
+impl Lane {
+    fn init() -> Lane {
+        Lane {
             items: LinearFifo::<QueuedRows, DynamicBuffer<QueuedRows>>::init(),
             finished: 0,
             requested: 0,
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.items.readable_length() == 0
+    }
+
+    /// Drops the rows of the first item that come before `next`.
+    #[inline]
+    fn finish_rows_before(&mut self, next: DependencyID) {
+        let head = self.items.peek_item_mut(0);
+        head.rows = DependencySlice::new(next, head.rows.end() - next);
+        if head.rows.len == 0 {
+            self.items.discard(1);
+            self.finished += 1;
+        }
+    }
+
+    /// `skips_first_row`: the first row of the lane is the one that everything waits for.
+    fn next_unrequested(&mut self, skips_first_row: bool) -> Option<QueuedRows> {
+        let index = self.requested.max(self.finished) - self.finished;
+        if index >= self.items.readable_length() {
+            return None;
+        }
+        self.requested = self.finished + index + 1;
+        let mut item = self.items.peek_item(index);
+        if index == 0 && skips_first_row {
+            item.rows = DependencySlice::new(item.rows.off + 1, item.rows.len - 1);
+        }
+        Some(item)
+    }
+
+    fn clear(&mut self) {
+        let queued = self.items.readable_length();
+        self.items.discard(queued);
+        self.finished += queued;
+    }
+}
+
+/// The dependencies that are not resolved yet, in the order in which they will be. Only the one at
+/// the front is ever resolved, so bun.lock does not depend on which manifest arrives first.
+pub(crate) struct DependencyQueue {
+    /// What the command wants resolved. All of it comes before anything in `found`, as it does
+    /// when every manifest is cached and a command's dependencies are resolved on the spot.
+    commanded: Lane,
+    /// The dependencies of the packages that were resolved.
+    found: Lane,
+    /// The task that fetches the manifest of the dependency at the front, once it was tried.
+    pub(crate) waits_for: Option<crate::package_manager_task::Id>,
+}
+
+impl DependencyQueue {
+    fn init() -> DependencyQueue {
+        DependencyQueue {
+            commanded: Lane::init(),
+            found: Lane::init(),
+            waits_for: None,
         }
     }
 
@@ -2711,49 +2769,57 @@ impl DependencyQueue {
         if item.rows.len == 0 {
             return Ok(());
         }
-        self.items.write_item(item)
+        if !item.from_command {
+            return self.found.items.write_item(item);
+        }
+        // It may be the new front of the queue.
+        if self.commanded.is_empty() {
+            self.waits_for = None;
+        }
+        self.commanded.items.write_item(item)
     }
 
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
-        self.items.readable_length() == 0
+        self.commanded.is_empty() && self.found.is_empty()
+    }
+
+    /// Whether a dependency that the command wants resolved is still waiting for its turn.
+    #[inline]
+    pub(crate) fn has_commanded_rows(&self) -> bool {
+        !self.commanded.is_empty()
     }
 
     /// The item at the front. Its first row is the next one to resolve.
     #[inline]
     pub(crate) fn head(&self) -> Option<QueuedRows> {
-        (!self.is_empty()).then(|| self.items.peek_item(0))
+        if !self.commanded.is_empty() {
+            return Some(self.commanded.items.peek_item(0));
+        }
+        (!self.found.is_empty()).then(|| self.found.items.peek_item(0))
     }
 
-    /// Removes the first row of `head`.
+    /// The rows of `head`, which `Self::head` returned, that come before `next` are done.
     #[inline]
-    pub(crate) fn finish_head_row(&mut self) {
-        let head = self.items.peek_item_mut(0);
-        head.rows = DependencySlice::new(head.rows.off + 1, head.rows.len - 1);
-        if head.rows.len == 0 {
-            self.items.discard(1);
-            self.finished += 1;
+    pub(crate) fn finish_rows_before(&mut self, head: QueuedRows, next: DependencyID) {
+        if head.from_command {
+            self.commanded.finish_rows_before(next);
+        } else {
+            self.found.finish_rows_before(next);
         }
     }
 
     /// Each call returns rows behind the head row that have not started their downloads yet.
     pub(crate) fn next_unrequested(&mut self) -> Option<QueuedRows> {
-        let index = self.requested.max(self.finished) - self.finished;
-        if index >= self.items.readable_length() {
-            return None;
-        }
-        self.requested = self.finished + index + 1;
-        let mut item = self.items.peek_item(index);
-        if index == 0 {
-            item.rows = DependencySlice::new(item.rows.off + 1, item.rows.len - 1);
-        }
-        Some(item)
+        let head_is_commanded = !self.commanded.is_empty();
+        (self.commanded.next_unrequested(true))
+            .or_else(|| self.found.next_unrequested(!head_is_commanded))
     }
 
     pub(crate) fn clear(&mut self) {
-        let queued = self.items.readable_length();
-        self.items.discard(queued);
-        self.finished += queued;
+        self.commanded.clear();
+        self.found.clear();
+        self.waits_for = None;
     }
 }
 

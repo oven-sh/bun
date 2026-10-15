@@ -5588,6 +5588,32 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("reports a registry URL that cannot be used once, when two dependencies ask for the same package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      await writeProject(
+        ctx,
+        {
+          "package.json": { name: "foo", workspaces: ["moo"], dependencies: { kept: "1.0.0" } },
+          "moo/package.json": { name: "moo", dependencies: { kept: "1.0.0" } },
+        },
+        { registry: "htp://127.0.0.1:1/" },
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err.split(/\r?\n/).filter(line => line.includes("Registry URL must be"))).toEqual([
+        "error: Registry URL must be http:// or https://",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   // While it lasts, the install fails and saves nothing, so the next one is whole.
   it.each<{ name: string; failing: RegExp; status?: number; error: RegExp }>([
     {

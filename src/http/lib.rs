@@ -235,6 +235,8 @@ pub struct Flags {
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
     pub redirect_credentials: RedirectCredentialsPolicy,
+    /// While all connections are taken, this request lets the ones without the flag go first.
+    pub yields_to_other_requests: bool,
 }
 
 impl Default for Flags {
@@ -259,6 +261,7 @@ impl Default for Flags {
             h3_retried: false,
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
+            yields_to_other_requests: false,
         }
     }
 }

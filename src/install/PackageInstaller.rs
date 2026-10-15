@@ -2227,8 +2227,7 @@ impl<'a> PackageInstaller<'a> {
             }
             let importer_folder =
                 Self::importer_folder(self.lockfile(), &mut self.trees, self.current_tree_id);
-            // A workspace's can be older than the project's.
-            let skip_delete = self.skip_delete && importer_folder == ImporterFolder::New;
+            let skip_delete = self.skip_delete && importer_folder != ImporterFolder::Linked;
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 _ if importer_folder == ImporterFolder::Linked

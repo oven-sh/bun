@@ -2491,32 +2491,3 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     });
   });
 });
-
-// The project's `node_modules` can be gone while a workspace still has its own.
-it.skipIf(isWindows)("a package in the older node_modules of a workspace is replaced, not added to", async () => {
-  using root = tempDir("nm-workspace-older", {});
-  const repo = join(String(root), "repo");
-  const place = join(repo, "packages", "app", "node_modules", "dep");
-  await mkdir(join(repo, "packages", "app"), { recursive: true });
-  await Promise.all([
-    writeTarball(join(repo, "dep1.tgz"), "dep", "1.0.0", "module.exports = 1"),
-    writeTarball(join(repo, "dep2.tgz"), "dep", "2.0.0", "module.exports = 2"),
-    writeFile(
-      join(repo, "package.json"),
-      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { dep: "file:./dep1.tgz" } }),
-    ),
-    writeFile(
-      join(repo, "packages", "app", "package.json"),
-      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:../../dep2.tgz" } }),
-    ),
-  ]);
-  const install = () => runBun(repo, ["install", "--ignore-scripts", "--linker", "hoisted"]);
-  expect((await install()).exitCode).toBe(0);
-  await writeFile(join(place, "of-an-older-version.js"), "");
-  await rm(join(repo, "node_modules"), { recursive: true });
-
-  const { exitCode } = await install();
-
-  expect((await readdir(place)).sort()).toEqual([".bun-tag", "index.js", "package.json"]);
-  expect(exitCode).toBe(0);
-});

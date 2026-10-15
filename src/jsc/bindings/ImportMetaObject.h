@@ -60,6 +60,9 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
+    /// The `import.meta.url` that createFromSpecifier() gives `specifier`.
+    static WTF::URL urlOfSpecifier(const String& specifier);
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 

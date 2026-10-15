@@ -18,7 +18,7 @@ namespace Bun {
 // True when every xn-- label in `host` is valid UTS #46 punycode.
 bool hasValidPunycodeHost(WTF::StringView host);
 
-// The one call of WTF::URL::fileSystemPath() in Bun (test/internal/source-lints/file-system-path.test.ts).
+// Call this, not WTF::URL::fileSystemPath(): test/internal/source-lints/file-system-path.test.ts scans for the raw call.
 // Empty when `url` is not a file: URL, and when its percent-decoded path is not UTF-8. WTF returns a
 // null String for both, and a null String reads as "": the current directory. On Windows WTF decodes
 // such a path with U+FFFD in it instead (oven-sh/WebKit#789).

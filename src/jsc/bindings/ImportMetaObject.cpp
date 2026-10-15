@@ -89,7 +89,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+WTF::URL ImportMetaObject::urlOfSpecifier(const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
@@ -100,7 +100,12 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }
-    return create(globalObject, url.string());
+    return url;
+}
+
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+{
+    return create(globalObject, urlOfSpecifier(specifier).string());
 }
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

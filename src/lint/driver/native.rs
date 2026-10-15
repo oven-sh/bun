@@ -1,6 +1,6 @@
 //! Rule settings for projects with no ESLint or oxlint config ("native mode"). They come from `[lint]` in bunfig.toml and
 //! from `--rule`. Every built-in rule is available under any of its names, and an unknown name is an error. `react/*` is a
-//! wildcard that sets every rule of a plugin: see [`expand_wildcards`].
+//! wildcard that turns off every rule of a plugin: see [`expand_wildcards`].
 
 use crate::bunfig::RuleOfBunfig;
 use crate::cli::{Options, Wildcard};
@@ -559,6 +559,8 @@ fn similar_plugin<'a>(
 ) -> Option<&'a [u8]> {
     let built_in = native_rules(registry).flat_map(|(meta, _)| meta.plugin.spellings());
     let names = (built_in.map(|it| it.as_bytes())).chain(js_plugins.iter().map(|it| &*it.0.name));
+    // ESLint's own rules have no prefix.
+    let names = names.filter(|it| !it.is_empty());
     let distance = |name: &[u8]| strings::edit_distance(prefix.iter().copied(), name);
     let closest = names.map(|it| (distance(it), it)).min_by_key(|it| it.0);
     (closest.filter(|it| it.0 <= prefix.len().max(3) / 3)).map(|it| it.1)

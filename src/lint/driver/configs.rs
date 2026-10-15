@@ -331,7 +331,19 @@ pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
 
 /// Combines a directory's `own` [`read_frameworks`] result with its `parent` directory's frameworks. The closest
 /// package.json wins, except that a package without a test runner inherits the one from above.
-pub(crate) fn inherit_frameworks(parent: Frameworks, own: Option<Frameworks>) -> Frameworks {
+///
+/// `is_repository_root`: [`gitignore::is_root`] of the directory. A test runner isn't inherited from outside the
+/// repository, such as from a package.json in the home directory. Nothing else stops there: a submodule without a
+/// package.json is still part of the React project around it.
+pub(crate) fn inherit_frameworks(
+    parent: Frameworks,
+    own: Option<Frameworks>,
+    is_repository_root: bool,
+) -> Frameworks {
+    let parent = match is_repository_root {
+        true => parent - Frameworks::TEST_RUNNERS,
+        false => parent,
+    };
     match own {
         // With both runners' plugins on, each problem would be reported twice.
         Some(own) if own.intersects(Frameworks::TEST_RUNNERS) => own,
@@ -418,8 +430,6 @@ pub(crate) struct Loader<'l> {
     passed_over: OnceLock<(Vec<u8>, Vec<u8>)>,
     /// The working directory has an `eslint.config.*`, in it or above it, and that is what the run is for.
     has_file_of_eslint: OnceLock<bool>,
-    /// See [`Loader::is_repository_root`].
-    repository_root: OnceLock<Option<Vec<u8>>>,
     /// [`Loader::lacks_file`]
     lacks_file: OnceLock<bool>,
     /// [`Loader::name`]
@@ -759,7 +769,6 @@ impl<'l> Loader<'l> {
             tool: OnceLock::new(),
             passed_over: OnceLock::new(),
             has_file_of_eslint: OnceLock::new(),
-            repository_root: OnceLock::new(),
             lacks_file: OnceLock::new(),
             named: Default::default(),
             refused: OnceLock::new(),
@@ -2666,16 +2675,6 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
     }
 
-    /// True if `directory` is the top of the repository that the working directory is in. A package.json above it, such as
-    /// one in the home directory, isn't part of the project. A repository nested in the project, such as a submodule, is.
-    pub(crate) fn is_repository_root(&self, directory: &[u8]) -> bool {
-        let find = || paths::ancestors(self.cwd()).find(|it| gitignore::is_root(it));
-        let root = self
-            .repository_root
-            .get_or_init(|| find().map(<[u8]>::to_vec));
-        root.as_deref() == Some(directory)
-    }
-
     /// Detects the frameworks used by files in `directory`, from its package.json and the ones above it.
     /// Only Bun's built-in config needs this, so the result is empty with an ESLint or oxlint config.
     pub(crate) fn detect_frameworks(&self, loaded: &Loaded, directory: &[u8]) -> Frameworks {
@@ -2685,10 +2684,10 @@ impl<'l> Loader<'l> {
         if let Some(cached) = self.frameworks.lock().get(directory) {
             return *cached;
         }
-        let parent = Some(paths::dirname(directory))
-            .filter(|it| it.len() < directory.len() && !self.is_repository_root(directory));
+        let parent = Some(paths::dirname(directory)).filter(|it| it.len() < directory.len());
         let parent = parent.map_or(Frameworks::empty(), |it| self.detect_frameworks(loaded, it));
-        let detected = inherit_frameworks(parent, read_frameworks(directory));
+        let is_repository_root = gitignore::is_root(directory);
+        let detected = inherit_frameworks(parent, read_frameworks(directory), is_repository_root);
         (self.frameworks.lock()).insert(directory.to_vec(), detected);
         detected
     }

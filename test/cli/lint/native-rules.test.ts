@@ -1162,17 +1162,17 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
       expect(await runs(files)).toEqual([inherited, inherited, inherited]);
       const bounded = sorted(general, general);
       expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
-      // From above, `project` is a repository nested in what is linted, and is part of it.
+      // The working directory makes no difference.
       const fromAbove = await lint({ ...files, ...repository }, ["project", "-f", "json"]);
-      expect(problems(fromAbove.stdout)).toEqual(inherited);
+      expect(problems(fromAbove.stdout)).toEqual(bounded);
     });
 
-    test("doesn't decide for a repository that has none at its root", async () => {
+    test("still decides about React and Next.js for a repository that has none at its root", async () => {
       const files = {
         "bunfig.toml": correctnessAndPerf,
         "package.json": dependsOn("jest", "next", "react"),
         "project/bunfig.toml": correctnessAndPerf,
-        // No package.json up to the root of the repository.
+        // No package.json up to the root of the repository, so the closest one is outside.
         ...inside("project/scripts"),
         // Its own package.json decides about the frameworks, and would inherit a test runner.
         "project/backend/package.json": dependsOn("lodash"),
@@ -1180,13 +1180,13 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
       };
       const outside = sorted(general, general, jest, jest, next, react);
       expect(await runs(files)).toEqual([outside, outside, outside]);
-      const bounded = sorted(general, general);
+      // Only the test runner stops at the root of the repository.
+      const bounded = sorted(general, general, next, react);
       expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
     });
   });
 
-  test("a repository nested in the project is part of it", async () => {
-    // Like a submodule. It has no package.json, so the project's package.json decides.
+  test("a submodule without a package.json is part of the React project around it", async () => {
     const files = {
       ".git/HEAD": "ref: refs/heads/main\n",
       "package.json": dependsOn("react"),
@@ -1196,6 +1196,8 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
     const results = await Promise.all([
       lint(files, ["-f", "json"]),
       lint(files, ["packages/ui/app.jsx", "-f", "json"]),
+      lint(files, ["-f", "json"], "packages/ui"),
+      lint(files, ["app.jsx", "-f", "json"], "packages/ui"),
     ]);
     for (const { stdout } of results) expect(problems(stdout)).toContain("app.jsx:2 react-hooks/rules-of-hooks");
   });
@@ -1337,6 +1339,7 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
   test.each([
     [`"nextj/*" = "off"`, `Unknown plugin "nextj"\n  Did you mean "nextjs/*"?`],
     [`"jsx-ally/*" = "off"`, `Unknown plugin "jsx-ally"\n  Did you mean "jsx-a11y/*"?`],
+    [`"m/*" = "off"`, `Unknown plugin "m"\n  Did you mean "n/*"?`],
     [
       `"perfectionist/*" = "off"`,
       `Unknown rule "perfectionist/*"\n  To use a rule from an ESLint plugin, add the plugin`,

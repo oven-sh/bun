@@ -4,6 +4,7 @@
 //! So a section with pages left out becomes one section per stretch that stays, and one per gap, which holds nothing and may
 //! not be read, written or run. Addresses here are relative to the image base.
 
+use bun_collections::index_sort::{sort_slice_by_key, sort_slice_unstable};
 use core::ops::Range;
 
 use crate::bytes::{minus, narrow, put_u16, put_u32, slice, u16_at, u32_at, whole_pages};
@@ -123,7 +124,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
             at += size;
         }
     }
-    relocated_pages.sort_unstable();
+    sort_slice_unstable(&mut relocated_pages);
 
     let mut gaps: Vec<Range<u64>> = Vec::new();
     for gap in dead.iter().filter_map(|range| whole_pages(range, page)) {
@@ -144,9 +145,9 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     let first_header = sections[0].header;
     let most =
         MOST_SECTIONS.min(minus(sections[0].address, first_header as u64)? as usize / SECTION);
-    gaps.sort_by_key(|g| core::cmp::Reverse(g.end - g.start));
+    sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.end - g.start));
     gaps.truncate(most.saturating_sub(sections.len() + 1) / 2);
-    gaps.sort_by_key(|g| g.start);
+    sort_slice_by_key(&mut gaps, |g| g.start);
     if gaps.is_empty() {
         return Ok(file.to_vec());
     }

@@ -595,6 +595,7 @@ dependencies = [
 name = "bun_exe_features"
 version = "0.0.0"
 dependencies = [
+ "bun_collections",
  "bun_core",
 ]
 

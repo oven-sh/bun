@@ -4,6 +4,7 @@
 //! between them are not mapped. The load commands grow into the room that the linker was asked to leave behind them
 //! (`-headerpad`).
 
+use bun_collections::index_sort::sort_slice_by_key;
 use core::ops::Range;
 
 use crate::bytes::{
@@ -181,10 +182,10 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         16
     };
     let room = minus(first_content, (end_of_commands + for_a_signature) as u64)? as usize;
-    gaps.sort_by_key(|g| core::cmp::Reverse(g.end - g.start));
+    sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.end - g.start));
     loop {
         let mut sorted = gaps.clone();
-        sorted.sort_by_key(|g| g.start);
+        sort_slice_by_key(&mut sorted, |g| g.start);
         let kept = stretches(&sorted)?;
         let size: usize = kept.iter().map(|s| SEGMENT + s.1.len() * SECTION).sum();
         if size <= SEGMENT + sections.len() * SECTION + room {

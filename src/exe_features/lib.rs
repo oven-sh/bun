@@ -23,6 +23,7 @@ mod elf;
 mod macho;
 mod pe;
 
+use bun_collections::index_sort::sort_slice_by_key;
 use core::ops::Range;
 
 use bytes::{i32_at, slice, slice_mut, u32_at};
@@ -104,7 +105,7 @@ impl Container {
             Container::MachO => macho::sections(file),
             Container::Pe => pe::sections(file),
         }?;
-        sections.sort_by_key(|s| s.addresses.start);
+        sort_slice_by_key(&mut sections, |s| s.addresses.start);
         Ok(sections)
     }
 
@@ -242,7 +243,7 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
 
         let is_dead = dead_islands(contents_of(&file, &sections, called_islands)?, &is_excluded)?;
         let mut islands = container.islands(&file, &sections)?;
-        islands.sort_by_key(|(_, addresses)| addresses.start);
+        sort_slice_by_key(&mut islands, |(_, addresses)| addresses.start);
         for (number, addresses) in islands {
             let index = number.checked_sub(1).ok_or(Error::InvalidExecutable)?;
             if !*is_dead.get(index).ok_or(Error::InvalidExecutable)? {

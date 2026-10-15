@@ -3,6 +3,7 @@
 //! A segment with pages left out becomes one segment per stretch that stays, each at the address it had. The gaps between
 //! them are not mapped. That takes more program headers than the linker made room for: see `room_for_program_headers`.
 
+use bun_collections::index_sort::sort_slice_by_key;
 use core::ops::Range;
 
 use crate::bytes::{
@@ -211,9 +212,9 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         }
     }
     // One more header each. The largest that there is room for.
-    gaps.sort_by_key(|g| core::cmp::Reverse(g.0.end - g.0.start));
+    sort_slice_by_key(&mut gaps, |g| core::cmp::Reverse(g.0.end - g.0.start));
     gaps.truncate((room.len() / PROGRAM_HEADER).saturating_sub(headers.len()));
-    gaps.sort_by_key(|g| g.1);
+    sort_slice_by_key(&mut gaps, |g| g.1);
     if gaps.is_empty() {
         return Ok(file.to_vec());
     }
@@ -237,7 +238,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     }
     out.extend_from_slice(file.get(at..).ok_or(Error::InvalidExecutable)?);
     let mut gaps: Vec<Range<u64>> = gaps.iter().map(|g| g.0.clone()).collect();
-    gaps.sort_by_key(|g| g.start);
+    sort_slice_by_key(&mut gaps, |g| g.start);
 
     // ---- program headers
     let mut new: Vec<ProgramHeader> = Vec::new();

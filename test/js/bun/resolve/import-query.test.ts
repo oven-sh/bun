@@ -370,16 +370,23 @@ test("a module that a Module._extensions hook compiles resolves from its own dir
       const Module = require("node:module");
       const load = Module._extensions[".js"];
       let compiled = 0;
+      let copy = false;
       Module._extensions[".js"] = (module, filename) => {
         const compile = module._compile;
         module._compile = function (code, file) {
           compiled++;
-          return compile.call(this, code, file);
+          // A hook can pass on another string with the same text.
+          return compile.call(this, code, copy ? file.slice(0, 1) + file.slice(1) : file);
         };
         return load(module, filename);
       };
       // A hook is chosen by the extension at the end of the key.
-      require("./app/a.js?next=/../../decoy/x.js").then(result => console.log(JSON.stringify({ compiled, ...result })));
+      (async () => {
+        const same = await require("./app/a.js?next=/../../decoy/x.js");
+        copy = true;
+        const copied = await require("./app/a.js?next=/../../decoy/y.js");
+        console.log(JSON.stringify({ compiled, same, copied }));
+      })();
     `,
   });
   await using proc = Bun.spawn({
@@ -391,14 +398,8 @@ test("a module that a Module._extensions hook compiles resolves from its own dir
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    compiled: 2,
-    required: "app",
-    imported: "app",
-    dirname: "app",
-    modulePath: "app",
-    paths0: "app",
-  });
+  const expected = { required: "app", imported: "app", dirname: "app", modulePath: "app", paths0: "app" };
+  expect(JSON.parse(stdout.trim())).toEqual({ compiled: 3, same: expected, copied: expected });
   expect(exitCode).toBe(0);
 });
 

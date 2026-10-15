@@ -90,6 +90,7 @@ private:
     // Length of `<path>` in m_filename when that is the loader's key `<path>?<query>` with a separator in the query, else 0.
     uint32_t m_filenamePathLength { 0 };
     JSValue loadedPath(JSC::VM&);
+    bool isFilename(JSValue);
 
 public:
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -148,8 +149,8 @@ public:
     }
     // filename() without the `?query` of the loader's key: a directory is taken from this, never from filename().
     JSValue filenamePath(JSC::VM& vm) { return m_filenamePathLength ? loadedPath(vm) : m_filename.get(); }
-    // Same for a `filename` that JS read from the module: only the module's own filename() is a key.
-    JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && filename == m_filename.get() ? loadedPath(vm) : filename; }
+    // Same for a `filename` that JS passes back: only a string with the text of the module's own filename() is a key.
+    JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && isFilename(filename) ? loadedPath(vm) : filename; }
     // The loader read this module from `path`.
     void setLoadedPath(JSC::VM&, const WTF::String& path);
 

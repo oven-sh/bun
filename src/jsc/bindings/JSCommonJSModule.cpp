@@ -1019,6 +1019,18 @@ JSValue JSCommonJSModule::loadedPath(JSC::VM& vm)
     return jsSubstringOfResolved(vm, asString(m_filename.get()), 0, m_filenamePathLength);
 }
 
+bool JSCommonJSModule::isFilename(JSValue value)
+{
+    JSValue filename = m_filename.get();
+    if (value == filename)
+        return true;
+    if (!value.isString() || asString(value)->length() != asString(filename)->length())
+        return false;
+    auto text = asString(value)->tryGetValue();
+    auto key = asString(filename)->tryGetValue();
+    return !text->isNull() && text.data == key.data;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     RELEASE_ASSERT(callframe->argumentCount() == 4);

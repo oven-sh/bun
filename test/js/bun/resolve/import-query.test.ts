@@ -442,3 +442,31 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
     });
   });
 });
+
+// `bun <file>.html` imports the file it was given. Windows does not allow `?` in a file name.
+test.skipIf(isWindows)("bun serves an HTML entry point in a folder with `?` in its name", async () => {
+  using dir = tempDir("import-query-question-mark-html", {
+    "pa?ge/index.html": `<!DOCTYPE html><html><head><title>in pa?ge</title></head><body></body></html>`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./pa?ge/index.html", "--port=0"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let stdout = "";
+  let url: string | undefined;
+  for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+    stdout += chunk;
+    url = stdout.match(/http:\/\/\S+/)?.[0];
+    if (url && stdout.includes("\n", stdout.indexOf(url))) break;
+  }
+  // The server prints its URL, or the process ends with the reason on stderr.
+  if (!url) expect(await proc.stderr.text()).toBe("");
+  const response = await fetch(url!);
+  expect({ status: response.status, title: (await response.text()).match(/<title>(.*)<\/title>/)?.[1] }).toEqual({
+    status: 200,
+    title: "in pa?ge",
+  });
+});

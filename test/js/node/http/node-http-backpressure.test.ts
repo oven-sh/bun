@@ -2511,5 +2511,19 @@ describe("backpressure", () => {
       },
       120_000,
     );
+
+    // The server keeps the buffer by reference and writes the rest of it as the socket drains. It copies nothing,
+    // so this one needs no memory.
+    it("res.write(body)", async () => {
+      const wireLength = "80000000\r\n".length + size + "\r\n0\r\n\r\n".length;
+      expect(await pipelined(`res.write(body, () => res.end());`, wireLength)).toEqual({
+        framing: "Transfer-Encoding: chunked",
+        length: wireLength,
+        start: "80000000\r\nAAAAAA",
+        end: "ZZZZZZZZZ\r\n0\r\n\r\n",
+        next: ["HTTP/1.1 200 OK", "after"],
+        exit: [0, null],
+      });
+    }, 120_000);
   });
 });

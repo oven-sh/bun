@@ -198,7 +198,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     , m_subprotocol(emptyString())
     , m_extensions(emptyString())
 {
-    m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
+    m_rejectUnauthorized = m_proxyRejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
 }
 
 WebSocket::~WebSocket()
@@ -214,9 +214,10 @@ struct ProxyConfig {
     String authorization;
     Vector<std::pair<String, String>> headers;
     bool isHTTPS { false };
+    std::optional<WebSocketTLSOptions> tls;
 };
 
-static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
+static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, std::optional<WebSocketTLSOptions>&& proxyTLS)
 {
     if (proxyUrl.isNull() || proxyUrl.isEmpty())
         return { std::nullopt };
@@ -236,6 +237,7 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
     config.isHTTPS = url.protocolIs("https"_s);
     config.port = url.port().value_or(config.isHTTPS ? 443 : 80);
     config.authorization = basicAuthorization(url);
+    config.tls = WTF::move(proxyTLS);
 
     if (proxyHeaders) {
         auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
@@ -349,13 +351,13 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 {
     ASSERT(scriptExecutionContext());
 
-    auto proxyConfigResult = setupProxy(options.proxyURL, WTF::move(options.proxyHeaders));
+    auto proxyConfigResult = setupProxy(options.proxyURL, WTF::move(options.proxyHeaders), WTF::move(options.proxyTLS));
     if (proxyConfigResult.hasException())
         return proxyConfigResult.releaseException();
     auto proxyConfig = proxyConfigResult.releaseReturnValue();
 
-    if (options.rejectUnauthorized)
-        m_rejectUnauthorized = *options.rejectUnauthorized;
+    if (options.tls.rejectUnauthorized)
+        m_rejectUnauthorized = *options.tls.rejectUnauthorized;
     m_connectedOptions = options.connected;
     auto& protocols = options.protocols;
 
@@ -493,6 +495,12 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     }
 
     bool proxyIsHTTPS = hasProxy && proxyConfig->isHTTPS;
+    bool hasProxyTLS = hasProxy && proxyConfig->tls;
+
+    if (!hasProxyTLS)
+        m_proxyRejectUnauthorized = m_rejectUnauthorized;
+    else if (proxyConfig->tls->rejectUnauthorized)
+        m_proxyRejectUnauthorized = *proxyConfig->tls->rejectUnauthorized;
 
     // Connection type determines what kind of socket we use:
     // - Plain/TLS: direct connection, socket type matches target protocol
@@ -533,7 +541,8 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     BunString extensions = Bun::toString(options.extensions);
 
     // The upgrade client takes ownership, even if connect() fails.
-    void* sslConfig = options.sslConfig.release();
+    void* sslConfig = options.tls.sslConfig.release();
+    void* proxySSLConfig = hasProxyTLS ? proxyConfig->tls->sslConfig.release() : nullptr;
 
     // Set to an errno name when connect() returns null and the cause is known.
     BunString connectErrorCode { BunStringTag::Empty };
@@ -546,7 +555,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         hasProxy ? &proxyHost : nullptr, proxyPort,
         (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
         proxyHeaderNames.begin(), proxyHeaderNames.size(), proxyHeaderValues.begin(), proxyHeaderValues.size(),
-        sslConfig, is_secure,
+        sslConfig, proxySSLConfig, hasProxyTLS, is_secure,
         targetAuthorization.isEmpty() ? nullptr : &targetAuth,
         is_unix ? &unixSocketPath : nullptr,
         options.extensions.isNull() ? nullptr : &extensions,
@@ -1401,9 +1410,9 @@ extern "C" void WebSocket__streamDestroy(WebCore::WebSocket* webSocket)
     webSocket->streamDestroy();
 }
 
-extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
+extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket, bool forProxy)
 {
-    return webSocket->rejectUnauthorized();
+    return webSocket->rejectUnauthorized(forProxy);
 }
 
 extern "C" bool WebSocket__isPaused(WebCore::WebSocket* webSocket)

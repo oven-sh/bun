@@ -698,3 +698,33 @@ test.each([true, false])(
     }
   },
 );
+
+// The client appends bytes to the payload before inflating it. A message that ends in the middle of a block must not
+// turn those bytes into data.
+test.each([
+  ["a final stored block of 5 bytes with no data", "010500faff"],
+  ["a fixed Huffman block that ends early", "02ac63"],
+])("WebSocket client inflates a truncated message like zlib: %s", async (_, hex) => {
+  const payload = Buffer.from(hex, "hex");
+  let expected: string;
+  try {
+    expected = inflateRawSync(Buffer.concat([payload, DEFLATE_TRAILER]), { finishFlush: zc.Z_SYNC_FLUSH }).toString(
+      "hex",
+    );
+  } catch {
+    expected = "closed 1006";
+  }
+  await using peer = await createPeer({
+    headers: ["Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover"],
+    afterUpgrade: encodeFrame(OP.binary, payload, { rsv1: true }),
+  });
+  const ws = new WebSocket(peer.url);
+  ws.binaryType = "nodebuffer";
+  const outcome = await new Promise<string>(resolve => {
+    ws.onmessage = event => resolve(event.data.toString("hex"));
+    ws.onclose = event => resolve(`closed ${event.code}`);
+  });
+  ws.onclose = null;
+  ws.terminate();
+  expect(outcome).toBe(expected);
+});

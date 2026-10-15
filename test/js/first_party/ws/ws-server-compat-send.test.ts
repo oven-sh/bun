@@ -1,6 +1,7 @@
 // Tests send(), ping() and pong() on a `ws` server socket, using a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { openAsBlob } from "node:fs";
@@ -533,6 +534,19 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       );
       // roundTrip() waits for a pong to its own ping, which proves auto-pong has resumed.
       expect(await client.roundTrip()).toEqual([]);
+    });
+
+    // npm ws keeps the store on Node. On Bun it depends on node:net, whose write callbacks lose it.
+    test.skipIf(!builtin)("the callback of a buffered send keeps its AsyncLocalStorage store", async () => {
+      await using server = await openServer(implementation);
+      const { ws, client } = server;
+      client.socket.pause();
+      for (let sent = 0; ws.bufferedAmount === 0 && sent < 32; sent++) ws.send(Buffer.alloc(8 * MiB));
+      expect(ws.bufferedAmount).toBeGreaterThan(0);
+      const storage = new AsyncLocalStorage<string>();
+      const store = new Promise(resolve => storage.run("the sender's", () => ws.send("z", () => resolve(storage.getStore())))); // prettier-ignore
+      client.socket.resume();
+      expect(await store).toBe("the sender's");
     });
 
     // send() flushes queued data first, so a later send() can be the first to notice that backpressure cleared. The

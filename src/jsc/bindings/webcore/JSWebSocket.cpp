@@ -203,15 +203,20 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         RETURN_IF_EXCEPTION(throwScope, );
     }
 
-    JSValue tlsValue = get(object, Identifier::fromString(vm, "tls"_s));
-    RETURN_IF_EXCEPTION(throwScope, );
-    if (auto* tls = tlsValue.getObject()) {
+    // Parses `tls` or `proxy.tls`. The caller checks for an exception.
+    auto convertTLS = [&](JSObject* tls, WebSocketTLSOptions& result) {
         JSValue rejectUnauthorizedValue = get(tls, Identifier::fromString(vm, "rejectUnauthorized"_s));
         RETURN_IF_EXCEPTION(throwScope, );
         if (rejectUnauthorizedValue.isBoolean())
-            options.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
+            result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
 
-        options.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsValue)) };
+        result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
+    };
+
+    JSValue tlsValue = get(object, Identifier::fromString(vm, "tls"_s));
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (auto* tls = tlsValue.getObject()) {
+        convertTLS(tls, options.tls);
         RETURN_IF_EXCEPTION(throwScope, );
 
         // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
@@ -234,7 +239,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
     if (JSValue::encode(perMessageDeflateValue) != JSValue::ValueDeleted && !perMessageDeflateValue.toBoolean(lexicalGlobalObject))
         options.extensions = String();
 
-    // `proxy` is a string, a URL or { url, headers }.
+    // `proxy` is a string, a URL or { url, headers, tls }.
     JSValue proxyValue = get(object, Identifier::fromString(vm, "proxy"_s));
     RETURN_IF_EXCEPTION(throwScope, );
     if (proxyValue.isString()) {
@@ -261,6 +266,13 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
             options.proxyHeaders = WTF::move(pairs);
         } else if (!proxyHeadersValue.isUndefinedOrNull()) {
             options.proxyHeaders = convert<IDLHeadersInit>(*lexicalGlobalObject, proxyHeadersValue);
+            RETURN_IF_EXCEPTION(throwScope, );
+        }
+
+        JSValue proxyTLSValue = get(proxy, Identifier::fromString(vm, "tls"_s));
+        RETURN_IF_EXCEPTION(throwScope, );
+        if (auto* proxyTLS = proxyTLSValue.getObject()) {
+            convertTLS(proxyTLS, options.proxyTLS.emplace());
             RETURN_IF_EXCEPTION(throwScope, );
         }
     }

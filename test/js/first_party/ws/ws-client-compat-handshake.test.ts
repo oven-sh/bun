@@ -608,6 +608,29 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       scriptTimeout,
     );
 
+    // After a 101, npm ws forwards the socket's own 'error' and 'close' events, so a throw from one doesn't skip the other.
+    // That holds on Node. On Bun, node:net doesn't emit 'close' after an 'error' listener throws.
+    test.skipIf(!builtin)(
+      "emits 'close' after a rejected 101 even if the 'error' listener throws",
+      async () => {
+        await using peer = await createPeer({ respond: withReplacedHeaders({ "Sec-WebSocket-Accept": "AAAA" }) });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL);
+          ws.on("error", error => {
+            console.log("error " + showError(error));
+            throw new Error("thrown by the listener");
+          });
+          ws.on("close", code => console.log("close " + code + " readyState " + ws.readyState));
+        `;
+        expect((await runScript({ specifier }, script, { PEER_URL: peer.url })).lines).toEqual([
+          'error Error "Invalid Sec-WebSocket-Accept header"',
+          'uncaught Error "thrown by the listener"',
+          "close 1006 readyState 3",
+        ]);
+      },
+      scriptTimeout,
+    );
+
     test("a response that isn't HTTP", async () => {
       await using client = await connectClient(implementation, {}, { respond: () => "garbage\r\n\r\n" });
       await client.closed;

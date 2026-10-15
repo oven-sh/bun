@@ -155,7 +155,10 @@ unsafe extern "C" {
     safe fn WebSocket__streamEnd(websocket_context: &CppWebSocket);
     safe fn WebSocket__streamDestroy(websocket_context: &CppWebSocket);
     safe fn WebSocket__isPaused(websocket_context: &CppWebSocket) -> bool;
-    safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__rejectUnauthorized(
+        websocket_context: &CppWebSocket,
+        for_proxy: bool,
+    ) -> bool;
     safe fn WebSocket__isProxyTLS(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
@@ -314,9 +317,10 @@ impl CppWebSocket {
         WebSocket__isPaused(self)
     }
 
+    /// `proxy.tls` sets it for the proxy and `tls` for the target. Without `proxy.tls`, `tls` sets both.
     /// A field read on the C++ side: no JS runs, so no event-loop entry.
-    pub(crate) fn reject_unauthorized(&self) -> bool {
-        WebSocket__rejectUnauthorized(self)
+    pub(crate) fn reject_unauthorized(&self, peer: TlsPeer) -> bool {
+        WebSocket__rejectUnauthorized(self, peer == TlsPeer::Proxy)
     }
 
     /// Rooted through the JS wrapper, which is alive while the socket is.
@@ -326,7 +330,7 @@ impl CppWebSocket {
     }
 
     fn name_check(&self, peer: TlsPeer) -> NameCheck {
-        let enforce = self.reject_unauthorized();
+        let enforce = self.reject_unauthorized(peer);
         let callback = match peer {
             TlsPeer::Target => self.check_server_identity(),
             TlsPeer::Proxy => None,
@@ -359,16 +363,16 @@ impl CppWebSocket {
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
-        if !chain_verified {
-            // As in Node, the callback never sees a chain that did not verify.
-            return !self.reject_unauthorized();
-        }
         let peer = match handshake {
             TlsHandshake::First { peer, .. } => peer,
             // Without a tunnel, that socket goes to the target or to the HTTPS proxy of a ws:// target.
             TlsHandshake::Renegotiation if WebSocket__isProxyTLS(self) => TlsPeer::Proxy,
             TlsHandshake::Renegotiation => TlsPeer::Target,
         };
+        if !chain_verified {
+            // As in Node, the callback never sees a chain that did not verify.
+            return !self.reject_unauthorized(peer);
+        }
         match (self.name_check(peer), handshake) {
             (NameCheck::Nobody, _) | (NameCheck::Callback { .. }, TlsHandshake::Renegotiation) => {
                 true

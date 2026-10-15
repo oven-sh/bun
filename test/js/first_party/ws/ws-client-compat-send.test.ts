@@ -1,6 +1,7 @@
 // Tests send(), ping() and pong() on a `ws` client against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { openAsBlob } from "node:fs";
 import path from "node:path";
 import {
@@ -704,6 +705,21 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       expect(conn.frames[sent - 3].payload.equals(Buffer.alloc(MiB, sent - 3))).toBe(true);
       expect(results).toEqual(Array.from({ length: sent }, (_, index) => `${index} null`));
     });
+
+    // npm ws keeps the store on Node. On Bun it depends on node:net, whose write callbacks lose it.
+    test.skipIf(!builtin).each(["the peer reads", "terminate()"])(
+      "the callback of a buffered send keeps its AsyncLocalStorage store after %s",
+      async how => {
+        await using client = await openClient(implementation, { perMessageDeflate: false });
+        const { ws, conn } = client;
+        await fillSendBuffer(client);
+        const storage = new AsyncLocalStorage<string>();
+        const store = new Promise(resolve => storage.run("the sender's", () => ws.send("z", () => resolve(storage.getStore())))); // prettier-ignore
+        if (how === "terminate()") ws.terminate();
+        else conn.socket.resume();
+        expect(await store).toBe("the sender's");
+      },
+    );
 
     test("terminate() passes an Error to the callbacks of buffered sends", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });

@@ -441,6 +441,17 @@ const socket = new WebSocket("wss://localhost:3000", {
 });
 ```
 
+With an `https://` proxy, `tls` applies to both the proxy and the server. To configure them separately, pass `proxy.tls`. The proxy then uses only `proxy.tls`, and the server uses only `tls`.
+
+```ts
+const socket = new WebSocket("wss://example.com", {
+  proxy: {
+    url: "https://proxy.internal:8443",
+    tls: { ca: Bun.file("./proxy-ca.pem") }, // only for the connection to the proxy
+  },
+});
+```
+
 Bun's client also has `ping()`, `pong()` and `terminate()` methods, `ping` and `pong` events, and `binaryType = "nodebuffer"` (the default), which delivers binary messages as `Buffer`.
 
 To add event listeners to the socket:

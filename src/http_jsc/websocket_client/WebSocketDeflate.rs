@@ -170,10 +170,15 @@ impl PerMessageDeflate {
                     libdeflate_sys::Encoding::Deflate,
                 );
                 if result.status == libdeflate_sys::Status::Success {
-                    if out.len() - initial_len > max_len {
-                        return Err(DecompressError::TooLarge);
+                    // Stopping before the appended block means the peer sent a final block of its own.
+                    // Leave that case to zlib.
+                    if result.read == in_with_trailer.len() {
+                        if out.len() - initial_len > max_len {
+                            return Err(DecompressError::TooLarge);
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                    out.truncate(initial_len);
                 }
                 in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
             }

@@ -374,7 +374,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
   });
 });
 
-// For an http: proxy, Bun doesn't call the agent. It reads the agent's proxy URL and headers and sends its own CONNECT.
+// Bun doesn't call the agent. It reads the agent's proxy URL, headers and options and sends its own CONNECT.
 describe("ws package with HttpsProxyAgent", () => {
   test("ws:// through HttpsProxyAgent", async () => {
     using recorded = await startRecordingProxy();
@@ -495,14 +495,32 @@ describe("TLS options with an HttpsProxyAgent", () => {
     secureTarget?.stop(true);
   });
 
-  /** The client's events and the number of CONNECT requests that reached the proxy. */
+  const portOf = (target: "ws" | "wss") => (target === "wss" ? secureTarget.port! : wsPort);
+
+  /**
+   * The client's events, the CONNECT requests that reached the proxy, and the transport of a connection that opened.
+   * The native client's `_socket` isn't a real socket.
+   */
   async function connect(proxy: "http" | "https", target: "ws" | "wss", options: (proxyUrl: string) => ClientOptions) {
     using recorded = await startRecordingProxy({ tls: proxy === "https" });
-    const port = target === "wss" ? secureTarget.port! : wsPort;
-    const ws = new WebSocket(`${target}://127.0.0.1:${port}`, options(`${proxy}://127.0.0.1:${recorded.port}`));
+    const url = `${target}://127.0.0.1:${portOf(target)}`;
+    const ws = new WebSocket(url, options(`${proxy}://127.0.0.1:${recorded.port}`));
+    let transport = null as "native" | "stream" | null;
+    ws.on("open", () => {
+      transport = (ws as any)._socket instanceof net.Socket ? "stream" : "native";
+    });
     const events = await wsEchoSession(ws, "hello");
-    return { events, connects: recorded.requests.length };
+    return { events, requests: recorded.requests, transport };
   }
+
+  // What connect() returns. `connectRequest()` is the native client's CONNECT. The agent's own has other headers.
+  const rejectedProxy = { events: proxyRejected, requests: [], transport: null };
+  const rejectedTarget = () => ({ events: targetRejected, requests: [connectRequest(portOf("wss"))], transport: null });
+  const opened = (target: "ws" | "wss") => ({
+    events: echoed("hello"),
+    requests: [connectRequest(portOf(target))],
+    transport: "native" as const,
+  });
 
   describe.each([
     { proxy: "http", target: "wss" },
@@ -522,10 +540,10 @@ describe("TLS options with an HttpsProxyAgent", () => {
     ])("%s", async (_, agent, ws, trusted) => {
       expect(await connect(proxy, target, url => ({ agent: new HttpsProxyAgent(url, agent), ...ws }))).toEqual(
         proxy === "https" && !trusted.includes("proxy")
-          ? { events: proxyRejected, connects: 0 }
+          ? rejectedProxy
           : target === "wss" && !trusted.includes("target")
-            ? { events: targetRejected, connects: 1 }
-            : { events: echoed("hello"), connects: 1 },
+            ? rejectedTarget()
+            : opened(target),
       );
     });
   });
@@ -543,24 +561,54 @@ describe("TLS options with an HttpsProxyAgent", () => {
         tls: { ca: targetCa },
       })),
     }).toEqual({
-      trusted: { events: echoed("hello"), connects: 1 },
-      proxyOnly: { events: targetRejected, connects: 1 },
-      targetOnly: { events: proxyRejected, connects: 0 },
+      trusted: opened("wss"),
+      proxyOnly: rejectedTarget(),
+      targetOnly: rejectedProxy,
     });
   });
 
-  // Bun-only: Node ignores `proxy` on an agent that doesn't implement it. Bun connects natively, with one set of TLS
-  // options for the proxy and the target.
-  test("`connectOpts` of an agent that can't connect on its own is ignored", async () => {
-    const agent = (proxy: string) => Object.assign(new http.Agent(), { proxy, connectOpts: off });
+  // Bun-only: Node ignores `proxy` on an agent that doesn't implement it.
+  test("`connectOpts` of an agent that can't connect on its own only applies to the proxy", async () => {
+    const agent = (proxy: string, connectOpts?: TrustOptions) =>
+      Object.assign(new http.Agent(), { proxy, connectOpts });
     expect({
-      http: await connect("http", "wss", url => ({ agent: agent(url) })),
-      https: await connect("https", "wss", url => ({ agent: agent(url) })),
-      trusted: await connect("https", "wss", url => ({ agent: agent(url), ca: [proxyCa, targetCa] })),
+      http: await connect("http", "wss", url => ({ agent: agent(url, off) })),
+      https: await connect("https", "wss", url => ({ agent: agent(url, off) })),
+      noConnectOpts: await connect("https", "wss", url => ({ agent: agent(url), ...off })),
+      trusted: await connect("https", "wss", url => ({ agent: agent(url, { ca: proxyCa }), ca: targetCa })),
     }).toEqual({
-      http: { events: targetRejected, connects: 1 },
-      https: { events: proxyRejected, connects: 0 },
-      trusted: { events: echoed("hello"), connects: 1 },
+      http: rejectedTarget(),
+      https: rejectedTarget(),
+      noConnectOpts: rejectedProxy,
+      trusted: opened("wss"),
+    });
+  });
+
+  // The native client always checks the proxy's certificate against the hostname in the proxy URL, so the agent itself
+  // connects when it was given one of these options.
+  test("an agent with `servername` or `checkServerIdentity` connects on its own", async () => {
+    const checked: string[] = [];
+    const pinned = Object.assign(new Error("pinned"), { code: "PINNED" });
+    const withAgent = async (options: ConnectionOptions) => {
+      const agent = (url: string) => new HttpsProxyAgent(url, { ca: proxyCa, ...options });
+      const { events, transport } = await connect("https", "ws", url => ({ agent: agent(url) }));
+      return { events, transport };
+    };
+    expect({
+      servername: await withAgent({ servername: "localhost" }),
+      otherName: await withAgent({ servername: "other.example" }),
+      accepts: await withAgent({ checkServerIdentity: hostname => void checked.push(hostname) }),
+      rejects: await withAgent({ checkServerIdentity: () => pinned }),
+      checked,
+    }).toEqual({
+      servername: { events: echoed("hello"), transport: "stream" },
+      otherName: {
+        events: failed({ error: expect.any(String), code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
+        transport: null,
+      },
+      accepts: { events: echoed("hello"), transport: "stream" },
+      rejects: { events: failed({ error: "pinned", code: "PINNED" }), transport: null },
+      checked: ["127.0.0.1"],
     });
   });
 });

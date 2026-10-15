@@ -27,6 +27,19 @@ import {
 type Client = Awaited<ReturnType<typeof openClient>>;
 
 describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin, specifier }) => {
+  // The Close frame is parsed and echoed while the socket is paused. Without a resume the peer's FIN is never read, and
+  // 'close' waits for the 30 s close timer, which is longer than this test's timeout.
+  test("the peer's Close frame resumes a socket that was paused in a 'message' listener", async () => {
+    await using client = await openClient(implementation);
+    const { ws, conn, events } = client;
+    ws.on("message", () => ws.pause());
+    conn.write(Buffer.concat([encodeFrame(OP.text, "hello"), encodeFrame(OP.close, closePayload(1000))]));
+    expect(await conn.nextFrames(1)).toEqual(["close 1000"]);
+    conn.end();
+    await client.closed;
+    expect(events).toEqual([...openEvents, 'message Buffer("hello") text rs=1', "close 1000 Buffer() rs=3"]);
+  }, 15_000);
+
   const { WebSocket } = implementation;
 
   describe("close(code, reason) on an open socket", () => {

@@ -176,7 +176,12 @@ interface NativeTlsOptions {
   [option: string]: unknown;
 }
 
-type ProxyOption = string | URL | { url: string | URL; headers?: HttpHeaders | globalThis.Headers };
+interface ProxyOptions {
+  url: string | URL;
+  headers?: HttpHeaders | globalThis.Headers;
+  tls?: NativeTlsOptions;
+}
+type ProxyOption = string | URL | ProxyOptions;
 
 interface NativeClientOptions {
   __proto__: null;
@@ -1344,7 +1349,7 @@ class WebSocket extends EventEmitter {
       this[kFirstFragment] = !!fin;
       scheduleSendCallback(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
-      this[kWriteCallback] = cb;
+      this[kWriteCallback] = cb && bindAsyncContext(cb);
       try {
         clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
       } catch (err) {
@@ -1460,7 +1465,7 @@ function sendControl(
     }
   }
 
-  if (isStream) websocket[kWriteCallback] = cb;
+  if (isStream) websocket[kWriteCallback] = cb && bindAsyncContext(cb);
 
   try {
     if (opcode === 0x09) native.ping(data);
@@ -1486,10 +1491,27 @@ function nativeBufferedAmount(websocket: WebSocket): number {
   }
 }
 
+// A callback that has to wait runs from a drain or close event, which doesn't have the caller's AsyncLocalStorage
+// context. That includes `socket.write()` callbacks on the stream transport.
+function bindAsyncContext(cb: SendCallback): SendCallback {
+  const context = $getInternalField($asyncContext, 0);
+  if (context === undefined) return cb;
+
+  return err => {
+    const previous = $getInternalField($asyncContext, 0);
+    $putInternalField($asyncContext, 0, context);
+    try {
+      cb(err);
+    } finally {
+      $putInternalField($asyncContext, 0, previous);
+    }
+  };
+}
+
 // A send callback runs once its frame has been written to the kernel, like a `socket.write()` callback.
 function scheduleSendCallback(websocket: WebSocket, buffered: boolean, cb: SendCallback | undefined): void {
   if (buffered) {
-    if (cb) (websocket[kCallbacks] ??= []).push(cb);
+    if (cb) (websocket[kCallbacks] ??= []).push(bindAsyncContext(cb));
     return;
   }
 
@@ -1541,7 +1563,16 @@ function emitErrorAndClose(websocket: WebSocket, err: Error): void {
   websocket.emitClose();
 }
 
-function abortHandshake(websocket: WebSocket, req: HandshakeRequest, message: string): void {
+function emitError(websocket: WebSocket, err: Error): void {
+  websocket._errorEmitted = true;
+  websocket.emit("error", err);
+}
+
+function emitWebSocketClose(websocket: WebSocket): void {
+  websocket.emitClose();
+}
+
+function abortHandshake(websocket: WebSocket, req: HandshakeRequest, message: string, upgraded = false): void {
   websocket._readyState = CLOSING;
 
   const err = new Error(message);
@@ -1557,7 +1588,14 @@ function abortHandshake(websocket: WebSocket, req: HandshakeRequest, message: st
     socket.destroy();
   }
 
-  process.nextTick(emitErrorAndClose, websocket, err);
+  if (upgraded) {
+    // After a 101, upstream destroys the socket and forwards its 'error' and 'close' events. They're separate events,
+    // so an 'error' listener that throws doesn't skip 'close'.
+    process.nextTick(emitError, websocket, err);
+    process.nextTick(emitWebSocketClose, websocket);
+  } else {
+    process.nextTick(emitErrorAndClose, websocket, err);
+  }
 }
 
 // Upstream's `websocket._socket.destroy()`.
@@ -1666,9 +1704,17 @@ function receiverOnConclude(websocket: WebSocket, code: number, reason: Buffer):
     websocket._closeCode = code;
 
     if (websocket._readyState === OPEN) setCloseTimer(websocket);
+
+    // Only the peer's FIN can follow its Close frame, and a paused socket would never read it.
+    if (websocket._paused) process.nextTick(resumeSocket, websocket);
   }
 
   if (websocket._readyState !== CLOSED) websocket._readyState = CLOSING;
+}
+
+function resumeSocket(websocket: WebSocket): void {
+  if (websocket[kTransport] !== NATIVE_CLIENT) (websocket._socket as ServerSocket | null)?.resume();
+  websocket[kNative]?.resume();
 }
 
 //
@@ -2065,7 +2111,7 @@ function validateUpgrade(
   removeAbortListener(req);
 
   if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
-    abortHandshake(websocket, req, "Invalid Upgrade header");
+    abortHandshake(websocket, req, "Invalid Upgrade header", true);
     return false;
   }
 
@@ -2073,7 +2119,7 @@ function validateUpgrade(
     headerValue(rawHeaders, "sec-websocket-accept") !==
     Bun.SHA1.hash(req.getHeader("sec-websocket-key") + GUID, "base64")
   ) {
-    abortHandshake(websocket, req, "Invalid Sec-WebSocket-Accept header");
+    abortHandshake(websocket, req, "Invalid Sec-WebSocket-Accept header", true);
     return false;
   }
 
@@ -2091,7 +2137,7 @@ function validateUpgrade(
   }
 
   if (protError) {
-    abortHandshake(websocket, req, protError);
+    abortHandshake(websocket, req, protError, true);
     return false;
   }
 
@@ -2102,7 +2148,7 @@ function validateUpgrade(
   if (secWebSocketExtensions !== undefined) {
     if (!perMessageDeflate) {
       const message = "Server sent a Sec-WebSocket-Extensions header but no extension was requested";
-      abortHandshake(websocket, req, message);
+      abortHandshake(websocket, req, message, true);
       return false;
     }
 
@@ -2112,7 +2158,7 @@ function validateUpgrade(
       extensions = extensionParse(secWebSocketExtensions);
     } catch {
       const message = "Invalid Sec-WebSocket-Extensions header";
-      abortHandshake(websocket, req, message);
+      abortHandshake(websocket, req, message, true);
       return false;
     }
 
@@ -2120,7 +2166,7 @@ function validateUpgrade(
 
     if (extensionNames.length !== 1 || extensionNames[0] !== extensionName) {
       const message = "Server indicated an extension that was not requested";
-      abortHandshake(websocket, req, message);
+      abortHandshake(websocket, req, message, true);
       return false;
     }
 
@@ -2128,7 +2174,7 @@ function validateUpgrade(
       perMessageDeflate.accept(extensions[extensionName]);
     } catch {
       const message = "Invalid Sec-WebSocket-Extensions header";
-      abortHandshake(websocket, req, message);
+      abortHandshake(websocket, req, message, true);
       return false;
     }
 
@@ -2167,34 +2213,31 @@ function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object:
   }
 }
 
-// `options` is `agent.options`, which node:http merges over the request's options. A proxy agent's `connectOpts` isn't
-// returned because the agent only uses it to connect to the proxy, so it must not affect how the target is verified.
+// `options` is `agent.options`, which node:http merges over the request's options. `connectOpts` is what a proxy agent
+// uses to connect to the proxy, so it must not affect how the target is verified.
 function extractAgentOptions(agent: Agent): {
   options: AgentConnectOptions | undefined;
-  proxy: ProxyOption | null;
+  connectOpts: AgentConnectOptions | undefined;
+  proxy: ProxyOptions | null;
   isSecureProxy: boolean;
 } {
   let options = Object.hasOwn(agent, "options") ? agent.options : undefined;
   if (!$isObject(options)) options = undefined;
   let connectOpts = Object.hasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
-  if (!$isObject(connectOpts)) connectOpts = options;
-  let proxy: ProxyOption | null = null;
+  if (!$isObject(connectOpts)) connectOpts = undefined;
+  let proxy: ProxyOptions | null = null;
 
   // The native client only supports HTTP(S) proxies. A SOCKS agent's `proxy` isn't a URL.
+  const proxySource = connectOpts || options;
   const agentProxy =
-    (connectOpts && getIgnoringObjectPrototype(connectOpts, "proxy")) || getIgnoringObjectPrototype(agent, "proxy");
+    (proxySource && getIgnoringObjectPrototype(proxySource, "proxy")) || getIgnoringObjectPrototype(agent, "proxy");
   const proxyUrl = (agentProxy as URL)?.href || agentProxy;
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
     const headers = getIgnoringObjectPrototype(agent, "proxyHeaders");
-    if (headers) {
-      const proxyHeaders: HttpHeaders = $isCallable(headers) ? headers.$call(agent) : headers;
-      proxy = { url: proxyUrl, headers: proxyHeaders };
-    } else {
-      proxy = proxyUrl;
-    }
+    proxy = { url: proxyUrl, headers: $isCallable(headers) ? headers.$call(agent) : headers || undefined };
   }
 
-  return { options, proxy, isSecureProxy: proxy !== null && (proxyUrl as string).startsWith("https:") };
+  return { options, connectOpts, proxy, isSecureProxy: proxy !== null && (proxyUrl as string).startsWith("https:") };
 }
 
 // Whether `agent` overrides how connections are made.
@@ -2690,9 +2733,24 @@ function initAsClient(
     const agentOpts = extractAgentOptions(agent);
     agentOptions = agentOpts.options;
 
-    // A proxy agent verifies an https: proxy with its own TLS options and the target with the request's. The native
-    // client applies a single `tls` option to both connections, so let the agent connect unless `tls` was passed.
-    if (!agentOpts.isSecureProxy || $isObject(opts.tls) || !hasCustomConnect(agent)) proxy ||= agentOpts.proxy;
+    if (!proxy) {
+      proxy = agentOpts.proxy;
+
+      // A proxy agent verifies an https: proxy with its own `connectOpts` and the target with the request's options.
+      // Always set `proxy.tls`, even if empty. Without it the native client would use the target's options for the
+      // proxy too, which is what the `tls` option asks for.
+      if (agentOpts.isSecureProxy && !$isObject(opts.tls)) {
+        const connectOpts: Dictionary<unknown> = { __proto__: null as never, ...agentOpts.connectOpts };
+
+        // The native client always checks the proxy's certificate against the proxy URL's hostname, so let the agent
+        // connect if it does something else.
+        if ((connectOpts.servername != null || connectOpts.checkServerIdentity != null) && hasCustomConnect(agent)) {
+          proxy = null;
+        } else {
+          agentOpts.proxy!.tls = require("internal/tls").nodeClientTlsToNative(connectOpts) ?? {};
+        }
+      }
+    }
   }
 
   // The native client doesn't support these options, so fall back to `http.request()`. The native engine adopts the

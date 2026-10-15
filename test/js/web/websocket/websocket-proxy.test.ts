@@ -5,7 +5,9 @@ import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
+import path from "node:path";
 import tls from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import {
@@ -17,6 +19,7 @@ import {
   echoed,
   failed,
   failingSession,
+  openOrFailure,
   startEchoServer,
   startProxy,
   startRawWssServer,
@@ -934,6 +937,140 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
       requests: [connectRequest(wsPort)],
     });
     gc();
+  });
+});
+
+describe("`proxy.tls`", () => {
+  const read = (file: string) => readFileSync(path.join(import.meta.dirname, "../../node", file), "utf8");
+  // The proxy's certificate is self-signed and the target's is issued by a private CA, so trusting one doesn't trust the
+  // other.
+  const proxyCa = tlsCerts.cert;
+  const targetCa = read("http/fixtures/openssl_localhost_ca.pem");
+  const off = { rejectUnauthorized: false };
+
+  let secureTarget: Bun.Server<undefined>;
+
+  beforeAll(() => {
+    secureTarget = Bun.serve({
+      port: 0,
+      tls: { cert: read("http/fixtures/openssl_localhost.crt"), key: read("http/fixtures/openssl_localhost.key") },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("connected");
+        },
+        message(ws, message) {
+          ws.send(message);
+        },
+      },
+    });
+  });
+
+  afterAll(() => {
+    secureTarget?.stop(true);
+  });
+
+  describe.each([
+    { proxy: "http", target: "wss" },
+    { proxy: "https", target: "ws" },
+    { proxy: "https", target: "wss" },
+  ] as const)("$proxy: proxy, $target: target", ({ proxy, target }) => {
+    type Row = [options: string, proxyTls: Bun.TLSOptions | undefined, tls: Bun.TLSOptions, trusted: string[]];
+
+    test.each<Row>([
+      ["proxy.tls: {}", {}, {}, []],
+      ["proxy.tls.rejectUnauthorized: false", off, {}, ["proxy"]],
+      ["proxy.tls: {}, tls.rejectUnauthorized: false", {}, off, ["target"]],
+      ["rejectUnauthorized: false in both", off, off, ["proxy", "target"]],
+      ["proxy.tls.ca for the proxy, tls.ca for the target", { ca: proxyCa }, { ca: targetCa }, ["proxy", "target"]],
+      ["proxy.tls.ca for the target, tls.ca for the proxy", { ca: targetCa }, { ca: proxyCa }, []],
+      ["no proxy.tls, tls.rejectUnauthorized: false", undefined, off, ["proxy", "target"]],
+      ["no proxy.tls, tls.ca for both", undefined, { ca: [proxyCa, targetCa] }, ["proxy", "target"]],
+      ["no proxy.tls, tls.ca for the proxy", undefined, { ca: proxyCa }, ["proxy"]],
+    ])("%s", async (_, proxyTls, tlsOptions, trusted) => {
+      using recorded = await startRecordingProxy({ tls: proxy === "https" });
+      const port = target === "wss" ? secureTarget.port! : wsPort;
+      const url = `${target}://127.0.0.1:${port}`;
+      const ws = new WebSocket(url, {
+        proxy: { url: `${proxy}://127.0.0.1:${recorded.port}`, tls: proxyTls },
+        tls: tlsOptions,
+      });
+      // A rejected proxy never gets the CONNECT request.
+      expect({ events: await echoSession(ws, "hello"), requests: recorded.requests }).toEqual(
+        proxy === "https" && !trusted.includes("proxy")
+          ? { events: failed(url, "TLS handshake failed"), requests: [] }
+          : target === "wss" && !trusted.includes("target")
+            ? { events: failed(url, "TLS handshake failed"), requests: [connectRequest(port)] }
+            : { events: echoed("hello"), requests: [connectRequest(port)] },
+      );
+    });
+  });
+
+  test("each client certificate is only sent to the peer it was configured for", async () => {
+    const identity = (name: string) => ({
+      ca: tlsCerts.cert,
+      cert: read(`test/fixtures/keys/${name}-cert.pem`),
+      key: read(`test/fixtures/keys/${name}-key.pem`),
+    });
+    const anonymous = { ca: tlsCerts.cert };
+    const requestCertificate = { requestCert: true, rejectUnauthorized: false };
+    const nameOf = (socket: tls.TLSSocket) => String(socket.getPeerCertificate().subject?.CN ?? "nobody");
+
+    const seenByProxy: string[] = [];
+    const connectProxy = createConnectProxy();
+    const proxy = tls.createServer({ ...tlsCerts, ...requestCertificate }, socket => {
+      seenByProxy.push(nameOf(socket));
+      connectProxy.emit("connection", socket);
+    });
+    const proxyPort = await startProxy(proxy);
+    // Answers the client's first frame with the name on the client's certificate.
+    using target = await startRawWssServer(socket => {
+      const name = Buffer.from(nameOf(socket));
+      socket.write(Buffer.concat([Buffer.from([0x81, name.length]), name]));
+    }, requestCertificate);
+
+    async function seenBy(proxyTls: Bun.TLSOptions | undefined, tlsOptions: Bun.TLSOptions) {
+      const ws = new WebSocket(`wss://127.0.0.1:${target.port}`, {
+        proxy: { url: `https://127.0.0.1:${proxyPort}`, tls: proxyTls },
+        tls: tlsOptions,
+      });
+      ws.addEventListener("open", () => ws.send("who am I?"));
+      return { target: await openOrFailure(ws, "message"), proxy: seenByProxy.splice(0) };
+    }
+
+    try {
+      expect({
+        both: await seenBy(identity("agent1"), identity("agent3")),
+        proxyOnly: await seenBy(identity("agent1"), anonymous),
+        targetOnly: await seenBy(anonymous, identity("agent3")),
+        shared: await seenBy(undefined, identity("agent3")),
+      }).toEqual({
+        both: { proxy: ["agent1"], target: "agent3" },
+        proxyOnly: { proxy: ["agent1"], target: "nobody" },
+        targetOnly: { proxy: ["nobody"], target: "agent3" },
+        shared: { proxy: ["agent3"], target: "agent3" },
+      });
+    } finally {
+      proxy.close();
+    }
+  });
+
+  test.each(["http", "https"])("throws on invalid options like `tls` does, with an %s: proxy", scheme => {
+    for (const invalid of [{ ca: 123 }, { key: {} }, { rejectUnauthorized: "no" }] as unknown as Bun.TLSOptions[]) {
+      let error: unknown;
+      try {
+        new WebSocket("wss://127.0.0.1:1", { tls: invalid });
+      } catch (thrown) {
+        error = thrown;
+      }
+      expect(error).toBeInstanceOf(TypeError);
+      expect(
+        () => new WebSocket("wss://127.0.0.1:1", { proxy: { url: `${scheme}://127.0.0.1:1`, tls: invalid } }),
+      ).toThrow(error as TypeError);
+    }
   });
 });
 

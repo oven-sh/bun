@@ -5048,7 +5048,7 @@ declare module "bun" {
      * HTTP proxy to use for the WebSocket connection.
      *
      * Can be a string URL, a URL instance, or an object with `url` and
-     * optional `headers`.
+     * optional `headers` and `tls`.
      *
      * @example
      * ```ts
@@ -5086,6 +5086,27 @@ declare module "bun" {
            * Supports plain objects or Headers class instances.
            */
           headers?: import("node:http").OutgoingHttpHeaders | Headers;
+          /**
+           * TLS options for the connection to an `https://` proxy.
+           *
+           * If set, even to `{}`, the proxy uses only these options and the
+           * target uses only the top-level `tls` option. Otherwise `tls`
+           * applies to both connections.
+           *
+           * The proxy's certificate is always checked against the hostname in
+           * the proxy URL. `serverName` is ignored.
+           *
+           * @example
+           * ```ts
+           * const ws = new WebSocket("wss://example.com", {
+           *   proxy: {
+           *     url: "https://proxy.internal:8443",
+           *     tls: { ca: Bun.file("./proxy-ca.pem") }
+           *   }
+           * });
+           * ```
+           */
+          tls?: TLSOptions;
         };
   };
 

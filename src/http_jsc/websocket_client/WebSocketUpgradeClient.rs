@@ -273,6 +273,10 @@ where
         proxy_header_values: &[BunString],
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: Option<Box<SSLConfig>>,
+        // `proxy.tls`. With `has_proxy_tls`, the connection to the proxy uses only this config (`None`
+        // means the defaults) and the target uses only `ssl_config`. Otherwise both use `ssl_config`.
+        proxy_ssl_config: Option<Box<SSLConfig>>,
+        has_proxy_tls: bool,
         // Whether the target URL is wss:// (separate from ssl template parameter)
         target_is_secure: bool,
         // Target URL authorization (Basic auth from ws://user:pass@host)
@@ -415,7 +419,13 @@ where
         let mut secure: Option<OwnedSslCtx> = None;
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             'brk: {
-                if let Some(config) = &ssl_config {
+                // Through a proxy this socket's peer is the proxy.
+                let socket_config = if has_proxy_tls {
+                    &proxy_ssl_config
+                } else {
+                    &ssl_config
+                };
+                if let Some(config) = socket_config {
                     if config.requires_custom_request_ctx {
                         let mut err = uws::create_bun_socket_error_t::none;
                         // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
@@ -807,7 +817,7 @@ where
             }
             if this
                 .cpp_websocket()
-                .is_some_and(|ws| ws.reject_unauthorized())
+                .is_some_and(|ws| ws.reject_unauthorized(this.tls_peer()))
             {
                 socket.set_inline_reject();
             }
@@ -1120,7 +1130,7 @@ where
         // Get certificate verification setting
         let reject_unauthorized = this
             .cpp_websocket()
-            .is_none_or(|ws| ws.reject_unauthorized());
+            .is_none_or(|ws| ws.reject_unauthorized(TlsPeer::Target));
 
         // Create proxy tunnel with all parameters.
         // Safely unwrap proxy state - it must exist if we're called from handle_proxy_response.
@@ -1890,7 +1900,7 @@ fn identity_name<'a>(
 //     → `Option<&BunString>` (guaranteed null-pointer niche);
 //   - `const BunString*` array + `size_t` count → `&[BunString]`
 //     (count may be 0 with a dangling/null begin());
-//   - `void* sslConfig` (ownership transferred, boxed by
+//   - `void* sslConfig` / `void* proxySSLConfig` (ownership transferred, boxed by
 //     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
 //     (null-pointer niche; Box matches the transferred ownership);
 //   - `BunString* connectErrorCode` (out param: the caller passes an empty
@@ -1915,6 +1925,8 @@ pub fn bun__websockethttpclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
@@ -1936,6 +1948,8 @@ pub fn bun__websockethttpclient__connect(
         proxy_header_names,
         proxy_header_values,
         ssl_config,
+        proxy_ssl_config,
+        has_proxy_tls,
         target_is_secure,
         target_authorization,
         unix_socket_path,
@@ -1984,6 +1998,8 @@ pub fn bun__websockethttpsclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
@@ -2005,6 +2021,8 @@ pub fn bun__websockethttpsclient__connect(
         proxy_header_names,
         proxy_header_values,
         ssl_config,
+        proxy_ssl_config,
+        has_proxy_tls,
         target_is_secure,
         target_authorization,
         unix_socket_path,

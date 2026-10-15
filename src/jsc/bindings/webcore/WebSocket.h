@@ -98,14 +98,22 @@ private:
     void* m_ptr { nullptr };
 };
 
+// A parsed `tls` or `proxy.tls` option.
+struct WebSocketTLSOptions {
+    WebSocketSSLConfigPtr sslConfig;
+    std::optional<bool> rejectUnauthorized;
+};
+
 // The parsed `options` argument of `new WebSocket(url, options)`. Filled in by JSWebSocket.cpp.
 struct WebSocketOptions {
     Vector<String> protocols;
     std::optional<FetchHeaders::Init> headers;
     String proxyURL;
     std::optional<FetchHeaders::Init> proxyHeaders;
-    WebSocketSSLConfigPtr sslConfig;
-    std::optional<bool> rejectUnauthorized;
+    WebSocketTLSOptions tls;
+    // `proxy.tls`. If set, it alone applies to the connection to the proxy and `tls` alone to the target.
+    // Otherwise `tls` applies to both.
+    std::optional<WebSocketTLSOptions> proxyTLS;
     // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
     JSC::JSValue checkServerIdentity;
     // Value of the Sec-WebSocket-Extensions request header (the permessage-deflate offer). Null omits the header.
@@ -298,9 +306,9 @@ public:
         sendWebSocketString(message, Opcode::Text, Fin | CompressIfLargeEnough);
     }
 
-    bool rejectUnauthorized() const
+    bool rejectUnauthorized(bool forProxy) const
     {
-        return m_rejectUnauthorized;
+        return forProxy ? m_proxyRejectUnauthorized : m_rejectUnauthorized;
     }
 
     bool isProxyTLS() const { return m_connectionType == ConnectionType::ProxyTLS; }
@@ -412,6 +420,8 @@ private:
     // Bytes that arrived with the 101 stay buffered while paused. Parse them from a task so listeners never run inside resume() or close().
     void queueInitialDataDelivery();
     bool m_rejectUnauthorized { false };
+    // Kept after connect() because the connected client verifies an https: proxy again when it renegotiates.
+    bool m_proxyRejectUnauthorized { false };
     bool m_paused { false };
     bool m_unref { false };
     WebSocketConnectedOptions m_connectedOptions {};

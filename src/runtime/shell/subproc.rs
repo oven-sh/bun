@@ -1442,26 +1442,29 @@ impl<'a> SpawnArgs<'a> {
         out
     }
 
-    /// `object_iter` should be a some type with the following fields:
-    /// - `next() bool`
-    pub(crate) fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
+    /// Appends one `key=value` entry per pair of `env` to the child's environment.
+    pub(crate) fn fill_env<'e, const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
-        env_iter: &mut crate::shell::env_map::Iterator<'_>,
+        env: impl Iterator<Item = (&'e sh::EnvStr, &'e sh::EnvStr)>,
     ) {
         self.override_env = true;
-        // Note: `bun_collections::array_hash_map::Iter` doesn't impl
-        // `ExactSizeIterator`; use `size_hint` for the reservation.
-        self.env_array
-            .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
+        // The exported variables are a filtered view with a lower bound of 0,
+        // so reserve for the upper bound.
+        self.env_array.reserve_exact(
+            env.size_hint()
+                .1
+                .unwrap_or(0)
+                .saturating_sub(self.env_array.len()),
+        );
 
         if DISABLE_PATH_LOOKUP_FOR_ARV0 {
             // If the env object does not include a $PATH, it must disable path lookup for argv[0]
             self.path = b"";
         }
 
-        while let Some(entry) = env_iter.next() {
-            let key = entry.key_ptr.slice();
-            let value = entry.value_ptr.slice();
+        for (key, value) in env {
+            let key = key.slice();
+            let value = value.slice();
 
             // Build a NUL-terminated `key=value` string in the spawn arena.
             // Bumpalo owns the bytes; freed when the spawn arena is reset.

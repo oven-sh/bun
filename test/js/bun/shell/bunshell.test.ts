@@ -1276,6 +1276,118 @@ booga"
     });
   });
 
+  // A variable has one value and an export attribute. `export NAME` keeps the
+  // value, and a plain assignment keeps the attribute.
+  describe("export attribute", () => {
+    // Prints NAME=value for each NAME argument, as a child process sees it.
+    const childEnv = "console.log(process.argv.slice(1).map(k => k + '=' + (process.env[k] ?? '<unset>')).join(' '))";
+    const env = { ...bunEnv, OUTER: "fromenv", APPEND: "base", CLEARED: "full" };
+
+    TestBuilder.command`
+      A=1; export A
+      export OUTER
+      export KEEP=1; export KEEP
+      export NOVALUE
+      export LATER; LATER=late
+      export EMPTY=
+      X=1; Y=2; export X Y
+      echo "$A $OUTER $KEEP [$NOVALUE] $LATER [$EMPTY] $X $Y"
+      ${BUN} -e ${childEnv} A OUTER KEEP NOVALUE LATER EMPTY X Y
+    `
+      .env(env)
+      .stdout(
+        "1 fromenv 1 [] late [] 1 2\nA=1 OUTER=fromenv KEEP=1 NOVALUE=<unset> LATER=late EMPTY= X=1 Y=2\n",
+      )
+      .testMini()
+      .runAsTest("export NAME keeps the value of the name");
+
+    TestBuilder.command`
+      OUTER=changed
+      APPEND="$APPEND+more"
+      CLEARED=
+      export T=5; T=6
+      U=5; export U; U=7
+      FRESH=1
+      echo "$OUTER $APPEND [$CLEARED] $T $U $FRESH"
+      ${BUN} -e ${childEnv} OUTER APPEND CLEARED T U FRESH
+    `
+      .env(env)
+      .stdout("changed base+more [] 6 7 1\nOUTER=changed APPEND=base+more CLEARED= T=6 U=7 FRESH=<unset>\n")
+      .testMini()
+      .runAsTest("a plain assignment keeps the export attribute of the name");
+
+    TestBuilder.command`
+      FOO=a; export FOO=b; echo $FOO
+      BAR=a; export BAR=b; BAR=c; echo $BAR
+      ${BUN} -e ${childEnv} FOO BAR
+    `
+      .stdout("b\nc\nFOO=b BAR=c\n")
+      .testMini()
+      .runAsTest("export NAME=value replaces a plain assignment to the name");
+
+    TestBuilder.command`
+      OUTER=changed; FRESH=1; export PENDING
+      (${BUN} -e ${childEnv} OUTER FRESH)
+      ${BUN} -e ${childEnv} OUTER FRESH | cat
+      echo $(${BUN} -e ${childEnv} OUTER FRESH)
+      (OUTER=inner; export FRESH; export NESTED=1; PENDING=1; ${BUN} -e ${childEnv} OUTER FRESH NESTED PENDING)
+      ${BUN} -e ${childEnv} OUTER FRESH NESTED PENDING
+    `
+      .env(env)
+      .stdout(
+        [
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=inner FRESH=1 NESTED=1 PENDING=1",
+          "OUTER=changed FRESH=<unset> NESTED=<unset> PENDING=<unset>",
+          "",
+        ].join("\n"),
+      )
+      .testMini()
+      .runAsTest("a subshell, a pipeline and a command substitution copy values and attributes");
+
+    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; echo $PWD; echo $OLDPWD; pwd`
+      .stdout(out => {
+        const [pwd, oldpwd, cwd] = out.split("\n");
+        expect({ pwd, oldpwd }).toEqual({ pwd: cwd, oldpwd: cwd });
+      })
+      .testMini()
+      .runAsTest("cd sets PWD and OLDPWD over a plain assignment");
+
+    TestBuilder.command`OUTER=changed; export NOVALUE; export`
+      .env(env)
+      .stdout(out => {
+        const lines = out.split("\n").filter(line => line.startsWith("OUTER") || line.startsWith("NOVALUE"));
+        expect(lines).toEqual(["NOVALUE", "OUTER=changed"]);
+      })
+      .testMini()
+      .runAsTest("export with no operand lists the current value of each exported name");
+
+    // Only the prefix on the `export` command itself is an assignment to its operand.
+    TestBuilder.command`
+      A=3 export A; echo $A
+      B=1 export B=2 B; echo $B
+      C=4 true; export C; echo "[$C]"
+    `
+      .stdout("3\n2\n[]\n")
+      .testMini()
+      .runAsTest("NAME=value export NAME assigns the value to the name");
+
+    test.skipIf(isWindows)("a plain assignment to PATH is used by command lookup and by which", async () => {
+      using dir = tempDir("shell-path-assign", {
+        "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+      });
+      chmodSync(join(String(dir), "onlyintool"), 0o755);
+      const toolDir = String(dir);
+
+      const { stdout, stderr, exitCode } = await $`PATH=${toolDir}; onlyintool; which onlyintool`.quiet().nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(`from-onlyintool\n${toolDir}/onlyintool\n`);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("cd & pwd", () => {
     test("cd", async () => {
       const { stdout } = await $`cd ${temp_dir} && ls`;

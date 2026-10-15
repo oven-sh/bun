@@ -13,7 +13,8 @@ use super::ref_counted_str::RefCountedStr;
 
 /// Packed `u128` layout (LSB-first):
 /// - bits  0..48  : `ptr` (u48)
-/// - bits 48..64  : `tag` (u16)
+/// - bits 48..62  : `tag`
+/// - bits 62..64  : variable attributes, zero outside a `VarTable` slot
 /// - bits 64..128 : `len` (usize)
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -34,7 +35,9 @@ pub(crate) enum Tag {
 
 const PTR_MASK: u128 = (1u128 << 48) - 1;
 const TAG_SHIFT: u32 = 48;
-const TAG_MASK: u128 = 0xFFFF;
+const TAG_MASK: u128 = 0x3FFF;
+const VAR_ATTRS_SHIFT: u32 = 62;
+const VAR_ATTRS_MASK: u128 = 0b11;
 const LEN_SHIFT: u32 = 64;
 
 impl EnvStr {
@@ -68,6 +71,19 @@ impl EnvStr {
     #[inline]
     fn len(self) -> usize {
         (self.0 >> LEN_SHIFT) as u64 as usize
+    }
+
+    #[inline]
+    pub(super) fn var_attrs(self) -> u8 {
+        ((self.0 >> VAR_ATTRS_SHIFT) & VAR_ATTRS_MASK) as u8
+    }
+
+    #[inline]
+    pub(super) fn with_var_attrs(self, attrs: u8) -> EnvStr {
+        EnvStr(
+            (self.0 & !(VAR_ATTRS_MASK << VAR_ATTRS_SHIFT))
+                | ((attrs as u128 & VAR_ATTRS_MASK) << VAR_ATTRS_SHIFT),
+        )
     }
 
     #[inline]

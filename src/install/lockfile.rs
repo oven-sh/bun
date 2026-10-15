@@ -1632,7 +1632,6 @@ impl Lockfile {
             sort_buf: Default::default(),
             peer_probes: Default::default(),
             placed: Default::default(),
-            replaced_row: false,
             shipped_rows: Default::default(),
             in_shipped_folder: false,
             contested: Default::default(),

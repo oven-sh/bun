@@ -3297,7 +3297,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    Bun::moduleLoaderOfTestFile(defaultGlobalObject(global))->removeEntry(identifier); // takes the loader's cellLock itself
+    Bun::testFileModuleLoader(defaultGlobalObject(global))->removeEntry(identifier); // takes the loader's cellLock itself
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm, bool full)
@@ -3657,7 +3657,7 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* graph = Bun::moduleGraphOfTestFile(defaultGlobalObject(globalObject));
+    auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject));
     auto* promise = graph ? graph->import(defaultGlobalObject(globalObject), jsString(vm, moduleNameStr->toWTFString()), false) : JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);

@@ -481,11 +481,12 @@ function enter(name: string, environment: Environment, keep: boolean) {
   return teardown;
 }
 
-// With --isolate=modules every file has a new window and globalThis stays. Redefining several hundred accessors a few times
-// has the effect on JSC that deleting them has (see `left`). So each is defined once, and reads the window of the running file.
-let windowOfFile: Properties | undefined;
+// With --isolate=modules, every file gets a new window but globalThis is shared. Redefining several hundred accessors a few
+// times makes JSC stop caching global reads, just like deleting them (see `left`). So each accessor is defined once and
+// forwards to the current file's window.
+let currentWindowProperties: Properties | undefined;
 const forwarders = new $Map<string, PropertyDescriptor>();
-const originalsOfForwarded = new $Map<string, PropertyDescriptor | undefined>();
+const originalDescriptors = new $Map<string, PropertyDescriptor | undefined>();
 
 function forwarder(key: string) {
   let descriptor = forwarders.$get(key);
@@ -493,10 +494,10 @@ function forwarder(key: string) {
     descriptor = {
       __proto__: null,
       get() {
-        return windowOfFile?.$get(key)?.get?.$call(this);
+        return currentWindowProperties?.$get(key)?.get?.$call(this);
       },
       set(value) {
-        windowOfFile?.$get(key)?.set?.$call(this, value);
+        currentWindowProperties?.$get(key)?.set?.$call(this, value);
       },
       enumerable: false,
       configurable: true,
@@ -506,41 +507,41 @@ function forwarder(key: string) {
   return descriptor;
 }
 
-function leaveSharedGlobal() {
-  windowOfFile = undefined;
-  originalsOfForwarded.$forEach((original, key) => void putBack(key, original));
-  originalsOfForwarded.$clear();
+function uninstallFromSharedGlobal() {
+  currentWindowProperties = undefined;
+  originalDescriptors.$forEach((original, key) => void putBack(key, original));
+  originalDescriptors.$clear();
 }
 
-function enterSharedGlobal(environment: Environment) {
+function installOnSharedGlobal(environment: Environment) {
   const { properties, keys } = environment;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    const ofWindow = properties.$get(key);
-    if (!ofWindow) continue;
-    const descriptor = ofWindow.get ? forwarder(key) : ofWindow;
+    const windowDescriptor = properties.$get(key);
+    if (!windowDescriptor) continue;
+    const descriptor = windowDescriptor.get ? forwarder(key) : windowDescriptor;
     const current = ownProperty(key);
     if (current?.configurable === false) continue;
     if (current && current.get === descriptor.get && current.value === descriptor.value) continue;
-    if (!originalsOfForwarded.$has(key)) originalsOfForwarded.$set(key, current);
+    if (!originalDescriptors.$has(key)) originalDescriptors.$set(key, current);
     $Object.$defineProperty(globalThis, key, descriptor);
   }
-  // A name only the last window had.
-  originalsOfForwarded.$forEach((original, key) => {
+  // Remove names that only the previous window had.
+  originalDescriptors.$forEach((original, key) => {
     if (properties.$has(key)) return;
     putBack(key, original);
-    originalsOfForwarded.$delete(key);
+    originalDescriptors.$delete(key);
   });
-  windowOfFile = properties;
+  currentWindowProperties = properties;
 }
 
-function setupInSharedGlobal(
+function setupSharedGlobal(
   name: "node" | "jsdom" | "happy-dom",
   optionsText: string | undefined,
   file: string,
   isFromComment: boolean,
 ) {
-  if (name === "node") return leaveSharedGlobal();
+  if (name === "node") return uninstallFromSharedGlobal();
   let result;
   try {
     result = open(name, optionsText, file, false, () => {}, true);
@@ -549,7 +550,7 @@ function setupInSharedGlobal(
     result = String((error as Error)?.message ?? error);
   }
   if (typeof result === "string") {
-    leaveSharedGlobal();
+    uninstallFromSharedGlobal();
     const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;
     if (isFromComment) return message;
     const error = new Error(message);
@@ -557,7 +558,7 @@ function setupInSharedGlobal(
     throw error;
   }
   const environment = result;
-  enterSharedGlobal(environment);
+  installOnSharedGlobal(environment);
   return function teardown(isLoadingFileAgain: boolean) {
     if (!isLoadingFileAgain) return environment.close();
     environment.forgetLastFile?.();
@@ -575,7 +576,7 @@ function setup(
   isFromComment: boolean,
   sharesGlobal: boolean,
 ) {
-  if (sharesGlobal) return setupInSharedGlobal(name, optionsText, file, isFromComment);
+  if (sharesGlobal) return setupSharedGlobal(name, optionsText, file, isFromComment);
   let last = left;
   left = undefined;
   function leaveLast() {
@@ -615,6 +616,6 @@ function setup(
 
 setup.find = find;
 // For internal/test/globals.ts.
-setup.isNameLeftOnGlobalThis = (key: PropertyKey) => originalsOfForwarded.$has(key as string);
+setup.isEnvironmentGlobal = (key: PropertyKey) => originalDescriptors.$has(key as string);
 
 export default setup;

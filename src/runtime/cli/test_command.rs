@@ -186,7 +186,7 @@ pub(crate) struct TestCaseReport<'a> {
     pub elapsed_ns: u64,
     pub line_number: u32,
     pub failure: Option<TestFailure>,
-    /// Of the attempts before the last one (`retry`), oldest first.
+    /// Failures from earlier attempts of a retried test, oldest first.
     pub earlier_failures: Vec<TestFailure>,
 }
 
@@ -689,7 +689,7 @@ impl JunitReporter {
         self.write_test_case(t, t.name, &class_name)
     }
 
-    /// `<failure>`, or Surefire's `<flakyFailure>` and `<rerunFailure>` for a test that was retried.
+    /// Writes `<failure>`, or Surefire's `<flakyFailure>` / `<rerunFailure>` for a retried test.
     fn write_failure(
         &mut self,
         indent: &[u8],
@@ -1017,7 +1017,7 @@ pub(crate) struct CommandLineReporter {
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
     pub(crate) test_failure: Option<TestFailure>,
-    /// `test_failure` of the attempts that were retried.
+    /// Failures from earlier attempts of the test that's being retried.
     pub(crate) earlier_test_failures: Vec<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,

@@ -398,9 +398,9 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
-    /// `--isolate=modules`: every file runs in the one global object, in a `Bun.ModuleGraph` of its own.
+    /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub shares_global: bool,
-    /// The context of the running file's graph, which its callbacks are called in.
+    /// The context of the running file's graph. Its callbacks run in this context.
     pub file_context: crate::ContextId,
 }
 
@@ -6010,7 +6010,7 @@ impl VirtualMachine {
     /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
-        // Then it's the file's graph that goes, with its context. What belongs to the global object stays.
+        // Only the file's graph and its context are torn down. The global object is kept.
         let shares_global = self.test_isolation_state.shares_global;
 
         // The finished file's workers, ports, channels and sockets are stopped
@@ -6132,13 +6132,13 @@ impl VirtualMachine {
         self.undo_synthetic_allocation_limit();
     }
 
-    /// `--isolate=modules`: what is loaded from now on is the test file's that is about to run.
+    /// `--isolate=modules`: creates the graph for the test file that's about to run.
     pub fn enter_module_graph_for_test_isolation(&mut self) {
         let state = &self.test_isolation_state;
         if state.shares_global && state.file_context == crate::ContextId::NONE {
-            // The first call remembers the globals, each later one undoes what the last file did to them.
+            // The first call snapshots the globals. Later calls restore them.
             let global = self.global();
-            if let Ok(undo) = crate::cpp::Bun__TestGlobals__undoChangesFunction(global) {
+            if let Ok(undo) = crate::cpp::Bun__TestGlobals__getRestoreFunction(global) {
                 let _ = undo.call(global, JSValue::UNDEFINED, &[]);
             }
             global.clear_exception();

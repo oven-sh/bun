@@ -581,7 +581,7 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
 
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, );
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
     auto* entry = loader->registryEntry(specifierIdent);
     if (!entry)
         return;
@@ -619,7 +619,7 @@ static void findLoadedCommonJSModule(Zig::GlobalObject* globalObject, JSC::JSStr
     loaded.commonJSModule = nullptr;
     loaded.staleCommonJSEntry = false;
 
-    JSValue entryValue = JSValue::decode(JSC__JSMap__get(Bun::requireMapOfTestFile(globalObject), globalObject, JSValue::encode(specifierString)));
+    JSValue entryValue = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(specifierString)));
     RETURN_IF_EXCEPTION(scope, );
     if (entryValue && !entryValue.isUndefined()) {
         loaded.commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
@@ -706,7 +706,7 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
 {
-    return Bun::moduleLoaderOfTestFile(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), key), nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate, JSC::ModuleLoadFlag::Dynamic });
+    return Bun::testFileModuleLoader(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), key), nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate, JSC::ModuleLoadFlag::Dynamic });
 }
 
 static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const String& from, const String& specifier)
@@ -714,7 +714,7 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     globalObject->onLoadPlugins.isResolvingImportCall = true;
-    JSC::JSPromise* promise = Bun::moduleLoaderOfTestFile(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, from), nullptr, nullptr);
+    JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, from), nullptr, nullptr);
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     return promise;
@@ -753,7 +753,7 @@ static JSValue requireModuleKey(Zig::GlobalObject* globalObject, const String& f
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, from);
+    JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, from, Bun::testFileModuleGraph(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     MarkedArgumentBuffer arguments;
     arguments.append(jsString(vm, key));
@@ -765,7 +765,7 @@ static Bun::JSCommonJSModule* loadedCommonJSModule(Zig::GlobalObject* globalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue entry = JSValue::decode(JSC__JSMap__get(Bun::requireMapOfTestFile(globalObject), globalObject, JSValue::encode(jsString(vm, key))));
+    JSValue entry = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(jsString(vm, key))));
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entry);
     if (!commonJSModule)
@@ -1421,7 +1421,7 @@ static void followImports(Zig::GlobalObject* globalObject, JSC::JSArray* fetches
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
     Vector<JSC::ModuleRegistryEntry*> work { start };
     Vector<UniquedStringImpl*> imports;
     while (!work.isEmpty()) {
@@ -1451,7 +1451,7 @@ static void followImporters(Zig::GlobalObject* globalObject, JSC::JSArray* fetch
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
 
     UncheckedKeyHashMap<UniquedStringImpl*, Vector<JSC::ModuleRegistryEntry*>> importersOf;
     Vector<UniquedStringImpl*> imports;
@@ -1487,7 +1487,7 @@ static void followImporters(Zig::GlobalObject* globalObject, JSC::JSArray* fetch
 static bool isFetchingAnythingElse(Zig::GlobalObject* globalObject, JSC::JSArray* fetches)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    for (auto& entry : Bun::moduleLoaderOfTestFile(globalObject)->moduleMap().values()) {
+    for (auto& entry : Bun::testFileModuleLoader(globalObject)->moduleMap().values()) {
         if (!isBeingFetchedWithoutFactory(globalObject, entry.get()))
             continue;
         bool isNew = !fetches || comesBy(globalObject, fetches, entry.get(), false);
@@ -1732,7 +1732,7 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModul
 
     if (auto* moduleObject = loaded.commonJSModule) {
         // A getter above may have evicted it, and a patch on an evicted module could never be undone.
-        JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::requireMapOfTestFile(globalObject), globalObject, JSValue::encode(mock->specifier.get())));
+        JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(mock->specifier.get())));
         RETURN_IF_EXCEPTION(scope, );
         if (cached != moduleObject)
             return;
@@ -1761,7 +1761,7 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
     auto* imported = importedValue ? dynamicDowncast<Bun::JSCommonJSModule>(importedValue) : nullptr;
     if (!imported || !importer->filename().isString() || !imported->filename().isString())
         return;
-    JSValue registered = JSValue::decode(JSC__JSMap__get(Bun::requireMapOfTestFile(globalObject), globalObject, JSValue::encode(imported->filename())));
+    JSValue registered = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(imported->filename())));
     RETURN_IF_EXCEPTION(scope, );
     if (registered != imported)
         return;
@@ -1817,7 +1817,7 @@ static void giveLoadedModuleBackToPreloadModuleMock(Zig::GlobalObject* globalObj
     auto& plugins = globalObject->onLoadPlugins;
     if (plugins.displacedPreloadModuleMocks.isEmpty() || plugins.testFileOfModule.get(key))
         return;
-    auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
     auto* record = entry ? entry->record() : nullptr;
     if (!record || !record->hasLiveExports())
         return;
@@ -1834,8 +1834,8 @@ static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
-    JSC::JSMap* requireMap = Bun::requireMapOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
 
     auto fromKey = JSC::Identifier::fromString(vm, from);
     auto* entry = loader->getRegisteredMayBeNull(fromKey, JSC::ScriptFetchParameters::Type::JavaScript);
@@ -1881,8 +1881,8 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
-    JSC::JSMap* requireMap = Bun::requireMapOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
 
     auto& waitedFor = plugins.modulesToEvictOnceLoaded;
     for (auto& key : waitedFor)
@@ -2885,8 +2885,8 @@ static void giveBackPreloadModules(Zig::GlobalObject* globalObject)
         return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
-    JSC::JSMap* requireMap = Bun::requireMapOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
 
     Vector<String> keys;
     for (auto& key : plugins.evictedPreloadModules.keys())
@@ -3006,7 +3006,7 @@ static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::Ab
 
     evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() });
     RETURN_IF_EXCEPTION(scope, );
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
     if (!loader->registryEntry(key))
         RELEASE_AND_RETURN(scope, loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, Zig::createObjectModuleSourceCode(vm, exports, key.string())));
 }
@@ -3022,7 +3022,7 @@ extern "C" void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject,
         (void)scope.tryClearException();
     if (!std::exchange(globalObject->onLoadPlugins.hasTestFileMockedModules, false))
         return;
-    auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(vm, path->toWTFString()));
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, path->toWTFString()));
     auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
     if (!record || record->status() != JSC::CyclicModuleRecord::Status::Evaluated || record->evaluationError())
         return;
@@ -3048,7 +3048,7 @@ static bool isModuleMockEvaluatorKey(const String& key)
 // Evicted so that the next import of it, or of an importer that failed with it, calls the factory again.
 static void forgetModuleThatFailedToEvaluate(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record)
 {
-    auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(record->moduleKey());
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(record->moduleKey());
     if (!entry || entry->record() != record)
         return;
     evictModulesAndTheirImporters(globalObject, Vector<String> { record->moduleKey().string() });
@@ -3178,7 +3178,7 @@ static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoa
         return true;
 
     auto& vm = JSC::getVM(globalObject);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
     auto recordOf = [&](const String& key) -> JSC::AbstractModuleRecord* {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
         return entry ? entry->record() : nullptr;
@@ -3567,8 +3567,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         // require() of a loaded ES module and import() of a loaded CommonJS one get here too, but load nothing and keep the owner.
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(vm, specifier->toWTFString()));
-        JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::requireMapOfTestFile(globalObject), globalObject, JSValue::encode(jsString(vm, specifier->toWTFString()))));
+        auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, specifier->toWTFString()));
+        JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(jsString(vm, specifier->toWTFString()))));
         scope.assertNoExceptionExceptTermination();
         auto* commonJSModule = cached ? dynamicDowncast<Bun::JSCommonJSModule>(cached) : nullptr;
         if ((!entry || !entry->record()) && !(commonJSModule && commonJSModule->hasEvaluated))
@@ -3580,7 +3580,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         auto* moduleMock = dynamicDowncast<Zig::JSModuleMock>(beingLoaded.get(specifierString).get());
         if (moduleMock && moduleMock->state != Zig::JSModuleMock::State::NotCalled) {
             // Only for the load it was kept for, which has a registry entry without a record. A load that starts now gets the current mock.
-            auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), specifierString));
+            auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), specifierString));
             if (entry && !entry->record()) {
                 wasModuleMock = true;
                 return moduleMock;
@@ -3716,7 +3716,7 @@ void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
 
 void evictModuleThatNothingFetches(Zig::GlobalObject* globalObject, const JSC::Identifier& key)
 {
-    auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(key);
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(key);
     if (entry && Zig::isNeverFetched(entry)) [[unlikely]]
         Zig::evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() });
 }
@@ -3831,7 +3831,7 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const Str
         String mocked = mock->specifier->tryGetValue().data;
         if (Zig::isStillRegisteredModuleMock(globalObject, mocked, mock)) [[likely]]
             continue;
-        auto* entry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
+        auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
         Vector<String> unfinished;
         if (entry && !entry->record() && (mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished)))
             replaced.append(mock);
@@ -3840,7 +3840,7 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const Str
         mock->giveUp(globalObject);
 
     // A module that is still loading can't be running import(), so `importer` is exactly that module and not a factory's copy of it.
-    auto* importerEntry = Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));
+    auto* importerEntry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));
     auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
     bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
 
@@ -3856,7 +3856,7 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const Str
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;
             // An evaluated module is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.
-            if (auto* entry = isESM ? Bun::moduleLoaderOfTestFile(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked)) : nullptr; entry && entry->record()) {
+            if (auto* entry = isESM ? Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked)) : nullptr; entry && entry->record()) {
                 auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
                 if (!cyclic || cyclic->isSCCEvaluated())
                     continue;

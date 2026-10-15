@@ -10,6 +10,7 @@
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include "ScriptExecutionContext.h"
+#include <wtf/Deque.h>
 
 namespace Zig {
 class GlobalObject;
@@ -18,6 +19,7 @@ class GlobalObject;
 namespace JSC {
 class JSLexicalEnvironment;
 class JSPromise;
+class ModuleProgramExecutable;
 class ThrowScope;
 }
 
@@ -64,6 +66,8 @@ public:
 
     // The linked wrapper function of a CommonJS module this graph evaluated (ModuleGraphState::commonJSWrappers).
     void keepCommonJSWrapper(JSC::VM&, JSC::CodeBlock*);
+    // Keeps an ES module's executable alive, along with the key JSC looks it up by. A finished record doesn't hold it.
+    void keepModuleExecutable(JSC::VM&, JSC::ModuleProgramExecutable*, WTF::UniquedStringImpl* key);
 
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true);
     void dispose(Zig::GlobalObject*);
@@ -80,6 +84,7 @@ private:
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
     WTF::UncheckedKeyHashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
+    WTF::Vector<std::pair<JSC::ModuleProgramExecutable*, RefPtr<WTF::UniquedStringImpl>>> m_moduleExecutables; // cellLock()
     unsigned m_overlayShape { 0 };
 };
 
@@ -113,11 +118,9 @@ public:
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;
     // bun test --isolate=modules: the graph of the running test file.
     JSC::Strong<JSModuleGraph> testFile;
-    // The compiled code of the modules the finished files loaded, which otherwise goes with the last graph that ran it:
-    // module executables with the symbol tables and module keys JSC finds them by, and CommonJS wrappers. Never seen by script.
-    JSC::Strong<JSC::JSArray> testFileCode;
-    WTF::UncheckedKeyHashSet<JSC::JSCell*> testFileCodeCells;
-    WTF::Vector<RefPtr<WTF::UniquedStringImpl>> testFileModuleKeys;
+    // Disposed graphs of the most recent files, kept only for their compiled code, which would otherwise be collected
+    // with the last graph that ran it. Code that files keep loading stays alive. Code only one file used ages out.
+    WTF::Deque<JSC::Strong<JSModuleGraph>, 8> finishedTestFiles;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -130,8 +133,8 @@ JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 // The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
-// The graph of the module whose code made `function`; null for the host's.
-JSModuleGraph* moduleGraphOfFunction(JSC::JSObject* function);
+// The graph of the module that `function` was defined in, or null if it isn't in a graph.
+JSModuleGraph* moduleGraphForFunction(JSC::JSObject* function);
 // The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
 JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
 
@@ -147,10 +150,10 @@ JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSMo
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 
 // ── bun test --isolate=modules ───────────────────────────────────────────────────────
-// What the runner loads a test file with, and what module mocks look in: those of the file's graph, or the global object's.
-JSModuleGraph* moduleGraphOfTestFile(Zig::GlobalObject*);
-JSC::JSModuleLoader* moduleLoaderOfTestFile(Zig::GlobalObject*);
-JSC::JSMap* requireMapOfTestFile(Zig::GlobalObject*);
+// What the runner and module mocks use to load modules: the running test file's graph if there is one, otherwise the global object.
+JSModuleGraph* testFileModuleGraph(Zig::GlobalObject*);
+JSC::JSModuleLoader* testFileModuleLoader(Zig::GlobalObject*);
+JSC::JSMap* testFileRequireMap(Zig::GlobalObject*);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

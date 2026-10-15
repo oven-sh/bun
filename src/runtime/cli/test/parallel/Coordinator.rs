@@ -807,8 +807,8 @@ impl<'a> Coordinator<'a> {
         self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
     }
 
-    /// `abort_on_worker_panic` for a worker that was waiting for a file, or exiting
-    /// after `.shutdown`. Every file may have passed by now, so the crash counts as an error of its own.
+    /// Like `abort_on_worker_panic`, for a worker that was idle or exiting after `.shutdown`.
+    /// Every file may already have passed, so the crash is counted as its own error.
     fn abort_on_idle_worker_panic(&mut self, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];

@@ -1515,6 +1515,11 @@ describe.concurrent("bun test --isolate=modules", () => {
       "c.test.js": hot("c"),
     };
     expect(await passes(files, 3)).toContain("a false false\nc true true\n");
+    // But not forever, or every test file's own code would pile up.
+    const { "c.test.js": last, ...many }: Record<string, string> = files;
+    for (let i = 0; i < 10; i++) many[`b${i}.test.js`] = files["b.test.js"];
+    many["c.test.js"] = last;
+    expect(await passes(many, 13)).toContain("a false false\nc false false\n");
     using dir = tempDir("isolate-global-code", files);
     const { stdout } = await runTests(String(dir), ["--isolate"], ["./a.test.js", "./b.test.js", "./c.test.js"]);
     expect(stdout).toContain("a false false\nc false false\n");

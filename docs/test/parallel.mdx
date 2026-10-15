@@ -92,7 +92,7 @@ Without `--isolate` (the default), all files share one global and one module reg
 bun test --isolate=modules
 ```
 
-Keeps one global object for the whole run and gives each file its own copy of every module. JIT-compiled code belongs to a global object, so with `--isolate` every file starts in the interpreter again. With `--isolate=modules`, a file runs the code that was compiled for the files before it.
+Keeps one global object for the whole run and gives each file its own copy of every module. JIT-compiled code belongs to a global object, so with `--isolate` every file starts over in the interpreter. With `--isolate=modules`, a file reuses the code that was compiled for earlier files.
 
 |                                                                      | `--isolate`  | `--isolate=modules` |
 | -------------------------------------------------------------------- | ------------ | ------------------- |
@@ -106,7 +106,7 @@ Keeps one global object for the whole run and gives each file its own copy of ev
 
 Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
-What is undone between files is a change to a property of `globalThis`, of an object that is a property of `globalThis`, or of a function or prototype reachable from those. A change to the exports of a built-in module (`fs.readFileSync = ...`) stays for the next file, and so does state inside a built-in object.
+Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
 
 ## Concurrent tests within a file
 

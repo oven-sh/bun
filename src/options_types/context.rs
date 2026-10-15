@@ -453,7 +453,7 @@ pub struct TestOptions {
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
-    /// `--isolate=modules`: one global object for every file, and a fresh `Bun.ModuleGraph` for each.
+    /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub isolate_modules: bool,
     /// `bun test --parallel[=N]`: run test files across N worker
     /// processes. 0 means not requested. Implies `isolate` in workers.

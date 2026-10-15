@@ -179,9 +179,9 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
         // file. doWork re-queues a Suspended realm's task; no Bun realm reports that.
         auto status = globalObject->globalObjectMethodTable()->scriptExecutionStatus(globalObject, job->ticket->scriptExecutionOwner());
         ASSERT(status != ScriptExecutionStatus::Suspended);
-        // The collector asks for this work, so `graphContext` is nobody's.
+        // The GC schedules this work, so `graphContext` isn't set. Use the callback's graph instead.
         if (auto* registry = dynamicDowncast<JSFinalizationRegistry>(job->ticket->target())) {
-            if (auto* graph = Bun::moduleGraphOfFunction(registry->callback()); graph && graph->disposed())
+            if (auto* graph = Bun::moduleGraphForFunction(registry->callback()); graph && graph->disposed())
                 status = ScriptExecutionStatus::Stopped;
         }
         if (status == ScriptExecutionStatus::Running) {

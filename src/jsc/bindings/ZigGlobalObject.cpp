@@ -820,7 +820,7 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
 
     Vector<JSC::Identifier> unfinished;
     Vector<std::pair<int64_t, String>> awaiting;
@@ -4906,7 +4906,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     }
 }
 
-// `bun test --isolate=modules`: the global object stays, and the realms the finished file derived from it go.
+// `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
 extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::GlobalObject* globalObject)
 {
     Bun::retireWebViewsForTestIsolation(globalObject);

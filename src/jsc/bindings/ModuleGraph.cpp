@@ -58,7 +58,7 @@ static JSModuleGraph* moduleGraphOfOverlay(VM& vm, JSScope* scope)
     return entry.isNull() ? nullptr : dynamicDowncast<JSModuleGraph>(environment->variableAt(entry.scopeOffset()).get());
 }
 
-JSModuleGraph* moduleGraphOfFunction(JSObject* function)
+JSModuleGraph* moduleGraphForFunction(JSObject* function)
 {
     auto* jsFunction = dynamicDowncast<JSFunction>(function);
     if (!jsFunction || jsFunction->isHostFunction())
@@ -593,6 +593,8 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     for (auto* wrapper : thisObject->m_commonJSWrappers)
         visitor.appendUnbarriered(wrapper);
+    for (auto& [executable, key] : thisObject->m_moduleExecutables)
+        visitor.appendUnbarriered(executable);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
 
@@ -604,6 +606,15 @@ void JSModuleGraph::keepCommonJSWrapper(VM& vm, CodeBlock* wrapper)
             return;
     }
     vm.writeBarrier(this, wrapper);
+}
+
+void JSModuleGraph::keepModuleExecutable(VM& vm, ModuleProgramExecutable* executable, UniquedStringImpl* key)
+{
+    {
+        Locker locker { cellLock() };
+        m_moduleExecutables.append({ executable, key });
+    }
+    vm.writeBarrier(this, executable);
 }
 
 // Like dynamic import(), every failure past the receiver check is a rejection of the
@@ -680,23 +691,23 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext& context)
 
 // ─── bun test --isolate=modules ───────────────────────────────────────────────
 
-JSModuleGraph* moduleGraphOfTestFile(Zig::GlobalObject* globalObject)
+JSModuleGraph* testFileModuleGraph(Zig::GlobalObject* globalObject)
 {
     return globalObject->hasModuleGraphs() ? globalObject->m_moduleGraphs->testFile.get() : nullptr;
 }
 
-JSModuleLoader* moduleLoaderOfTestFile(Zig::GlobalObject* globalObject)
+JSModuleLoader* testFileModuleLoader(Zig::GlobalObject* globalObject)
 {
-    auto* graph = moduleGraphOfTestFile(globalObject);
+    auto* graph = testFileModuleGraph(globalObject);
     return graph ? graph->loader() : globalObject->moduleLoader();
 }
 
-JSMap* requireMapOfTestFile(Zig::GlobalObject* globalObject)
+JSMap* testFileRequireMap(Zig::GlobalObject* globalObject)
 {
-    return requireMapOf(globalObject, moduleGraphOfTestFile(globalObject));
+    return requireMapOf(globalObject, testFileModuleGraph(globalObject));
 }
 
-// Returns the identifier of the context that the file's callbacks are to be called in.
+// Returns the ID of the context to run the file's callbacks in.
 extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -706,7 +717,7 @@ extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObj
     scope.assertNoException();
     auto* graph = JSModuleGraph::create(vm, globalObject, globalObject->JSModuleGraphStructure(), loader, overlayShape, nullptr, nullptr);
     moduleGraphState(globalObject).testFile.set(vm, graph);
-    // argv[1] is the test file.
+    // argv[1] is the test file's path.
     globalObject->processObject()->clearCachedArgv();
     return graph->context().identifier();
 }
@@ -720,40 +731,30 @@ extern "C" void Bun__TestFile__leaveModuleGraph(Zig::GlobalObject* globalObject)
     if (!finished)
         return;
 
-    if (!state.testFileCode)
-        state.testFileCode.set(vm, constructEmptyArray(globalObject, nullptr));
-    auto keep = [&](JSCell* cell) {
-        if (!cell || !state.testFileCodeCells.add(cell).isNewEntry)
-            return false;
-        state.testFileCode->push(globalObject, cell);
-        return true;
-    };
     {
         DeferGC deferGC(vm);
-        // JSModuleRecord::getOrMakeExecutable()'s key.
+        // Same key as JSModuleRecord::getOrMakeExecutable().
         SymbolTable* moduleScope = finished->overlay()->symbolTable();
-        keep(moduleScope);
         for (auto& entry : finished->loader()->moduleMap().values()) {
             UniquedStringImpl* key = entry->key().impl();
             ModuleProgramExecutable* executable = globalObject->moduleProgramExecutables().get({ key, moduleScope });
-            if (!keep(executable))
+            if (!executable)
                 continue;
-            state.testFileModuleKeys.append(key);
-            // What the records of later files are compared with before they take the executable. JSC asks the record
-            // that linked it when there is a second record, and this one is gone by then.
+            finished->keepModuleExecutable(vm, executable, key);
+            // Later files compare their imports against these before reusing the executable. JSC normally asks the
+            // record that linked it, but that record will be gone by then.
             if (JSModuleRecord* linker = executable->linkerImportedBindings() ? nullptr : executable->linker()) {
                 executable->setLinkerImportedBindings(linker->importedBindings(globalObject));
                 (void)scope.tryClearException();
             }
         }
-        state.commonJSWrappers.forEach([&](CodeBlock* wrapper) {
-            keep(wrapper);
-            return IterationStatus::Continue;
-        });
     }
-    (void)scope.tryClearException();
+    constexpr size_t maxFinishedTestFiles = 8;
+    if (state.finishedTestFiles.size() == maxFinishedTestFiles)
+        state.finishedTestFiles.removeFirst();
+    state.finishedTestFiles.append(Strong<JSModuleGraph>(vm, finished));
 
-    // As in Zig__GlobalObject__createForTestIsolation().
+    // Same as Zig__GlobalObject__createForTestIsolation().
     size_t loadedModules = finished->loader()->moduleMap().size() + finished->requireMap()->size();
     if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > vm.codeCache()->workingSetMaxEntries())
         vm.codeCache()->setWorkingSetMaxEntries(entries);
@@ -761,10 +762,10 @@ extern "C" void Bun__TestFile__leaveModuleGraph(Zig::GlobalObject* globalObject)
     state.testFile.clear();
     finished->dispose(globalObject);
     (void)scope.tryClearException();
-    // The preloads run again for the next file, and register their plugins and mocks again.
+    // Preloads run again for the next file and re-register their plugins and mocks.
     globalObject->onLoadPlugins.clear();
     globalObject->onResolvePlugins.clear();
-    // The runner puts the working directory back.
+    // The runner restores the working directory.
     globalObject->processObject()->clearCachedCwd();
 }
 

@@ -1,7 +1,7 @@
 use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-// Export functions for C++. Both return whether that changed anything.
+// Export functions for C++. Both return whether the state changed.
 #[unsafe(no_mangle)]
 extern "C" fn Timer_enableEventLoopDelayMonitoring(
     vm: *mut VirtualMachine,

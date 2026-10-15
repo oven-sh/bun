@@ -1019,10 +1019,10 @@ extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (auto* graph = Bun::moduleGraphOfTestFile(defaultGlobalObject(globalObject))) {
+    if (auto* graph = Bun::testFileModuleGraph(defaultGlobalObject(globalObject))) {
         auto* promise = graph->import(defaultGlobalObject(globalObject), jsString(vm, specifier->toWTFString()));
         EXCEPTION_ASSERT(!!promise == !scope.exception());
-        // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+        // The caller reports a failed load, so keep the rejection tracker from reporting it too.
         if (promise)
             promise->markAsHandled();
         return promise;

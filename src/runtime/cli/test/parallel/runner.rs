@@ -731,7 +731,7 @@ pub(crate) fn run_as_worker(
     };
     vm_ref.run_with_api_lock(|| wloop.begin());
 
-    // Test hook, as BUN_TEST_WORKER_EXIT_BEFORE_READY: a crash on the way out isn't reproducible from a test.
+    // Test hook, like BUN_TEST_WORKER_EXIT_BEFORE_READY. A test can't otherwise reproduce a crash during exit.
     if cfg!(any(debug_assertions, bun_asan))
         && vm_ref
             .env_loader()
@@ -857,7 +857,7 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
         wf.str(name);
         wf.u32(line);
     }
-    // The last attempt's, if it failed, after the earlier ones'.
+    // Earlier attempts' failures first, then the last attempt's if it failed.
     wf.u32(u32::from(t.failure.is_some()));
     wf.u32(u32::try_from(t.earlier_failures.len()).expect("int cast"));
     for f in t.earlier_failures.iter().chain(&t.failure) {

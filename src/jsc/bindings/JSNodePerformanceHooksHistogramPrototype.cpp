@@ -424,7 +424,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
 }
 
 // Extern declarations for the native timer implementation
-// Whether that changed anything.
+// Both return whether the state changed.
 extern "C" bool Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
 extern "C" bool Timer_disableEventLoopDelayMonitoring();
 

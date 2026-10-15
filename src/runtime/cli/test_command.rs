@@ -3056,13 +3056,13 @@ impl TestCommand {
                 vm.event_loop_ref().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest_strong.phase != bun_test::Phase::Done {
-                    if buntest_strong.wants_wakeup {
+                while buntest_strong.get().phase != bun_test::Phase::Done {
+                    if buntest_strong.get().wants_wakeup {
                         buntest_strong.get().wants_wakeup = false;
                         vm.wakeup();
                     }
                     vm.event_loop_ref().auto_tick();
-                    if buntest_strong.phase == bun_test::Phase::Done {
+                    if buntest_strong.get().phase == bun_test::Phase::Done {
                         break;
                     }
                     vm.event_loop_ref().tick();

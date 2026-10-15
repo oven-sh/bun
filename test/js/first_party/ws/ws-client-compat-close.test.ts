@@ -19,7 +19,6 @@ import {
   recordEvents,
   runScript,
   scriptTimeout,
-  show,
   showFrame,
   tryCall,
   validCloseCalls,

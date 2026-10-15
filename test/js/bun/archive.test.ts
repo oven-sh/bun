@@ -1174,18 +1174,18 @@ describe("Bun.Archive", () => {
           "extract.ts": `
             import { closeSync, existsSync, lstatSync, openSync } from "node:fs";
             const bytes = await Bun.file("ro.tar").bytes();
+            // Takes every descriptor, and then gives one back for each extraction.
+            const held: number[] = [];
+            try {
+              for (;;) held.push(openSync("/dev/null", "r"));
+            } catch {}
             const seen: string[] = [];
-            for (let free = 0; free < 40; free++) {
-              const held: number[] = [];
-              try {
-                for (;;) held.push(openSync("/dev/null", "r"));
-              } catch {}
-              for (let i = 0; i < free; i++) closeSync(held.pop()!);
+            for (let free = 0; free < 40 && held.length > 0; free++) {
               const out = "out" + free;
               const count = await new Bun.Archive(bytes).extract(out).catch(() => "rejected");
-              held.forEach(fd => closeSync(fd));
               const ro = out + "/${parents}ro";
               seen.push(count === 2 && existsSync(ro + "/f.txt") ? (lstatSync(ro).mode & 0o777).toString(8) : String(count));
+              closeSync(held.pop()!);
             }
             // With too few descriptors the extraction rejects. From the first one that works, all do.
             console.log(JSON.stringify([...new Set(seen.slice(seen.findIndex(result => result !== "rejected")))]));

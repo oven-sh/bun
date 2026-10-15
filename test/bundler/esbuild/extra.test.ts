@@ -1636,6 +1636,56 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // A sloppy block can declare a function name twice. The last declaration is
+  // the value of the name.
+  itBundled(`extra/FunctionHoistingDeclaredTwice1`, {
+    files: {
+      "in.js": `
+      if (1) {
+        function f() { return 1 }
+        function f() { return 2 }
+      }
+      if (typeof f !== 'function' || f() !== 2) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  itBundled(`extra/FunctionHoistingDeclaredTwice2`, {
+    files: {
+      "in.js": `
+      x: {
+        function f() { return 1 }
+        break x
+        function f() { return 2 }
+      }
+      if (typeof f !== 'function' || f() !== 2) throw 'fail'
+    `,
+    },
+    run: true,
+  });
+  // A direct eval keeps the declarations, and an ES module is strict code,
+  // which rejects two declarations of one name in a block.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`extra/FunctionHoistingDeclaredTwiceDirectEval${format.toUpperCase()}`, {
+      files: {
+        "in.js": `
+        {
+          function f() { return 1 }
+          eval('')
+          function f() { return 2 }
+          if (f() !== 2) throw 'fail'
+        }
+        switch (1) {
+          case 0: function g() { return 1 }
+          case 1: eval(''); function g() { return 2 }
+            if (g() !== 2) throw 'fail'
+        }
+      `,
+      },
+      format,
+      run: true,
+    });
+  }
   itBundled(`extra/FunctionHoistingKeepNames1`, {
     todo: true, // keepNames requires Object.defineProperty implementation
     files: {

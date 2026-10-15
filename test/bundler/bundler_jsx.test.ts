@@ -1454,5 +1454,33 @@ describe("bundler", () => {
       },
       run: { stdout: "1" },
     });
+
+    // A sloppy block can declare a function name twice. The binding has the
+    // last function, so only that one gets a signature.
+    itBundled("jsx/FastRefreshBlockFunctionDeclaredTwice", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          function make() {
+            {
+              function Comp() { return useThing(); }
+              function Comp() { return useThing() + useThing(); }
+              return Comp;
+            }
+          }
+          console.log(make()());
+        `,
+        "/node_modules/react-refresh/runtime.js": /* js */ `
+          export const createSignatureFunctionForTransform = () => fn => fn;
+          export const register = () => {};
+        `,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(1);
+      },
+      run: { stdout: "2" },
+    });
   });
 });

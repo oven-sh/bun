@@ -253,6 +253,99 @@ describe("unterminated string literals in large files", () => {
   });
 });
 
+describe("a function declared twice in a sloppy block", () => {
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("transpiler-block-function-twice", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The expected output is what node prints for this file. The direct eval
+  // keeps each declaration as it is written.
+  test.concurrent("each declaration statement assigns the var of the function", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "twice.cjs": `
+          function twoClauses(kind) { switch (kind) { case "a": function handler() { return "A" } eval(""); break; case "b": function handler() { return "B" } break; } try { return handler(); } catch (e) { return e.name; } }
+          function threeClauses(k) { switch (k) { case 1: eval(""); function h() { return 1 } break; case 2: function h() { return 2 } break; case 3: function h() { return 3 } } return typeof h === "function" ? h() : typeof h; }
+          function fallthrough(k) { switch (k) { case 1: function h() { return 1 } eval(""); case 2: function h() { return 2 } break; case 3: function h() { return 3 } } return typeof h === "function" ? h() : typeof h; }
+          function sameClause(k) { switch (k) { case 1: function h() { return 1 } eval(""); function h() { return 2 } break; } return typeof h === "function" ? h() : typeof h; }
+          function defaultFirst(k) { switch (k) { default: function h() { return "d" } eval(""); break; case 1: function h() { return 1 } } return h(); }
+          function leaveBetween() { exit: { function f() { return 1 } eval(""); break exit; function f() { return 2 } } return f(); }
+          function three() { { function f() { return 1 } eval(""); function f() { return 2 } function f() { return 3 } } return f(); }
+          function evalInFunction() { { function f() { return 1 } function f() { return eval("2") } } return f(); }
+          console.log(JSON.stringify({
+            twoClauses: [twoClauses("a"), twoClauses("b"), twoClauses("c")],
+            threeClauses: [threeClauses(1), threeClauses(2), threeClauses(3), threeClauses(4)],
+            fallthrough: [fallthrough(1), fallthrough(2), fallthrough(3), fallthrough(4)],
+            sameClause: [sameClause(1), sameClause(2)],
+            defaultFirst: [defaultFirst(1), defaultFirst(2)],
+            leaveBetween: leaveBetween(), three: three(), evalInFunction: evalInFunction(),
+          }));
+        `,
+      },
+      "twice.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      twoClauses: ["B", "B", "TypeError"],
+      threeClauses: [3, 3, 3, "undefined"],
+      fallthrough: [3, 3, 3, "undefined"],
+      sameClause: [2, "undefined"],
+      defaultFirst: [1, 1],
+      leaveBetween: 2,
+      three: 3,
+      evalInFunction: 2,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Bun runs a file with no CommonJS marker as a module, which is strict code.
+  // Strict code rejects two declarations of one name in a block, so these
+  // files must not get both.
+  const twice = `
+    { function f() { return 1 } eval(""); function f() { return 2 } console.log(f()); }
+    switch (1) { case 0: function g() { return 1 } eval(""); case 1: function g() { return 2 } console.log(g()); }
+  `;
+  const files = {
+    "twice.js": twice,
+    "twice.mjs": twice,
+    "twice.cjs": twice,
+    "twice.ts": twice,
+    "import.mjs": `import "./twice.cjs";`,
+    "dynamic-import.mjs": `await import("./twice.cjs");`,
+    "main.js": ``,
+    "plugin.mjs": `
+      import { plugin } from "bun";
+      plugin({ name: "twice", setup(b) { b.onLoad({ filter: /\\.virtual$/ }, () => ({ loader: "js", contents: ${JSON.stringify(twice)} })); } });
+      await import("./twice.virtual");
+    `,
+    "twice.virtual": ``,
+  };
+  test.concurrent.each([
+    [["twice.js"]],
+    [["twice.mjs"]],
+    [["twice.ts"]],
+    [["twice.cjs"]],
+    [["import.mjs"]],
+    [["dynamic-import.mjs"]],
+    [["--preload", "./twice.cjs", "main.js"]],
+    [["plugin.mjs"]],
+  ])("a file that can run as a module still loads: bun %p", async args => {
+    const { stdout, stderr, exitCode } = await run(files, ...args);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2\n2\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // 2 GiB through the printer takes over 30 seconds on a debug or ASAN build.
 test.skipIf(isDebug || isASAN)(
   "printing more than 2 GiB of modules in one process keeps the space after a keyword",

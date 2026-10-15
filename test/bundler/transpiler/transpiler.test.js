@@ -5706,6 +5706,176 @@ describe("export of a block-scoped function declaration", () => {
   });
 });
 
+describe("a function declared twice in a sloppy block", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  // A direct eval keeps a block-level function declaration as it is written.
+  const block =
+    "function t() { x: { function f() { return 1 } eval(''); break x; function f() { return 2 } } return f }";
+  const clauses =
+    "function t(k) { switch (k) { case 1: function f() { return 1 } eval(''); break; case 2: function f() { return 2 } } return f }";
+
+  // Each statement assigns the binding of the block to the `var` of the function.
+  it("keeps both declarations in a CommonJS file", () => {
+    expect(transpiler.transformSync(block + "\nmodule.exports = t;")).toBe(
+      `function t() {
+  x: {
+    function f() {
+      return 1;
+    }
+    function f() {
+      return 2;
+    }
+    eval("");
+    break x;
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+    expect(transpiler.transformSync(clauses + "\nmodule.exports = t;")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      function f() {
+        return 1;
+      }
+      eval("");
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+  });
+
+  // A file with no CommonJS marker runs as a module, and strict code rejects
+  // two declarations of one name in a block.
+  it("keeps one declaration in a file that can run as a module", () => {
+    expect(transpiler.transformSync(block)).toBe(
+      `function t() {
+  x: {
+    function __bun_temp_ref_1$() {}
+    function f() {
+      return 2;
+    }
+    eval("");
+    break x;
+  }
+  return f;
+}
+`,
+    );
+    expect(transpiler.transformSync(clauses)).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      function __bun_temp_ref_1$() {}
+      eval("");
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+`,
+    );
+    expect(
+      transpiler.transformSync(
+        "{ function f() { return 1 } eval(''); function f() { return 2 } function f() { return 3 } }",
+      ),
+    ).toBe(
+      `{
+  function __bun_temp_ref_1$() {}
+  function __bun_temp_ref_2$() {}
+  function f() {
+    return 3;
+  }
+  eval("");
+}
+`,
+    );
+  });
+
+  it("keeps one declaration in strict code", () => {
+    expect(transpiler.transformSync(clauses + "\nexport { t };")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      eval("");
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+
+export { t };
+`,
+    );
+    expect(
+      transpiler.transformSync(
+        "class C { m() { { function f() { return 1 } eval(''); function f() { return 2 } return f } } }\nmodule.exports = C;",
+      ),
+    ).toBe(
+      `class C {
+  m() {
+    {
+      function f() {
+        return 2;
+      }
+      eval("");
+      return f;
+    }
+  }
+}
+module.exports = C;
+`,
+    );
+  });
+
+  it("gives the `let` of the block the last function", () => {
+    const input =
+      "function t() { x: { function f() { return 1 } break x; function f() { return 2 } } return f }\nmodule.exports = t;";
+    expect(transpiler.transformSync(input)).toBe(
+      `function t() {
+  x: {
+    let f = function() {
+      return 2;
+    };
+    break x;
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+    expect(new Bun.Transpiler({ loader: "js", minify: { identifiers: true } }).transformSync(input)).toBe(
+      `function r() {
+  n: {
+    let n = function() {
+      return 2;
+    };
+    var t = n;
+    break n;
+  }
+  return t;
+}
+module.exports = r;
+`,
+    );
+  });
+});
+
 describe("using declarations in switch statements", () => {
   const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
 

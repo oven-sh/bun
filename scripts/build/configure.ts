@@ -33,6 +33,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
+import { loadMsvcEnv } from "./msvc.ts";
 import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
@@ -43,7 +44,6 @@ import {
   checkImageTools,
   findBun,
   findCargo,
-  findMsvcLinker,
   findNpm,
   findSystemTool,
   resolveLlvmToolchain,
@@ -123,10 +123,6 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // someone might be testing a subset that doesn't need lolhtml.
   const rust = findCargo(host.os);
 
-  // Windows: MSVC link.exe path (to prevent Git Bash's /usr/bin/link
-  // shadowing). Only needed when cargo builds with the msvc target.
-  const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
-
   return {
     ...llvm,
     ...resolveJsToolchain(packageManager),
@@ -134,7 +130,6 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
     rustupHome: rust?.rustupHome,
-    msvcLinker,
   };
 }
 
@@ -476,16 +471,16 @@ async function generate<N extends string | undefined>(
 
   checkWorkarounds(cfg);
 
-  // Windows cross-compile: make sure the MSVC CRT + Windows SDK splat is
-  // usable BEFORE the graph is emitted — emitBun() enumerates its include
-  // dirs (llvm-rc's /I flags) at configure time, so the sysroot must exist
-  // by then, not just before ninja runs. CI fetches a missing sysroot into
-  // the per-build cache; local builds require a provisioned one (the fetch
-  // would be a surprise multi-GB download) and only get the case-alias
-  // fixup + completeness check.
-  if (cfg.windows && cfg.host.os !== "windows") {
+  // Windows: make sure the MSVC CRT + Windows SDK splat is usable BEFORE the
+  // graph is emitted — emitBun() enumerates its include dirs (llvm-rc's /I
+  // flags) at configure time, so the sysroot must exist by then, not just
+  // before ninja runs.
+  if (cfg.winsysroot !== undefined) {
     await ensureWindowsSysroot(cfg);
     mark("ensureWindowsSysroot");
+  } else if (cfg.host.os === "windows") {
+    // Without one the tools find the installed toolset through this process's environment, which ninja inherits.
+    loadMsvcEnv(cfg.windows ? (cfg.arch === "aarch64" ? "arm64" : "x64") : undefined);
   }
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja

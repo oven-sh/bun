@@ -459,6 +459,33 @@ describe("buildRustGraph + unitManifest", () => {
     expect(depManifest.args).toEqual(DEP_ARGS(dep));
   });
 
+  test("a Windows host's host units are told where the sysroot is; target units have rustflags for that", () => {
+    const plan = planWith([]);
+    plan.unitGraph.units[0]!.platform = null;
+    const graph = buildRustGraph(plan, "/build/rust-target/shim");
+    const [hostDep, bin] = graph.units;
+    expect(hostDep.platform).toBe("host");
+    const args = (unit: RustUnit, os: string, winsysroot: string | undefined) => {
+      const ctx = context(graph);
+      return (
+        unitManifest({ ...ctx, cfg: { ...ctx.cfg, host: { os }, winsysroot } as Config }, unit) as RustcUnitManifest
+      ).args;
+    };
+    const linkArg = "link-arg=/winsysroot:C:\\build cache\\winsysroot";
+    const sysroot = "C:\\build cache\\winsysroot";
+
+    const hostArgs = args(hostDep, "windows", sysroot);
+    expect(hostArgs.slice(hostArgs.indexOf("linker=link.exe") - 1).slice(0, 4)).toEqual([
+      ...["-C", "linker=link.exe"],
+      ...["-C", linkArg],
+    ]);
+    expect(args(bin, "windows", sysroot)).not.toContain(linkArg);
+    // Cross-compiling: the host units are not Windows programs.
+    expect(args(hostDep, "linux", sysroot)).not.toContain(linkArg);
+    // webkit=local: the installed toolset, through LIB.
+    expect(args(hostDep, "windows", undefined).filter(a => a.includes("winsysroot"))).toEqual([]);
+  });
+
   test("a library root's link takes the target libraries, with one panic runtime and no host code", () => {
     // What a `-Zbuild-std` graph looks like: std depends on both panic runtimes, and a proc-macro brings host-only crates.
     const names = ["panic_abort", "panic_unwind", "std", "macro_dep", "my_macro", "my-root"] as const;

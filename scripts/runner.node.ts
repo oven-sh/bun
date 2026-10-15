@@ -51,6 +51,8 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
+import { BuildError } from "./build/error.ts";
+import { loadMsvcEnv } from "./build/msvc.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -3440,6 +3442,18 @@ function escapeXml(str: string): string {
 async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
+  }
+
+  // Tests compile native addons (node-gyp) and C. Without Visual Studio those fail, and the rest still run.
+  // Only in CI, whose images have one Visual Studio: VCINSTALLDIR holds node-gyp to the newest, and left alone it
+  // finds one it knows. The node-gyp the tests pin does not know Visual Studio 2026.
+  if (isWindows && isCI) {
+    try {
+      loadMsvcEnv();
+    } catch (error) {
+      if (!(error instanceof BuildError)) throw error;
+      console.warn(`warning: ${error.message}. Tests that compile native code will fail.\n  ${error.hint}`);
+    }
   }
 
   if (!isQuiet) {

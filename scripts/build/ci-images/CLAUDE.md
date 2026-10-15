@@ -77,7 +77,7 @@ The name covers everything `spec.ts` decides; the record adds what is only decid
 
 ## Debugging a failed bake
 
-The bake step's log is the script's output, and the script is linear: find the last `# ---- <tool>` banner before the error, then read that section of the generated script. For Windows the log is Packer's; the script's error is above Packer's cleanup lines, and `An error occurred:` is how Packer reports a PowerShell terminating error. A Windows step that fails within a minute with `InvalidTemplateDeployment … preflight validation` is Azure refusing the VM (usually quota held by VMs of cancelled bakes), not the script.
+The bake step's log is the script's output, and the script is linear: find the last `# ---- <tool>` banner before the error, then read that section of the generated script. For Windows the log is Packer's; the script's error is above Packer's cleanup lines, and `An error occurred:` is how Packer reports a PowerShell terminating error. `InvalidTemplateDeployment … preflight validation` within a minute is Azure refusing the VM, not the script. When the reason is `QuotaExceeded`, usually cores still held by the VM of a bake that a push has just cancelled, the step waits two minutes and asks again, ten times in all (`untilQuotaAllows` in `scripts/ci-image.ts`). If it still fails after that, nothing is releasing those cores: a VM has to be deleted by hand.
 
 ## macOS
 

@@ -1427,21 +1427,23 @@ function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input
     rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
     rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
   }
+  // Here as well as in .cargo/config.toml, whose `rustflags` the variable below replaces.
+  if (cfg.windows && cfg.winsysroot !== undefined) rustflags.push(`-Clink-arg=/winsysroot:${cfg.winsysroot}`);
 
   if (rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.
     env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
   }
 
-  // Windows: pin the linker to MSVC's link.exe. Without this, if Git Bash
-  // is in PATH, its /usr/bin/link (GNU hard-link tool) shadows the real
-  // linker and cargo's link step fails with a baffling error.
-  if (cfg.windows && cfg.msvcLinker !== undefined) {
+  // Windows: pin the linker. Without this rustc looks for MSVC's link.exe,
+  // and if Git Bash is in PATH finds its /usr/bin/link (GNU hard-link tool)
+  // instead, and cargo's link step fails with a baffling error.
+  if (cfg.windows) {
     // Triple-specific linker env var. Cargo reads CARGO_TARGET_<TRIPLE>_LINKER
     // where <TRIPLE> is uppercased with hyphens→underscores.
     const triple = spec.rustTarget ?? (cfg.arm64 ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc");
     const envKey = `CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.msvcLinker;
+    env[envKey] = cfg.ld;
   }
 
   // Cross-compile (Android): cargo's default `cc` linker can't handle the
@@ -1612,13 +1614,18 @@ function emitDirect(
     // so host-arch objects never land in obj/ (which would dirty ccache
     // for the target build).
     const toolDefs = Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v));
+    // On a Windows host the tool is a Windows program too. The driver hands /winsysroot's libraries to the linker.
+    const toolSysroot =
+      cfg.host.os === "windows" && cfg.winsysroot !== undefined
+        ? ["/winsysroot", quote(cfg.winsysroot, true), "-fuse-ld=lld"]
+        : [];
     n.build({
       outputs: [toolOut],
       rule: "dep_host_cc",
       inputs: [toolSrc],
       implicitInputs: [toolIdentityFile(cfg, "hostCc")],
       orderOnlyInputs: orderOnly,
-      vars: { flags: ["-w", ...toolDefs].join(" ") },
+      vars: { flags: ["-w", ...toolSysroot, ...toolDefs].join(" ") },
     });
     const toolExe = toolOut;
 

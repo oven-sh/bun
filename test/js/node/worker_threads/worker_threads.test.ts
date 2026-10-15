@@ -715,6 +715,56 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  // The first three lines of a worker that posts its URL, then what the 'error' event on its own
+  // global scope says.
+  const reportInside = `import { MessageChannel, parentPort } from "node:worker_threads";
+parentPort.postMessage(import.meta.url);
+addEventListener("error", ({ message, filename, lineno, colno }) => parentPort.postMessage({ message, filename, lineno, colno }));
+`;
+
+  // What 'error' on the Worker gave, and what the worker posted before it exited.
+  async function errorAndPosted(source: string) {
+    using dir = tempDir("worker-threads-error-event", { "worker.mjs": reportInside + source });
+    const worker = new Worker(join(String(dir), "worker.mjs"));
+    const posted: any[] = [];
+    worker.on("message", message => posted.push(message));
+    const exited = Promise.withResolvers<number>();
+    worker.on("exit", exited.resolve);
+    const [err] = await once(worker, "error");
+    await exited.promise;
+    return { err, posted };
+  }
+
+  test("in the worker says what was thrown and where, and the parent still gets the copy", async () => {
+    const { err, posted } = await errorAndPosted(`\nthrow new TypeError("oh no");\n`);
+    const [url, inside] = posted;
+    expect(inside).toEqual({ message: "TypeError: oh no", filename: url, lineno: 5, colno: 11 });
+    expect(err).toBeInstanceOf(TypeError);
+    expect({ message: err.message, cause: err.cause }).toEqual({ message: "oh no", cause: undefined });
+  });
+
+  test("says where a value that cannot be serialized was thrown, next to the string", async () => {
+    const { err, posted } = await errorAndPosted(
+      `const { port1 } = new MessageChannel();\nsetTimeout(() => {\n  throw port1;\n}, 1);\n`,
+    );
+    const [url, inside] = posted;
+    expect(inside).toEqual({ message: "[object MessagePort]", filename: url, lineno: 6, colno: 9 });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
+    const { filename, lineno, colno } = err.cause;
+    expect({ filename, lineno, colno }).toEqual({ filename: url, lineno: 6, colno: 9 });
+  });
+
+  test("falls back to the value as a string when it can be neither serialized nor printed", async () => {
+    const worker = new Worker(
+      `throw { uncloneable() {}, [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("no"); } };`,
+      { eval: true },
+    );
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("[object Object]");
+  });
 });
 
 describe("getHeapSnapshot", () => {

@@ -530,11 +530,12 @@ private:
             /* Bun.serve routes only the methods of HTTP_METHOD_NAMES. Any other method gets 501 (RFC 9110 15.6.2), and a
              * request that no route takes gets 404, as over HTTP/2 and HTTP/3. No handler reads the content of such a request,
              * so the connection closes after the answer. node:http's parser is strict: it answers 400 to an unknown method. */
-            if (!IsNodeHttp && httpRequest->getMethodId() == HTTP_METHOD_NONE) [[unlikely]] {
+            const uint8_t methodId = httpRequest->getMethodId();
+            if (!IsNodeHttp && methodId == HTTP_METHOD_NONE) [[unlikely]] {
                 ((HttpResponse<SSL> *) s)->writeStatus("501 Not Implemented")->end({}, true);
             } else {
                 selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-                if (!selectedRouter->route(httpRequest->getMethod(), httpRequest->getUrlForRouting())) {
+                if (!selectedRouter->route(methodId, httpRequest->getUrlForRouting())) {
                     ((HttpResponse<SSL> *) s)->writeStatus("404 Not Found")->end({}, true);
                 }
             }

@@ -42,15 +42,10 @@ impl AnyRequest {
     }
 }
 
-/// `id` is what uWS resolved. Each transport answers a request without one before a handler runs.
+/// `id` is what uWS resolved at parse. `HttpRouter::route()` runs a handler only for an id that is a `Method`.
 #[inline]
 pub(crate) fn method_from_id(id: u8) -> Method {
-    let method = Method::from_repr(id);
-    debug_assert!(
-        method.is_some(),
-        "uWS ran a route handler for a request with no method id"
-    );
-    method.unwrap_or(Method::GET)
+    Method::from_repr(id).expect("uWS ran a route handler for a request with no method id")
 }
 
 bun_opaque::opaque_ffi! {

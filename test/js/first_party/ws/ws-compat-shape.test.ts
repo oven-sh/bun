@@ -7,10 +7,10 @@ import * as builtinNamespace from "ws";
 import * as npmNamespace from "../../../node_modules/ws/wrapper.mjs";
 import {
   closedPort,
-  createPeer,
   connectClient,
-  nextEvent,
+  createPeer,
   implementations,
+  nextEvent,
   openClient,
   openServer,
   runScript,

@@ -6,10 +6,10 @@ import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
 import {
-  createPeer,
   connectClient,
-  nextEvent,
+  createPeer,
   implementations,
+  nextEvent,
   openClient,
   type RawSocket,
   runScript,

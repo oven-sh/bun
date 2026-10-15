@@ -3,10 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { Duplex, pipeline } from "node:stream";
 import {
   closedPort,
-  createServer,
   connectClient,
-  nextEvent,
+  createServer,
   implementations,
+  nextEvent,
   openClient,
   openServer,
   runScript,

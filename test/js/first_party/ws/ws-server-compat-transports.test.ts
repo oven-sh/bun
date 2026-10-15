@@ -17,18 +17,18 @@ import {
   closePayload,
   createServer,
   encodeFrame,
-  nextEvent,
   HttpClient,
   implementations,
   KEY,
+  nextEvent,
   OP,
   openServer,
   RawClient,
+  recordEvents,
   serve,
   show,
   showError,
   upgradeRequest,
-  recordEvents,
 } from "./ws-raw-peer";
 
 const switchingProtocols = "HTTP/1.1 101 Switching Protocols";

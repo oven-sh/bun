@@ -7,12 +7,11 @@ import https from "node:https";
 import zlib from "node:zlib";
 import type { ServerOptions, WebSocket } from "ws";
 import {
-  tryCall,
   closePayload,
   encodeFrame,
-  nextEvent,
   type FrameOptions,
   implementations,
+  nextEvent,
   OP,
   openServer,
   type Payload,
@@ -20,6 +19,7 @@ import {
   runScript,
   scriptTimeout,
   serve,
+  tryCall,
   upgradeRequest,
 } from "./ws-raw-peer";
 

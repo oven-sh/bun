@@ -6,11 +6,11 @@ import { isWindows } from "harness";
 import type { ClientRequest, IncomingMessage } from "node:http";
 import {
   acceptKey,
-  createPeer,
   connectClient,
+  createPeer,
   encodeFrame,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   openClient,
   response101,

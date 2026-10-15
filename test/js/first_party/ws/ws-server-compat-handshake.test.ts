@@ -5,17 +5,17 @@ import http from "node:http";
 import type { Duplex } from "node:stream";
 import type { ServerOptions } from "ws";
 import {
-  tryCall,
   createServer,
-  nextEvent,
   implementations,
   listen,
+  nextEvent,
   openServer,
   RawClient,
   type RequestOptions,
   serve,
   show,
   showError,
+  tryCall,
 } from "./ws-raw-peer";
 
 const switchingProtocols = [

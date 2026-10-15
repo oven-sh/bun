@@ -6,21 +6,21 @@ import http from "node:http";
 import https from "node:https";
 import type { WebSocket as WsSocket } from "ws";
 import {
-  tryCall,
   closePayload,
   createServer,
   encodeFrame,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   openServer,
   type Payload,
   RawClient,
+  recordEvents,
   serve,
   show,
   showError,
   showFrame,
-  recordEvents,
+  tryCall,
 } from "./ws-raw-peer";
 
 const abnormalClose = "close 1006 Buffer() rs=3";

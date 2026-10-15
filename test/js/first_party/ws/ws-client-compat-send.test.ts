@@ -5,17 +5,17 @@ import { openAsBlob } from "node:fs";
 import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
 import {
-  tryCall,
   closedPort,
   connectClient,
-  nextEvent,
   Frame,
   implementations,
+  nextEvent,
   OP,
   openClient,
   response101,
   show,
   showFrame,
+  tryCall,
 } from "./ws-raw-peer";
 
 type Client = Awaited<ReturnType<typeof openClient>>;

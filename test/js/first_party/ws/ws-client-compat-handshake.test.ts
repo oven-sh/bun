@@ -4,22 +4,22 @@ import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
-  tryCall,
   closedPort,
-  createPeer,
   connectClient,
+  createPeer,
   encodeFrame,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   openClient,
   type RawSocket,
+  recordEvents,
   response101,
   runScript,
   scriptTimeout,
   show,
   showError,
-  recordEvents,
+  tryCall,
 } from "./ws-raw-peer";
 
 const openEvents = ["upgrade 101 rs=0", "open rs=1"];

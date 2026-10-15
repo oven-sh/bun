@@ -9,17 +9,17 @@ import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
 import type { WebSocket as Socket } from "ws";
 import {
-  tryCall,
   createServer,
   encodeFrame,
-  nextEvent,
   type Frame,
   implementations,
+  nextEvent,
   OP,
   openServer,
   type RawClient,
   show,
   showFrame,
+  tryCall,
   upgradeRequest,
 } from "./ws-raw-peer";
 

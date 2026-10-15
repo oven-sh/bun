@@ -1,22 +1,22 @@
 // `ws` client close(), terminate() and the closing handshake, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import {
-  tryCall,
   closedPort,
   closePayload,
-  createPeer,
   connectClient,
+  createPeer,
   encodeFrame,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   openClient,
   type Payload,
+  recordEvents,
   runScript,
   scriptTimeout,
   show,
   showFrame,
-  recordEvents,
+  tryCall,
 } from "./ws-raw-peer";
 
 const openEvents = ["upgrade 101 rs=0", "open rs=1"];

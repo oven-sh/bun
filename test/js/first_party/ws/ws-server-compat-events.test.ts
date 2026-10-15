@@ -2,7 +2,7 @@
 // and EventTarget interfaces. The client is a raw TCP socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { EventEmitter, once } from "node:events";
-import { tryCall, createServer, nextEvent, implementations, openServer, show } from "./ws-raw-peer";
+import { createServer, implementations, nextEvent, openServer, show, tryCall } from "./ws-raw-peer";
 
 type Server = Awaited<ReturnType<typeof openServer>>;
 

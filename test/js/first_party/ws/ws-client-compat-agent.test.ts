@@ -9,17 +9,17 @@ import net from "node:net";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
-  tryCall,
   closedPort,
   createPeer,
   encodeFrame,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   type RawSocket,
+  recordEvents,
   response101,
   show,
-  recordEvents,
+  tryCall,
 } from "./ws-raw-peer";
 
 const openEvents = ["upgrade 101 rs=0", "open rs=1"];

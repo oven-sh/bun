@@ -7,10 +7,9 @@ import net from "node:net";
 import path from "node:path";
 import type { WebSocket as WsSocket } from "ws";
 import {
-  tryCall,
   createPeer,
-  nextEvent,
   implementations,
+  nextEvent,
   OP,
   type PeerOptions,
   type RawSocket,
@@ -19,6 +18,7 @@ import {
   scriptTimeout,
   show,
   showError,
+  tryCall,
   type WsModule,
 } from "./ws-raw-peer";
 

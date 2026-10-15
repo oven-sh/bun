@@ -5,13 +5,13 @@ import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
-  tryCall,
   closedPort,
-  createPeer,
   connectClient,
-  nextEvent,
+  createPeer,
   implementations,
+  nextEvent,
   response101,
+  tryCall,
   type ClientOptions,
   type PeerOptions,
 } from "./ws-raw-peer";

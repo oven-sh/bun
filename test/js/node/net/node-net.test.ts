@@ -2237,7 +2237,7 @@ describe.concurrent("typeOfService option", () => {
 // never throws, and applies it when it later connects over TCP. Every value below is what node v26.3.0 gives.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L661-L710
 // Not on Windows: there the two methods report no error on any kind of socket.
-describe.skipIf(isWindows)("type of service of a unix socket", () => {
+describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps", () => {
   let paths = 0;
   const socketPath = () => join(socket_domain, `tos${paths++}.sock`);
   // [before, setTypeOfService() returned the socket, after], or what was thrown.
@@ -2337,28 +2337,32 @@ describe.skipIf(isWindows)("type of service of a unix socket", () => {
   });
 
   // The socket sent its FIN first, so its native handle can be closed already when 'end' arrives.
-  it("is kept in the 'end' listener of a socket that ended first", async () => {
-    const path = socketPath();
-    const server = createServer({ allowHalfOpen: true }, socket => {
-      socket
-        .on("error", () => {})
-        .on("end", () => socket.end())
-        .resume();
-    });
-    await once(server.listen(path), "listening");
-    try {
-      const socket = connect({ path, allowHalfOpen: true }, () => socket.end());
-      let inEnd: unknown;
-      socket.on("end", () => {
-        inEnd = setAndGet(socket, 0x10);
+  // Node's handle stays open until destroy(), so a TCP socket has its value there too.
+  for (const kind of ["unix", "TCP"]) {
+    it(`is kept in the 'end' listener of a ${kind} socket that ended first`, async () => {
+      const server = createServer({ allowHalfOpen: true }, socket => {
+        socket
+          .on("error", () => {})
+          .on("end", () => socket.end())
+          .resume();
       });
-      socket.resume();
-      await once(socket, "close");
-      expect(inEnd).toEqual([0, true, 0x10]);
-    } finally {
-      server.close();
-    }
-  });
+      await once(kind === "unix" ? server.listen(socketPath()) : server.listen(0, "127.0.0.1"), "listening");
+      try {
+        const address = server.address() as string | import("node:net").AddressInfo;
+        const target = typeof address === "string" ? { path: address } : { port: address.port, host: "127.0.0.1" };
+        const socket = connect({ ...target, allowHalfOpen: true }, () => socket.end());
+        let inEnd: unknown;
+        socket.on("end", () => {
+          inEnd = setAndGet(socket, 0x10);
+        });
+        socket.resume();
+        await once(socket, "close");
+        expect(inEnd).toEqual([0, true, 0x10]);
+      } finally {
+        server.close();
+      }
+    });
+  }
 
   // An extra stdio pipe is a Pipe handle in node too: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
   it("is kept by an extra stdio pipe of a child process", async () => {

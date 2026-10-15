@@ -131,8 +131,7 @@ pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
 pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [is_ssl, is_pipe] = frame.arguments_as_array::<2>();
     let is_ssl = is_ssl.to_boolean();
-    // `connect({ path })` makes its handle before the dial writes the path.
-    // Node's handle is a `Pipe` from that moment, so this one says so too.
+    // Node's handle for `connect({ path })` is a `Pipe` before the dial writes the path.
     let is_pipe = is_pipe.to_boolean();
 
     // Only `socket`, `ref_count`, `protos`, `handlers` are

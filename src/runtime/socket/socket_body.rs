@@ -897,9 +897,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::from(this.socket.get().get_tos()))
     }
 
-    /// usockets answers `-EINVAL` for an open unix socket, after a
-    /// `getsockname` to learn the family. When the state already says the
-    /// socket is one, this is that answer without the syscall.
+    /// usockets' `-EINVAL` for an open unix socket, without its `getsockname`.
     fn open_pipe_type_of_service_errno(&self) -> Option<i32> {
         let socket = self.socket.get();
         (self.pipe_from_state() == Some(true)
@@ -908,9 +906,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         .then_some(-(sys::SystemErrno::EINVAL as i32))
     }
 
-    /// `Some` when the state says, with no syscall, whether Node's handle for
-    /// this socket is a `Pipe` (a unix socket or a named pipe) or a `TCP`.
-    /// The last dial wrote `connection`. An accepted socket has its listener.
+    /// Whether Node's handle is a `Pipe`, if the last dial or the accepting listener says so.
     fn pipe_from_state(&self) -> Option<bool> {
         use super::listener::UnixOrHost;
         if self.socket.get().is_named_pipe() {
@@ -928,10 +924,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// Whether Node's handle for this socket is a `Pipe`, which has none of
-    /// the TCP-only methods. A socket whose state does not say (an adopted
-    /// fd, a socket of an fd listener, the raw half of a TLS upgrade) asks the
-    /// kernel, and a pipe keeps the answer in `connection`.
+    /// Node's `handle instanceof Pipe`. An adopted fd asks the kernel, and a pipe keeps the answer.
     pub(crate) fn is_pipe(&self) -> bool {
         if let Some(pipe) = self.pipe_from_state() {
             return pipe;
@@ -5084,8 +5077,7 @@ pub(crate) fn js_is_named_pipe_socket(
     Ok(JSValue::FALSE)
 }
 
-/// node:net's stand-in for Node's `handle instanceof Pipe`: one native class
-/// backs both kinds of handle here.
+/// node:net's `handle instanceof Pipe`: one native class backs both kinds of handle.
 #[bun_jsc::host_fn]
 pub(crate) fn js_is_pipe_socket(
     global: &JSGlobalObject,
@@ -5109,8 +5101,7 @@ pub(crate) fn js_is_pipe_socket(
     Ok(JSValue::FALSE)
 }
 
-/// Whether Node would wrap `fd` in a `Pipe`: it is a unix socket, or not a
-/// socket at all (a FIFO). An fd that cannot be asked is not one.
+/// Whether Node wraps `fd` in a `Pipe`: a unix socket, or not a socket at all (a FIFO).
 #[cfg(not(windows))]
 fn fd_is_pipe(fd: sys::Fd) -> bool {
     if !fd.is_valid() {

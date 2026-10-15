@@ -2897,6 +2897,11 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
+// Node's Pipe handle has no type of service, and its TCP handle stays open until destroy(). Ours closes once both sides ended.
+function keepsTypeOfService(socket, errno) {
+  return (errno === -9 /* UV_EBADF */ && !socket.connecting) || isPipeSocket(socket._handle);
+}
+
 // Matches Node's setTypeOfService/getTypeOfService (lib/net.js + TCPWrap).
 // The native handle does the setsockopt (IP_TOS / IPV6_TCLASS); a socket
 // without a handle yet caches the value and applies it on connect.
@@ -2917,8 +2922,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
     const err = this._handle.setTypeOfService(tos);
     // Windows often restricts TOS or reports errors even when partially
     // applied - best-effort there, the way Node treats it.
-    // Node's Pipe handle has no setTypeOfService: the socket only keeps the value.
-    if (err && process.platform !== "win32" && !isPipeSocket(this._handle)) {
+    if (err && process.platform !== "win32" && !keepsTypeOfService(this, err)) {
       throw new ErrnoException(err, "setTypeOfService");
     }
   }
@@ -2932,8 +2936,8 @@ Socket.prototype.getTypeOfService = function getTypeOfService() {
   const res = this._handle.getTypeOfService();
   if (typeof res === "number" && res < 0) {
     // getsockopt(IP_TOS) commonly fails on Windows: fall back to the cached
-    // value the way Node does. A pipe has only the cached value.
-    if (process.platform === "win32" || isPipeSocket(this._handle)) {
+    // value the way Node does.
+    if (process.platform === "win32" || keepsTypeOfService(this, res)) {
       return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
     }
     throw new ErrnoException(res, "getTypeOfService");

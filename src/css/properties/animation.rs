@@ -2,9 +2,9 @@ use crate as css;
 use crate::CSSString;
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
-use crate::css_values::number::{CSSNumber, CSSNumberFns};
+use crate::css_values::number::{CSSNumber, CSSNumberFns, NonNegative};
 use crate::css_values::time::Time;
-use crate::generics::CssEql;
+use crate::generics::{CssEql, Parse as _};
 use crate::{Parser, PrintErr, Printer};
 use bun_core::strings;
 
@@ -14,7 +14,7 @@ pub struct Animation {
     /// The animation name.
     pub name: AnimationName,
     /// The animation duration.
-    pub(crate) duration: Time,
+    pub(crate) duration: NonNegative<Time>,
     /// The easing function for the animation.
     pub(crate) timing_function: EasingFunction,
     /// The number of times the animation will run.
@@ -53,7 +53,7 @@ impl Animation {
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut name: Option<AnimationName> = None;
-        let mut duration: Option<Time> = None;
+        let mut duration: Option<NonNegative<Time>> = None;
         let mut timing_function: Option<EasingFunction> = None;
         let mut iteration_count: Option<AnimationIterationCount> = None;
         let mut direction: Option<AnimationDirection> = None;
@@ -64,7 +64,7 @@ impl Animation {
 
         loop {
             if duration.is_none() {
-                if let Ok(value) = input.try_parse(Time::parse) {
+                if let Ok(value) = input.try_parse(NonNegative::<Time>::parse) {
                     duration = Some(value);
                     continue;
                 }
@@ -75,7 +75,8 @@ impl Animation {
                     continue;
                 }
             }
-            if delay.is_none() {
+            // The first time must be a duration, even if it is invalid.
+            if duration.is_some() && delay.is_none() {
                 if let Ok(value) = input.try_parse(Time::parse) {
                     delay = Some(value);
                     continue;
@@ -122,9 +123,10 @@ impl Animation {
 
         css::Result::Ok(Animation {
             name: name.unwrap_or(AnimationName::None),
-            duration: duration.unwrap_or(Time::Seconds(0.0)),
+            duration: duration.unwrap_or(NonNegative(Time::Seconds(0.0))),
             timing_function: timing_function.unwrap_or(EasingFunction::Ease),
-            iteration_count: iteration_count.unwrap_or(AnimationIterationCount::Number(1.0)),
+            iteration_count: iteration_count
+                .unwrap_or(AnimationIterationCount::Number(NonNegative(1.0))),
             direction: direction.unwrap_or(AnimationDirection::Normal),
             play_state: play_state.unwrap_or(AnimationPlayState::Running),
             delay: delay.unwrap_or(Time::Seconds(0.0)),
@@ -159,9 +161,9 @@ impl Animation {
             };
         }
 
-        if !self.duration.is_zero() || !self.delay.is_zero() {
+        if !self.duration.0.is_zero() || !self.delay.is_zero() {
             space!();
-            self.duration.to_css(dest)?;
+            self.duration.0.to_css(dest)?;
             wrote_any = true;
         }
 
@@ -378,7 +380,7 @@ impl AnimationName {
 #[derive(Clone, Copy, PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
-    Number(CSSNumber),
+    Number(NonNegative<CSSNumber>),
     /// The animation will repeat forever.
     Infinite,
 }
@@ -387,7 +389,7 @@ impl AnimationIterationCount {
     // Port of `css.DeriveParse(@This()).parse` — payload (`number: f32`) declared
     // first, single void variant (`infinite`) last → try number, then ident.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Ok(v) = input.try_parse(CSSNumberFns::parse) {
+        if let Ok(v) = input.try_parse(NonNegative::<CSSNumber>::parse) {
             return Ok(AnimationIterationCount::Number(v));
         }
         input.expect_ident_matching(b"infinite")?;
@@ -397,13 +399,13 @@ impl AnimationIterationCount {
     // Port of `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n.0, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
 
     pub(crate) fn default() -> AnimationIterationCount {
-        AnimationIterationCount::Number(1.0)
+        AnimationIterationCount::Number(NonNegative(1.0))
     }
 }
 

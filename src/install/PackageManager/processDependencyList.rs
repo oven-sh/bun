@@ -14,8 +14,8 @@ use crate::package_manager_real::{PackageManager, enqueue};
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
-    Dependency, DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, dependency,
+    Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
+    PackageID, Resolution, TaskCallbackContext, dependency,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -212,14 +212,29 @@ impl PackageManager {
         }
     }
 
+    /// The package.json of an extracted package, with what its `file:` folders depend on.
+    fn parse_with_folders<R: ResolverContext>(
+        &mut self,
+        package: &mut Package,
+        json: &ExtractDataJson,
+        resolver: &mut R,
+    ) -> crate::Result<()> {
+        let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
+        self.parse_extracted(package, &source, resolver)?;
+        self.adopt_contained_folders(package, &json.path, &mut |this, source| {
+            this.parse_extracted(&mut Package::default(), source, resolver)
+        })
+    }
+
     /// A `file:` folder inside a package is part of it, and Node looks up what the folder imports
     /// in the `node_modules` of the package: the folder's dependencies become rows of the package.
-    /// `package` is parsed and not appended yet, so its rows end the buffer.
-    fn adopt_contained_folders<R: ResolverContext>(
+    /// `package` is parsed and not appended yet, so its rows end the buffer. `parse` appends the
+    /// rows of a folder's package.json there, with the resolver that `package` was parsed with.
+    fn adopt_contained_folders(
         &mut self,
         package: &mut Package,
         package_json_path: &[u8],
-        resolver: &mut R,
+        parse: &mut dyn FnMut(&mut Self, &bun_ast::Source) -> crate::Result<()>,
     ) -> crate::Result<()> {
         let off = package.dependencies.off as usize;
         let own_len = package.dependencies.len as usize;
@@ -271,7 +286,7 @@ impl PackageManager {
             let source = bun_ast::Source::init_path_string(path, &json[..]);
 
             let start = self.lockfile.buffers.dependencies.len();
-            self.parse_extracted(&mut Package::default(), &source, resolver)?;
+            parse(self, &source)?;
             let declared = self.lockfile.buffers.dependencies.split_off(start);
             self.lockfile.buffers.resolutions.truncate(start);
             for declared in declared {
@@ -364,15 +379,7 @@ impl PackageManager {
 
                     let mut pkg = Package::default();
                     if let Some(json) = &data.json {
-                        let package_json_source =
-                            &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
-
-                        if let Err(err) = self
-                            .parse_extracted(&mut pkg, package_json_source, &mut resolver)
-                            .and_then(|()| {
-                                self.adopt_contained_folders(&mut pkg, &json.path, &mut resolver)
-                            })
-                        {
+                        if let Err(err) = self.parse_with_folders(&mut pkg, json, &mut resolver) {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 Output::err(
@@ -415,8 +422,6 @@ impl PackageManager {
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let json = data.json.as_ref().unwrap();
-                let package_json_source =
-                    &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                 let mut package = Package::default();
 
                 let mut resolver = TarballResolver {
@@ -424,12 +429,7 @@ impl PackageManager {
                     resolution,
                 };
 
-                if let Err(err) = self
-                    .parse_extracted(&mut package, package_json_source, &mut resolver)
-                    .and_then(|()| {
-                        self.adopt_contained_folders(&mut package, &json.path, &mut resolver)
-                    })
-                {
+                if let Err(err) = self.parse_with_folders(&mut package, json, &mut resolver) {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                         bun_core::pretty_errorln!(

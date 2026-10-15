@@ -2038,11 +2038,17 @@ describe("socket teardown events (#43381)", () => {
     });
     function run() {
       const [holder, peer] = SIDE === "client" ? [client, accepted] : [accepted, client];
+      // "peer reset, handled": an 'error' listener takes the reset. The report ends with how
+      // often the callback of each write and of end() ran by the check phase after 'close'.
+      const handled = SCENARIO === "peer reset, handled";
+      const calls = { write: 0, queued: 0, end: 0 };
       peer.on("error", () => {});
+      if (handled) holder.on("error", err => events.push("error " + shape(err)));
       holder.on("end", () => events.push("end"));
       holder.on("close", hadError => {
         events.push("close " + hadError);
         setImmediate(() => {
+          if (handled) events.push("calls " + JSON.stringify(calls));
           console.log(JSON.stringify(events));
           peer.destroy();
           server.close();
@@ -2050,16 +2056,18 @@ describe("socket teardown events (#43381)", () => {
       });
       if (SCENARIO === "destroy") return holder.destroy();
       // Write until the kernel stops taking the bytes, so one write is in flight, and queue
-      // one more behind it. The callbacks are recorded on the client only: an accepted
-      // socket has no handle left when it is destroyed, so its 'close' comes on the next tick,
-      // before the canceled write reports. #43250 moves the cancel into _destroy.
-      const record = SIDE === "client";
+      // one more behind it. The order of the callbacks is recorded on the client only: an
+      // accepted socket has no handle left when it is destroyed, so its 'close' comes on the
+      // next tick, before the canceled write reports. #43250 moves the cancel into _destroy.
+      const record = SIDE === "client" && !handled;
       const chunk = Buffer.alloc(1024 * 1024, "a");
       let writes = 0;
       while (writes < 256 && holder.writableLength === 0) {
         const nth = ++writes;
         holder.write(chunk, err => {
-          if (record && nth === writes) events.push("write " + shape(err));
+          if (nth !== writes) return;
+          calls.write++;
+          if (record) events.push("write " + shape(err));
         });
       }
       if (holder.writableLength === 0) {
@@ -2067,8 +2075,10 @@ describe("socket teardown events (#43381)", () => {
         process.exit(1);
       }
       holder.write("b", err => {
+        calls.queued++;
         if (record) events.push("queued " + shape(err));
       });
+      if (handled) holder.end(() => calls.end++);
       peer.resetAndDestroy();
     }
   `;
@@ -2106,6 +2116,18 @@ describe("socket teardown events (#43381)", () => {
                 ? ["uncaught ECONNRESET read", "write ECANCELED write", "queued ECONNRESET read", "close true"]
                 : ["uncaught ECONNRESET read", "close true"],
             ),
+          );
+        },
+      );
+
+      // The same reset with an 'error' listener: the write in flight, the write queued
+      // behind it and end() each get their callback once. Their place in the order is
+      // pinned by the test above.
+      it.concurrent.skipIf(!exe || !isLinux)(
+        "a peer reset with a write in flight calls the callback of each write and of end() once",
+        async () => {
+          expect(await run({ SIDE, SCENARIO: "peer reset, handled" })).toEqual(
+            reports(["error ECONNRESET read", "close true", 'calls {"write":1,"queued":1,"end":1}']),
           );
         },
       );

@@ -325,5 +325,24 @@ plugin({
       // The error of the load before is not reported again.
       expect((await hot.stderr("")).split("error: from first.js")).toHaveLength(2);
     });
+
+    concurrentTest("a reload that fails reports what it logged, and not what an earlier reload logged", async () => {
+      await using hot = spawnHot({
+        "tsconfig.json": `{}`,
+        "first.js": `throw new Error("from first.js");`,
+        "second.js": `console.log("second ran");`,
+      });
+      expect(await hot.stderr("error: from first.js")).toContain("error: from first.js");
+      // The next reload logs a warning about this tsconfig.json. Nothing prints what a reload logs.
+      hot.write("tsconfig.json", `{ "compilerOptions": { "paths": { "@/*": ["src/*"] } } }`);
+      hot.write("first.js", `throw new Error("from first.js again");`);
+      expect(await hot.stderr("error: from first.js again")).toContain("error: from first.js again");
+      hot.write("tsconfig.json", `{}`);
+      hot.remove("first.js");
+      hot.write("main.js", `console.log("main ran");`);
+      const stderr = await hot.stderr('preload not found "./first.js"');
+      expect(stderr).toContain('preload not found "./first.js"');
+      expect(stderr).not.toContain("tsconfig.json");
+    });
   });
 });

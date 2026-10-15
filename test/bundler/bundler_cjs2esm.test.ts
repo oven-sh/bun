@@ -2496,6 +2496,111 @@ describe("bundler", () => {
       stdout: "1 2 false",
     },
   });
+  for (const backend of ["cli", "api"] as const) {
+    // The build removes `if (module.exports.a) {}`. The other uses of
+    // `module` still need the wrapper, and a file with none still lifts.
+    itBundled(`cjs2esm/RemovedModuleExportsReadKeepsWrapper_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import before from "./before.cjs";
+          import after from "./after.cjs";
+          import twice from "./twice.cjs";
+          import rest from "./rest.cjs";
+          import lifted from "./lifted.cjs";
+          console.log(before.kind, after.kind, twice.kinds.join(), rest.keys, lifted.a);
+        `,
+        "/before.cjs": /* js */ `
+          exports.a = 1;
+          if (module.exports.a) {}
+          exports.kind = typeof module;
+        `,
+        "/after.cjs": /* js */ `
+          exports.a = 1;
+          exports.kind = typeof module;
+          if (module.exports.a) {}
+        `,
+        "/twice.cjs": /* js */ `
+          exports.a = 1;
+          if (module.exports.a) {}
+          if (module.exports.a) {}
+          exports.kinds = [typeof module, typeof module];
+        `,
+        // Here `module` is a copy of another file's namespace.
+        "/rest.cjs": /* js */ `
+          var { a, ...module } = require("./esm.mjs");
+          !module;
+          exports.keys = Object.keys(module).join();
+        `,
+        "/esm.mjs": `export const a = 1, b = 2, c = 3;`,
+        "/lifted.cjs": /* js */ `
+          exports.a = 1;
+          if (module.exports.a) {}
+        `,
+      },
+      minifySyntax: true,
+      cjs2esm: { unhandled: ["/before.cjs", "/after.cjs", "/twice.cjs", "/rest.cjs"] },
+      run: { stdout: "object object object,object b,c 1" },
+    });
+
+    // `require` is the only CommonJS sign of these files. A folded
+    // `typeof require` or `require.main === module` is no use of it, and
+    // takes no other use away.
+    itBundled(`cjs2esm/FoldedRequireReadKeepsOtherRequireUses_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import removed from "./removed.js";
+          import unreachable from "./unreachable.js";
+          import main from "./main.js";
+          console.log(typeof removed, typeof unreachable, typeof main, globalThis.seen.join());
+        `,
+        "/dep.js": `exports.value = 7;`,
+        "/removed.js": /* js */ `
+          const dep = require("./dep.js");
+          typeof require;
+          (globalThis.seen ??= []).push(dep.value);
+        `,
+        "/unreachable.js": /* js */ `
+          const dep = require("./dep.js");
+          if (false) console.log(typeof require);
+          (globalThis.seen ??= []).push(dep.value);
+        `,
+        "/main.js": /* js */ `
+          const dep = require("./dep.js");
+          require.main === module;
+          (globalThis.seen ??= []).push(dep.value);
+        `,
+      },
+      run: { stdout: "object object object 7,7,7" },
+    });
+
+    // `var impl = require()` becomes an import and leaves its statement
+    // empty. A use in a function above it is still a use.
+    itBundled(`cjs2esm/UseAboveUnwrappedRequireDeclaration_${backend}`, {
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          import ReactDOM from "react-dom";
+          import { keys } from "./typed.ts";
+          console.log(Object.keys(ReactDOM).join(), Object.keys(globalThis.above()).join(), keys());
+        `,
+        "/node_modules/react-dom/index.js": /* js */ `
+          function above() { return impl; }
+          var impl = require("./impl.js");
+          globalThis.above = above;
+          module.exports = impl;
+        `,
+        "/node_modules/react-dom/impl.js": `exports.a = 1; exports.b = 2;`,
+        "/typed.ts": /* ts */ `
+          export function keys() { return Object.keys(React).join(); }
+          const React = require("react");
+        `,
+        "/node_modules/react/index.js": `exports.version = "19.0.0"; exports.createElement = function () {};`,
+      },
+      run: { stdout: "a,b a,b version,createElement" },
+    });
+  }
   // Module code makes a top-level function declaration lexical, so a `var`
   // with the same name is a SyntaxError there. A function body allows it, so
   // these files keep their `__commonJS` wrapper. In sloppy mode the bundler

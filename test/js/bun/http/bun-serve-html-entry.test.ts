@@ -1,6 +1,7 @@
 import type { Subprocess } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isMacOS, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>) {
@@ -714,4 +715,138 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+// The `o + Enter` shortcut launches the platform opener (`xdg-open`, `open`, `start`).
+// The key handler only runs on a TTY, so the dev server is driven through a pty.
+describe("o + Enter", () => {
+  const html = `<!DOCTYPE html><html><body><h1>hi</h1></body></html>`;
+
+  // Polls with a deadline: the condition is reached in milliseconds or not at all.
+  async function until(what: string, condition: () => boolean) {
+    const deadline = Date.now() + 10_000;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error(`timed out: ${what}`);
+      await Bun.sleep(10);
+    }
+  }
+
+  // Boots `bun index.html` on a pty. With `stdoutFile`, the server's stdout goes to that file,
+  // and the pty carries only the key echoes and stderr.
+  async function devServerInPty(cwd: string, PATH: string, stdoutFile?: string) {
+    const decoder = new TextDecoder();
+    let text = "";
+    const waiters: { needle: string; from: number; resolve: () => void; reject: (error: Error) => void }[] = [];
+    const closed = Promise.withResolvers<void>();
+    const bun = [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"];
+    const proc = Bun.spawn({
+      cmd: stdoutFile ? ["/bin/sh", "-c", 'exec "$0" "$@" > "$STDOUT_FILE"', ...bun] : bun,
+      // On Windows the inherited variable is spelled `Path`, and in a plain spread it would win.
+      env: mergeWindowEnvs([bunEnv, { PATH, NO_COLOR: "1", STDOUT_FILE: stdoutFile }]),
+      cwd,
+      terminal: {
+        // Wide enough that no line wraps: ConPTY redraws a wrapped line.
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          text += decoder.decode(chunk, { stream: true });
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (text.indexOf(waiters[i].needle, waiters[i].from) !== -1) waiters.splice(i, 1)[0].resolve();
+          }
+        },
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    // An early exit fails the wait instead of hanging. The last output can arrive
+    // after the exit, so the message is built once the pty has closed.
+    proc.exited.then(async code => {
+      await closed.promise;
+      for (const waiter of waiters.splice(0)) {
+        waiter.reject(new Error(`server exited with ${code} before ${JSON.stringify(waiter.needle)}:\n${text}`));
+      }
+    });
+    const waitFor = (needle: string, from = 0) => {
+      if (text.indexOf(needle, from) !== -1) return Promise.resolve();
+      if (proc.exitCode !== null) return Promise.reject(new Error(`server exited with ${proc.exitCode}:\n${text}`));
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      waiters.push({ needle, from, resolve, reject });
+      return promise;
+    };
+    const stdout = () => (!stdoutFile ? text : existsSync(stdoutFile) ? readFileSync(stdoutFile, "utf8") : "");
+    // The shortcut hint is the last line of the banner, so the URL line is complete by then.
+    if (stdoutFile) {
+      await until("the banner", () => {
+        if (proc.exitCode !== null) throw new Error(`server exited with ${proc.exitCode}:\n${text}`);
+        return stdout().includes("h + Enter");
+      });
+    } else {
+      await waitFor("h + Enter");
+    }
+    // ConPTY can put an escape sequence right after the text of a line.
+    const url = Bun.stripANSI(stdout()).match(/url: (\S+)/)?.[1];
+    if (!url) throw new Error(`no URL on the banner: ${JSON.stringify(stdout())}`);
+    return {
+      proc,
+      // The URL on the banner.
+      url,
+      port: Number(new URL(url).port),
+      waitFor,
+      closed: closed.promise,
+      text: () => text,
+      stdout,
+      mark: () => text.length,
+      // Enter is a carriage return: a Windows console read only completes a line on one.
+      press: (key: string) => void proc.terminal!.write(`${key}\r`),
+      async [Symbol.asyncDispose]() {
+        proc.kill();
+        await proc.exited;
+      },
+    };
+  }
+
+  // On Windows the opener is `start`, which is not a program, so every press takes this path
+  // there (#26231). The test relies on the opener being looked up on PATH (bare `open` on macOS),
+  // and needs a new setup once Windows has a real opener.
+  test("reports the error on stderr and keeps serving when the opener cannot be launched", async () => {
+    using dir = tempDir("html-open-missing", { "index.html": html, "empty-bin/.keep": "" });
+    // POSIX: stdout goes to a file, as in `bun index.html > app.log`, so the pty shows stderr only.
+    const stdoutFile = isWindows ? undefined : join(String(dir), "stdout.txt");
+    await using server = await devServerInPty(String(dir), join(String(dir), "empty-bin"), stdoutFile);
+    const opener = isWindows ? "start" : isMacOS ? "open" : "xdg-open";
+    const error = `error: Executable not found in $PATH: "${opener}"`;
+    const note = `note: Open ${server.url} in your browser`;
+
+    for (let press = 0; press < 2; press++) {
+      const from = server.mark();
+      server.press("o");
+      // The whole line: the next key must not go out while the line is still being written.
+      await server.waitFor(isWindows ? "in your browser" : "in your browser\r\n", from);
+    }
+
+    // The listener still accepts a connection, and the server still exits on request.
+    const socket = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+    socket.end();
+    server.press("q");
+    expect(await server.proc.exited).toBe(0);
+    await server.closed;
+
+    if (isWindows) {
+      // ConPTY redraws its output, so only the two lines are checked there.
+      const shown = Bun.stripANSI(server.text());
+      expect(shown).toContain(error);
+      expect(shown).toContain(note);
+    } else {
+      const press = `o\r\n${error}\r\n${note}\r\n`;
+      expect({
+        terminal: server.text(),
+        stdoutAfterBanner: server.stdout().split("to show shortcuts\n")[1],
+      }).toEqual({
+        // The echo of each key, and the two lines per press on stderr.
+        terminal: `${press}${press}q\r\n`,
+        stdoutAfterBanner: "",
+      });
+    }
+  });
 });

@@ -325,14 +325,34 @@ describe("SQL adapter environment variable precedence", () => {
       expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "db.example", port: 5433, database: "app" });
     });
 
-    test("hostname, host or path next to filename still selects Postgres", async () => {
-      await using byHostname = new SQL({ filename: "dev.db", hostname: "db.example" });
-      await using byHost = new SQL({ filename: "dev.db", host: "db.example" });
-      await using byPath = new SQL({ filename: "dev.db", path: "/run/postgresql" });
+    test("a server option next to a plain-path filename still selects Postgres", async () => {
+      const serverOptions: SQL.PostgresOrMySQLOptions[] = [
+        { hostname: "db.example" },
+        { host: "db.example" },
+        { path: "/run/postgresql" },
+        { port: 5433 },
+        { username: "app" },
+        { password: "secret" },
+        { database: "app" },
+        { tls: true },
+      ];
 
-      expect(byHostname.options).toMatchObject({ adapter: "postgres", hostname: "db.example" });
-      expect(byHost.options).toMatchObject({ adapter: "postgres", hostname: "db.example" });
-      expect(byPath.options.adapter).toBe("postgres");
+      const adapters: Record<string, unknown> = {};
+      for (const serverOption of serverOptions) {
+        await using sql = new SQL({ filename: "dev.db", ...serverOption } as SQL.Options);
+        adapters[Object.keys(serverOption)[0]] = sql.options.adapter;
+      }
+
+      expect(adapters).toEqual({
+        hostname: "postgres",
+        host: "postgres",
+        path: "postgres",
+        port: "postgres",
+        username: "postgres",
+        password: "postgres",
+        database: "postgres",
+        tls: "postgres",
+      });
     });
   });
 

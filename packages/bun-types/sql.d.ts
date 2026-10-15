@@ -185,8 +185,9 @@ declare module "bun" {
        * Path to the database file
        *
        * A non-empty `filename` selects the SQLite adapter when `adapter` is
-       * not set and the options name no server (`hostname`, `host`, `path`).
-       * The value is a path, or a `sqlite:` or `file:` URL.
+       * not set and no PostgreSQL or MySQL connection option is set
+       * (`hostname`, `port`, `username`, `password`, `database`, `path`, `tls`
+       * or an alias of one). The value is a path, or a `sqlite:` or `file:` URL.
        *
        * Examples:
        *

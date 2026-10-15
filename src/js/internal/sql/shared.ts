@@ -1696,10 +1696,23 @@ function hasProtocol(url: string | URL): boolean {
   return url.includes("://");
 }
 
-/** `hostname`, `host` and `path` name a Postgres or MySQL server. */
-function namesServer(options: Bun.SQL.Options): boolean {
-  const { hostname, host, path } = options as Bun.SQL.PostgresOrMySQLOptions;
-  return !!(hostname || host || path);
+/** True when the options configure a connection to a Postgres or MySQL server. */
+function hasServerOption(options: Bun.SQL.Options): boolean {
+  const o = options as Bun.SQL.PostgresOrMySQLOptions;
+  return !!(
+    o.hostname ||
+    o.host ||
+    o.path ||
+    o.port ||
+    o.username ||
+    o.user ||
+    o.password ||
+    o.pass ||
+    o.database ||
+    o.db ||
+    o.tls ||
+    o.ssl
+  );
 }
 
 /**
@@ -1759,7 +1772,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   if (!options.adapter && resolvedUrl !== null) {
     // Without a SQLite URL, only `filename` (with no server option) and SQLITE_URL itself name a SQLite file.
-    const fromSqliteSource = optionsFilename ? !namesServer(options) : adapter === "sqlite" && !optionsUrl;
+    const fromSqliteSource = optionsFilename ? !hasServerOption(options) : adapter === "sqlite" && !optionsUrl;
 
     if (parseDefinitelySqliteUrl(resolvedUrl) !== null || (fromSqliteSource && !hasProtocol(resolvedUrl))) {
       // Return the original URL (with query params) for SQLite parsing

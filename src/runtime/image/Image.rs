@@ -114,9 +114,7 @@ pub(crate) enum Source {
     Path(ZBox),
     /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
     /// don't exist until read. We hold a Strong on the JS Blob and, at
-    /// terminal time, just call its own `.bytes()` (whatever that means for
-    /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
-    /// task off the resulting Promise. After the first read completes the
+    /// terminal time, `BlobReadChain` reads it. After the first read completes the
     /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
     Blob(Strong),
 }
@@ -414,7 +412,7 @@ fn source_from_js(
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
-        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
+        // through its own store at terminal time, so we inherit whatever
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
         if blob.store.get().is_some() {
@@ -776,24 +774,25 @@ impl Image {
                     _ => unreachable!(),
                 }
             }
-            // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
-            // Strong while pending_tasks > 0 (see `schedule()`).
-            Source::Owned(b) => Ok((
-                Input {
-                    bytes: bun_ptr::RawSlice::new(b.as_slice()),
-                    ..Default::default()
-                },
-                Pin::NONE,
-            )),
-            Source::Path(p) => Ok((
-                Input {
-                    path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
-                    ..Default::default()
-                },
-                Pin::NONE,
-            )),
+            Source::Owned(_) | Source::Path(_) => Ok((self.borrow_for_task(), Pin::NONE)),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
+        }
+    }
+
+    /// The `Input` for an `Owned` or `Path` source: nothing to pin, the `Image` owns the bytes.
+    fn borrow_for_task(&self) -> Input {
+        match self.source.get() {
+            Source::Owned(b) => Input {
+                bytes: bun_ptr::RawSlice::new(b.as_slice()),
+                ..Default::default()
+            },
+            Source::Path(p) => Input {
+                path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
+                ..Default::default()
+            },
+            // A `Blob` source only becomes `Owned` (read chain) or `Path` (`encode_for_body`).
+            Source::JsBuffer | Source::Blob(_) => unreachable!(),
         }
     }
 }
@@ -1135,17 +1134,6 @@ impl Image {
         if matches!(self.source.get(), Source::Blob(_)) {
             return BlobReadChain::start(self, cx, this_value, spec, deliver);
         }
-        self.dispatch(cx, this_value, spec, deliver)
-    }
-
-    /// Pin the input and queue the job for a source whose bytes exist.
-    fn dispatch(
-        &self,
-        cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
-        spec: Spec,
-        deliver: Deliver,
-    ) -> JsResult<JSValue> {
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
@@ -1253,21 +1241,13 @@ impl Image {
 
 // ───────────────────────────── worker task ──────────────────────────────────
 
-/// `.blob` source: ask the Blob for its bytes via the store-agnostic
-/// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
-/// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
-/// JSValue — swap it into `image.source = .owned`, and `dispatch()` the job.
-/// Promise-of-promise flattens, so the caller sees one `await` for
-/// read+decode+ops+encode. After the first read, subsequent terminals on the
-/// same instance reuse the `.owned` bytes without re-reading.
+/// A `Source::Blob` terminal's job, parked until `read_bytes_to_handler` delivers the bytes.
 struct BlobReadChain<'a> {
-    image: *const Image,
     global: &'a JSGlobalObject,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
     spec: Spec,
-    deliver: Deliver,
-    outer: jsc::JSPromiseStrong,
+    js: PipelineJs,
 }
 
 impl<'a> BlobReadChain<'a> {
@@ -1294,24 +1274,21 @@ impl<'a> BlobReadChain<'a> {
         // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
         let blob = unsafe { &mut *blob };
 
-        // Same Strong-ref contract as the regular pending_tasks bump — keeps
-        // the wrapper (and its sourceJS slot) alive until the read settles.
-        if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, cx.global()));
-        }
-        image.pending_tasks.set(image.pending_tasks.get() + 1);
-
+        let promise = jsc::JSPromiseStrong::init(cx.global());
+        let promise_value = promise.value();
         let chain = Box::new(BlobReadChain {
-            image: std::ptr::from_ref::<Image>(image),
             global: cx.global(),
             context: cx.context().id(),
             spec,
-            deliver,
-            outer: jsc::JSPromiseStrong::init(cx.global()),
+            js: PipelineJs {
+                promise,
+                deliver,
+                // The `Image` or the task will own the bytes: nothing to pin.
+                _pin: Pin::NONE,
+                // Keeps the wrapper alive across the read, then across the job.
+                image: PendingTask::new(image, this_value, cx.global()),
+            },
         });
-        let promise = chain.outer.value();
         // `read_bytes_to_handler` stores the handler pointer and calls
         // `on_read_bytes` on the JS thread (sync for in-memory, async for
         // file/S3). Ownership of the chain transfers there; the trait impl
@@ -1322,65 +1299,43 @@ impl<'a> BlobReadChain<'a> {
         // returns `Err` (an exception left pending while delivering synchronously,
         // i.e. after the chain has already been reclaimed).
         unsafe { blob.read_bytes_to_handler(raw, cx) }?;
-        Ok(promise)
+        Ok(promise_value)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
     fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global;
-        // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
-        // bump in `start()`; we are on the JS thread. R-2: shared deref —
-        // mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
-        let mut outer = self.outer;
-        let spec = self.spec;
-        let deliver = self.deliver;
-        // `bun.destroy(self)` — Box drops at end of scope.
-
-        image.pending_tasks.set(image.pending_tasks.get() - 1);
-        if image.pending_tasks.get() == 0 {
-            image.this_ref.with_mut(|r| r.downgrade());
-        }
-        // `defer outer.deinit()` — `JSPromiseStrong` Drop handles this.
-
+        // On Err `js` drops here: the promise handle, `deliver`'s Strong, the hold on the Image.
+        let mut js = self.js;
         match r {
             ReadBytesResult::Ok(bytes) => {
+                let cx = global.js_thread(global.bun_vm().context_of(self.context));
+                let image = js.image.image(&cx);
                 // Concurrent terminals can have started multiple BlobReadChains
                 // (no in-flight serialisation — `start()` re-enters every time
                 // it sees `.blob`). The FIRST resolver wins and swaps to
-                // `.owned`; that buffer is then *borrowed* by `pin_for_task`
+                // `.owned`; that buffer is then *borrowed* by `borrow_for_task`
                 // into a worker-thread PipelineTask. A later resolver MUST NOT
                 // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and `dispatch()`
+                // — drop the redundant read instead and launch the job
                 // on the already-swapped source.
-                if matches!(image.source.get(), Source::Blob(_)) {
+                let input = if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
-                } else {
+                    image.borrow_for_task()
+                } else if matches!(image.source.get(), Source::Owned(_)) {
                     drop(bytes);
-                }
-                let Some(this_value) = image.this_ref.get().try_get() else {
-                    drop(deliver);
-                    return outer.reject(
-                        global,
-                        Ok(global.create_error_instance(format_args!(
-                            "Image: collected before read completed"
-                        ))),
-                    );
+                    image.borrow_for_task()
+                } else {
+                    // `encode_for_body` made the source the file's path, without the Blob's offset and size.
+                    Input {
+                        copied: Some(bytes),
+                        ..Default::default()
+                    }
                 };
-                // Source is now `.owned`; `dispatch()` takes the regular path. If it threw,
-                // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.dispatch(
-                    &global.js_thread(global.bun_vm().context_of(self.context)),
-                    this_value,
-                    spec,
-                    deliver,
-                );
-                outer.settle(global, inner)
+                PipelineTask::launch(&cx, self.spec, input, js);
+                Ok(())
             }
-            ReadBytesResult::Err(e) => {
-                drop(deliver);
-                outer.reject(global, Ok(e.to_error_instance(global)))
-            }
+            ReadBytesResult::Err(e) => js.promise.reject(global, Ok(e.to_error_instance(global))),
         }
     }
 }
@@ -1427,7 +1382,7 @@ pub(crate) struct PipelineTask {
 // the job's Js side keeps alive; read only under the pool borrow. The rest is owned.
 unsafe impl Send for PipelineTask {}
 
-/// The JS-thread half of a scheduled `PipelineTask`.
+/// The JS-thread half of one operation, built when its terminal is called.
 #[derive(bun_jsc::JsAffine)]
 pub(crate) struct PipelineJs {
     promise: jsc::JSPromiseStrong,
@@ -1477,7 +1432,7 @@ impl PendingTask {
 }
 impl Drop for PendingTask {
     fn drop(&mut self) {
-        // JS thread (a job's Js side is only ever dropped there).
+        // JS thread (a job's Js side, parked or queued, is only ever dropped there).
         // SAFETY: as `image()`.
         let image = unsafe { &*self.0.as_ptr() };
         image.pending_tasks.set(image.pending_tasks.get() - 1);
@@ -1507,7 +1462,7 @@ pub(crate) struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
+    /// Bytes the task owns: a FastTypedArray's (tiny, GC-movable), or a Blob read the `Image` did not keep.
     copied: Option<Vec<u8>>,
 }
 
@@ -1600,7 +1555,7 @@ impl PipelineTask {
 
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
-        // `self.input` was prepared on the JS thread by `pin_for_task`: either a
+        // `self.input` was prepared on the JS thread: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
         let owned_file: Option<Vec<u8>>;

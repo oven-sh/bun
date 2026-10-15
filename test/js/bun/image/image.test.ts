@@ -1,7 +1,7 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
-import { closeSync, openSync } from "node:fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, constants, openSync } from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -340,6 +340,20 @@ describe("Bun.Image", () => {
       expect(await res.bytes()).toEqual(await new Bun.Image(src).resize(5, 10).webp({ lossless: true }).bytes());
     });
 
+    // That path source has no offset. The read that is in flight has the
+    // slice's bytes, and its terminal decodes those.
+    test("Bun.file().slice() source, a pending terminal decodes its own read after new Response(image)", async () => {
+      using dir = srcDir();
+      const img = Bun.file(join(String(dir), "after-other.png"))
+        .slice(other.length)
+        .image();
+
+      const pending = img.resize(8, 4).png().bytes();
+      new Response(img);
+
+      await expectFirstState(await pending);
+    });
+
     test("Bun.file() source, a failed read rejects its terminal and the next terminal reads again", async () => {
       using dir = tempDir("image-terminal-state", {});
       const path = join(String(dir), "later.png");
@@ -376,6 +390,114 @@ describe("Bun.Image", () => {
         expect(await new Bun.Image(out).metadata()).toEqual({ width: 20, height: 20, format: "jpeg" });
       },
     );
+  });
+
+  // A Bun.file()/S3 read that has not completed holds its terminal: the
+  // promise, the write() destination and the Image. These end the read in the
+  // ways that hand no bytes back.
+  describe("a Bun.file() read that does not complete", () => {
+    // A FIFO with a writer and no data keeps a read pending, and opening it
+    // read-write makes the opener that writer. Windows has no FIFO.
+    const holdOpen = (fifo: string) => openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+    const fifoIn = (dir: string) => {
+      const fifo = join(dir, "fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      return fifo;
+    };
+
+    test.skipIf(isWindows)("its Worker is terminated", async () => {
+      using dir = tempDir("image-pending-read", {
+        "worker.mjs": `
+          onmessage = ({ data: { fifo, out } }) => {
+            const pending = Bun.file(fifo).image().resize(2, 2).png().write(out);
+            pending.then(() => postMessage("resolved"), e => postMessage(e.code));
+            postMessage("read started");
+          };
+        `,
+      });
+      const fifo = fifoIn(String(dir));
+      const out = join(String(dir), "out.png");
+      const writer = holdOpen(fifo);
+      try {
+        const messages: string[] = [];
+        const started = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        const worker = new Worker(join(String(dir), "worker.mjs"));
+        worker.onerror = event => started.reject(event.error ?? new Error(event.message));
+        worker.onmessage = event => {
+          messages.push(event.data);
+          started.resolve();
+        };
+        worker.addEventListener("close", () => closed.resolve());
+        worker.postMessage({ fifo, out });
+        await started.promise;
+        worker.terminate();
+        await closed.promise;
+        Bun.gc(true);
+        // The terminal did not settle, and nothing was written.
+        expect(messages).toEqual(["read started"]);
+        expect(await Bun.file(out).exists()).toBe(false);
+      } finally {
+        closeSync(writer);
+      }
+    });
+
+    const runFixture = async (dir: string, args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs", ...args],
+        // The S3 case needs an environment with no credentials in it.
+        env: {
+          ...bunEnv,
+          ...Object.fromEntries(
+            ["S3", "AWS"].flatMap(prefix =>
+              ["ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"].map(name => [`${prefix}_${name}`, undefined]),
+            ),
+          ),
+        },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    test.skipIf(isWindows).concurrent("the process exits", async () => {
+      using dir = tempDir("image-pending-read", {
+        "fixture.mjs": `
+          import { constants, openSync } from "node:fs";
+          const [fifo, out] = process.argv.slice(2);
+          // Read-write: this end is the FIFO's writer, and it writes nothing.
+          openSync(fifo, constants.O_RDWR | constants.O_NONBLOCK);
+          const pending = Bun.file(fifo).image().resize(2, 2).png().write(out);
+          pending.then(() => console.log("resolved"), e => console.log(e.code));
+          console.log("exit with the read pending");
+          process.exit(0);
+        `,
+      });
+      const fifo = fifoIn(String(dir));
+      expect(await runFixture(String(dir), [fifo, join(String(dir), "out.png")])).toEqual({
+        stdout: "exit with the read pending\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an S3 download that cannot start rejects the terminal", async () => {
+      using dir = tempDir("image-pending-read", {
+        "fixture.mjs": `
+          // No credentials: the read fails inside write(), before it returns.
+          const img = new Bun.S3Client({ bucket: "images" }).file("src.png").image();
+          const pending = img.resize(2, 2).png().write(process.argv[2]);
+          console.log(await pending.then(() => "resolved", e => e.code), img.width);
+        `,
+      });
+      expect(await runFixture(String(dir), [join(String(dir), "out.png")])).toEqual({
+        stdout: "ERR_S3_MISSING_CREDENTIALS -1\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   // Store-backed Blob sources are read at terminal time through the Blob's

@@ -888,9 +888,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `_protected` drops here → unprotect.
     }
 
-    // The list is consumed once per global. The test runner refills it
-    // after it swaps the global (`--isolate`, `[[test.projects]]`).
-    // `Vec::clear` drops the `Box<[u8]>` payloads but keeps capacity.
+    // Consumed once per global; the test runner refills it after a global swap.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).preload.clear() };
 

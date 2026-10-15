@@ -1895,8 +1895,7 @@ impl TestCommand {
             } else {
                 Some(Timings::load(&ctx.test_options.timings_files))
             },
-            // SAFETY: `ctx` is the process-lifetime CLI context and `exec()`
-            // never returns, so the views never dangle.
+            // SAFETY: `ctx` is the process-lifetime CLI context; `exec()` never returns.
             projects: TestProjects::init(
                 unsafe { bun_ptr::detach_lifetime(&ctx.preloads[..]) },
                 unsafe { bun_ptr::detach_lifetime(&ctx.test_options.projects[..]) },
@@ -1950,8 +1949,7 @@ impl TestCommand {
             })?
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
-        // `vm.preload` is filled per global by the file loops (`run_all_tests`
-        // and the parallel worker) from `reporter.projects`.
+        // `vm.preload` is filled per global by the file loops from `reporter.projects`.
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -1978,8 +1976,7 @@ impl TestCommand {
         vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
-        // `[[test.projects]]` swaps the global between project groups with
-        // the same machinery `--isolate` uses between files.
+        // `[[test.projects]]` swaps the global between projects like `--isolate` does between files.
         if ctx.test_options.isolate || !ctx.test_options.projects.is_empty() {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
@@ -2776,9 +2773,7 @@ impl TestCommand {
 
                 let isolate = reporter.jest.test_options.isolate;
                 let n = files.len();
-                // The global is fresh before the first file and after every
-                // swap: its preloads have not run yet, so the first file in
-                // it loads them and runs the preload-level `beforeAll`.
+                // `fresh`: the global has not loaded its preloads yet.
                 let mut fresh = true;
 
                 for (i, file_name) in files.iter().enumerate() {
@@ -2834,9 +2829,7 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
-    /// Retires the global the last file ran in and creates a fresh one.
-    /// The caller sets `vm.preload` for the next file: `load_preloads`
-    /// consumes the list once per global.
+    /// Fresh global. The caller refills `vm.preload`, consumed once per global.
     pub(crate) fn swap_global(reporter: &mut CommandLineReporter, vm: &mut VirtualMachine) {
         crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
         vm.swap_global_for_test_isolation();

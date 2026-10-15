@@ -91,8 +91,6 @@ pub(crate) fn run_as_coordinator(
             bun_core::order(a.as_bytes(), b.as_bytes())
         });
     }
-    // Keep each project's files contiguous so a worker swaps its global
-    // (and re-runs the preloads) as rarely as possible.
     reporter.projects.group(&mut sorted);
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
@@ -561,8 +559,7 @@ impl<'a> WorkerLoop<'a> {
         self.cmds.send(wf.finish());
 
         let isolate = self.reporter.jest.test_options.isolate;
-        // `fresh`: the global has not loaded its preloads yet. `cur_key`:
-        // the project whose preloads the current global loaded.
+        // `fresh`: the global has not loaded its preloads yet.
         let mut fresh = true;
         let mut cur_key: ProjectKey = BASE_KEY;
 
@@ -589,8 +586,6 @@ impl<'a> WorkerLoop<'a> {
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
 
-            // Without --isolate a worker keeps its global across files and
-            // swaps it only when the next file belongs to another project.
             let key = self.reporter.projects.key_for(&self.cmds.pending_path);
             if !fresh && key != cur_key {
                 TestCommand::swap_global(self.reporter, vm);

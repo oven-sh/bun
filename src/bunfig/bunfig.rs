@@ -346,8 +346,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// `[[test.projects]]`: each table needs a unique `name` and a
-    /// `testMatch`. `preload` is optional.
+    /// `[[test.projects]]`: unique `name`, `testMatch`, optional `preload`.
     fn load_test_projects(&mut self, expr: &Expr) -> crate::Result<()> {
         self.expect(expr, ExprTag::EArray)?;
         let ExprData::EArray(arr) = &expr.data else {

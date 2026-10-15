@@ -1,17 +1,9 @@
-//! `[[test.projects]]`: which project a test file belongs to, and which
-//! preloads its global needs.
-//!
-//! Files are grouped by project and each group runs in its own global.
-//! The serial loop and the parallel worker both derive the key from the
-//! path with [`TestProjects::key_for`] and swap the global when the key
-//! changes. `[test] preload` runs first in every global, then the
-//! project's own `preload`.
+//! `[[test.projects]]`: each project's files share one global that loads `[test] preload`, then the project's `preload`.
 
 use bun_options_types::context::TestProject;
 use bun_resolver::fs::FileSystem;
 
-/// Index into the `[[test.projects]]` table plus one. `BASE_KEY` is a file
-/// that matches no project: it runs with `[test] preload` only.
+/// Index into `[[test.projects]]` plus one. `BASE_KEY` matches no project.
 pub(crate) type ProjectKey = u32;
 
 pub(crate) const BASE_KEY: ProjectKey = 0;
@@ -27,8 +19,7 @@ pub(crate) struct TestProjects {
 }
 
 impl TestProjects {
-    /// `preloads` and `projects` are the process-lifetime CLI context's
-    /// fields, so the views never dangle.
+    /// Both slices are fields of the process-lifetime CLI context.
     pub(crate) fn init(
         preloads: &'static [Box<[u8]>],
         projects: &'static [TestProject],
@@ -49,8 +40,7 @@ impl TestProjects {
         }
     }
 
-    /// The first project whose `testMatch` matches `abs_path` relative to
-    /// the project root, else `BASE_KEY`.
+    /// The first project whose `testMatch` matches, else `BASE_KEY`.
     pub(crate) fn key_for(&self, abs_path: &[u8]) -> ProjectKey {
         if self.projects.is_empty() {
             return BASE_KEY;
@@ -69,8 +59,7 @@ impl TestProjects {
         BASE_KEY
     }
 
-    /// The preload list a fresh global needs before it runs a file with
-    /// this key: `[test] preload`, then the project's own.
+    /// `[test] preload`, then the project's own `preload`.
     pub(crate) fn preloads_for(&self, key: ProjectKey) -> Vec<Box<[u8]>> {
         let project = match key {
             BASE_KEY => &[][..],
@@ -82,9 +71,7 @@ impl TestProjects {
         out
     }
 
-    /// Stable partition of `files` by key, so each project's files are
-    /// contiguous and the global is swapped once per project. The order
-    /// inside a group is kept (`--randomize` and `--shard` already ran).
+    /// Stable partition by key, so the `--randomize` or `--shard` order inside a project is kept.
     pub(crate) fn group(&self, files: &mut [bun_ptr::Interned]) {
         if self.projects.is_empty() {
             return;

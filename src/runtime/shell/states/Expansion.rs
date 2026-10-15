@@ -621,8 +621,7 @@ impl Expansion {
         }
         .clone();
 
-        // A `$(...)` with an empty body runs no command. It keeps the status
-        // recorded before it, like in bash.
+        // An empty `$(...)` body runs no command and keeps the earlier status, like in bash.
         let ran_command = interp
             .as_script(child)
             .node

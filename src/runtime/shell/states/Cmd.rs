@@ -1,7 +1,7 @@
 //! A shell primarily runs commands, so this is the main state node.
 //!
 //! Execution proceeds: expand argv atoms → expand assigns → expand redirect
-//! (the order of bash) → resolve to builtin or spawn subprocess → await exit.
+//! → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
@@ -27,8 +27,7 @@ pub(crate) struct Cmd {
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
-    /// `None` until the exec reports, a stdio error records its errno, or the
-    /// command is aborted. `on_exit` and `has_finished` depend on that.
+    /// `None` until the exec reports, a stdio error records its errno, or the command is aborted.
     pub(crate) exit_code: Option<ExitCode>,
 }
 
@@ -416,8 +415,7 @@ impl Cmd {
             }
         }
 
-        // An empty-string argv[0] is a command name: it reaches `which()` and
-        // fails with "command not found".
+        // An empty-string argv[0] is a command name: `which()` fails with "command not found".
         let Some(first_arg) = interp
             .as_cmd(this)
             .args
@@ -802,8 +800,7 @@ impl Cmd {
         Ok(None)
     }
 
-    /// Opens the expanded target of a `> file` / `< file` redirect. `Err` is
-    /// the message that says why it could not be opened.
+    /// Opens the expanded redirect target. `Err` is the message that says why it failed.
     fn open_redirect_file(interp: &Interpreter, this: NodeId) -> Result<bun_sys::Fd, String> {
         let me = interp.as_cmd(this);
         if me.redirection_file.is_empty() {
@@ -835,9 +832,7 @@ impl Cmd {
         })
     }
 
-    /// No word is left after expansion, so there is no command name. The
-    /// redirect is still performed. Then the status is that of the last
-    /// `$(...)` this command performed, else 0 (POSIX 2.9.1).
+    /// No command name: perform the redirect, then report the last `$(...)` status, else 0.
     fn finish_without_command(interp: &Interpreter, this: NodeId) -> Yield {
         if matches!(
             interp.as_cmd(this).ast_node().redirect_file,

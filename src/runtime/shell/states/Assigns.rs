@@ -1,8 +1,5 @@
 //! In pipeline expressions, assigns (e.g. `FOO=bar BAR=baz | echo hi`) have
 //! no effect on the environment of the shell, so we can skip them.
-//!
-//! A statement made only of assignments (`AssignCtx::Shell`) has no command
-//! name, so it completes with the status of the last `$(...)` in its values.
 
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -88,8 +85,7 @@ impl Assigns {
                         let me = interp.as_assigns(this);
                         let exit_code = match me.ctx {
                             AssignCtx::Shell => me.base.shell().last_cmd_subst_status.unwrap_or(0),
-                            // `Cmd` reads a nonzero status from this node as
-                            // an expansion failure.
+                            // `Cmd` reads a nonzero status from this node as a failed expansion.
                             AssignCtx::Cmd => 0,
                         };
                         (me.base.parent, exit_code)

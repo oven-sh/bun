@@ -13,8 +13,6 @@ use super::storage_class::StorageClass;
 
 bun_core::declare_scope!(AWS, visible);
 
-use bun_core::fmt::buf_print;
-
 /// Format into a fresh `Vec<u8>` and return it.
 macro_rules! alloc_print {
     ($($arg:tt)*) => {{
@@ -148,15 +146,6 @@ fn aws_cache_get(day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
 #[inline]
 fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
     AWS_SIGNATURE_CACHE.set(day, key, digest)
-}
-
-/// BoringSSL `ENGINE*` for `EVP_Digest`. BoringSSL's `EVP_Digest` ignores the
-/// `impl` argument entirely (it's an OpenSSL-compat shim — see
-/// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
-/// engines"), so passing null is fine.
-#[inline]
-fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
-    core::ptr::null_mut()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -362,14 +351,10 @@ impl S3Credentials {
             return Err(SignError::InvalidPath);
         }
 
-        // 1024 max key size and 63 max bucket name
-        let mut normalized_path_buffer = [0u8; 1024 + 63 + 2];
-        let mut path_buffer = [0u8; 1024];
-        let mut bucket_buffer = [0u8; 63];
-        let bucket = encode_uri_component::<false>(bucket, &mut bucket_buffer)
-            .map_err(|_| SignError::InvalidPath)?;
-        let path = encode_uri_component::<false>(path, &mut path_buffer)
-            .map_err(|_| SignError::InvalidPath)?;
+        // The limit is on the key, not on its percent-encoded form.
+        if path.len() > MAX_KEY_LEN {
+            return Err(SignError::InvalidPath);
+        }
         // Default to https. Only use http if they explicit pass "http://" as the endpoint.
         let protocol: &str = if self.insecure_http { "http" } else { "https" };
 
@@ -398,20 +383,15 @@ impl S3Credentials {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // The bucket is interpolated into the host; a `/` (or `\`,
-                    // which encode_uri_component normalizes to `/`) would let a
+                    // which encode_uri_component_into writes as `/`) would let a
                     // crafted bucket redirect the signed request to another host.
-                    if strings::contains_char(bucket, b'/') {
+                    if strings::index_of_any(bucket, b"/\\").is_some() {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
                     let mut v = Vec::new();
-                    write!(
-                        &mut v,
-                        "{}.s3.{}.amazonaws.com",
-                        BStr::new(bucket),
-                        BStr::new(region)
-                    )
-                    .unwrap();
+                    encode_uri_component_into::<false>(bucket, &mut v);
+                    write!(&mut v, ".s3.{}.amazonaws.com", BStr::new(region)).unwrap();
                     endpoint_owned = Some(v.clone());
                     break 'brk_host v.into_boxed_slice();
                 }
@@ -424,27 +404,6 @@ impl S3Credentials {
         };
         let _ = endpoint_owned; // not read after this point.
         // `host` (Box<[u8]>) drops on `?`.
-
-        let normalized_path: &[u8] = 'brk: {
-            if self.virtual_hosted_style {
-                break 'brk buf_print(
-                    &mut normalized_path_buffer,
-                    format_args!("{}/{}", BStr::new(extra_path), BStr::new(path)),
-                )
-                .map_err(|_| SignError::InvalidPath)?;
-            } else {
-                break 'brk buf_print(
-                    &mut normalized_path_buffer,
-                    format_args!(
-                        "{}/{}/{}",
-                        BStr::new(extra_path),
-                        BStr::new(bucket),
-                        BStr::new(path)
-                    ),
-                )
-                .map_err(|_| SignError::InvalidPath)?;
-            }
-        };
 
         let date_result = get_amz_date();
         let amz_date: Box<[u8]> = date_result.date;
@@ -471,7 +430,36 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+
+        // Written once, into the allocation the result returns. The canonical request reads the path back.
+        let path_capacity = extra_path.len()
+            + "/".len()
+            + if self.virtual_hosted_style {
+                0
+            } else {
+                encoded_len::<false>(bucket) + "/".len()
+            }
+            + encoded_len::<false>(path);
+        let query_capacity = if sign_query {
+            0
+        } else {
+            search_params.map_or(0, <[u8]>::len)
+        };
+        let mut url = Zeroing(Vec::with_capacity(
+            protocol.len() + "://".len() + host.len() + path_capacity + query_capacity,
+        ));
+        write!(&mut url.0, "{}://{}", protocol, BStr::new(&host))
+            .expect("infallible: in-memory write");
+        let path_start = url.0.len();
+        write!(&mut url.0, "{}/", BStr::new(extra_path)).expect("infallible: in-memory write");
+        if !self.virtual_hosted_style {
+            encode_uri_component_into::<false>(bucket, &mut url.0);
+            url.0.push(b'/');
+        }
+        encode_uri_component_into::<false>(path, &mut url.0);
+        let path_end = url.0.len();
+
+        let mut hash_block = [0u8; HASH_BLOCK_LEN];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -495,13 +483,13 @@ impl S3Credentials {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
-                let aws4_key = buf_print(
-                    &mut tmp_buffer,
-                    format_args!("AWS4{}", BStr::new(&self.secret_access_key)),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
+                let mut aws4_key = Zeroing(Vec::with_capacity(
+                    "AWS4".len() + self.secret_access_key.len(),
+                ));
+                aws4_key.0.extend_from_slice(b"AWS4");
+                aws4_key.0.extend_from_slice(&self.secret_access_key);
                 let sig_date = bun_sha_hmac::generate(
-                    aws4_key,
+                    &aws4_key.0,
                     amz_day,
                     bun_sha_hmac::Algorithm::Sha256,
                     &mut hmac_sig_service,
@@ -537,56 +525,17 @@ impl S3Credentials {
                 break 'brk_sign digest;
             };
 
+            let mut canonical =
+                HashWriter::new(bun_sha_hmac::sha::hashers::SHA256::init(), &mut hash_block);
             if sign_query {
-                let mut token_encoded_buffer = [0u8; 2048]; // token is normaly like 600-700 but can be up to 2k
-                let mut encoded_session_token: Option<&[u8]> = None;
-                if let Some(token) = session_token {
-                    encoded_session_token = Some(
-                        encode_uri_component::<true>(token, &mut token_encoded_buffer)
-                            .map_err(|_| SignError::InvalidSessionToken)?,
-                    );
-                }
-
-                // MD5 as base64 (which is required for AWS SigV4) is always 44, when encoded its always 46 (44 + ==)
-                let mut content_md5_encoded_buffer = [0u8; 128];
-                let mut encoded_content_md5: Option<&[u8]> = None;
-                if let Some(content_md5_value) = content_md5.as_deref() {
-                    encoded_content_md5 = Some(
-                        encode_uri_component::<true>(
-                            content_md5_value,
-                            &mut content_md5_encoded_buffer,
-                        )
-                        .map_err(|_| SignError::FailedToGenerateSignature)?,
-                    );
-                }
-
-                // Encode response override parameters for presigned URLs
-                let mut content_disposition_encoded_buffer = [0u8; 512];
-                let mut encoded_content_disposition: Option<&[u8]> = None;
-                if let Some(cd) = content_disposition {
-                    encoded_content_disposition = Some(
-                        encode_uri_component::<true>(cd, &mut content_disposition_encoded_buffer)
-                            .map_err(|_| SignError::FailedToGenerateSignature)?,
-                    );
-                }
-
-                let mut content_type_encoded_buffer = [0u8; 256];
-                let mut encoded_content_type: Option<&[u8]> = None;
-                if let Some(ct) = content_type {
-                    encoded_content_type = Some(
-                        encode_uri_component::<true>(ct, &mut content_type_encoded_buffer)
-                            .map_err(|_| SignError::FailedToGenerateSignature)?,
-                    );
-                }
-
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
-                let canonical: &[u8] = 'brk_canonical: {
+                {
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
-                    if let Some(v) = encoded_content_md5 {
-                        query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
+                    if let Some(v) = content_md5.as_deref() {
+                        query_parts.push(encoded_param(b"Content-MD5=", v));
                     }
                     if let Some(v) = acl {
                         query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
@@ -601,18 +550,15 @@ impl S3Credentials {
                     ));
                     query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
                     query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
-                    if let Some(token) = encoded_session_token {
-                        query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                    if let Some(token) = session_token {
+                        query_parts.push(encoded_param(b"X-Amz-Security-Token=", token));
                     }
                     query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
-                    if let Some(cd) = encoded_content_disposition {
-                        query_parts.push(alloc_print!(
-                            "response-content-disposition={}",
-                            BStr::new(cd)
-                        ));
+                    if let Some(cd) = content_disposition {
+                        query_parts.push(encoded_param(b"response-content-disposition=", cd));
                     }
-                    if let Some(ct) = encoded_content_type {
-                        query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                    if let Some(ct) = content_type {
+                        query_parts.push(encoded_param(b"response-content-type=", ct));
                     }
                     if request_payer {
                         query_parts.push(alloc_print!("x-amz-request-payer=requester"));
@@ -630,53 +576,68 @@ impl S3Credentials {
                         query_string.extend_from_slice(part);
                     }
 
-                    break 'brk_canonical buf_print(
-                        &mut tmp_buffer,
-                        format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
-                            method_name,
-                            BStr::new(normalized_path),
-                            BStr::new(&query_string),
-                            BStr::new(&host),
-                            BStr::new(aws_content_hash)
-                        ),
-                    )
-                    .map_err(|_| SignError::NoSpaceLeft)?;
-                };
-                let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
-                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
+                    write!(
+                        canonical,
+                        "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
+                        method_name,
+                        BStr::new(&url.0[path_start..path_end]),
+                        BStr::new(&query_string),
+                        BStr::new(&host),
+                        BStr::new(aws_content_hash)
+                    );
+                }
+            } else {
+                CanonicalRequest::format(
+                    &mut canonical,
+                    header_key,
+                    method_name.as_bytes(),
+                    &url.0[path_start..path_end],
+                    search_params.map(|p| &p[1..]).unwrap_or(b""),
+                    content_disposition,
+                    content_encoding,
+                    content_md5.as_deref(),
+                    &host,
+                    acl,
+                    aws_content_hash,
+                    &amz_date,
+                    session_token,
+                    storage_class,
+                    signed_headers,
+                );
+            }
+            let mut sha_digest = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
+            canonical.finish().r#final(&mut sha_digest);
 
-                let sign_value = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
-                        BStr::new(&amz_date),
-                        BStr::new(amz_day),
-                        BStr::new(region),
-                        service_name,
-                        HexLower(&sha_digest)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
-
-                let signature = bun_sha_hmac::generate(
+            let mut string_to_sign = HashWriter::new(
+                bun_sha_hmac::hmac::HMAC::init(
                     &sig_date_region_service_req,
-                    sign_value,
                     bun_sha_hmac::Algorithm::Sha256,
-                    &mut hmac_sig_service,
                 )
+                .ok_or(SignError::FailedToGenerateSignature)?,
+                &mut hash_block,
+            );
+            write!(
+                string_to_sign,
+                "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                BStr::new(&amz_date),
+                BStr::new(amz_day),
+                BStr::new(region),
+                service_name,
+                HexLower(&sha_digest)
+            );
+            let signature = string_to_sign
+                .finish()
+                .r#final(&mut hmac_sig_service)
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
+            if sign_query {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(14);
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
-                if let Some(v) = encoded_content_md5 {
-                    url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
+                if let Some(v) = content_md5.as_deref() {
+                    url_query_parts.push(encoded_param(b"Content-MD5=", v));
                 }
                 if let Some(v) = acl {
                     url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
@@ -691,22 +652,19 @@ impl S3Credentials {
                 ));
                 url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
                 url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
-                if let Some(token) = encoded_session_token {
-                    url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
+                if let Some(token) = session_token {
+                    url_query_parts.push(encoded_param(b"X-Amz-Security-Token=", token));
                 }
                 url_query_parts.push(alloc_print!(
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
                 url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
-                if let Some(cd) = encoded_content_disposition {
-                    url_query_parts.push(alloc_print!(
-                        "response-content-disposition={}",
-                        BStr::new(cd)
-                    ));
+                if let Some(cd) = content_disposition {
+                    url_query_parts.push(encoded_param(b"response-content-disposition=", cd));
                 }
-                if let Some(ct) = encoded_content_type {
-                    url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
+                if let Some(ct) = content_type {
+                    url_query_parts.push(encoded_param(b"response-content-type=", ct));
                 }
                 if request_payer {
                     url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));
@@ -724,71 +682,23 @@ impl S3Credentials {
                     url_query_string.extend_from_slice(part);
                 }
 
-                break 'brk alloc_print!(
-                    "{}://{}{}?{}",
-                    protocol,
-                    BStr::new(&host),
-                    BStr::new(normalized_path),
-                    BStr::new(&url_query_string)
-                )
-                .into_boxed_slice();
-            } else {
-                let canonical = CanonicalRequest::format(
-                    &mut tmp_buffer,
-                    header_key,
-                    method_name.as_bytes(),
-                    normalized_path,
-                    search_params.map(|p| &p[1..]).unwrap_or(b""),
-                    content_disposition,
-                    content_encoding,
-                    content_md5.as_deref(),
-                    &host,
-                    acl,
-                    aws_content_hash,
-                    &amz_date,
-                    session_token,
-                    storage_class,
-                    signed_headers,
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
-                let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
-                // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                // SAFETY: `boring_engine()` returns null (default engine).
-                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
-
-                let sign_value = buf_print(
-                    &mut tmp_buffer,
-                    format_args!(
-                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
-                        BStr::new(&amz_date),
-                        BStr::new(amz_day),
-                        BStr::new(region),
-                        service_name,
-                        HexLower(&sha_digest)
-                    ),
-                )
-                .map_err(|_| SignError::NoSpaceLeft)?;
-
-                let signature = bun_sha_hmac::generate(
-                    &sig_date_region_service_req,
-                    sign_value,
-                    bun_sha_hmac::Algorithm::Sha256,
-                    &mut hmac_sig_service,
-                )
-                .ok_or(SignError::FailedToGenerateSignature)?;
-
-                break 'brk alloc_print!(
-                    "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature={}",
-                    BStr::new(&self.access_key_id),
-                    BStr::new(amz_day),
-                    BStr::new(region),
-                    service_name,
-                    BStr::new(signed_headers),
-                    HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
-                )
-                .into_boxed_slice();
+                url.0.reserve_exact("?".len() + url_query_string.len());
+                write!(&mut url.0, "?{}", BStr::new(&url_query_string))
+                    .expect("infallible: in-memory write");
+                // The signature is in the query; a presigned URL has no Authorization header.
+                break 'brk Box::default();
             }
+
+            alloc_print!(
+                "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature={}",
+                BStr::new(&self.access_key_id),
+                BStr::new(amz_day),
+                BStr::new(region),
+                service_name,
+                BStr::new(signed_headers),
+                HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
+            )
+            .into_boxed_slice()
         };
         // `authorization` (Box<[u8]>) drops on `?`.
 
@@ -797,7 +707,7 @@ impl S3Credentials {
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
             r.acl = sign_options.acl;
-            r.url = authorization;
+            r.url = url.into_boxed_slice();
             r.storage_class = sign_options.storage_class;
             return Ok(r);
         }
@@ -817,14 +727,9 @@ impl S3Credentials {
             return Err(SignError::InvalidHeaderValue);
         }
 
-        let url = alloc_print!(
-            "{}://{}{}{}",
-            protocol,
-            BStr::new(&host),
-            BStr::new(normalized_path),
-            BStr::new(search_params.unwrap_or(b""))
-        )
-        .into_boxed_slice();
+        write!(&mut url.0, "{}", BStr::new(search_params.unwrap_or(b"")))
+            .expect("infallible: in-memory write");
+        let url = url.into_boxed_slice();
 
         // SignResult implements Drop, so struct-update `..default()` is forbidden.
         let mut result = SignResult::default();
@@ -960,6 +865,8 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
 }
 
 const DIGESTED_HMAC_256_LEN: usize = 32;
+/// S3 limits an object key to 1024 bytes of UTF-8.
+const MAX_KEY_LEN: usize = 1024;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignResult
@@ -1044,6 +951,27 @@ impl Drop for SignResult {
 fn zero_sensitive(b: &mut Box<[u8]>) {
     // SAFETY: `b` is exclusively borrowed; `len` bytes are valid for writes.
     unsafe { bun_core::secure_zero(b.as_mut_ptr(), b.len()) };
+}
+
+/// Bytes that are zeroed before they are freed, on every path out of `sign_request`.
+struct Zeroing(Vec<u8>);
+
+impl Zeroing {
+    /// Hands the bytes to an owner that zeroes them itself.
+    fn into_boxed_slice(mut self) -> Box<[u8]> {
+        if self.0.len() == self.0.capacity() {
+            return core::mem::take(&mut self.0).into_boxed_slice();
+        }
+        // Shrinking to fit can move the bytes; copy, so that `drop` zeroes the original.
+        Box::from(self.0.as_slice())
+    }
+}
+
+impl Drop for Zeroing {
+    fn drop(&mut self) {
+        // SAFETY: the Vec owns `len` initialised bytes.
+        unsafe { bun_core::secure_zero(self.0.as_mut_ptr(), self.0.len()) };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1134,52 +1062,44 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 // URI encoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
-pub enum EncodeError {
-    #[error("BufferTooSmall")]
-    BufferTooSmall,
+/// Whether `c` goes into a URI component as one byte: the RFC 3986 unreserved
+/// characters and, without `ENCODE_SLASH`, the two path separators.
+#[inline]
+fn is_kept<const ENCODE_SLASH: bool>(c: u8) -> bool {
+    matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~')
+        || (!ENCODE_SLASH && matches!(c, b'/' | b'\\'))
 }
 
-pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
-    input: &[u8],
-    buffer: &'b mut [u8],
-) -> Result<&'b [u8], EncodeError> {
-    // returns a borrow into `buffer`; caller must not reuse buffer while result is live.
-    let mut written: usize = 0;
-
+/// Appends `input` to `out` percent-encoded, in uppercase hex. Without
+/// `ENCODE_SLASH`, `/` is kept and `\` becomes `/`.
+pub fn encode_uri_component_into<const ENCODE_SLASH: bool>(input: &[u8], out: &mut Vec<u8>) {
     for &c in input {
-        match c {
-            // RFC 3986 Unreserved Characters (do not encode)
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                if written >= buffer.len() {
-                    return Err(EncodeError::BufferTooSmall);
-                }
-                buffer[written] = c;
-                written += 1;
-            }
-            // All other characters need to be percent-encoded
-            _ => {
-                if !ENCODE_SLASH && (c == b'/' || c == b'\\') {
-                    if written >= buffer.len() {
-                        return Err(EncodeError::BufferTooSmall);
-                    }
-                    buffer[written] = if c == b'\\' { b'/' } else { c };
-                    written += 1;
-                    continue;
-                }
-                if written + 3 > buffer.len() {
-                    return Err(EncodeError::BufferTooSmall);
-                }
-                buffer[written] = b'%';
-                buffer[written + 1] = bun_core::fmt::hex_char_upper(c >> 4);
-                buffer[written + 2] = bun_core::fmt::hex_char_upper(c);
-                written += 3;
-            }
+        if is_kept::<ENCODE_SLASH>(c) {
+            out.push(if c == b'\\' { b'/' } else { c });
+        } else {
+            out.extend_from_slice(&[
+                b'%',
+                bun_core::fmt::hex_char_upper(c >> 4),
+                bun_core::fmt::hex_char_upper(c),
+            ]);
         }
     }
+}
 
-    // `written <= buffer.len()` by construction; safe sub-slice of the owning buffer.
-    Ok(&buffer[..written])
+/// The number of bytes [`encode_uri_component_into`] appends for `input`.
+fn encoded_len<const ENCODE_SLASH: bool>(input: &[u8]) -> usize {
+    input
+        .iter()
+        .map(|&c| if is_kept::<ENCODE_SLASH>(c) { 1 } else { 3 })
+        .sum()
+}
+
+/// One query parameter with its value percent-encoded. `name` ends in `=`.
+fn encoded_param(name: &[u8], value: &[u8]) -> Vec<u8> {
+    let mut param = Vec::with_capacity(name.len() + encoded_len::<true>(value));
+    param.extend_from_slice(name);
+    encode_uri_component_into::<true>(value, &mut param);
+    param
 }
 
 fn normalize_name(name: &[u8]) -> &[u8] {
@@ -1203,14 +1123,10 @@ pub enum SignError {
     InvalidPath,
     #[error("InvalidEndpoint")]
     InvalidEndpoint,
-    #[error("InvalidSessionToken")]
-    InvalidSessionToken,
     #[error("InvalidHeaderValue")]
     InvalidHeaderValue,
     #[error("FailedToGenerateSignature")]
     FailedToGenerateSignature,
-    #[error("NoSpaceLeft")]
-    NoSpaceLeft,
 }
 
 impl<'a> Default for SignOptions<'a> {
@@ -1316,8 +1232,8 @@ struct CanonicalRequest;
 
 impl CanonicalRequest {
     // Builds the canonical request at runtime with conditional writes; profile if hot.
-    fn format<'b>(
-        buf: &'b mut [u8],
+    fn format(
+        out: &mut HashWriter<'_, bun_sha_hmac::sha::hashers::SHA256>,
         key: SignedHeadersKey,
         method: &[u8],
         path: &[u8],
@@ -1332,10 +1248,9 @@ impl CanonicalRequest {
         session_token: Option<&[u8]>,
         storage_class: Option<&[u8]>,
         signed_headers: &[u8],
-    ) -> Result<&'b [u8], core::fmt::Error> {
-        let mut c = bun_core::fmt::SliceCursor::new(buf);
+    ) {
         macro_rules! w {
-            ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
+            ($($arg:tt)*) => { out.write_fmt(format_args!($($arg)*)) };
         }
         // method, path, query
         w!(
@@ -1385,9 +1300,83 @@ impl CanonicalRequest {
         }
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));
+    }
+}
 
-        let len = c.at;
-        Ok(&c.buf[..len])
+const HASH_BLOCK_LEN: usize = 256;
+
+/// A hash that takes its message in pieces.
+trait Absorb {
+    fn absorb(&mut self, bytes: &[u8]);
+}
+
+impl Absorb for bun_sha_hmac::sha::hashers::SHA256 {
+    #[inline]
+    fn absorb(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+}
+
+impl Absorb for bun_sha_hmac::hmac::HMAC {
+    #[inline]
+    fn absorb(&mut self, bytes: &[u8]) {
+        self.update(bytes);
+    }
+}
+
+/// The canonical request and the string to sign are only hashed, so they go to the hash in
+/// pieces and no buffer has to hold all of one. `block` collects the small pieces.
+struct HashWriter<'a, H: Absorb> {
+    hash: H,
+    block: &'a mut [u8; HASH_BLOCK_LEN],
+    len: usize,
+}
+
+impl<'a, H: Absorb> HashWriter<'a, H> {
+    fn new(hash: H, block: &'a mut [u8; HASH_BLOCK_LEN]) -> Self {
+        Self {
+            hash,
+            block,
+            len: 0,
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        if bytes.len() > HASH_BLOCK_LEN - self.len {
+            self.flush();
+            if bytes.len() >= HASH_BLOCK_LEN {
+                self.hash.absorb(bytes);
+                return;
+            }
+        }
+        self.block[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+        self.len += bytes.len();
+    }
+
+    fn flush(&mut self) {
+        if self.len > 0 {
+            self.hash.absorb(&self.block[..self.len]);
+            self.len = 0;
+        }
+    }
+
+    /// The target of `write!`. A hash takes every byte, so this cannot fail.
+    fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+        core::fmt::write(self, args).expect("infallible: write_str never fails");
+    }
+
+    /// The hash, with every written byte in it.
+    fn finish(mut self) -> H {
+        self.flush();
+        self.hash
+    }
+}
+
+impl<H: Absorb> core::fmt::Write for HashWriter<'_, H> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.update(s.as_bytes());
+        Ok(())
     }
 }
 

@@ -11,7 +11,6 @@ pub fn get_sign_error_message(e: Error) -> &'static [u8] {
         Error::InvalidMethod => b"Method must be GET, PUT, DELETE or HEAD when using s3:// protocol",
         Error::InvalidPath => b"Invalid S3 bucket, key combination",
         Error::InvalidEndpoint => b"Invalid S3 endpoint",
-        Error::InvalidSessionToken => b"Invalid session token",
         _ => b"Failed to retrieve S3 content. Are the credentials correct?",
     }
 }
@@ -34,10 +33,6 @@ pub fn get_sign_error_code_and_message(e: Error) -> ErrorCodeAndMessage {
         Error::InvalidEndpoint => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_ENDPOINT",
             message: get_sign_error_message(Error::InvalidEndpoint),
-        },
-        Error::InvalidSessionToken => ErrorCodeAndMessage {
-            code: b"ERR_S3_INVALID_SESSION_TOKEN",
-            message: get_sign_error_message(Error::InvalidSessionToken),
         },
         _ => ErrorCodeAndMessage {
             code: b"ERR_S3_INVALID_SIGNATURE",

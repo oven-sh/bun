@@ -19,6 +19,7 @@ pub mod ffi {
         EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
         EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
         EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+        HMAC_CTX, HMAC_CTX_cleanup, HMAC_CTX_init, HMAC_Final, HMAC_Init_ex, HMAC_Update,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed

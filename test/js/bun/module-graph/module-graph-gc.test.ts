@@ -73,6 +73,7 @@ const dir = String(
       // node:http waits for the promise of its native server to emit 'close', and that reaction reaches the server.
       export function listenWithNode(tls) {
         const server = tls ? https.createServer(tls, () => {}) : http.createServer(() => {});
+        server.on("close", () => control.heard.push("close"));
         return new Promise(resolve => server.listen(0, "127.0.0.1", () => { control.httpPort = server.address().port; resolve(); }));
       }
       // A stop() that waits for a request nobody answers, with a reaction that reaches the server.
@@ -80,7 +81,7 @@ const dir = String(
         const asked = Promise.withResolvers();
         const server = Bun.serve({ port: 0, fetch() { asked.resolve(); return new Promise(() => {}); } });
         control.httpPort = server.port;
-        fetch(server.url).catch(() => {});
+        fetch("http://127.0.0.1:" + server.port + "/").catch(asked.reject);
         await asked.promise;
         server.stop().then(() => control.heard.push("stopped " + server.id));
       }

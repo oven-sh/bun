@@ -3,7 +3,7 @@ import * as internalForTesting from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -4476,6 +4476,30 @@ describe("binding values", () => {
     expect([bind(undefined), bind(null)]).toEqual([{ a: null }, { a: null }]);
     expect(db.prepare("SELECT ? AS a, ? AS b", null).get()).toEqual({ a: null, b: null });
   });
+
+  it("db.prepare(sql, value) drops a single value that the statement has no one parameter for", () => {
+    using db = new Database(":memory:");
+    expect(["SELECT 1 AS a", "SELECT 2 AS a"].map(db.prepare, db).map(statement => statement.get())).toEqual([{ a: 1 }, { a: 2 }]); // prettier-ignore
+    expect(db.prepare("SELECT 1 AS a", "x").get()).toEqual({ a: 1 });
+    expect(db.prepare("SELECT ? AS a, ? AS b", 5).get()).toEqual({ a: null, b: null });
+    // A list says how many values it has.
+    expect(() => db.prepare("SELECT 1 AS a", [5])).toThrow("SQLite query expected 0 values, received 1");
+    expect(() => db.prepare("SELECT ? AS a, ? AS b", [5])).toThrow("SQLite query expected 2 values, received 1");
+  });
+
+  it.skipIf(!isLinux)(
+    "db.prepare() whose binding throws leaves no statement that keeps the file open after close()",
+    () => {
+      using dir = tempDir("sqlite-prepare-bind-throws", {});
+      const file = path.join(realpathSync(String(dir)), "kept.db");
+      const open = () => readdirSync("/proc/self/fd").filter(fd => { try { return readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } }).length; // prettier-ignore
+      const db = new Database(file);
+      expect(() => db.prepare("SELECT ? AS a", [Symbol()])).toThrow("Binding expected");
+      expect(open()).toBe(1);
+      db.close();
+      expect(open()).toBe(0);
+    },
+  );
 
   it("no argument keeps the values of the last call, and an empty array clears them", () => {
     using db = new Database(":memory:");

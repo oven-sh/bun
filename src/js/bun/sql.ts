@@ -26,7 +26,7 @@ const {
 const { PostgresAdapter } = require("internal/sql/postgres");
 const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
-const { SQLHelper, transforms } = require("internal/sql/shared");
+const { SQLHelper, SQLResultArray, transforms } = require("internal/sql/shared");
 const { closeTimeoutMs } = require("internal/sql/pool");
 const { parseOptions } = require("internal/sql/options");
 
@@ -530,7 +530,8 @@ async function run(scope: Scope, callback: TransactionCallback) {
   let result: unknown;
   try {
     result = await callback(makeHandle(scope));
-    if ($isArray(result)) {
+    // A result is an array too, and Promise.all would copy it without its count, command and columns.
+    if ($isArray(result) && !(result instanceof SQLResultArray)) {
       result = await Promise.all(result);
     }
   } catch (error) {

@@ -47,6 +47,22 @@ function whatStaysInTheTable(prefix: string, connect: () => Promise<SQL>) {
     return sql;
   }
 
+  const described = (result: any) => [result.constructor.name, result.count, result.command, [...result]];
+  test.each([
+    ["a query", (handle: any, n: number) => insert(handle, n)],
+    ["an awaited result", async (handle: any, n: number) => await insert(handle, n)],
+  ])("%s that the callback returns is what begin() and savepoint() resolve with", async (_, run) => {
+    await using sql = await open();
+    const direct = described(await insert(sql, 0));
+    expect(direct.slice(0, 2)).toEqual(["SQLResultArray", 1]);
+    expect(described(await sql.begin(tx => run(tx, 1)))).toEqual(direct);
+    expect(described(await sql.begin(tx => tx.savepoint((sp: any) => run(sp, 2))))).toEqual(direct);
+
+    const pipeline = await sql.begin(tx => [insert(tx, 3), insert(tx, 4)]);
+    expect([pipeline.constructor.name, ...pipeline.map(described)]).toEqual(["Array", direct, direct]);
+    expect(await rows(sql)).toEqual([0, 1, 2, 3, 4]);
+  });
+
   test("a rejected begin() keeps no row of the tasks that go on after one failed", async () => {
     await using sql = await open();
     const racing: Promise<string>[] = [];

@@ -576,6 +576,15 @@ public:
 
     ~JSSQLStatement();
 
+    void finalizeStatement()
+    {
+        if (!stmt)
+            return;
+        sqlite3_finalize(std::exchange(stmt, nullptr));
+        if (version_db)
+            version_db->closeIfDrained();
+    }
+
     sqlite3_stmt* stmt;
     RefPtr<VersionSqlite3> version_db;
     // It has the functions that the statement calls. (The destructor needs version_db: this cell can be swept first.)
@@ -934,7 +943,7 @@ struct SQLiteBinder {
 
     // `arguments` is the array of what script passed. Its first element decides: an array is the list of values,
     // an object of named parameters is that, and anything else makes `arguments` itself the list.
-    bool bind(JSC::JSValue arguments)
+    bool bind(JSC::JSValue arguments, bool atPrepare = false)
     {
         auto* values = dynamicDowncast<JSC::JSArray>(arguments);
         JSC::JSObject* named = nullptr;
@@ -966,6 +975,9 @@ struct SQLiteBinder {
 
         unsigned required = sqlite3_bind_parameter_count(stmt);
         if (count != required) {
+            // db.prepare() has always dropped a value that is not a list: `texts.map(db.prepare, db)` passes the index.
+            if (atPrepare && values == arguments.asCell())
+                return true;
             throwException(globalObject, scope, createError(globalObject, makeString("SQLite query expected "_s, required, " values, received "_s, count)));
             return false;
         }
@@ -1579,8 +1591,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlStatement->ownedByDatabase = (internalFlags & kOwnedByDatabaseFlag) != 0;
     }
 
-    if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames, sqlStatement->useBigInt64 }.bind(bindings))
+    if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames, sqlStatement->useBigInt64 }.bind(bindings, true)) {
+        // Nobody gets this statement. Left to the collector, it would keep the file open after db.close().
+        sqlStatement->finalizeStatement();
         return {};
+    }
     return JSValue::encode(JSValue(sqlStatement));
 }
 
@@ -2541,10 +2556,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
 
     if (castedThis->stmt) {
         CHECK_NOT_BUSY(castedThis->version_db)
-        sqlite3_finalize(castedThis->stmt);
-        castedThis->stmt = nullptr;
-        if (castedThis->version_db)
-            castedThis->version_db->closeIfDrained();
+        castedThis->finalizeStatement();
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -2567,11 +2579,7 @@ JSSQLStatement::~JSSQLStatement()
     if (this->version_db) {
         this->version_db->statements.remove(this);
     }
-    if (this->stmt) {
-        sqlite3_finalize(this->stmt);
-        if (this->version_db)
-            this->version_db->closeIfDrained();
-    }
+    finalizeStatement();
 }
 
 void JSSQLStatement::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

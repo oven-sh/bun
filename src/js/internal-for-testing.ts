@@ -257,6 +257,7 @@ export const bindgen = $bindgenFn("bindgen_test.bind.ts", "add") && {
   describeAnything: $bindgenFn("bindgen_test.bind.ts", "describeAnything"),
   overloaded: $bindgenFn("bindgen_test.bind.ts", "overloaded"),
   describeDefaults: $bindgenFn("bindgen_test.bind.ts", "describeDefaults"),
+  names: $bindgenFn("bindgen_test.bind.ts", "names"),
   sumArray: $bindgenFn("bindgen_test.bind.ts", "sumArray"),
   range: $bindgenFn("bindgen_test.bind.ts", "range"),
   words: $bindgenFn("bindgen_test.bind.ts", "words"),

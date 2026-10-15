@@ -52,6 +52,13 @@ export const TestOptionsEcho = b.dictionary({
 });
 export const optionsEcho = b.fn({ args: { options: TestOptions }, returns: TestOptionsEcho, capability: "heap" });
 
+export const TestNames = b.dictionary({
+  first: b.string.utf8,
+  nickname: b.string.utf8.nullable,
+  all: b.array(b.string.utf8),
+});
+export const names = b.fn({ args: { text: b.string.utf8 }, returns: TestNames });
+
 export const TestValue = b.union({
   number: b.f64,
   flag: b.bool,

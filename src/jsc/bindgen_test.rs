@@ -9,8 +9,8 @@ use crate::bindgen::{
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestCounterClass, TestCounterInternalFields as _,
-    TestFailure, TestHolderClass, TestOptions, TestOptionsEcho, TestOuter, TestTokenClass,
-    TestValue,
+    TestFailure, TestHolderClass, TestNames, TestOptions, TestOptionsEcho, TestOuter,
+    TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -170,6 +170,15 @@ pub fn sum_array(numbers: Vec<i32>) -> f64 {
 
 pub fn range(length: u32) -> core::ops::Range<u32> {
     0..length
+}
+
+pub fn names(text: &[u8]) -> TestNames {
+    let all: Vec<Vec<u8>> = words(text).map(<[u8]>::to_vec).collect();
+    TestNames {
+        first: all.first().cloned().unwrap_or_default(),
+        nickname: all.get(1).cloned(),
+        all,
+    }
 }
 
 pub fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {

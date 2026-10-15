@@ -264,6 +264,11 @@ describe("dictionaries", () => {
     }
   });
 
+  it("returns one that holds only strings", () => {
+    expect(bindgen.names("ana bé c")).toStrictEqual({ first: "ana", nickname: "bé", all: ["ana", "bé", "c"] });
+    expect(bindgen.names("")).toStrictEqual({ first: "", nickname: null, all: [] });
+  });
+
   it("returns ordinary objects", () => {
     const seen = bindgen.optionsEcho({ name: "a", renamed: 1 });
     expect(Object.getPrototypeOf(seen)).toBe(Object.prototype);

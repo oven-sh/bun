@@ -1153,6 +1153,10 @@ export class DictionaryType extends NamedType {
       "from_js outlives the frame b.string.utf8 borrows from; use b.string or b.string.utf8.owned",
     );
   }
+  /** One that is only returned owns its strings, so nothing but a JS value in it has a lifetime. */
+  get needsLifetime(): boolean {
+    return this.accepted ? super.needsLifetime : this.holdsJSValue;
+  }
   get userFacingName(): string {
     return this.options.userFacingName ?? this.name;
   }

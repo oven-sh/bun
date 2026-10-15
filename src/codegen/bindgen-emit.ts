@@ -1085,8 +1085,8 @@ impl ${type.name}${lifetime ? "<'_>" : ""} {
       }
       return `${member.type.rustToJS(field, scope)}?.to_js()`;
     };
-    text += `impl<'a> ${type.name}${lifetime} {
-    pub fn to_js(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
+    text += `impl${lifetime} ${type.name}${lifetime} {
+    pub fn to_js${lifetime ? "" : "<'a>"}(self, heap: &bindgen::JsHeap<'a>) -> ${jsValueResult} {
         let values = [
 ${type.members.map(member => `            ${value(member)},`).join("\n")}
         ];

@@ -779,8 +779,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
-// The prototype of every CommonJS module object, so that a write to `Module.prototype._compile`
-// reaches the loader and `module instanceof Module` holds.
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleConstructor)
 {
     return defaultGlobalObject(moduleConstructor->globalObject())->commonJSModulePrototype();

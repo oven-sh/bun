@@ -21,7 +21,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 JSC::JSObject* createNodeModuleConstructor(JSC::VM& vm, Zig::GlobalObject* globalObject);
-// `Module.prototype.require`: reads and writes the overridable require builtin.
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
 

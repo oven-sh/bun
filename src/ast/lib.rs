@@ -1108,9 +1108,16 @@ impl Data {
 
 /// A line of a file as it is printed: its control characters are spelled out. A tab stays.
 fn printable(line: &[u8]) -> Vec<u8> {
-    bun_core::fmt::escape_control_chars_multiline(line)
-        .to_string()
-        .into_bytes()
+    let mut printed = Vec::with_capacity(line.len());
+    // A NUL does nothing on a terminal: it stays, as the line has it.
+    for (i, part) in bun_core::strings::split(line, b"\0").enumerate() {
+        if i > 0 {
+            printed.push(0);
+        }
+        let part = bun_core::fmt::escape_control_chars_multiline(part);
+        printed.extend_from_slice(part.to_string().as_bytes());
+    }
+    printed
 }
 
 /// Width in terminal columns of the first `units` UTF-16 code units of `line`, printed. A tab counts as one column.
@@ -1119,7 +1126,7 @@ fn width_before(line: &[u8], units: usize) -> usize {
     let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
     let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
     let before = printable(before);
-    if strings::is_all_ascii(&before) {
+    if strings::is_all_ascii(line) {
         return before.len() + past_the_end;
     }
     // The width of a tab is 0 there.

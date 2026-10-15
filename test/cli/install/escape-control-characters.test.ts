@@ -458,6 +458,17 @@ test.concurrent("the mark under a line of a file stands under the place it is ab
   expect(exitCode).toBe(1);
 });
 
+// It does nothing on a terminal.
+test.concurrent("a NUL stays in the line of a file, and is spelled out in the message", async () => {
+  using dir = tempDir("escape-controls-nul", { "package.json": `{ "name": "app", /*\0*/ a\0b }` });
+  const { stderr, exitCode } = await run(String(dir), "install");
+  const before = `1 | { "name": "app", /*\0*/ `;
+  expect(stderr).toStartWith(
+    `${before}a\0b }\n${Buffer.alloc(before.length, " ")}^\nerror: Expected string but found "a\\x00b"\n`,
+  );
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("a name that is not one", async () => {
   using dir = tempDir("escape-controls-name", { "package.json": JSON.stringify({ ...app, name: `a${C1}b` }) });
   const { stdout, stderr, exitCode } = await run(String(dir), "link");

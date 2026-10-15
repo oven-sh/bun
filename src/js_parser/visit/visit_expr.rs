@@ -2466,8 +2466,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
 
-        for arg in e_.args.slice_mut() {
+        // Matched before the arguments are visited: CommonJS output inlines `import.meta.url`
+        // to the build path during the visit.
+        let is_url_of_import_meta = p.options.features.embed_new_url_assets
+            && e_.args.len_u32() == 2
+            && p.unbound_global_name(&e_.target) == Some(&b"URL"[..])
+            && matches!(
+                &e_.args.slice()[1].data,
+                Data::EDot(dot) if matches!(dot.target.data, Data::EImportMeta(..)) && dot.name.slice() == b"url"
+            );
+        let is_worker = p.options.features.embed_new_url_assets
+            && matches!(
+                p.unbound_global_name(&e_.target),
+                Some(b"Worker" | b"SharedWorker")
+            );
+
+        for (i, arg) in e_.args.slice_mut().iter_mut().enumerate() {
+            let saved = p.in_worker_url_arg;
+            p.in_worker_url_arg = saved || (is_worker && i == 0);
             p.visit_expr(arg);
+            p.in_worker_url_arg = saved;
+        }
+
+        if is_url_of_import_meta && !p.in_worker_url_arg && !p.is_control_flow_dead {
+            p.embed_new_url_asset(&mut e_);
         }
 
         if p.options.features.minify_syntax {
@@ -2482,6 +2504,102 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+    }
+
+    /// The name of `target` when it is an identifier that nothing in the file declares.
+    fn unbound_global_name(&self, target: &Expr) -> Option<&[u8]> {
+        let Data::EIdentifier(ident) = target.data else {
+            return None;
+        };
+        let symbol = &self.symbols[ident.ref_.inner_index() as usize];
+        (symbol.kind == js_ast::symbol::Kind::Unbound).then(|| symbol.original_name.slice())
+    }
+
+    /// `--compile`: `new URL("./file", import.meta.url)` becomes `new URL("file:" + require("./file"))`
+    /// with the record loaded by the file loader, so the file is embedded and the URL names the
+    /// embedded copy. `"file:"` + an absolute path parses to a `file:///` URL on POSIX
+    /// (`/$bunfs/root/x`) and on Windows (`B:/~BUN/root/x`, the drive letter stays a path).
+    /// A target that is not an existing file at build time is left as written.
+    fn embed_new_url_asset(&mut self, e_: &mut E::New) {
+        let args = e_.args.slice_mut();
+        let arg_loc = args[0].loc;
+        let Some(mut specifier) = args[0].data.as_e_string() else {
+            return;
+        };
+        if specifier.is_utf16 {
+            return;
+        }
+        let specifier: &'a [u8] = specifier.slice(self.arena);
+        if !is_relative_file_specifier(specifier) {
+            return;
+        }
+        // A JS/TS source is a worker or import() target, not an asset.
+        let ext = bun_paths::extension(specifier);
+        if [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx"]
+            .iter()
+            .any(|e| ext.eq_ignore_ascii_case(e.as_bytes()))
+        {
+            return;
+        }
+
+        let dir = self.source.path.name().dir;
+        let mut joined = bun_paths::path_buffer_pool::get();
+        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::resolve_path::platform::Auto,
+        >(dir, &mut joined.0[..], &[specifier])
+        .len();
+        if joined_len >= joined.0.len() {
+            return;
+        }
+        joined.0[joined_len] = 0;
+        let z = bun_core::ZStr::from_buf(&joined.0[..], joined_len);
+        if !matches!(
+            bun_sys::exists_at_type(bun_sys::Fd::cwd(), z),
+            Ok(bun_sys::ExistsAtType::File)
+        ) {
+            return;
+        }
+
+        // The resolver reads a bare name as a package name: the record path is always `./`-relative.
+        let record_path: &'a [u8] = if specifier.starts_with(b"./") || specifier.starts_with(b"../")
+        {
+            specifier
+        } else {
+            let mut with_prefix = Vec::with_capacity(2 + specifier.len());
+            with_prefix.extend_from_slice(b"./");
+            with_prefix.extend_from_slice(specifier);
+            self.arena.alloc_slice_copy(&with_prefix)
+        };
+        let import_record_index =
+            self.add_import_record(js_ast::ImportKind::Require, arg_loc, record_path);
+        self.import_records.items_mut()[import_record_index as usize].loader =
+            Some(bun_ast::Loader::File);
+        self.import_records_for_current_part
+            .push(import_record_index);
+
+        let scheme = self.new_expr(
+            E::String {
+                data: E::Str::new(b"file:"),
+                ..Default::default()
+            },
+            arg_loc,
+        );
+        let path = self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            arg_loc,
+        );
+        let url = self.new_expr(
+            E::Binary {
+                op: Op::BinAdd,
+                left: scheme,
+                right: path,
+            },
+            arg_loc,
+        );
+        e_.args = ExprNodeList::init_one(url);
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.
@@ -2808,4 +2926,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.class_name = None;
         }
     }
+}
+
+/// A `new URL(specifier, base)` argument that names a file relative to the base: not empty, not
+/// absolute, no scheme (`data:`, `https:`, a Windows drive letter), and none of `? # % \ NUL`,
+/// which would make the URL name a different file than the literal.
+fn is_relative_file_specifier(specifier: &[u8]) -> bool {
+    if specifier.is_empty() || matches!(specifier[0], b'/' | b'\\') {
+        return false;
+    }
+    if strings::index_of_any(specifier, b"?#%\\\0").is_some() {
+        return false;
+    }
+    if specifier[0].is_ascii_alphabetic() {
+        for &c in specifier {
+            if c == b':' {
+                return false;
+            }
+            if !(c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')) {
+                break;
+            }
+        }
+    }
+    true
 }

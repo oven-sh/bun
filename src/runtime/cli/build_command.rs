@@ -893,6 +893,10 @@ impl BuildCommand {
                     reachable_file_count,
                     output_files,
                 );
+                print_embedded_assets(
+                    output_files,
+                    bun_resolver::fs::FileSystem::instance().top_level_dir,
+                );
 
                 Output::flush();
 
@@ -1296,6 +1300,26 @@ fn print_summary(
     );
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
+}
+
+/// One line per file embedded in the executable beside the bundle: a `with { type: "file" }`
+/// import, a `new URL("./x", import.meta.url)` sibling, or an `--asset`.
+fn print_embedded_assets(output_files: &[options::OutputFile], cwd: &[u8]) {
+    for f in output_files.iter() {
+        if f.output_kind != options::OutputKind::Asset {
+            continue;
+        }
+        let shown: &[u8] = if f.src_path.text.is_empty() {
+            strings::remove_leading_dot_slash(&f.dest_path)
+        } else {
+            resolve_path::relative(cwd, f.src_path.text)
+        };
+        bun_core::prettyln!(
+            "           <green>embed<r>  {}  <d>{}<r>",
+            bstr::BStr::new(shown),
+            bun_fmt::size(f.size, Default::default())
+        );
+    }
 }
 
 pub(crate) fn collect_compile_assets(

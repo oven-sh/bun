@@ -995,12 +995,9 @@ function finishSocketEnd(self) {
   }
 }
 
-// A native close strands the write that waits on the drain. Fail it on the next
-// tick, after the EOF reached the stream, so 'end' (and the destroy that a TLS
-// handshake hangs on it) come first, and a destroy in between can settle it. A
-// chunk still in _pendingData never reached the handle: _write's 'close'
-// listener reports it. A write the TLS engine rejected keeps its own error for
-// the close (failRejectedWrite).
+// A native close strands the write that waits on the drain. It fails on the next tick, after the EOF, so that 'end'
+// and the destroy that a TLS handshake hangs on it come first and can settle it. Not for a chunk still in
+// _pendingData (the 'close' listener of _write reports it) or a write the TLS engine rejected (failRejectedWrite).
 function failPendingWriteAfterClose(self, err) {
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && self._pendingData == null && self[kRejectedWrite] === undefined) {
@@ -1054,8 +1051,7 @@ function SocketEmitEndNT(self, _err?) {
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
   // A write in flight errors the socket either way: report the read error
-  // (uncaught, as in node), not ERR_SOCKET_CLOSED. A write the TLS engine
-  // rejected is not in flight: it fails with the close (failRejectedWrite).
+  // (uncaught, as in node), not ERR_SOCKET_CLOSED.
   const hasErrorListener = self.listenerCount("error") > 0;
   const writeInFlight = self[kwriteCallback] != null && self[kRejectedWrite] === undefined;
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && (hasErrorListener || writeInFlight)) {

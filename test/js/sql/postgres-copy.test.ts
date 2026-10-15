@@ -575,24 +575,25 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 
   // The server would take what is written behind it for its data.
-  test.each(["copy copied from stdin", " /* a /* nested */ comment */ -- and a line\r\tCoPy copied from stdin"])(
-    "nothing is written behind %j that nobody feeds",
-    async text => {
-      await using sql = await session();
-      const pid = await pidOf(sql);
-      const count = () => sql`select count(*)::int as rows from copied where a > ${0}`;
-      await count();
-      // On the second run a statement is prepared, and what is prepared is pipelined.
-      for (let run = 0; run < 2; run++) {
-        // With values a text is a prepared statement, but not this one.
-        for (const copy of [() => sql`${sql.unsafe(text)}`, () => sql.unsafe(text, [1])]) {
-          const all = [copy(), count(), count()].map(query => query.then(rows => [...rows], failure));
-          expect(await Promise.all(all)).toEqual([withoutStream, [{ rows: 0 }], [{ rows: 0 }]]);
-        }
+  test.each([
+    "copy copied from stdin",
+    " /* a /* nested */ comment */ -- and a line\r\tCoPy copied from stdin",
+    " ;; copy copied from stdin",
+  ])("nothing is written behind %j that nobody feeds", async text => {
+    await using sql = await session();
+    const pid = await pidOf(sql);
+    const count = () => sql`select count(*)::int as rows from copied where a > ${0}`;
+    await count();
+    // On the second run a statement is prepared, and what is prepared is pipelined.
+    for (let run = 0; run < 2; run++) {
+      // With values a text is a prepared statement, but not this one.
+      for (const copy of [() => sql`${sql.unsafe(text)}`, () => sql.unsafe(text, [1])]) {
+        const all = [copy(), count(), count()].map(query => query.then(rows => [...rows], failure));
+        expect(await Promise.all(all)).toEqual([withoutStream, [{ rows: 0 }], [{ rows: 0 }]]);
       }
-      expect(await pidOf(sql)).toBe(pid);
-    },
-  );
+    }
+    expect(await pidOf(sql)).toBe(pid);
+  });
 
   describe("a stream that does not fit the statement", () => {
     test.each([

@@ -41,14 +41,14 @@ fn copy_fail_message(message: &[u8]) -> &[u8] {
 }
 
 /// Whether the first keyword is COPY. Whitespace and comments are the server's: `--` ends with the
-/// line, `/*` nests.
+/// line, `/*` nests. It drops an empty statement, from a Parse too.
 fn starts_with_copy(text: &BunString) -> bool {
     let length = text.length();
     let at = |i: usize| if i < length { text.char_at(i) } else { 0 };
     let is = |i: usize, c: u8| at(i) == u16::from(c);
     let mut i = 0;
     loop {
-        if matches!(at(i), 0x09..=0x0d | 0x20) {
+        if matches!(at(i), 0x09..=0x0d | 0x20 | 0x3b) {
             i += 1;
         } else if is(i, b'-') && is(i + 1, b'-') {
             while i < length && !is(i, b'\n') && !is(i, b'\r') {

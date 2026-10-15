@@ -848,6 +848,16 @@ describe("Bun.serve tls.minVersion and tls.maxVersion", () => {
       unset: "served",
     });
 
+    // A TLS 1.3-only tls.DEFAULT_CIPHERS raises the minimum of an entry that has no `ciphers`.
+    // The entry does not set that bound, so it is not compared.
+    const defaultCiphers = nodeTls.DEFAULT_CIPHERS;
+    try {
+      nodeTls.DEFAULT_CIPHERS = "TLS_AES_256_GCM_SHA384";
+      expect(start({ ...a, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }, b)).toBe("served");
+    } finally {
+      nodeTls.DEFAULT_CIPHERS = defaultCiphers;
+    }
+
     // An entry with no bound of its own uses the range of the first entry.
     using server = serve({ port: 0, tls: [{ ...a, maxVersion: "TLSv1.2" }, b], fetch });
     const { promise, resolve, reject } = Promise.withResolvers<string | null>();

@@ -1235,14 +1235,22 @@ impl ServerConfig {
                 if value_iter.len == 0 {
                     // Empty TLS array means no TLS - this is valid
                 } else {
+                    let mut first_bounds = [0i32; 2];
                     while let Some(item) = value_iter.next()? {
-                        let Some(ssl_config) = SSLConfig::from_js(vm, global, item, true)? else {
+                        let generated =
+                            crate::server::jsc::generated::SSLConfig::from_js(global, item)?;
+                        let Some(ssl_config) =
+                            SSLConfig::from_generated(vm, global, &generated, true)?
+                        else {
                             // Backwards-compatibility; we ignored empty tls objects.
                             continue;
                         };
+                        // As the entry sets them: the default ciphers can raise `ssl_min_version`.
+                        let bounds = [generated.ssl_min_version, generated.ssl_max_version];
 
                         if args.ssl_config.is_none() {
                             args.ssl_config = Some(ssl_config);
+                            first_bounds = bounds;
                         } else {
                             if ssl_config.server_name_bytes().unwrap_or(b"").is_empty() {
                                 drop(ssl_config);
@@ -1251,24 +1259,14 @@ impl ServerConfig {
                                 )));
                             }
                             // The first entry's range is negotiated before SNI selects this one.
-                            if let Some(first) = &args.ssl_config {
-                                for (key, bound, first_bound) in [
-                                    (
-                                        "minVersion",
-                                        ssl_config.ssl_min_version,
-                                        first.ssl_min_version,
-                                    ),
-                                    (
-                                        "maxVersion",
-                                        ssl_config.ssl_max_version,
-                                        first.ssl_max_version,
-                                    ),
-                                ] {
-                                    if bound != 0 && bound != first_bound {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "SNI tls object must have the same '{key}' as the first tls object"
-                                        )));
-                                    }
+                            for (key, bound, first_bound) in [
+                                ("minVersion", bounds[0], first_bounds[0]),
+                                ("maxVersion", bounds[1], first_bounds[1]),
+                            ] {
+                                if bound != 0 && bound != first_bound {
+                                    return Err(global.throw_invalid_arguments(format_args!(
+                                        "SNI tls object must have the same '{key}' as the first tls object"
+                                    )));
                                 }
                             }
                             if args.sni.is_none() {

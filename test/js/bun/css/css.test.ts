@@ -8273,6 +8273,113 @@ describe("css tests", () => {
       );
     });
 
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // A channel keyword has a meaning only after `from`. An rgb() or hsl()
+    // with an unresolved alpha is printed with folded channels and no origin,
+    // so a relative one whose alpha names a channel is printed as written:
+    // `rgb(51 102 153/calc(alpha*var(--o)))` is not a color.
+    describe("relative rgb()/hsl() whose unresolved alpha names a channel", () => {
+      const cases: [string, string][] = [
+        ["color: rgb(from #336699 r g b / calc(alpha * var(--o)))", "color:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+        [
+          "color: rgb(from #336699 r g b / calc(r / 255 * var(--o)))",
+          "color:rgb(from #369 r g b/calc(r/255*var(--o)))",
+        ],
+        // `NaN` keeps clamp() from being reduced, with or without a fold of clamp() over numbers.
+        ["color: rgb(from #336699 r g b / clamp(0, alpha, NaN))", "color:rgb(from #369 r g b/clamp(0,alpha,NaN))"],
+        ["color: hsl(from #336699 h s l / calc(alpha * var(--o)))", "color:hsl(from #369 h s l/calc(alpha*var(--o)))"],
+        ["color: hsl(from #336699 h s l / calc(h / 360))", "color:hsl(from #369 h s l/calc(h/360))"],
+        [
+          "color: hsl(from #336699 h s l / calc(s / 100 * var(--o)))",
+          "color:hsl(from #369 h s l/calc(s/100*var(--o)))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / var(--undefined, alpha))",
+          "color:rgb(from #369 r g b/var(--undefined,alpha))",
+        ],
+        ["color: rgb(from #336699 r g b / env(--x, alpha))", "color:rgb(from #369 r g b/env(--x,alpha))"],
+        ["color: RGB(FROM #336699 R G B / CALC(ALPHA * VAR(--o)))", "color:RGB(FROM #369 R G B/CALC(ALPHA*VAR(--o)))"],
+        ["--c: rgb(from #336699 r g b / calc(alpha * var(--o)))", "--c:rgb(from #369 r g b/calc(alpha*var(--o)))"],
+        ["--c: hsl(from #336699 h s l / calc(alpha * var(--o)))", "--c:hsl(from #369 h s l/calc(alpha*var(--o)))"],
+        [
+          "color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o)))",
+          "color:rgb(from light-dark(#369,#963) r g b/calc(alpha*var(--o)))",
+        ],
+        [
+          "box-shadow: 0 0 4px rgb(from #336699 r g b / calc(alpha * var(--o)))",
+          "box-shadow:0 0 4px rgb(from #369 r g b/calc(alpha*var(--o)))",
+        ],
+        [
+          "background: linear-gradient(rgb(from #336699 r g b / calc(alpha * var(--o))), red)",
+          "background:linear-gradient(rgb(from #369 r g b/calc(alpha*var(--o))),red)",
+        ],
+        [
+          "color: hwb(from rgb(from #336699 r g b / calc(alpha * var(--o))) h w b)",
+          "color:hwb(from rgb(from #369 r g b/calc(alpha*var(--o)))h w b)",
+        ],
+        [
+          "color: var(--x, rgb(from #336699 r g b / calc(alpha * var(--o))))",
+          "color:var(--x,rgb(from #369 r g b/calc(alpha*var(--o))))",
+        ],
+        // The keyword is found in a block of any kind, and when it is written with an escape.
+        [
+          "color: rgb(from #336699 r g b / calc((alpha) * var(--o)))",
+          "color:rgb(from #369 r g b/calc((alpha)*var(--o)))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / calc((1 - alpha) * var(--o)))",
+          "color:rgb(from #369 r g b/calc((1 - alpha)*var(--o)))",
+        ],
+        ["color: rgb(from #336699 r g b / --half({alpha}))", "color:rgb(from #369 r g b/--half({alpha}))"],
+        [
+          "color: rgb(from #336699 r g b / calc(var(--o) * [alpha]))",
+          "color:rgb(from #369 r g b/calc(var(--o)*[alpha]))",
+        ],
+        [
+          "color: rgb(from #336699 r g b / calc(\\61lpha * var(--o)))",
+          "color:rgb(from #369 r g b/calc(alpha*var(--o)))",
+        ],
+        // The check reads names, not roles: an attribute that is named like a channel keeps the color as written too.
+        ["color: rgb(from #336699 r g b / attr(alpha number, 1))", "color:rgb(from #369 r g b/attr(alpha number,1))"],
+        // The color as written keeps its tokens apart.
+        ["color: rgb(from#f00 r g b / var(--o, b))", "color:rgb(from red r g b/var(--o,b))"],
+        ["color: rgb(from #336699 +10+20+30 / var(--o, b))", "color:rgb(from #369 10+20+30/var(--o,b))"],
+        ["color: rgb(from #336699 1.0.5 b / var(--o, b))", "color:rgb(from #369 1 .5 b/var(--o,b))"],
+        // No keyword in the alpha: the channels are folded as before.
+        ["color: rgb(from #336699 r g b / var(--o))", "color:rgb(51 102 153/var(--o))"],
+        ["color: rgb(from #336699 r g b / calc((1 - var(--o)) * 2))", "color:rgb(51 102 153/calc((1 - var(--o))*2))"],
+        ["color: rgb(from #336699 r g b / attr(data-o number, 1))", "color:rgb(51 102 153/attr(data-o number,1))"],
+        ["color: rgb(from #336699 r g b / var(--o, alphaa))", "color:rgb(51 102 153/var(--o,alphaa))"],
+        ["color: rgb(from #336699 r g b / var(--alpha))", "color:rgb(51 102 153/var(--alpha))"],
+        ["color: hsl(from #336699 h s l / var(--o))", "color:hsl(210 50% 40%/var(--o))"],
+        ["color: rgb(from #336699 r g b / calc(var(--o) * 2))", "color:rgb(51 102 153/calc(var(--o)*2))"],
+        ["color: rgb(from #336699 r g b / var(--o, .5))", "color:rgb(51 102 153/var(--o,.5))"],
+        // An alpha that is known at build time is folded with its origin.
+        ["color: rgb(from #336699 r g b / calc(alpha * .5))", "color:#33669980"],
+      ];
+      for (const [input, expected] of cases) {
+        minify_test(`.a { ${input} }`, `.a{${expected}}`);
+      }
+
+      for (const chrome of [60, 90]) {
+        test(`not minified, chrome ${chrome}`, () => {
+          const print = (css: string) => cssInternals.prefixTest(css, "", { chrome: chrome << 16 });
+          expect([
+            print(".a { color: rgb(from #336699 r g b / calc(alpha * var(--o))); }"),
+            print(".a { color: hsl(from #336699 h s l / calc(alpha * var(--o))); }"),
+            print(".a { color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o))); }"),
+            // An origin outside sRGB gets the fallback of any color in an unparsed value.
+            print(".a { color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o))); }"),
+          ]).toEqual([
+            ".a {\n  color: rgb(from #369 r g b / calc(alpha * var(--o)));\n}\n",
+            ".a {\n  color: hsl(from #369 h s l / calc(alpha * var(--o)));\n}\n",
+            ".a {\n  color: rgb(from var(--buncss-light, #369) var(--buncss-dark, #963) r g b / calc(alpha * var(--o)));\n}\n",
+            ".a {\n  color: rgb(from #b32323 r g b / calc(alpha * var(--o)));\n}\n\n@supports (color: lab(0% 0 0)) {\n  .a {\n    color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o)));\n  }\n}\n",
+          ]);
+        });
+      }
+    });
+
     // A value that is kept as tokens is printed token by token. Two tokens that
     // read back as other tokens when they touch get a separator between them.
     describe("tokens of an unparsed value stay apart", () => {

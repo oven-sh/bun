@@ -1001,6 +1001,7 @@ impl UnresolvedColor {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
+                    Self::expect_no_channel_keyword(i, p)?;
                     let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
@@ -1012,6 +1013,7 @@ impl UnresolvedColor {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
+                    Self::expect_no_channel_keyword(i, p)?;
                     let alpha = TokenListFns::parse(i, options, depth + 1)?;
                     Ok(UnresolvedColor::HSL { h, s, l, alpha })
                 })
@@ -1045,6 +1047,43 @@ impl UnresolvedColor {
             _ => {},
         }}
         Err(input.new_custom_error(ParserError::invalid_value))
+    }
+
+    /// A channel keyword in the alpha needs the origin, which is not kept. Runs before buffering.
+    fn expect_no_channel_keyword(
+        input: &mut Parser,
+        parser: &css_values::color::ComponentParser,
+    ) -> Result<()> {
+        let Some(from) = &parser.from else {
+            return Ok(());
+        };
+        let start = input.state();
+        let found = Self::names_channel_keyword(input, from)?;
+        input.reset(&start);
+        if found {
+            return Err(input.new_custom_error(ParserError::invalid_value));
+        }
+        Ok(())
+    }
+
+    /// Reads to the end of the block, nested blocks included.
+    fn names_channel_keyword(
+        input: &mut Parser,
+        from: &css_values::color::RelativeComponentParser,
+    ) -> Result<bool> {
+        let mut found = false;
+        while let Ok(tok) = input.next() {
+            // Copy the token so that `input` is free for the nested block.
+            let tok = *tok;
+            match tok {
+                Token::Ident(name) => found |= from.is_channel_keyword(name),
+                Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
+                    found |= input.parse_nested_block(|i| Self::names_channel_keyword(i, from))?;
+                }
+                _ => {}
+            }
+        }
+        Ok(found)
     }
 
     fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {

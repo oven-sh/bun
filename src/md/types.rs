@@ -84,6 +84,14 @@ pub trait RendererImpl {
     fn leave_span(&mut self, span_type: SpanType) -> JsResult<()>;
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()>;
 
+    /// Fenced code, in place of `enter_block` and `leave_block`, for a consumer that does not want source.
+    fn enter_fenced_code(&mut self, _code: FencedCode<'_>) -> JsResult<()> {
+        self.enter_block(BlockType::Code, 0, 0)
+    }
+    fn leave_fenced_code(&mut self, _code: FencedCode<'_>) -> JsResult<()> {
+        self.leave_block(BlockType::Code, 0)
+    }
+
     /// Whether this consumer wants to know where things are written in the
     /// document. Asked once, before parsing. None of the methods below is
     /// called, and nothing is recorded for them, unless it does. It is then
@@ -165,6 +173,31 @@ impl<'a> Renderer<'a> {
     #[inline]
     pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
         self.ptr.text(text_type, content)
+    }
+}
+
+/// The argument of `enter_fenced_code` and `leave_fenced_code`, valid for the duration of the call.
+#[derive(Copy, Clone)]
+pub struct FencedCode<'a> {
+    /// The document from the info string on, so that the language is scanned only when asked for.
+    from_info: &'a [u8],
+}
+
+impl<'a> FencedCode<'a> {
+    pub(crate) fn new(from_info: &'a [u8]) -> Self {
+        Self { from_info }
+    }
+
+    /// The first word of the info string as written: escapes and entities are not resolved. Empty if none.
+    pub fn language(self) -> &'a [u8] {
+        let mut end = 0;
+        while end < self.from_info.len()
+            && !crate::helpers::is_blank(self.from_info[end])
+            && !crate::helpers::is_newline(self.from_info[end])
+        {
+            end += 1;
+        }
+        &self.from_info[..end]
     }
 }
 
@@ -294,6 +327,7 @@ pub(crate) const BLOCK_CONTAINER_CLOSER: u32 = 0x01;
 pub(crate) const BLOCK_CONTAINER_OPENER: u32 = 0x02;
 pub(crate) const BLOCK_LOOSE_LIST: u32 = 0x04;
 pub const BLOCK_SETEXT_HEADER: u32 = 0x08;
+/// Fenced code. To a consumer that wants source, `data` is where the info string starts in the parsed text.
 pub const BLOCK_FENCED_CODE: u32 = 0x10;
 pub(crate) const BLOCK_REF_DEF_ONLY: u32 = 0x20;
 /// Fenced code with its closing fence, HTML with what ends it.

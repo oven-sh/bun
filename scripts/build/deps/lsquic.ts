@@ -134,6 +134,9 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // lsquic_stream_fin_reached(): whether a request ended with its header
+    // block, which lsquic knows when it hands the block over.
+    "patches/lsquic/stream-fin-reached.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

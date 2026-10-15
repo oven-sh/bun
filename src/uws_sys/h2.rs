@@ -125,7 +125,7 @@ impl Response {
     pub(crate) fn is_closed(&self) -> bool {
         c::uws_h2_res_is_closed(self)
     }
-    /// END_STREAM on the HEADERS frame, or `content-length: 0`.
+    /// END_STREAM on the HEADERS frame.
     pub fn request_body_ended(&self) -> bool {
         c::uws_h2_res_request_body_ended(self)
     }

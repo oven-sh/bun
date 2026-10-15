@@ -176,6 +176,7 @@ bool uws_h3_res_write(uws_h3_res_t* res, const char* data, size_t* length)
 }
 
 bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)->hasResponded(); }
+bool uws_h3_res_request_body_ended(uws_h3_res_t* res) { return us_quic_stream_read_ended((us_quic_stream_t*)res); }
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
 
 void uws_h3_res_reset_timeout(uws_h3_res_t*) {}

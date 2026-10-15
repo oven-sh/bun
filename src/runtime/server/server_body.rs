@@ -339,7 +339,7 @@ pub(super) trait RespLike {
     fn timeout(&mut self, seconds: u8);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
-    /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
+    /// The request ended with its header block: END_STREAM on HEADERS, or the QUIC FIN.
     fn request_body_ended(&mut self) -> bool;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
@@ -388,10 +388,9 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
 }
 impl RespLike for uws_sys::h3::Response {
     const IS_MUX: bool = true;
-    /// The QUIC FIN is only seen by a read after dispatch.
     #[inline]
     fn request_body_ended(&mut self) -> bool {
-        false
+        uws_sys::h3::Response::request_body_ended(self)
     }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
@@ -2900,13 +2899,16 @@ where
         // `Ctx::create`.
         let method = method.or_else(|| http::Method::which(ReqLike::method(req)));
 
-        let request_body_length: Option<usize> = 'request_body_length: {
+        let request_body_length: Option<(usize, bool)> = 'request_body_length: {
             if method.unwrap_or(http::Method::OPTIONS).has_request_body() {
-                let len: usize = 'brk: {
+                let (len, declared_empty): (usize, bool) = 'brk: {
                     if let Some(content_length) = ReqLike::header(req, b"content-length") {
-                        break 'brk bun_http_types::parse_content_length(content_length);
+                        let len = bun_http_types::parse_content_length(content_length);
+                        let declared_empty = len == 0
+                            && bun_http_types::parse_content_length_strict(content_length) == Some(0);
+                        break 'brk (len, declared_empty);
                     }
-                    0
+                    (0, false)
                 };
 
                 // Abort the request very early. For H2/H3 a per-request error
@@ -2918,7 +2920,7 @@ where
                     return None;
                 }
 
-                break 'request_body_length Some(len);
+                break 'request_body_length Some((len, declared_empty));
             }
             None
         };
@@ -3084,12 +3086,15 @@ where
             });
         }
 
-        if let Some(req_len) = request_body_length {
+        if let Some((req_len, declared_empty)) = request_body_length {
             ctx.set_request_body_content_len(req_len);
             let is_te = ReqLike::has_transfer_encoding(req);
             ctx.set_is_transfer_encoding(is_te);
             // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
-            if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)) {
+            if req_len > 0
+                || is_te
+                || (Ctx::IS_MUX && !declared_empty && !RespLike::request_body_ended(resp))
+            {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory

@@ -1680,6 +1680,129 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   });
 });
 
+// A request with no body has `req.body === null` over HTTP/1.1 and HTTP/2. Over HTTP/3 that is a stream that ends with its header block, or a content-length of 0.
+describe("Bun.serve HTTP/3 req.body", () => {
+  function serve() {
+    const hooks: { dispatched?: () => void } = {};
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      async fetch(req) {
+        const atDispatch = req.body === null ? "null" : "stream";
+        hooks.dispatched?.();
+        const contentLength = req.headers.get("content-length");
+        return new Response(`${atDispatch} content-length=${contentLength} ${JSON.stringify(await req.text())}`);
+      },
+    });
+    return { server, hooks };
+  }
+
+  /** One HTTP/1.1 request to the same port. Resolves to `"<status> <body>"`, like `h3Exchange`. */
+  async function h1Exchange(port: number, method: string, fields: string[], body = ""): Promise<string> {
+    const socket = connectTLS({ host: "127.0.0.1", port, rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] });
+    await once(socket, "secureConnect");
+    const head = [`${method} / HTTP/1.1`, "host: localhost", "connection: close", ...fields];
+    socket.write(head.join("\r\n") + "\r\n\r\n" + body);
+    let response = "";
+    for await (const chunk of socket) response += chunk;
+    return `${response.slice(9, 12)} ${response.slice(response.indexOf("\r\n\r\n") + 4)}`;
+  }
+
+  /** One HTTP/3 request whose stream the client ends only after the handler ran. */
+  async function endAfterDispatch(
+    server: Bun.Server<undefined>,
+    hooks: { dispatched?: () => void },
+    extra: Record<string, string>,
+  ) {
+    const dispatched = Promise.withResolvers<void>();
+    hooks.dispatched = dispatched.resolve;
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror: dispatched.reject,
+    } as SessionOptions);
+    client.closed.then(
+      () => dispatched.reject(new Error("the session closed before the handler ran")),
+      dispatched.reject,
+    );
+    await client.opened;
+    const stream = await client.createBidirectionalStream();
+    stream.closed.catch(() => {});
+    const writer = stream.writer;
+    stream.sendHeaders(requestHeaders("/", { ":method": "POST", ...extra }));
+    await dispatched.promise;
+    hooks.dispatched = undefined;
+    writer.endSync();
+    let body = "";
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+    if (!client.destroyed) client.close().catch(() => {});
+    return body;
+  }
+
+  const methods = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND"];
+
+  // The node:quic client ends the stream with the header block.
+  test("is null for a request whose stream ends with its header block, as over HTTP/1.1", async () => {
+    const { server } = serve();
+    await using _ = server;
+    const results: Record<string, { h1: string; h3: string }> = {};
+    for (const method of methods) {
+      results[method] = {
+        h1: await h1Exchange(server.port!, method, []),
+        h3: await h3Exchange(server.port!, requestHeaders("/", { ":method": method })),
+      };
+    }
+    const same = { h1: '200 null content-length=null ""', h3: '200 null content-length=null ""' };
+    expect(results).toEqual(Object.fromEntries(methods.map(method => [method, same])));
+  });
+
+  test("is null for content-length: 0, as over HTTP/1.1", async () => {
+    const { server, hooks } = serve();
+    await using _ = server;
+    const results: Record<string, { h1: string; h3: string; fetch: string }> = {};
+    for (const method of methods) {
+      results[method] = {
+        h1: await h1Exchange(server.port!, method, ["content-length: 0"]),
+        h3: await h3Exchange(server.port!, requestHeaders("/", { ":method": method, "content-length": "0" })),
+        // fetch() sends content-length: 0 with a request that has no body.
+        fetch: await (await fetchH3(server.port!, "/", { method })).text(),
+      };
+    }
+    const same = {
+      h1: '200 null content-length=0 ""',
+      h3: '200 null content-length=0 ""',
+      fetch: 'null content-length=0 ""',
+    };
+    expect({
+      results,
+      "stream still open": await endAfterDispatch(server, hooks, { "content-length": "0" }),
+    }).toEqual({
+      results: Object.fromEntries(methods.map(method => [method, same])),
+      "stream still open": 'null content-length=0 ""',
+    });
+  });
+
+  test("is a stream when the request can still carry bytes", async () => {
+    const { server, hooks } = serve();
+    await using _ = server;
+    expect({
+      "stream still open, no content-length": await endAfterDispatch(server, hooks, {}),
+      "body over HTTP/3": await (await fetchH3(server.port!, "/", { method: "POST", body: "abc" })).text(),
+      "body over HTTP/1.1": await h1Exchange(server.port!, "POST", ["content-length: 3"], "abc"),
+    }).toEqual({
+      "stream still open, no content-length": 'stream content-length=null ""',
+      "body over HTTP/3": 'stream content-length=3 "abc"',
+      "body over HTTP/1.1": '200 stream content-length=3 "abc"',
+    });
+  });
+});
+
 describe("Bun.serve HTTP/3 production", () => {
   // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
   // H1 writes it via HttpResponse::writeMark(); H3 must too.

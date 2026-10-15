@@ -1,0 +1,33 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1988,6 +1988,14 @@
+ lsquic_stream_reset_received (const lsquic_stream_t *s);
+ 
+ /**
++ * Returns true if reading has reached the FIN of this stream: the peer sent
++ * it and every byte before it was consumed.  True for a stream whose FIN
++ * arrived with its header block and nothing after it.
++ */
++int
++lsquic_stream_fin_reached (const lsquic_stream_t *s);
++
++/**
+  * Retained for API compatibility with removed server push support.  Current
+  * LSQUIC versions do not create pushed streams.
+  *
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -5431,6 +5431,13 @@
+ 
+ 
+ int
++lsquic_stream_fin_reached (const struct lsquic_stream *stream)
++{
++    return !!(stream->stream_flags & STREAM_FIN_REACHED);
++}
++
++
++int
+ lsquic_stream_verify_len (struct lsquic_stream *stream,
+                                                 unsigned long long cont_len)
+ {

@@ -171,6 +171,10 @@ impl Response {
     pub(crate) fn has_responded(&mut self) -> bool {
         c::uws_h3_res_has_responded(self)
     }
+    /// The stream's FIN came with the request's header block.
+    pub fn request_body_ended(&self) -> bool {
+        c::uws_h3_res_request_body_ended(self)
+    }
     pub(crate) fn state(&mut self) -> State {
         c::uws_h3_res_state(self)
     }
@@ -722,6 +726,7 @@ mod c {
         pub(super) safe fn uws_h3_res_flush_headers(res: &mut Response, immediate: bool);
         pub(super) fn uws_h3_res_write(res: *mut Response, p: *const u8, len: *mut usize) -> bool;
         pub(super) safe fn uws_h3_res_has_responded(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h3_res_request_body_ended(res: &Response) -> bool;
         pub(super) safe fn uws_h3_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h3_res_reset_timeout(res: &mut Response);
         pub(super) safe fn uws_h3_res_timeout(res: &mut Response, seconds: u8);

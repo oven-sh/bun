@@ -3429,11 +3429,6 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
-extern "C" uint32_t Bun__napi_get_version(napi_env env)
-{
-    return env->napiModule().nm_version;
-}
-
 // napi_ok, or the status NAPI_RETURN_IF_CANNOT_CALL_INTO_JS returns (not yet set as the last error).
 extern "C" napi_status NapiEnv__checkCanCallIntoJS(napi_env env)
 {

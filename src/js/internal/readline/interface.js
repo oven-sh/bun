@@ -619,8 +619,7 @@ class Interface extends InterfaceConstructor {
       this[kSawReturnAt] = 0;
     }
 
-    // Only the new chunk needs this check: kLine_buffer is the text after the
-    // last line ending, so it never holds "\r", "\u2028" or "\u2029".
+    // kLine_buffer follows the last line ending, so only the new chunk can hold one.
     if (
       StringPrototypeIndexOf(string, "\r") === -1 &&
       StringPrototypeIndexOf(string, "\u2028") === -1 &&

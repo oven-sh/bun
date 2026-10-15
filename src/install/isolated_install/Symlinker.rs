@@ -120,17 +120,16 @@ impl Symlinker {
                                     }
                                 }
                                 // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
-                                // Behind a link the caller tells what it is, from the `EEXIST`.
                                 _ => {
+                                    let has_package_json = {
+                                        let mut dest = self.dest.save();
+                                        let _ = dest.append(b"package.json");
+                                        bun_sys::exists_z(dest.slice_z())
+                                    };
+                                    if has_package_json {
+                                        return Ok(false);
+                                    }
                                     if !self.is_behind_link {
-                                        let has_package_json = {
-                                            let mut dest = self.dest.save();
-                                            let _ = dest.append(b"package.json");
-                                            bun_sys::exists_z(dest.slice_z())
-                                        };
-                                        if has_package_json {
-                                            return Ok(false);
-                                        }
                                         if bun_sys::rmdir(self.dest.slice_z())
                                             .is_err_and(|err| err.get_errno() == Errno::EBUSY)
                                         {

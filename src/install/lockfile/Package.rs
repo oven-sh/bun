@@ -807,10 +807,7 @@ pub(crate) struct Diff;
 pub(crate) struct DroppedRow {
     pub(crate) owner: PackageID,
     pub(crate) name: String,
-    pub(crate) name_hash: PackageNameHash,
     pub(crate) package: PackageID,
-    /// For when that lockfile is gone. Empty: the row was not resolved.
-    pub(crate) package_name: Box<[u8]>,
 }
 
 #[derive(Default)]
@@ -1090,12 +1087,7 @@ impl Diff {
                     summary.dropped_rows.push(DroppedRow {
                         owner: from.meta.id,
                         name: from_dep.name,
-                        name_hash: from_dep.name_hash,
                         package: from_resolutions[i],
-                        package_name: (from_lockfile.packages.items_name())
-                            .get(from_resolutions[i] as usize)
-                            .map_or(&b""[..], |name| name.slice(from_buf!()))
-                            .into(),
                     });
                 }
                 continue;

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <type_traits>
 #include <utility>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>

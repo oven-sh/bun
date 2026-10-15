@@ -101,7 +101,7 @@ struct IDLHumanReadableName<WebCore::IDLOptional<IDL>> : BaseIDLHumanReadableNam
 };
 
 template<typename IDL>
-struct IDLHumanReadableName<IDLLooseNullable<IDL>>
+struct IDLHumanReadableName<IDLFalsyAsNull<IDL>>
     : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
 
 template<HasIDLHumanReadableName IDL>
@@ -118,10 +118,10 @@ struct IDLHumanReadableName<WebCore::IDLDictionary<T>> : BaseIDLHumanReadableNam
 };
 
 template<HasIDLHumanReadableName IDL>
-struct IDLHumanReadableName<Bun::IDLOrderedUnion<IDL>> : IDLHumanReadableName<IDL> {};
+struct IDLHumanReadableName<Bun::IDLAlternatives<IDL>> : IDLHumanReadableName<IDL> {};
 
 template<HasIDLHumanReadableName... IDL>
-struct IDLHumanReadableName<Bun::IDLOrderedUnion<IDL...>> : BaseIDLHumanReadableName {
+struct IDLHumanReadableName<Bun::IDLAlternatives<IDL...>> : BaseIDLHumanReadableName {
     static constexpr bool isDisjunction = sizeof...(IDL) > 1;
     static constexpr auto humanReadableName
         = Bun::joinCStringsAsList(Detail::nestedHumanReadableName<IDL>()...);

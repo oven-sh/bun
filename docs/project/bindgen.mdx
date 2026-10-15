@@ -60,8 +60,9 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 a function gives its full path instead. `length` sets the function's `.length`,
 which is otherwise the number of required arguments.
 
-Nothing else is written by hand. If the Rust signature does not match the
-schema, the generated code does not compile.
+Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
+includes the generated file, and the crate root declares `mod generated_bindgen`. If the
+Rust signature does not match the schema, the generated code does not compile.
 
 To reach the function:
 
@@ -109,21 +110,28 @@ export const read = b.overloads(
 Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.
 
-Argument by argument, the signatures that take a value of its [kind](#unions-and-kinds)
-stay. An argument that was not passed is `undefined`, which a required argument does not
-take, so `f(x)` and `f(x, undefined)` are the same call. A signature that has no such
-argument ignores it, and an argument that none of them takes rules nothing out. If
-several are left when the arguments run out, the call goes to the one that requires the
-most arguments, then to the one written first, and its conversion reports what is wrong. Choosing converts nothing and runs no JavaScript. A
-signature that no call can reach is an error when the schema is loaded.
+The generated function starts with every signature as a candidate and looks at the
+arguments from left to right:
+
+1. It keeps the candidates whose type at that position takes the [kind](#unions-and-kinds)
+   of the argument.
+2. An argument that was not passed is `undefined`, which a required argument does not
+   take. So `f(x)` and `f(x, undefined)` are the same call.
+3. A candidate with no argument at that position stays.
+4. If no candidate takes the argument, all of them stay, and the next argument decides.
+5. When the arguments run out, the candidate that requires the most arguments wins, then
+   the one written first. Its conversion reports whatever is wrong.
+
+Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
+an error when the schema is loaded.
 
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-or BigInt that is an integer in range, and nothing else. A failed strict, `.loose` or
-`.validateInteger` conversion throws `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE`
-naming the argument or the dictionary member; `.wrap` and `.enforceRange` throw
-what WebIDL does. An argument that was not passed is `undefined` and is converted like
+or BigInt that is an integer in range, and nothing else. A failed strict or
+`.validateInteger` conversion, or a `.loose` one of an integer, throws
+`ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
+member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
 any other: nothing looks at how many there are.
 
 | Schema                                           | Rust, as an argument             | Takes                                                         |
@@ -149,12 +157,12 @@ any other: nothing looks at how many there are.
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported.
 
-A type takes one of these, last (`b.any` already accepts `undefined` and `null`, and takes only `.withValue`):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.withValue` applies to it):
 
-- `.optional`: `undefined` means "not given"; `Option<T>`.
-- `.nullable`: `null` or `undefined` means "not given"; `Option<T>`.
-- `.falsyAsNull`: every falsy value means "not given"; `Option<T>`.
-- `.default(value)`: what to use when not given; `T`. `.nullable.default(value)` also applies to `null`.
+- `.optional`: `undefined` means absent; `Option<T>`.
+- `.nullable`: `null` or `undefined` means absent; `Option<T>`.
+- `.falsyAsNull`: every falsy value means absent; `Option<T>`.
+- `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 - `.withValue`, for arguments: see [Keeping the original value](#keeping-the-original-value).
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything
@@ -296,7 +304,7 @@ A JS value in Rust is a `JsValue<'a>`: a `JSValue` tied to the host call it belo
 to. It is `Copy`, one register, and not rooted, because JavaScriptCore scans the
 stack. The lifetime is what stops it from being stored in a struct, captured by a
 task or sent to a thread. `JsValue<'a, T>` is one known to be a `JSString`,
-`JSObject`, `JSFunction` or `ArrayBuffer`. `value.to_js()` gives the `JSValue`;
+`JSObject`, `Callable` or `ArrayBuffer`. `value.to_js()` gives the `JSValue`;
 `JsValue::new(heap, value)` goes the other way.
 
 What outlives a call:
@@ -387,7 +395,7 @@ long as nothing else can run:
 
 ```rust
 fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> bindgen::Result<'a, i32> {
-    if let Some(listener) = this.listener_field(&cx.heap).as_function() {
+    if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
         listener.call(cx, this.as_value(), &[])?;
     }
     Ok(this.with(&cx.payloads, |counter| counter.count))

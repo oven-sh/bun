@@ -157,7 +157,7 @@ public:
     static JSBindgenConstructor* create(JSC::VM&, JSC::JSGlobalObject*, const ClassDefinition&, JSC::JSObject* prototype);
 
 private:
-    JSBindgenConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction construct);
+    JSBindgenConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
 };
 
 // By index into Tables::classes (GeneratedBindings+Tables.h).

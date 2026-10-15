@@ -101,6 +101,7 @@ private:
         }
 
         double number = value.asNumber();
+        // Written so that NaN is caught here: casting it to an integer is undefined.
         if (!(number <= maxSafeInteger && number >= -maxSafeInteger)) {
             ctx.throwNumberNotInteger(globalObject, scope, number);
             return {};

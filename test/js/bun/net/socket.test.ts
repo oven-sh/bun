@@ -6584,8 +6584,10 @@ it("a view of part of a buffer as a tls option is read as the view", () => {
     new Uint8Array(both.buffer, offset, length),
     new DataView(both.buffer, offset, length),
   ]) {
-    listen(view).stop(true);
-    listen([view]).stop(true);
+    for (const key of [view, [view]]) {
+      using listener = listen(key);
+      expect(listener.port).toBeGreaterThan(0);
+    }
   }
 });
 

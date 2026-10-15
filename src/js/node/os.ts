@@ -102,6 +102,7 @@ function bound(binding) {
         : $bundleError("TODO: endianness");
     },
     freemem: binding.freemem,
+    // Plain functions where Node's are, so that `new os.homedir()` does what it does there. The other four are not constructors in Node either.
     getPriority: function (pid) {
       return binding.getPriority(pid);
     },

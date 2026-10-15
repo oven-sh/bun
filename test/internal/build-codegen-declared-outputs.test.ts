@@ -166,7 +166,7 @@ describe("emitBindgen", () => {
       resolve(cfg.cwd, "src", "jsc", "fmt_jsc.bind.ts"),
     ];
 
-    emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenInternal: [] }), o, dirStamp });
+    emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenCodegen: [] }), o, dirStamp });
 
     const inDir = (name: string) => resolve(cfg.codegenDir, name);
     const cpp = ["GeneratedFmtJsc.cpp", "GeneratedNodeOs.cpp"].map(inDir);
@@ -195,7 +195,7 @@ describe("emitBindgen", () => {
       const bindgen = repoBindFiles(cfg);
       expect(bindgen).not.toBeEmpty();
 
-      emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenInternal: [] }), o, dirStamp });
+      emitBindgen({ n, cfg, sources: sourceLists({ bindgen, bindgenCodegen: [] }), o, dirStamp });
 
       const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
       const typesDir = resolve(String(dir), "types");

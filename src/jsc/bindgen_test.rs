@@ -207,7 +207,7 @@ pub fn sum_before_and_after_callback<'a>(
     callback: JsValue<'a>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
-    let Some(callback) = callback.as_function() else {
+    let Some(callback) = callback.as_callable() else {
         return Err(cx
             .heap
             .throw_type_error(format_args!("callback must be a function")));
@@ -298,7 +298,7 @@ impl TestCounterClass for TestCounter {
     }
 
     fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> bindgen::Result<'a, i32> {
-        if let Some(listener) = this.listener_field(&cx.heap).as_function() {
+        if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
             listener.call(cx, this.as_value(), &[])?;
         }
         Ok(this.with(&cx.payloads, |counter| counter.count))

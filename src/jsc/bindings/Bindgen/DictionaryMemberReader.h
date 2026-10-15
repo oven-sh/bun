@@ -12,16 +12,16 @@ public:
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_object(object)
-        , m_memberNames(identifiers(vm).identifiersAt(firstMemberNameIndex, memberNameCount))
+        , m_memberNames(identifiers(vm).memberNames(firstMemberNameIndex, memberNameCount))
     {
     }
 
     // May throw. Out of line: inlined, it is most of the size of every generated dictionary converter.
-    JSC::JSValue get(unsigned index);
+    NEVER_INLINE JSC::JSValue get(unsigned index);
 
 private:
     // `get` stops before Object.prototype. Asked per member: converting one can run JavaScript.
-    ALWAYS_INLINE bool ownPropertiesAreTheWholeAnswer() const
+    ALWAYS_INLINE bool canSkipPrototypeChain() const
     {
         if (m_object->type() != JSC::FinalObjectType)
             return false;

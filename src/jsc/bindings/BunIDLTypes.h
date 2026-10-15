@@ -26,7 +26,7 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 
 // Treats all falsy values as null.
 template<typename IDL>
-struct IDLLooseNullable : WebCore::IDLNullable<IDL> {};
+struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 
 template<std::integral T>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
@@ -40,7 +40,7 @@ struct IDLLooseInteger : IDLStrictInteger<T> {};
 
 // The alternatives of a union, for IDLHumanReadableName.
 template<typename... IDL>
-struct IDLOrderedUnion {};
+struct IDLAlternatives {};
 
 namespace Detail {
 template<typename IDL>

@@ -5,7 +5,7 @@
 
 namespace Bun::Bindgen {
 
-// Dictionaries that contain raw `JSValue`s must live on the stack.
+// Dictionaries that hold a raw `JSValue` or a `JSStringUTF8View` must live on the stack.
 template<typename T>
 struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
     using SequenceStorageType = void;
@@ -13,7 +13,7 @@ struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
     using NullableParameterType = const T&;
 };
 
-// A generated union: a struct with a member for each alternative, and a tag.
+// A generated union: a struct with a tag and a member for each alternative, so that the chosen one is converted where it stays. A large one is a std::optional, made when chosen.
 template<typename T>
 struct IDLTaggedUnion : WebCore::IDLType<T> {};
 

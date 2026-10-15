@@ -16,14 +16,13 @@ concept IDLConversionContext = std::derived_from<T, Detail::IDLConversionContext
 namespace Detail {
 template<typename... IDL>
 struct IDLUnionForDiagnostic {
-    using Type = IDLOrderedUnion<IDL...>;
+    using Type = IDLAlternatives<IDL...>;
 };
 
 template<typename... IDL>
 struct IDLUnionForDiagnostic<IDLStrictNull, IDL...> {
-    using Type = IDLOrderedUnion<IDL..., Bun::IDLStrictNull>;
+    using Type = IDLAlternatives<IDL..., Bun::IDLStrictNull>;
 };
-
 }
 
 template<typename Derived>
@@ -126,7 +125,7 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
     }
 
     template<HasIDLHumanReadableName IDLEnum>
-    void throwBadEnumValue(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
+    void throwBadEnumerationValue(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
     {
         derived().throwTypeMustBe(global, scope, idlHumanReadableName<IDLEnum>());
     }

@@ -38,9 +38,7 @@ public:
         m_isNull = false;
     }
 
-    bool isNull() const { return m_isNull; }
-
-    // Null data only when isNull().
+    // Null data only for a view that was not initialized.
     std::span<const uint8_t> bytes() const
     {
         if (m_isNull)

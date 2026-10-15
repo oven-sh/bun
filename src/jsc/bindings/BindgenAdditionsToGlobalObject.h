@@ -6,7 +6,7 @@
 
 namespace Bun {
 
-// What src/codegen/bindgen.ts generates has per global object, by index into Bindgen::Tables.
+// The per-global-object state of generated bindings, by index into Bindgen::Tables.
 struct BindgenAdditionsToGlobalObject {
     BindgenAdditionsToGlobalObject();
     void initialize();

@@ -44,8 +44,8 @@ void Identifiers::visit(Visitor& visitor)
             visitor.appendUnbarriered(string);
     }
 }
-template void Identifiers::visit(JSC::AbstractSlotVisitor&);
-template void Identifiers::visit(JSC::SlotVisitor&);
+template void Identifiers::visit(AbstractSlotVisitor&);
+template void Identifiers::visit(SlotVisitor&);
 
 Identifiers& identifiers(VM& vm)
 {
@@ -57,7 +57,7 @@ static_assert(std::ranges::all_of(Tables::objectStructures, [](const auto& struc
 Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
 {
     auto [firstMemberNameIndex, memberCount] = Tables::objectStructures[index];
-    const Identifier* memberNames = identifiers(vm).identifiersAt(firstMemberNameIndex, memberCount);
+    const Identifier* memberNames = identifiers(vm).memberNames(firstMemberNameIndex, memberCount);
     Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), memberCount);
     for (unsigned i = 0; i < memberCount; ++i) {
         PropertyOffset offset;
@@ -67,9 +67,9 @@ Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned 
     return structure;
 }
 
-NEVER_INLINE JSValue DictionaryMemberReader::get(unsigned index)
+JSValue DictionaryMemberReader::get(unsigned index)
 {
-    if (ownPropertiesAreTheWholeAnswer()) [[likely]] {
+    if (canSkipPrototypeChain()) [[likely]] {
         unsigned attributes = 0;
         PropertyOffset offset = m_object->structure()->get(m_vm, m_memberNames[index], attributes);
         if (offset == invalidOffset)
@@ -105,15 +105,11 @@ bool JSStringUTF8View::convert()
     return m_converted.tryAppend(byteCast<uint8_t>(lenient.span()));
 }
 
-}
-
-using namespace JSC;
-
 // An empty value is a member that is absent.
 extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObject, unsigned structureIndex, const EncodedJSValue* values, size_t count)
 {
     VM& vm = getVM(globalObject);
-    ASSERT(count == Bun::Bindgen::Tables::objectStructures[structureIndex].memberCount);
+    ASSERT(count == Tables::objectStructures[structureIndex].memberCount);
     bool hasEveryMember = true;
     for (size_t i = 0; i < count; ++i)
         hasEveryMember &= !!values[i];
@@ -123,7 +119,7 @@ extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObjec
             object->putDirectOffset(vm, static_cast<PropertyOffset>(i), JSValue::decode(values[i]));
         return JSValue::encode(object);
     }
-    const Identifier* memberNames = Bun::Bindgen::identifiers(vm).identifiersAt(Bun::Bindgen::Tables::objectStructures[structureIndex].firstMemberNameIndex, count);
+    const Identifier* memberNames = identifiers(vm).memberNames(Tables::objectStructures[structureIndex].firstMemberNameIndex, count);
     JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     for (size_t i = 0; i < count; ++i) {
         if (values[i])
@@ -134,7 +130,7 @@ extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObjec
 
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)
 {
-    return JSValue::encode(Bun::Bindgen::identifiers(getVM(globalObject)).stringAt(index));
+    return JSValue::encode(identifiers(getVM(globalObject)).enumerationValue(index));
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)
@@ -151,4 +147,6 @@ extern "C" EncodedJSValue Bun__Bindgen__constructArray(JSGlobalObject* globalObj
         return {};
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), *values)));
+}
+
 }

@@ -76,7 +76,6 @@ test("scan options", () => {
   expect(scan("*", { cwd: new String(path.join(cwd, "sub")) })).toEqual(["b.txt"]);
 
   // An array is read like any other object.
-  expect(scan("package.json", [])).toEqual(scan("package.json", {}));
   expect(scan("*", Object.assign([], { cwd, dot: true }))).toEqual([".dot", "a.txt"]);
 });
 

@@ -1,6 +1,4 @@
-//! Bindgen target for `fmt_jsc.bind.ts`. The actual formatters live in
-//! `src/bun_core/fmt.rs`; only the JS-facing wrapper
-//! lives here so `bun_core/` stays JSC-free.
+//! The bodies of `fmt_jsc.bind.ts`. The formatters are in `src/bun_core/fmt.rs`, which stays JSC-free.
 
 use std::io::Write as _;
 

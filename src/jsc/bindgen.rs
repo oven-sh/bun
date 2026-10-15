@@ -6,7 +6,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{
-    ArrayBuffer, JSFunction, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
+    ArrayBuffer, JSGlobalObject, JSObject, JSString, JSValue, JsError, JsThread,
     MarkedArgumentBuffer, Strong,
 };
 
@@ -21,11 +21,11 @@ type OpaqueFfi = (UnsafeCell<[u8; 0]>, PhantomPinned);
 
 // ───────────────────────────── capabilities ─────────────────────────────
 
-/// Allocate, read JS-owned memory, describe an error to throw. Cannot run JavaScript.
+/// What allocates, reads JS-owned memory and describes an error to throw. It cannot run JavaScript.
 #[repr(C)]
 pub struct JsHeap<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
 
-/// Reach the Rust payloads of wrapper objects.
+/// What reaches the Rust payloads of wrapper objects.
 #[repr(C)]
 pub struct JsPayloads<'a>(OpaqueFfi, InvariantLifetime<'a>, NotSend);
 
@@ -101,6 +101,7 @@ impl<'a> JsCall<'a> {
         self.heap.global()
     }
 
+    /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
         self.heap.global().js_thread_of_caller_no_frame()
@@ -147,6 +148,7 @@ impl<'a> Error<'a> {
         }
     }
 
+    /// Throws it now, for a caller that is not a generated thunk.
     #[cold]
     pub fn into_js_error(self, global: &JSGlobalObject) -> JsError {
         match self.0 {
@@ -237,6 +239,7 @@ impl<'a> JsValue<'a> {
     pub const UNDEFINED: Self = JsValue(JSValue::UNDEFINED, PhantomData, PhantomData);
     pub const NULL: Self = JsValue(JSValue::NULL, PhantomData, PhantomData);
 
+    /// `value` is alive now, so it is for the rest of the call that `heap` belongs to.
     #[inline(always)]
     pub fn new(_: &JsHeap<'a>, value: JSValue) -> Self {
         debug_assert!(!value.is_empty());
@@ -247,13 +250,17 @@ impl<'a> JsValue<'a> {
     pub fn is_undefined(self) -> bool {
         self.0.is_undefined()
     }
+
     #[inline]
-    pub fn as_function(self) -> Option<JsValue<'a, JSFunction>> {
+    pub fn as_callable(self) -> Option<JsValue<'a, Callable>> {
         self.0.is_callable().then(|| JsValue::wrap(self.0))
     }
 }
 
-impl<'a> JsValue<'a, JSFunction> {
+/// Marks a [`JsValue`] that can be called: a function, or a proxy of one.
+pub enum Callable {}
+
+impl<'a> JsValue<'a, Callable> {
     /// Runs JavaScript.
     pub fn call<T>(
         self,
@@ -379,6 +386,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         JsValue::wrap(JSValue::from_cell(self.0.as_ptr()))
     }
 
+    /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsCall` the `JsPayloads` is borrowed from.
     #[inline(always)]
     pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
         // SAFETY: every `&mut T` holds `JsPayloads` exclusively.
@@ -387,6 +395,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         result
     }
 
+    /// As [`with`](Self::with), exclusively.
     #[inline(always)]
     pub fn with_mut<R>(self, _: &mut JsPayloads<'a>, f: impl FnOnce(&mut T) -> R) -> R {
         // SAFETY: the exclusive borrow of `JsPayloads` excludes every other payload reference.
@@ -453,7 +462,7 @@ impl<T: JsPayload> JsWrapperStrong<T> {
 
 // ───────────────────────────── results ─────────────────────────────
 
-/// Rust to JS, one function per schema type: a `Vec<u8>` is a string or an array of numbers.
+/// Rust to JS, one function per schema type, because the Rust type does not say which: a `Vec<u8>` is a string or an array of numbers.
 pub mod to_js {
     use super::*;
 
@@ -520,7 +529,7 @@ pub mod to_js {
         items: I,
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsValue<'a>>,
     ) -> Result<'a, JsValue<'a>> {
-        // As many as a `MarkedArgumentBuffer` holds inline, on this stack, where the GC sees them just the same.
+        // The inline capacity of a `MarkedArgumentBuffer`.
         const INLINE_CAPACITY: usize = 8;
         let mut inline = [JSValue::ZERO; INLINE_CAPACITY];
         let mut items = items.into_iter();

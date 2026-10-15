@@ -23,7 +23,7 @@ export const requiredAndOptionalArg = b.fn({
   returns: b.i32,
 });
 
-export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.utf8 });
+export const utf8Echo = b.fn({ args: { text: b.string.utf8 }, returns: b.string.utf8, length: 3 });
 export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns: b.string.utf8 });
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
@@ -151,7 +151,7 @@ export const TestAnything = b.union({
 });
 export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8, capability: "js" });
 
-/** Told apart by the number of arguments, by the first and by the second. */
+/** Told apart by the first argument, then by the second. */
 export const overloaded = b.overloads(
   {
     args: { text: b.string.utf8, times: b.u32.default(1) },

@@ -15,8 +15,8 @@ template<> struct WebCore::Converter<Bun::IDLRawAny> : WebCore::DefaultConverter
 };
 
 template<typename IDL>
-struct WebCore::Converter<Bun::IDLLooseNullable<IDL>>
-    : Bun::DefaultContextConverter<Bun::IDLLooseNullable<IDL>> {
+struct WebCore::Converter<Bun::IDLFalsyAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::IDLFalsyAsNull<IDL>> {
 
     using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
 
@@ -119,6 +119,7 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
         Ctx& ctx)
     {
         auto& vm = JSC::getVM(&globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         if (auto* jsBuffer = JSC::toUnsharedArrayBuffer(vm, value)) {
             return jsBuffer;
         }
@@ -130,7 +131,6 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
             if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span())) {
                 return bytes;
             }
-            auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::throwOutOfMemoryError(&globalObject, scope);
         }
         return std::nullopt;

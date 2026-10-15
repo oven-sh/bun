@@ -36,7 +36,7 @@ impl<T: Copy> ExternOptional<T> {
         if self.tag == 0 {
             return None;
         }
-        // SAFETY: C++ initialized the arm `tag` names.
+        // SAFETY: C++ initialized the alternative `tag` names.
         Some(unsafe { self.data.some })
     }
 }
@@ -51,18 +51,25 @@ pub struct ExternVector<T: Copy> {
 }
 impl<T: Copy> ExternVector<T> {
     /// The buffer becomes the `Vec`, where the global allocator is the one C++ used.
+    ///
+    /// # Safety
+    /// No copy of `self` is used again.
     #[inline]
-    pub fn into_vec_unconverted(self) -> Vec<T> {
+    pub unsafe fn into_vec(self) -> Vec<T> {
         if !bun_alloc::USE_MIMALLOC || self.data.is_null() {
-            return self.into_vec(|item| item);
+            // SAFETY: forwarded.
+            return unsafe { self.into_vec_with(|item| item) };
         }
         // SAFETY: a mimalloc buffer of `capacity` elements, `length` of them initialized; ownership was transferred.
         unsafe { Vec::from_raw_parts(self.data, self.length as usize, self.capacity as usize) }
     }
 
     /// Converts every element and frees the buffer.
+    ///
+    /// # Safety
+    /// As [`into_vec`](Self::into_vec).
     #[inline]
-    pub fn into_vec<U>(self, mut convert: impl FnMut(T) -> U) -> Vec<U> {
+    pub unsafe fn into_vec_with<U>(self, mut convert: impl FnMut(T) -> U) -> Vec<U> {
         if self.data.is_null() {
             return Vec::new();
         }
@@ -110,23 +117,26 @@ pub struct ExternWithValue<T: Copy> {
 }
 
 unsafe extern "C" {
-    pub fn Bun__Bindgen__constructArray(
+    pub(super) fn Bun__Bindgen__constructArray(
         global: *mut JSGlobalObject,
         values: *mut MarkedArgumentBuffer,
     ) -> JSValue;
-    pub fn Bun__Bindgen__constructArrayFromValues(
+    pub(super) fn Bun__Bindgen__constructArrayFromValues(
         global: *mut JSGlobalObject,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
-    pub fn Bun__Bindgen__createObject(
+    pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         structure_index: u32,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;
-    pub fn Bun__Bindgen__enumerationValueToJS(global: *mut JSGlobalObject, index: u32) -> JSValue;
-    pub fn Bun__Bindgen__setInternalField(
+    pub(super) fn Bun__Bindgen__enumerationValueToJS(
+        global: *mut JSGlobalObject,
+        index: u32,
+    ) -> JSValue;
+    pub(super) fn Bun__Bindgen__setInternalField(
         global: *mut JSGlobalObject,
         cell: *mut c_void,
         offset: u32,

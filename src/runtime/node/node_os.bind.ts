@@ -14,7 +14,6 @@ export const getPriority = b.fn({
   returns: b.i32,
   capability: "js",
   throws: true,
-  length: 1,
 });
 export const homedir = b.fn({ returns: b.string, capability: "js", throws: true });
 export const hostname = b.fn({ returns: b.any, capability: "js", throws: true });
@@ -35,7 +34,6 @@ export const userInfo = b.fn({
   returns: b.any,
   capability: "js",
   throws: true,
-  length: 1,
 });
 export const version = b.fn({ returns: b.string, throws: true });
 
@@ -50,7 +48,6 @@ export const setPriority = b.overloads(
     capability: "js",
     throws: true,
     rustPath: "crate::node::os::set_priority",
-    length: 2,
   },
   {
     args: {

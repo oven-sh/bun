@@ -10,7 +10,7 @@ import {
   type DictionaryOptions,
   DictionaryType,
   DoubleType,
-  EnumType,
+  EnumerationType,
   FunctionDefinition,
   integers,
   type MemberOptions,
@@ -45,8 +45,8 @@ export const any = new AnyType();
 export const bufferSource = new BufferSourceType();
 
 /** The native `Blob` behind a JS `Blob`. */
-export const blob = new RefType("::Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h", [
-  { cpp: "::WebCore::JSBlob" },
+export const blob = new RefType("Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h", [
+  { cpp: "WebCore::JSBlob" },
 ]);
 
 const null_ = new UnitType("null");
@@ -56,7 +56,7 @@ export const array = (element: Type) => new ArrayType(element);
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
 /** An array in place of a value lists several spellings of it; the first is the one given back to JS. */
-export const enumeration = (values: readonly (string | readonly string[])[]) => new EnumType(values);
+export const enumeration = (values: readonly (string | readonly string[])[]) => new EnumerationType(values);
 
 export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
   new DictionaryType(members, options);
@@ -73,7 +73,7 @@ export { selfType as self } from "./bindgen-lib-internal.ts";
 
 export const fn = (signature: SignatureOptions) => new FunctionDefinition([signature]);
 
-/** One JS function, several signatures, told apart by how many arguments were passed and by their kinds. */
+/** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */

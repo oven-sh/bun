@@ -94,6 +94,31 @@ itAlways("unsigned integer dictionary fields reject negative values", () => {
   }
 });
 
+describe("integers", () => {
+  it("strict takes an integer in range, as a number or a BigInt", () => {
+    for (const value of [5, 5n, 5.0]) expect(bindgen.makeToken(value).id).toBe(5);
+    expect(bindgen.makeToken(-0).id).toBe(0);
+    const outOfRange = (message: string) =>
+      expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE", message });
+    for (const value of [NaN, Infinity, -Infinity, 1.5, 2 ** 53]) {
+      expect(() => bindgen.makeToken(value)).toThrow(outOfRange(`id must be an integer (received ${value})`));
+    }
+    for (const value of [-1, 2 ** 32, 2n ** 40n]) {
+      expect(() => bindgen.makeToken(value)).toThrow(
+        outOfRange(`id must be in the range [0, 4294967295] (received ${value})`),
+      );
+    }
+    for (const value of [-1n, 2n ** 70n]) {
+      expect(() => bindgen.makeToken(value)).toThrow(outOfRange("id must be in the range [0, 4294967295]"));
+    }
+    for (const value of ["5", true, null, undefined, {}]) {
+      expect(() => bindgen.makeToken(value)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "id must be a number" }),
+      );
+    }
+  });
+});
+
 describe("strings", () => {
   const rope = (a: string, b: string) => a + b + a; // long enough that JSC keeps it a rope
   const texts = [
@@ -155,6 +180,12 @@ describe("strings", () => {
     expect(bindgen.utf8Optional(undefined)).toBe(null);
     expect(bindgen.utf8Optional()).toBe(null);
     expect(bindgen.utf8Optional("")).toBe("");
+  });
+
+  it("length is the number of required arguments, or what the schema says", () => {
+    expect(bindgen.utf8EchoLoose.length).toBe(1);
+    expect(bindgen.utf8Optional.length).toBe(0);
+    expect(bindgen.utf8Echo.length).toBe(3);
   });
 
   it("an argument that was not passed is undefined", () => {
@@ -615,7 +646,7 @@ describe("unions", () => {
 });
 
 describe("overloads", () => {
-  it("are told apart by the number of arguments and by their kinds", () => {
+  it("are told apart by the kinds of their arguments", () => {
     const { TestCounter } = bindgen as any;
     const cases: [unknown[], string][] = [
       [["ab"], "text times ab"],

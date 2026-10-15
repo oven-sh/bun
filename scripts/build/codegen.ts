@@ -934,31 +934,32 @@ function withoutBindingsFlag(cfg: CodegenFields, sources: Sources): string {
 }
 
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
-export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
-  const sources = { ...allSources, bindgen: allSources.bindgen.filter(src => hasBindings(cfg, src)) };
+  const crates = new Map(sources.bindgen.map(src => [src, crateOf(src)]));
+  const compiled = sources.bindgen.filter(src => hasBindings(cfg, src));
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
-  const stems = sources.bindgen.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);
-  stems.forEach((stem, i) => {
-    const first = stems.indexOf(stem);
-    if (first !== i)
-      throw new BuildError(`${sources.bindgen[first]} and ${sources.bindgen[i]} both generate ${stem}.h`);
+  const outputNames = compiled.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);
+  outputNames.forEach((name, i) => {
+    const first = outputNames.indexOf(name);
+    if (first !== i) throw new BuildError(`${compiled[first]} and ${compiled[i]} both generate ${name}.h`);
   });
-  const cpp = stems.map(stem => resolve(cfg.codegenDir, `${stem}.cpp`));
+  const cpp = outputNames.map(name => resolve(cfg.codegenDir, `${name}.cpp`));
   const headers = [
-    ...stems.map(stem => resolve(cfg.codegenDir, `${stem}.h`)),
+    ...outputNames.map(name => resolve(cfg.codegenDir, `${name}.h`)),
     resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"),
     resolve(cfg.codegenDir, "GeneratedBindings+Counts.h"),
   ];
-  const crates = sources.bindgen.map(crateOf);
-  const rust = [...new Set(crates)].map(crate => resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`));
+  const rust = [...new Set(compiled.map(src => crates.get(src)))].map(crate =>
+    resolve(cfg.codegenDir, `generated_bindgen_${crate}.rs`),
+  );
   const types = resolve(cfg.typesDir, "Bindgen.d.ts");
 
   n.build({
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
-    inputs: [...allSources.bindgen, ...sources.bindgenInternal],
+    inputs: [...sources.bindgen, ...sources.bindgenCodegen],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -966,8 +967,8 @@ export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): 
       args: shJoin(cfg, [
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
-        `--sources=${allSources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
-        withoutBindingsFlag(cfg, allSources),
+        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        withoutBindingsFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,
       ]),
@@ -981,7 +982,7 @@ export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): 
   o.cppHeaders.push(...headers);
 }
 
-/** Same transform as `pascalCase()` in src/codegen/bindgen-lib-internal.ts: `node_os` → `NodeOs`. */
+/** `node_os` → `NodeOs`. A copy of `pascalCase()` in src/codegen/bindgen-lib-internal.ts, which node warns about importing here (MODULE_TYPELESS_PACKAGE_JSON). build-codegen-declared-outputs.test.ts holds the two together. */
 function pascalCase(s: string): string {
   return s
     .split(/[^A-Za-z0-9]+/)

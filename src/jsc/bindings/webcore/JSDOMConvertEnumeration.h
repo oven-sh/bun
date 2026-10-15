@@ -59,7 +59,7 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
         if (result.has_value()) {
             return std::move(*result);
         }
-        ctx.template throwBadEnumValue<IDLEnumeration<T>>(lexicalGlobalObject, throwScope);
+        ctx.template throwBadEnumerationValue<IDLEnumeration<T>>(lexicalGlobalObject, throwScope);
         return {};
     }
 

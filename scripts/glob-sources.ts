@@ -72,7 +72,7 @@ const patterns = {
     paths: ["src/**/*.bind.ts"],
   },
   /** bindgen generator code */
-  bindgenInternal: {
+  bindgenCodegen: {
     paths: ["src/codegen/bindgen*.ts", "src/codegen/helpers.ts"],
   },
   /**

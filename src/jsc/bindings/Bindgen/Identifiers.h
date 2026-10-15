@@ -14,7 +14,7 @@ public:
     explicit Identifiers(JSC::VM&);
 
     // `count` identifiers starting at Tables::memberNames[first] (GeneratedBindings+Tables.h).
-    ALWAYS_INLINE const JSC::Identifier* identifiersAt(unsigned first, unsigned count)
+    ALWAYS_INLINE const JSC::Identifier* memberNames(unsigned first, unsigned count)
     {
         if (m_memberNames[first].isNull()) [[unlikely]]
             initializeMemberNames(first, count);
@@ -22,7 +22,7 @@ public:
     }
 
     // Tables::enumerationValues[index].
-    ALWAYS_INLINE JSC::JSString* stringAt(unsigned index)
+    ALWAYS_INLINE JSC::JSString* enumerationValue(unsigned index)
     {
         if (!m_enumerationValues[index]) [[unlikely]]
             initializeEnumerationValue(index);

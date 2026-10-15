@@ -1450,7 +1450,12 @@ pub(crate) mod upgrade_js_bindings {
 
             let mut attr = w::OBJECT_ATTRIBUTES {
                 Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
-                RootDirectory: core::ptr::null_mut(),
+                // A single relative name comes back as it is, for the cwd.
+                RootDirectory: if path.as_slice().first() == Some(&(b'\\' as u16)) {
+                    core::ptr::null_mut()
+                } else {
+                    sys::Fd::cwd().native()
+                },
                 Attributes: 0,
                 ObjectName: &mut nt_name,
                 SecurityDescriptor: core::ptr::null_mut(),

@@ -513,10 +513,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -2504,3 +2501,58 @@ export const dtUnknownReaddir = {
     return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
   },
 };
+
+/**
+ * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
+ * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
+ */
+export function integersThatNeedRounding(): [string, bigint][] {
+  // prefix, digits to draw from, longest
+  const prefixes: [string, string, number][] = [
+    ["0x", "0123456789abcdefABCDEF", 40],
+    ["0X", "0123456789abcdef", 40],
+    ["0o", "01234567", 50],
+    ["0b", "01", 140],
+  ];
+  const cases: [string, bigint][] = [];
+  const add = (prefix: string, digits: string) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
+}

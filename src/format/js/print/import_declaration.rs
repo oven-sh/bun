@@ -45,12 +45,6 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(
     let Some(with_clause) = statement.import_attributes() else {
         return;
     };
-    // `import "a" with { /* comment */ }`: Prettier has no node for the braces, so the comment trails the source.
-    if !f.is_quiet() && with_clause.entries().is_empty() {
-        let braces = with_clause.object().as_ast_nodes();
-        let comments = f.comments().of_node(braces).dangling;
-        write!(f, FormatTrailingComments::Comments(comments));
-    }
     write_with_clause(with_clause, f);
 }
 

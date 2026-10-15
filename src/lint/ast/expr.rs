@@ -632,6 +632,15 @@ impl<'a> Expr<'a> {
         }
     }
 
+    /// The import, the export or the import type whose attributes are in this `{ .. }`: the `import a from "a" with {}`
+    /// around the `{}`. Such an object is not a node of the tree, and its [parent](Expr::parent) is the file.
+    pub fn owner_of_import_attributes(self) -> Option<Node<'a>> {
+        if self.file.hir.import_attributes.is_empty() {
+            return None;
+        }
+        (self.file.parents()).of_import_attributes(self.file, self.id)
+    }
+
     #[inline]
     pub fn as_template(self) -> Option<Template<'a>> {
         let raw = self.try_raw()?;

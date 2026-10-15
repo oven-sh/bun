@@ -40,11 +40,6 @@ fn node_from_data<'a>(file: &'a File<'a>, data: NodeData) -> Option<Node<'a>> {
 }
 
 impl<'a> Comment<'a> {
-    #[inline]
-    pub fn file(self) -> &'a File<'a> {
-        self.file
-    }
-
     /// Its index among the comments of the file.
     #[inline]
     pub fn id(self) -> u32 {

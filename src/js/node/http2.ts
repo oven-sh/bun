@@ -2226,13 +2226,11 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// close() and destroy() reset a stream through these three functions only.
-//
-// node submits RST_STREAM to nghttp2 inside the call, and nghttp2 treats the stream as closing
-// from then on. Here native writes the frame one event loop turn later (writeRstStream), so
-// setStreamClosing puts the native stream in that state now.
+// node submits RST_STREAM to nghttp2 inside close() and destroy(), and nghttp2 treats the stream
+// as closing from then on. Here native writes the frame one event loop turn later
+// (writeRstStream), so setStreamClosing puts the native stream in that state at the call.
 function submitRstStream(session: Http2Session, stream: Http2Stream, code: number) {
-  session[bunHTTP2Native]?.setStreamClosing(stream.id, code, stream.destroyed);
+  session[bunHTTP2Native]?.setStreamClosing(stream.id, code, false);
   setImmediate(writeRstStream, session, stream, code);
   scheduleDestroyIfNotDestroyed(stream);
 }
@@ -2691,10 +2689,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
+      session[bunHTTP2Native]?.setStreamClosing(this.#id, rstCode, true);
       // node's Http2Stream::Destroy: the RST_STREAM of an earlier close() leaves now, before
       // 'close' frees the stream's slot for the next request.
       if (closedBefore) writeRstStream(session, this, rstCode);
-      else submitRstStream(session, this, rstCode);
+      else setImmediate(writeRstStream, session, this, rstCode);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error

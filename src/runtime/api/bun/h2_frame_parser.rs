@@ -5678,7 +5678,7 @@ impl H2FrameParser {
         let writing = this.write_buffer.get().len_u32() > 0;
         if destroyed_arg.to_boolean() {
             // destroy() submits a parked frame at once: the queued DATA does not leave.
-            if stream.reset_parked || (!stream.closing && (writing || cancel_in_read)) {
+            if stream.reset_parked || (!stream.closing && writing) {
                 this.set_closing(stream, BeforeReset::Nothing);
             } else if !stream.closing {
                 this.set_closing(stream, BeforeReset::QueuedData);

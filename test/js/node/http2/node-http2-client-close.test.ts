@@ -891,6 +891,7 @@ describe("close() and destroy() behind another stream's stuck body", () => {
     ["write('hello'), close()", req => (hello(req), req.close()), "H D5 R0"],
     ["write('hello'), close(code)", req => (hello(req), req.close(NGHTTP2_INTERNAL_ERROR)), "H D5 R2"],
     ["write('hello'), destroy()", req => (hello(req), req.destroy()), "H D5 R0"],
+    ["write('hello'), close(), destroy()", req => (hello(req), req.close(), req.destroy()), "H D5 R0"],
     // Bun puts END_STREAM on the chunk inside end(chunk), node one tick later. The chunk leaves
     // as the stream queued it.
     [
@@ -924,7 +925,8 @@ describe("close() and destroy() behind another stream's stuck body", () => {
 
 // node cannot send a stream's queued DATA while a socket write is in progress. close() then
 // holds RST_STREAM back until that write has completed, and the queued DATA leaves first.
-// destroy() does not wait: its RST_STREAM leaves next, and what the stream has queued is dropped.
+// destroy() does not wait, also after such a close(): its RST_STREAM leaves next, and what the
+// stream has queued is dropped.
 test("close() and destroy() with a socket write in progress", async () => {
   await withRawServer(async (session, accepted) => {
     const peer = await accepted;
@@ -939,6 +941,8 @@ test("close() and destroy() with a socket write in progress", async () => {
       ["H D0E R2", req => (req.end(), req.close(NGHTTP2_INTERNAL_ERROR))],
       ["H R0", req => (req.end(B), req.destroy())],
       ["H R0", req => (req.end(), req.destroy())],
+      ["H R0", req => (req.write(B), req.close(), req.destroy())],
+      ["H R2", req => (req.end(), req.close(NGHTTP2_INTERNAL_ERROR), req.destroy())],
     ];
     const requests = [post(session), ...calls.map(() => post(session))];
     const last = 2 * requests.length - 1;
@@ -1061,10 +1065,30 @@ describe("close() and destroy() in a listener, with more frames for the stream i
     }
   });
 
-  // With DATA queued, node cannot send it while it reads, so it holds the RST_STREAM back until
-  // the read has ended. The WINDOW_UPDATE frames of that read release the body first. node 24
-  // and 27 do this for every code (nodejs/node#64166), and so does Bun. node 26 does it for
-  // NGHTTP2_CANCEL only, so the test uses that code.
+  // The request has DATA queued. node sends what the windows admit and then submits RST_STREAM,
+  // both inside the call: the WINDOW_UPDATE frames of the same read release nothing.
+  // (node 24 and 27 hold the frame back until the read has ended: nodejs/node#64166.)
+  for (const [call, act, reset] of [
+    ["close()", req => req.close(), "R0"],
+    ["close(NGHTTP2_REFUSED_STREAM)", req => req.close(http2.constants.NGHTTP2_REFUSED_STREAM), "R7"],
+    ["destroy()", req => req.destroy(), "R0"],
+  ] as [string, Act, string][]) {
+    test(`${call} in 'response' with a stalled body and WINDOW_UPDATE in the same read`, async () => {
+      await withRawServer(async (session, accepted) => {
+        const peer = await accepted;
+        const req = post(session, [BODY]);
+        req.on("response", () => act(req, peer));
+        await peer.until(() => peer.wire(1) === STALLED);
+        peer.send(responseHeaders(1), windowUpdate(0), windowUpdate(1));
+        await peer.until(() => peer.wire(1).includes("R"));
+        await peer.settle();
+        assert.strictEqual(resetOnce(peer.wire(1)), `${STALLED} ${reset}`);
+      });
+    });
+  }
+
+  // node parks RST_STREAM(CANCEL) that is submitted under a frame callback: the stream stays as
+  // it is for the rest of the read.
   test("close(NGHTTP2_CANCEL) in 'response' with a stalled body and WINDOW_UPDATE in the same read", async () => {
     await withRawServer(async (session, accepted) => {
       const peer = await accepted;
@@ -1077,6 +1101,123 @@ describe("close() and destroy() in a listener, with more frames for the stream i
       assert.strictEqual(resetOnce(peer.wire(1)), `${SENT} R8`);
     });
   });
+  test("close(NGHTTP2_CANCEL) in 'response', then DATA with END_STREAM in the same read: no RST_STREAM", async () => {
+    await withRawServer(async (session, accepted) => {
+      const peer = await accepted;
+      const req = session.request({ ":path": "/" }).resume();
+      req.on("response", () => req.close(NGHTTP2_CANCEL));
+      const closed = once(req, "close");
+      await peer.until(() => peer.wire(1) === "HE");
+      peer.send(responseHeaders(1), dataFrame(1, 1, true));
+      await closed;
+      await peer.settle();
+      assert.strictEqual(peer.wire(1), "HE");
+    });
+  });
+});
+
+// The peer answers a GET with HEADERS that carry END_STREAM, so both sides have ended the
+// stream when a listener of that frame calls close() or destroy(). node sends no RST_STREAM.
+describe("close() and destroy() in a listener of the frame that ends the stream", () => {
+  for (const event of ["response", "end"]) {
+    for (const [call, act] of [
+      ["close()", req => req.close()],
+      ["close(NGHTTP2_CANCEL)", req => req.close(NGHTTP2_CANCEL)],
+      ["destroy()", req => req.destroy()],
+    ] as [string, Act][]) {
+      test(`${call} in '${event}'`, async () => {
+        await withRawServer(async (session, accepted) => {
+          const peer = await accepted;
+          const req = session.request({ ":path": "/" }).resume();
+          req.on(event, () => act(req, peer));
+          const closed = once(req, "close");
+          await peer.until(() => peer.wire(1) === "HE");
+          peer.send(responseHeaders(1, true));
+          await closed;
+          // A RST_STREAM would leave one turn after the call.
+          await peer.settle();
+          assert.strictEqual(peer.wire(1), "HE");
+        });
+      });
+    }
+  }
+});
+
+// The peer resets the stream after close() or destroy(), before the stream's own RST_STREAM
+// has left. node's onStreamClose leaves a closed stream as it is: the stream keeps the code of
+// the call, 'aborted' comes once, and only close(code) gives an 'error'.
+describe("a stream that user code closed keeps its code when the peer resets it", () => {
+  const rstStream = (code: number) => frameOf(3, 0, 1, u32(code));
+  const calls: [name: string, act: Act, rstCode: number, errors: string[]][] = [
+    ["close()", req => req.close(), NGHTTP2_NO_ERROR, []],
+    ["close(2)", req => req.close(NGHTTP2_INTERNAL_ERROR), NGHTTP2_INTERNAL_ERROR, ["ERR_HTTP2_STREAM_ERROR"]],
+    ["destroy()", req => req.destroy(), NGHTTP2_NO_ERROR, []],
+  ];
+  const bodies: [name: string, chunks: Chunk[], ready: string][] = [
+    ["no body", [], "H"],
+    ["a stalled body", [BODY], STALLED],
+  ];
+  for (const [call, act, rstCode, errors] of calls) {
+    for (const [body, chunks, ready] of bodies) {
+      for (const peerCode of [NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL]) {
+        for (const inListener of [true, false]) {
+          const when = inListener ? "in the read of the call" : "in the read after the call";
+          test(`${call}, ${body}, RST_STREAM(${peerCode}) ${when}`, async () => {
+            await withRawServer(async (session, accepted) => {
+              const peer = await accepted;
+              const seen = { aborted: 0, errors: [] as string[] };
+              const req = session.request({ ":method": "POST" });
+              req.on("aborted", () => seen.aborted++);
+              req.on("error", error => seen.errors.push((error as NodeJS.ErrnoException).code!));
+              const closed = new Promise(resolve => req.on("close", resolve));
+              for (const chunk of chunks) req.write(chunk);
+              await peer.until(() => peer.wire(1) === ready);
+              if (inListener) {
+                req.on("response", () => act(req, peer));
+                peer.send(responseHeaders(1), rstStream(peerCode));
+              } else {
+                setImmediate(() => {
+                  peer.send(rstStream(peerCode));
+                  act(req, peer);
+                });
+              }
+              await closed;
+              assert.deepStrictEqual({ ...seen, rstCode: req.rstCode }, { aborted: 1, errors, rstCode });
+              // The session has counted the stream out: a graceful close() completes.
+              const sessionClosed = once(session, "close");
+              session.close();
+              await sessionClosed;
+            });
+          });
+        }
+      }
+    }
+  }
+});
+
+// The peer counts a stream against SETTINGS_MAX_CONCURRENT_STREAMS until it gets RST_STREAM.
+// destroy() after close() emits 'close' at once, and 'close' lets the next request leave.
+describe("close() then destroy() at SETTINGS_MAX_CONCURRENT_STREAMS: RST_STREAM leaves before the next HEADERS", () => {
+  for (const [body, chunks, ready] of [
+    ["no body", [], "H"],
+    ["a stalled body", [BODY], STALLED],
+  ] as [string, Chunk[], string][]) {
+    test(body, async () => {
+      await withRawServer(async (session, accepted) => {
+        const peer = await accepted;
+        peer.send(settings(3, 1));
+        await peer.settle();
+        const req = post(session, chunks);
+        await peer.until(() => peer.wire(1) === ready);
+        req.close();
+        req.destroy();
+        session.request({ ":path": "/" }).on("error", () => {});
+        let resetFirst: boolean | undefined;
+        await peer.until(() => peer.wire(3) !== "" && ((resetFirst ??= peer.wire(1).includes("R")), true));
+        assert.strictEqual(resetFirst, true);
+      });
+    });
+  }
 });
 
 test("session.destroy() with an unsent response sends GOAWAY and no RST_STREAM", async () => {

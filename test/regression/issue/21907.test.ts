@@ -85,9 +85,9 @@ test("CSS parser should handle extremely large floating-point values without cra
   expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
     "/* [path] */
     .test-rounded-full {
-      border-radius: 3.40282e+38px;
       width: 2147480000px;
       height: -2147480000px;
+      border-radius: 3.40282e+38px;
     }
 
     .test-negative {
@@ -109,8 +109,8 @@ test("CSS parser should handle extremely large floating-point values without cra
     }
 
     .test-boundaries {
-      margin: 2147480000px;
       padding: -2147480000px;
+      margin: 2147480000px;
       left: 4294970000px;
     }
 

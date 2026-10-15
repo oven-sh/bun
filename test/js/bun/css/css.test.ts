@@ -443,6 +443,373 @@ describe("css tests", () => {
       expect(sources.map(css => minify_test_with_options(css, css))).toEqual(sources);
     });
   });
+  describe("non-negative values", () => {
+    // lightningcss#1329: a negative literal where only non-negative values are allowed does not parse, so
+    // the declaration is kept as written. A calculation with a negative result is clamped to zero instead.
+    minify_test(
+      `.box { padding: 20px } .box.tight { padding: calc(8px - 12px) }`,
+      `.box{padding:20px}.box.tight{padding:0}`,
+    );
+    minify_test(`.foo { width: 10px; width: -1px }`, `.foo{width:10px;width:-1px}`);
+    minify_test(`.foo { width: calc( (1em - calc( 10px + 1em)) / 2) }`, `.foo{width:0}`);
+    minify_test(`.foo { width: calc(10px * sign(-1vw)`, `.foo{width:0}`);
+    minify_test(`.foo { width: mod(18px, -5px) }`, `.foo{width:0}`);
+
+    // A value maps to what it prints as, or to null when it is out of range.
+    type Cases = Record<string, string | null>;
+    const lengthRange: Cases = { "-1px": null, "calc(1px - 2px)": "0", "calc(-1px + 2px)": "1px" };
+    const percentageRange: Cases = { "-1%": null, "calc(1em - 2px)": "calc(1em - 2px)", "calc(-1%)": "calc(-1%)" };
+    const lengthPercentageRange: Cases = { ...lengthRange, ...percentageRange };
+    const numberRange: Cases = { "-1": null, "calc(1 - 2)": "0", "calc(-1 + 2)": "1" };
+    // Bun has no handler for these, so a second declaration does not replace the first one.
+    const unmerged = `animation aspect-ratio border-spacing mask-border-outset mask-border-slice mask-border-width
+      mask-size outline-width scroll-padding scroll-padding-inline scroll-padding-top
+      -webkit-mask-box-image-outset`.split(/\s+/);
+    // lightningcss's property_range_test as `p: first; p: value`: in range replaces `first`, out of range keeps both.
+    function property_range_test(properties: string, first: string, cases: Cases, name = properties) {
+      test(name, () => {
+        const rows = properties.split(" ").flatMap(p =>
+          Object.entries(cases).map(([value, printed]) => ({
+            css: `a{${p}:${first};${p}:${value}}`,
+            expected:
+              printed === null || unmerged.includes(p)
+                ? `a{${p}:${first};${p}:${printed ?? value}}`
+                : `a{${p}:${printed}}`,
+          })),
+        );
+        expect(rows.map(row => minify_test_with_options(row.css, ""))).toEqual(rows.map(row => row.expected));
+      });
+    }
+    property_range_test("border-spacing", "9px", { ...lengthRange, "1px -1px": null });
+    property_range_test("border-width border-left-width outline-width", "9px", lengthRange);
+    property_range_test("border-image-outset mask-border-outset -webkit-mask-box-image-outset", "9px", {
+      ...lengthRange,
+      ...numberRange,
+    });
+    property_range_test("border-image-width mask-border-width", "9px", {
+      ...lengthPercentageRange,
+      ...numberRange,
+      "auto": "auto",
+    });
+    property_range_test("border-image-slice mask-border-slice", "9", { ...numberRange, "-1%": null });
+    property_range_test("border-radius border-top-left-radius border-start-start-radius", "9px", lengthPercentageRange);
+    property_range_test("padding padding-inline padding-block padding-top padding-inline-start", "9px", {
+      ...lengthPercentageRange,
+      "auto": null,
+      "1px auto": null,
+      "1px -1px": null,
+    });
+    property_range_test("scroll-padding scroll-padding-inline scroll-padding-top", "9px", {
+      ...lengthPercentageRange,
+      "auto": "auto",
+    });
+    property_range_test("aspect-ratio", "9", { "-1/2": null, "1/-2": null, "calc(-1) / 2": "0/2", "0 / 0": "0/0" });
+    property_range_test("width max-height", "9px", {
+      "fit-content(-1px)": null,
+      "fit-content(calc(-1px))": "fit-content(0)",
+    });
+    property_range_test(
+      "width height min-width max-width min-height max-height block-size inline-size min-block-size max-inline-size",
+      "9px",
+      lengthPercentageRange,
+    );
+    property_range_test("background-size mask-size", "9px", {
+      ...lengthPercentageRange,
+      "auto": "auto",
+      "1px -1px": null,
+    });
+    property_range_test("flex", "9", { "-1": null, "1 -1": null, "1 1 -1px": null });
+    property_range_test("flex-basis -ms-flex-preferred-size", "9px", lengthPercentageRange);
+    property_range_test("flex-grow flex-shrink -webkit-box-flex -ms-flex-positive -ms-flex-negative", "9", numberRange);
+    property_range_test("font-stretch", "90%", { "-1%": null, "calc(-1%)": "0%" });
+    property_range_test("line-height", "9", numberRange);
+    property_range_test("font-size line-height", "9px", lengthPercentageRange);
+    property_range_test("transition-duration", "9s", { "-1s": null, "calc(1s - 2s)": "0s" });
+    property_range_test("background-image", "none", {
+      "radial-gradient(-1px,red,blue)": null,
+      "radial-gradient(1px -2%,red,blue)": null,
+    });
+    property_range_test("gap row-gap column-gap", "9px", lengthPercentageRange);
+    property_range_test("margin scroll-margin", "9px", { "-1px": "-1px" });
+    property_range_test("transition-delay", "9s", { "-1s": "-1s" });
+    // A rejected blur radius is not read again as the spread.
+    property_range_test("box-shadow", "9px 9px", {
+      "1px 2px -3px": null,
+      "1px 2px -3px 4px": null,
+      "1px 2px 0 -4px": "1px 2px 0 -4px",
+      "1px 2px calc(-3px)": "1px 2px",
+    });
+    property_range_test("text-shadow", "9px 9px", {
+      "1px 2px -3px": null,
+      "1px 2px 0 -4px": null,
+      "-1px -2px": "-1px -2px",
+    });
+    // No clamped rows for text-shadow, perspective() and perspective: Bun does not parse calc() there.
+    property_range_test("transform", "scale(9)", { "perspective(-1px)": null, "translateX(-1px)": "translate(-1px)" });
+    property_range_test("perspective", "9px", { "-1px": null });
+    // The first <time> is the duration even when it is out of range, so the next one is not promoted.
+    property_range_test("transition", "all 9s", {
+      "opacity -1s": null,
+      "opacity -1s 2s": null,
+      "opacity 1s -1s": "opacity 1s -1s",
+    });
+    property_range_test("animation", "9s x", {
+      "test -1s": null,
+      "test -1s 2s": null,
+      "test 1s -1s": "1s -1s test",
+      "test 1s -1": null,
+      "test calc(1s - 2s)": "test",
+      "test 1s calc(1 - 2)": "1s 0 test",
+    });
+
+    // lightningcss's `non_negative_test::<T>`, through one property whose value is a `NonNegative<T>`.
+    const numbers: Cases = {
+      "-1": null,
+      "-.5": null,
+      "0": "0",
+      "-0": "0",
+      "calc(-5)": "0",
+      "calc(-5 + 10)": "5",
+      "calc(-5 * -2)": "10",
+      "min(-5, 10)": "0",
+      "max(-5, -10)": "0",
+      "clamp(-10, -5, -1)": "0",
+      "calc(min(-5, -10) + 20)": "10",
+    };
+    const percentages: Cases = {
+      "-5%": null,
+      "-0%": "-0%",
+      "calc(-5%)": "0%",
+      "calc(-5% + 10%)": "5%",
+      "min(-5%, 10%)": "0%",
+      "calc(min(-5%, -10%) + 20%)": "10%",
+    };
+    const lengths: Cases = {
+      "-1px": null,
+      "-1em": null,
+      "-1vw": null,
+      "-1": null,
+      "0": "0",
+      "-0": "0",
+      "-0px": "0",
+      "2em": "2em",
+      "min(-5px, 10px)": "0",
+      "max(-5px, -10px)": "0",
+      "clamp(-10px, -5px, -1px)": "0",
+      "calc(min(-5px, -10px) + 20px)": "10px",
+      "calc(-5px)": "0",
+      "calc(5px - 10px)": "0",
+      "calc(-5px + 10px)": "5px",
+      "calc(-5px * -2)": "10px",
+      "calc(calc(-5px) + 10px)": "5px",
+      "calc(-1em)": "0",
+      "calc(1in - 100px)": "0",
+      "calc(1em - 10px)": "calc(1em - 10px)",
+      "min(-1em, -10px)": "min(-1em,-10px)",
+    };
+    const notLengths: Cases = { "calc(0)": null, "calc(-5)": null, "calc(1s)": null };
+    const lengthPercentages: Cases = {
+      ...lengths,
+      "-1%": null,
+      "10%": "10%",
+      "calc(5%)": "5%",
+      "calc(0%)": "0%",
+      "calc(-5% + 10%)": "5%",
+      "calc(5% - 5%)": "0%",
+      "calc(100px - (100px - 100%))": "100%",
+      "calc(-5%)": "calc(-5%)",
+      "calc(100% - 10px)": "calc(100% - 10px)",
+    };
+    const times: Cases = {
+      "-1s": null,
+      "-1ms": null,
+      "0s": "0s",
+      "calc(-1s)": "0s",
+      "calc(500ms - 1s)": "0s",
+      "calc(-1s + 1500ms)": ".5s",
+      "calc(min(-1s, -2s) + 3s)": "1s",
+      "calc(1px)": null,
+      "calc(1)": null,
+    };
+    property_range_test("flex-grow", "9", numbers, "<number>");
+    property_range_test("border-image-slice", "9", { ...numbers, ...percentages }, "<number> | <percentage>");
+    property_range_test("font-stretch", "90%", { ...percentages, "calc(1)": null, "calc(1px)": null }, "<percentage>");
+    property_range_test("border-top-width", "9px", { ...lengths, ...notLengths }, "<length>");
+    property_range_test("border-image-outset", "9px", { ...lengths, "2": "2", "calc(-2)": "0" }, "<length> | <number>");
+    property_range_test("padding-top", "9px", { ...lengthPercentages, ...notLengths }, "<length-percentage>");
+    property_range_test("flex-basis", "9px", { ...lengthPercentages, "auto": "auto" }, "<length-percentage> | auto");
+    property_range_test("transition-duration", "9s", times, "<time>");
+
+    // A calculation that resolves to a number is not a length, with or without a range.
+    property_range_test(
+      "width padding gap font-size border-width flex-basis border-radius margin top translate",
+      "9px",
+      { "calc(0)": null, "calc(2*5)": null, "min(0,1)": null, "max(1,2)": null, "clamp(1,2,3)": null },
+      "a number is not a length",
+    );
+    minify_test(`a { width: 9px; width: calc(2 * 5px) }`, `a{width:10px}`);
+
+    // Without a handler, a value that is out of range shows as a value that is not normalized.
+    test("a value out of range is printed as written", () => {
+      const sources = [
+        `a{scroll-padding:-1px -1px}`,
+        `a{mask-size:-1px auto}`,
+        `a{mask:url(a.png) 0 0/-1px auto}`,
+        `a{mask-border-outset:-1px -1px}`,
+        `a{mask-border-width:-1px -1px}`,
+        `a{mask-border-slice:-1 -1}`,
+        `a{border-spacing:-1px -1px}`,
+        `a{aspect-ratio:-2/1}`,
+        `a{outline:solid -1px red}`,
+        `a{animation:test -1s}`,
+      ];
+      expect(sources.map(css => minify_test_with_options(css, ""))).toEqual(sources);
+    });
+
+    // A declaration that is out of range is not folded into its shorthand or into a longhand of it.
+    test("a shorthand and one of its longhands, in both orders", () => {
+      const sources = [
+        `a{padding:9px;padding-top:-1px}`,
+        `a{padding-top:9px;padding:-1px}`,
+        `a{padding-block:9px;padding-block-start:-1px}`,
+        `a{padding-block-start:9px;padding-block:-1px}`,
+        `a{scroll-padding:9px;scroll-padding-top:-1px}`,
+        `a{scroll-padding-top:9px;scroll-padding:-1px}`,
+        `a{border:1px solid red;border-top-width:-1px}`,
+        `a{border-top-width:1px;border:-1px solid red}`,
+        `a{border-width:9px;border-top-width:-1px}`,
+        `a{border-top-width:9px;border-width:-1px}`,
+        `a{border-radius:9px;border-top-left-radius:-1px}`,
+        `a{border-top-left-radius:9px;border-radius:-1px}`,
+        `a{border-image:url(a.png) 9;border-image-width:-1px}`,
+        `a{border-image-width:9px;border-image:url(a.png) 9/-1px}`,
+        `a{background:red;background-size:-1px}`,
+        `a{background-size:9px;background:url(a.png) 0 0/-1px}`,
+        `a{gap:9px;row-gap:-1px}`,
+        `a{row-gap:9px;gap:-1px}`,
+        `a{flex:9px;flex-basis:-1px}`,
+        `a{flex-basis:9px;flex:1 1 -1px}`,
+        `a{font:12px serif;font-size:-1px}`,
+        `a{font-size:12px;font:-1px serif}`,
+        `a{font:12px/1 serif;line-height:-1}`,
+        `a{line-height:1;font:12px/-1 serif}`,
+        `a{transition:all 9s;transition-duration:-1s}`,
+        `a{transition-duration:9s;transition:all -1s}`,
+      ];
+      expect(sources.map(css => minify_test_with_options(css, ""))).toEqual(sources);
+    });
+    minify_test(`a { padding: 9px; padding-top: calc(1px - 2px) }`, `a{padding:0 9px 9px}`);
+    minify_test(`a { padding-top: 9px; padding: calc(1px - 2px) }`, `a{padding:0}`);
+    minify_test(`a { border-radius: 9px; border-radius: 1px / -1px }`, `a{border-radius:9px;border-radius:1px/-1px}`);
+    minify_test(
+      `a { transition-duration: 9s; transition-duration: 1s, -1ms }`,
+      `a{transition-duration:9s;transition-duration:1s,-1ms}`,
+    );
+    minify_test(`a { border: 1px solid red; border: -1px solid red }`, `a{border:1px solid red;border:-1px solid red}`);
+    minify_test(`a { font: 12px serif; font: -1px serif }`, `a{font:12px serif;font:-1px serif}`);
+
+    // Source order is kept, also with `!important` and across rules that are merged.
+    minify_test(`a { width: -1px; width: 9px }`, `a{width:-1px;width:9px}`);
+    minify_test(`a { width: 9px; width: -1px; width: 2px }`, `a{width:9px;width:-1px;width:2px}`);
+    minify_test(`a { width: 9px !important; width: -1px !important }`, `a{width:9px!important;width:-1px!important}`);
+    minify_test(
+      `a { width: 9px; height: 9px !important; width: -1px; height: -1px !important }`,
+      `a{width:9px;width:-1px;height:9px!important;height:-1px!important}`,
+    );
+    minify_test(`a { padding: 9px !important; padding: calc(1px - 2px) !important }`, `a{padding:0!important}`);
+    minify_test(`a { width: 9px } a { width: -1px }`, `a{width:9px;width:-1px}`);
+    minify_test(`a { width: -1px } a { width: 9px }`, `a{width:-1px;width:9px}`);
+    minify_test(`a { width: 9px } a { width: calc(1px - 2px) }`, `a{width:0}`);
+    // The declarations of these at-rules go through the same parser.
+    minify_test(
+      `@keyframes k { from { padding: -1px -1px } to { padding: calc(1px - 2px) } }`,
+      `@keyframes k{0%{padding:-1px -1px}to{padding:0}}`,
+    );
+    minify_test(`@page { padding: -1px -1px; width: calc(1px - 2px) }`, `@page{padding:-1px -1px;width:0}`);
+    minify_test(
+      `@container style(padding: -1px -1px) { a { color: red } }`,
+      `@container style(padding:-1px -1px){a{color:red}}`,
+    );
+    minify_test(
+      `@container style(padding: calc(1px - 2px)) { a { color: red } }`,
+      `@container style(padding:0){a{color:red}}`,
+    );
+    // Not minified, and with a logical property that is compiled to a physical one.
+    cssTest(
+      `a { padding: 9px; padding-top: -1px; padding-left: calc(1px - 2px) }`,
+      indoc`
+        a {
+          padding: 9px;
+          padding-top: -1px;
+          padding-left: 0;
+        }
+      `,
+    );
+    prefix_test(
+      `a { inline-size: 9px; inline-size: -1px }`,
+      indoc`
+        a {
+          width: 9px;
+          width: -1px;
+        }
+      `,
+      { safari: 8 << 16 },
+    );
+
+    // Still accepted: negative values where there is no range, zero, `auto`, var() and math that is not resolved.
+    minify_test(`a { inset: -1px -1px }`, `a{inset:-1px}`);
+    minify_test(`a { top: 9px; top: -1px }`, `a{top:-1px}`);
+    minify_test(`a { translate: 9px; translate: -1px -2px }`, `a{translate:-1px -2px}`);
+    minify_test(`a { box-shadow: 9px 9px; box-shadow: -1px -2px 3px -4px }`, `a{box-shadow:-1px -2px 3px -4px}`);
+    minify_test(`a { order: 9; order: -1 }`, `a{order:-1}`);
+    minify_test(`a { z-index: -1 }`, `a{z-index:-1}`);
+    minify_test(`a { margin: 9px; margin: calc(10px - 20px) }`, `a{margin:-10px}`);
+    minify_test(`a { width: 9px; width: -0px }`, `a{width:0}`);
+    minify_test(`a { padding: 9px; padding: 0 }`, `a{padding:0}`);
+    minify_test(`a { line-height: 9; line-height: calc(2) }`, `a{line-height:2}`);
+    minify_test(`a { flex: 9; flex: 1 1 0 }`, `a{flex:1 1 0}`);
+    minify_test(`a { flex-basis: 9px; flex-basis: auto }`, `a{flex-basis:auto}`);
+    minify_test(`a { background-size: 9px; background-size: auto }`, `a{background-size:auto}`);
+    minify_test(`a { scroll-padding: auto auto }`, `a{scroll-padding:auto}`);
+    minify_test(`a { padding: 9px; padding: var(--p) }`, `a{padding:9px;padding:var(--p)}`);
+    minify_test(
+      `a { padding: 9px; padding: env(safe-area-inset-top) }`,
+      `a{padding:9px;padding:env(safe-area-inset-top)}`,
+    );
+    minify_test(`a { width: 9px; width: max(-2px, -1em) }`, `a{width:max(-2px,-1em)}`);
+    // A negative percentage is not known to be negative as a length, so it keeps its calc().
+    minify_test(`a { width: 9px; width: calc(-10%) }`, `a{width:calc(-10%)}`);
+    minify_test(`a { padding: 9px; padding: 1px calc(10% - 20%) }`, `a{padding:1px calc(-10%)}`);
+
+    // Unchanged, as in lightningcss: a unit-less number is a px length, font-weight has no range, 1e1 prints as 10.
+    minify_test(`a { width: 9px; width: 10 }`, `a{width:10px}`);
+    minify_test(`a { transform: translate(10) }`, `a{transform:translate(10px)}`);
+    minify_test(`@media (min-width: 600) { a { color: red } }`, `@media (width>=600px){a{color:red}}`);
+    minify_test(`a { font-weight: bold; font-weight: 1001 }`, `a{font-weight:1001}`);
+    minify_test(`a { order: 9; order: 1e1 }`, `a{order:9;order:10}`);
+    minify_test(`a { --x: 2.0 }`, `a{--x:2}`);
+
+    // An at-rule has no unparsed form to fall back to, so there the same values are errors, as in lightningcss.
+    test.each([
+      [`@media (min-width: calc(0)) { a { color: red } }`, "Invalid media query"],
+      [`@container (min-width: calc(0)) { a { color: red } }`, "Invalid media query"],
+      [`@media (aspect-ratio: -1/1) { a { color: red } }`, "Invalid media query"],
+      [`@property --x { syntax: "<length>"; inherits: false; initial-value: calc(0) }`, "Unexpected token: calc("],
+      [
+        `@property --x { syntax: "<image>"; inherits: false; initial-value: radial-gradient(-1px, red, blue) }`,
+        "Unexpected token: radial-gradient(",
+      ],
+      [
+        `@property --x { syntax: "<transform-function>"; inherits: false; initial-value: perspective(-5px) }`,
+        "Unexpected token: perspective(",
+      ],
+    ])("ERROR: %s", (css, message) => {
+      expect(() => minify_test_with_options(css, "")).toThrow(message);
+    });
+    // The length of a media feature has no range.
+    minify_test(`@media (min-width: -5px) { a { color: red } }`, `@media (width>=-5px){a{color:red}}`);
+    minify_test(`@media (min-width: calc(1px - 6px)) { a { color: red } }`, `@media (width>=-5px){a{color:red}}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

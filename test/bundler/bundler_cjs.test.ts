@@ -1417,9 +1417,9 @@ describe("bundler", () => {
     run: { stdout: "function" },
   });
 
-  // The browser runtime has no real require, so the eval sees the __require
-  // shim. Node runs the output: Bun would define `require` for the module.
-  itBundled("cjs/DirectEvalSeesRequireShimBrowser", {
+  // A browser has no require, so nothing is injected and the eval finds none.
+  // Node runs the output: Bun would define `require` for the module.
+  itBundled("cjs/DirectEvalBrowserTargetHasNoRequire", {
     files: {
       "/entry.js": /* js */ `
         const probe = require("./probe.cjs");
@@ -1439,16 +1439,42 @@ describe("bundler", () => {
     format: "esm",
     outfile: "/out.mjs",
     onAfterBundle(api) {
-      api.expectFile("/out.mjs").toMatch(requireDecl);
-      api.expectFile("/out.mjs").toContain("Dynamic require of");
+      api.expectFile("/out.mjs").not.toMatch(requireDecl);
+      api.expectFile("/out.mjs").not.toContain("__require");
     },
-    run: { runtime: "node", stdout: '{"type":"function","message":"Dynamic require of \\"fs\\" is not supported"}' },
+    run: { runtime: "node", stdout: '{"type":"undefined","message":"require is not defined"}' },
+  });
+
+  const jsChunks = (api: BundlerTestBundleAPI) => readdirSync(api.outdir).filter(name => name.endsWith(".js"));
+  const declaresRequire = (api: BundlerTestBundleAPI, name: string) => requireDecl.test(api.readFile("/out/" + name));
+
+  // With --splitting the wrapped file has its own chunk. That chunk imports
+  // __require from the chunk that holds the runtime.
+  itBundled("cjs/DirectEvalSeesRequireSplitting", {
+    files: {
+      "/entry.js": `const { default: inquire } = await import("./inquire.cjs");\n${printInquiredBuffer}`,
+      "/inquire.cjs": inquireCjs,
+    },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const [chunk, ...rest] = jsChunks(api).filter(name => declaresRequire(api, name));
+      expect(rest).toEqual([]);
+      expect(chunk).not.toBe("entry.js");
+      api.expectFile("/out/" + chunk).toMatch(/import\s*\{[^}]*\b__require\b[^}]*\}\s*from/);
+    },
+    run: { stdout: "Buffer\ntrue" },
   });
 
   // A server build bundles the scripts of an imported HTML file for the
-  // browser, but its runtime __require is the server's. The browser copy of a
-  // file gets no declaration.
+  // browser, but its runtime __require is the server's.
   const htmlImportFiles = {
+    "/server.js": /* js */ `
+      import page from "./index.html";
+      import probe from "./probe.cjs";
+      console.log(probe, typeof page.index);
+    `,
     "/index.html": /* html */ `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
     "/client.js": /* js */ `
       import probe from "./probe.cjs";
@@ -1458,18 +1484,10 @@ describe("bundler", () => {
       module.exports = eval("typeof require");
     `,
   };
-  const jsChunks = (api: BundlerTestBundleAPI) => readdirSync(api.outdir).filter(name => name.endsWith(".js"));
-  const declaresRequire = (api: BundlerTestBundleAPI, name: string) => requireDecl.test(api.readFile("/out/" + name));
 
+  // Only the server copy of the file gets the declaration.
   itBundled("cjs/DirectEvalInServerAndBrowserChunk", {
-    files: {
-      ...htmlImportFiles,
-      "/server.js": /* js */ `
-        import page from "./index.html";
-        import probe from "./probe.cjs";
-        console.log(probe, typeof page.index);
-      `,
-    },
+    files: htmlImportFiles,
     entryPoints: ["/server.js"],
     outdir: "/out",
     target: "bun",
@@ -1479,16 +1497,10 @@ describe("bundler", () => {
     run: { stdout: "function string" },
   });
 
-  // Only the browser side has the eval. Node's __require imports node:module,
-  // which a browser cannot load.
-  itBundled("cjs/DirectEvalOnlyInBrowserChunkOfNodeBuild", {
-    files: {
-      ...htmlImportFiles,
-      "/server.js": /* js */ `
-        import page from "./index.html";
-        console.log(typeof page.index);
-      `,
-    },
+  // Node's __require part imports node:module, and each chunk prints every
+  // live runtime part. The browser chunk must still load, so nothing changes.
+  itBundled("cjs/DirectEvalNodeBuildWithHtmlImport", {
+    files: htmlImportFiles,
     entryPoints: ["/server.js"],
     outdir: "/out",
     target: "node",

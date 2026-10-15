@@ -3331,9 +3331,13 @@ impl<'a> LinkerContext<'a> {
         if self.options.output_format != Format::Esm {
             return None;
         }
-        // A browser file in a server build (HTML import) would get the server's `__require`.
-        if self.options.target.is_server_side()
-            && self.graph.ast.items_target()[source_index as usize] == Target::Browser
+        // A browser has no `require`. A browser file in a server build (HTML import) would get the server's.
+        if self.graph.ast.items_target()[source_index as usize] == Target::Browser {
+            return None;
+        }
+        // Each chunk prints every live runtime part, and Node's `__require` part imports `node:module`.
+        if self.options.target == Target::Node
+            && self.parse_graph().html_imports.server_source_indices.len() > 0
         {
             return None;
         }

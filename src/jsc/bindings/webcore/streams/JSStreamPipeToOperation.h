@@ -5,8 +5,8 @@
 // THIS cell, set at acquire and cleared in "finalize". Either stream end reachable ⇒ its
 // reader/writer ⇒ this op ⇒ the other end. Zero Strong handles.
 // The AbortSignal registration MUST go through the GC-visited
-// addAbortAlgorithmToSignal/removeAbortAlgorithmFromSignal API (never
-// AbortSignal::addAlgorithm) and MUST be removed on every terminal path. The registered
+// addAbortAlgorithmToSignal/removeAbortAlgorithmFromSignal API and MUST be removed on every
+// terminal path. The registered
 // callable is a JSBoundFunction over the [bound-convention] `boundPipeAbortAlgorithm`
 // target (JSStreamsRuntime.h) with THIS cell bound at argument(0) — JSAbortAlgorithm invokes
 // it as `(reason)` with no context slot, so a reaction-convention handler cannot be used.

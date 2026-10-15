@@ -1729,7 +1729,12 @@ fn wanted_internal_modules(
     builtins: &bun_exe_format::builtins::Builtins<'_>,
 ) -> Vec<u32> {
     let import_records = c.graph.ast.items_import_records();
-    let excluded: Vec<&[u8]> = c.options.compile_exclude_features.iter().map(|it| &**it).collect();
+    let excluded: Vec<&[u8]> = c
+        .options
+        .compile_exclude_features
+        .iter()
+        .map(|it| &**it)
+        .collect();
     let gone = builtins.without(&excluded);
     let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {

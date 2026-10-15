@@ -254,11 +254,7 @@ static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGloba
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
-    auto* matching = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, length);
-    if (!matching) [[unlikely]] {
-        throwOutOfMemoryError(&lexicalGlobalObject, scope);
-        return nullptr;
-    }
+    JSArray* matching = nullptr;
     // No PerformanceEntry has the type 0: an entryType that is not a type matches no mark or measure.
     bool filtersByName = !name.isNull();
     bool filtersByType = !entryType.isNull();
@@ -292,11 +288,21 @@ static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGloba
                     continue;
             }
         }
+        // Made at the first match, with room for the entries that remain: a filter that matches nothing allocates no storage.
+        if (!matching) {
+            matching = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, length - index);
+            if (!matching) [[unlikely]] {
+                throwOutOfMemoryError(&lexicalGlobalObject, scope);
+                return nullptr;
+            }
+        }
         if (tryAppendToArrayQuickly(vm, matching, entry)) [[likely]]
             continue;
         matching->putDirectIndex(&lexicalGlobalObject, matching->length(), entry);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
+    if (!matching)
+        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     return matching;
 }
 

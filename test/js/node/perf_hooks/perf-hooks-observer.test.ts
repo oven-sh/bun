@@ -1023,7 +1023,8 @@ if (typeof Bun !== "undefined") {
   const node = nodeExe();
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    // The timeout is for one Node.js process that runs every test of this file.
+    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 30_000 }, async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       const child = spawn(node!, ["--v8-pool-size=1", fileURLToPath(import.meta.url)], {

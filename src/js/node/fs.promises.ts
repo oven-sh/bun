@@ -8,6 +8,8 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  validateRmdirRecursiveOptions,
+  getValidatedFsPath,
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
@@ -363,8 +365,15 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) return exports.rm(path, options);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
+    if (options?.recursive) {
+      path = getValidatedFsPath(path);
+      validateObject(options, "options");
+      options = validateRmdirRecursiveOptions(options);
+      // stat, not the lstat of fs.rmdir: a symlink to a directory goes to rm, which unlinks it.
+      if (!(await fs.stat(path)).isDirectory()) return fs.rmdir(path);
+      return exports.rm(path, options);
+    }
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

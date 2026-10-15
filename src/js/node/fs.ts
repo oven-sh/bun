@@ -5,7 +5,9 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateRmdirRecursiveOptions,
   getValidatedPath,
+  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -113,9 +115,16 @@ var access = function access(path, mode, callback?) {
     }
     callback = ensureCallback(callback);
 
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
-    else fs.rmdirCb(callback, path, options);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
+    if (options?.recursive) {
+      path = getValidatedFsPath(path);
+      options = validateRmdirRecursiveOptions(options);
+      fs.lstatCb((err, stats) => {
+        if (err) callback(err);
+        else if (stats.isDirectory()) settleCallback(require("node:fs/promises").rm(path, options), callback);
+        else fs.rmdirCb(callback, path);
+      }, path);
+    } else fs.rmdirCb(callback, path, options);
   },
   copyFile = function copyFile(src, dest, mode, callback?) {
     if ($isCallable(mode)) {
@@ -576,8 +585,13 @@ var access = function access(path, mode, callback?) {
     return fs.rmSync(path, options);
   },
   rmdirSync = function rmdirSync(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) return rmSync(path, options);
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
+    if (options?.recursive) {
+      path = getValidatedFsPath(path);
+      options = validateRmdirRecursiveOptions(options);
+      if (!fs.lstatSync(path).isDirectory()) return fs.rmdirSync(path);
+      return rmSync(path, options);
+    }
     return fs.rmdirSync(path, options);
   },
   writev = function writev(fd, buffers, position, callback?) {

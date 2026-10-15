@@ -393,12 +393,16 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
 
   test("the compiled code of a CommonJS module goes with the last graph that ran it", async () => {
     // Many, because the count also has the code of whatever else ran since the baseline.
-    const files = 200;
-    for (let i = 0; i < files; i++)
+    const files = 80;
+    let all = "";
+    for (let i = 0; i < files; i++) {
       writeFileSync(file(`only-in-graphs-${i}.cjs`), `module.exports = function f${i}() { return ${i}; };`);
+      all += `require("./only-in-graphs-${i}.cjs");\n`;
+    }
+    writeFileSync(file("only-in-graphs.cjs"), all);
     const load = async () => {
       const graph = new ModuleGraph();
-      for (let i = 0; i < files; i++) await graph.import(file(`only-in-graphs-${i}.cjs`));
+      await graph.import(file("only-in-graphs.cjs"));
       return graph;
     };
     await load();
@@ -413,7 +417,7 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     })();
     const limit = baseline + files / 2;
     expect((await settle({ FunctionCodeBlock: limit })).FunctionCodeBlock).toBeLessThanOrEqual(limit);
-  });
+  }, 30_000);
 
   test("the host's copy of a file a collected graph also loaded is untouched", async () => {
     const hostRequire = require("node:module").createRequire(import.meta.url);

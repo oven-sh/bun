@@ -185,9 +185,9 @@ fn map_floyd_steinberg(
     k: u16,
     indices: &mut [u8],
 ) -> Result<(), AllocError> {
-    // Two rows of accumulated error, ×4 channels. `cur` carries error pushed
-    // *into* the current row from the row above; `nxt` collects error for the
-    // row below.
+    // Two rows of accumulated error in sixteenths of a level, ×4 channels.
+    // `cur` carries error pushed *into* the current row from the row above;
+    // `nxt` collects error for the row below.
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];
@@ -201,13 +201,15 @@ fn map_floyd_steinberg(
             let px: usize = y as usize * w as usize + usize::try_from(x).expect("int cast");
             let off: usize = usize::try_from(x).expect("int cast") * 4;
 
-            // Candidate colour = source + accumulated error, clamped to what a
-            // pixel can be. The error is measured from the clamped value: the
-            // part past 0 or 255 is not something a neighbour can make up
-            // for, and carrying it spills into flat areas further on.
+            // Wanted colour = source + accumulated error, in sixteenths and
+            // clamped to what a pixel can be: the part past 0 or 255 is not
+            // something a neighbour can make up for, and carrying it spills
+            // into flat areas further on. The candidate is the nearest level.
+            let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
-                cand[c] = clamp255(i32::from(rgba[px * 4 + c]) + cur[off + c]);
+                wanted[c] = (16 * i32::from(rgba[px * 4 + c]) + cur[off + c]).clamp(0, 16 * 255);
+                cand[c] = (wanted[c] + 8) >> 4;
             }
 
             // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
@@ -215,17 +217,17 @@ fn map_floyd_steinberg(
                 bun_image_nearest_palette(
                     palette.as_ptr(),
                     u32::from(k),
-                    cand[0],
-                    cand[1],
-                    cand[2],
-                    cand[3],
+                    clamp255(cand[0]),
+                    clamp255(cand[1]),
+                    clamp255(cand[2]),
+                    clamp255(cand[3]),
                 )
             })
             .unwrap();
             indices[px] = idx;
 
             for c in 0..4usize {
-                let err: i32 = cand[c] - i32::from(palette[idx as usize * 4 + c]);
+                let err: i32 = wanted[c] - 16 * i32::from(palette[idx as usize * 4 + c]);
                 // Three shares round toward zero and the one below takes the
                 // rest, so the four add up to `err`. With four floored
                 // shares an error of −1 pushed −4 and +1 pushed nothing.

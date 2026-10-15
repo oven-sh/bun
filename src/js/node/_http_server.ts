@@ -2028,7 +2028,15 @@ function getNodeHTTPServerSocket() {
       // The FIN and 'finish' follow what the kernel refused of the writes that the handle held back.
       const refused = handle.flushWrites();
       if (refused) {
-        this.#write(refused, "buffer", err => (err ? callback(err) : this._final(callback)), false);
+        // The stream takes no write after end(), so count them here: writableLength is 0 once the kernel has the bytes.
+        const state = this._writableState;
+        state.length += refused.length;
+        const onWritten = err => {
+          state.length -= refused.length;
+          if (err) callback(err);
+          else this._final(callback);
+        };
+        this.#write(refused, "buffer", onWritten, false);
         return;
       }
       handle.end(this[kDestroySoon]);

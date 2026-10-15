@@ -377,6 +377,11 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       then: `setImmediate(function poll() { if (socket.writableLength === 0) socket.destroy(); else setImmediate(poll); })`,
       events: [],
     },
+    {
+      how: "end() in their task, then destroy() once writableLength is 0",
+      then: `socket.end(); setImmediate(function poll() { if (socket.writableLength === 0) socket.destroy(); else setImmediate(poll); })`,
+      events: ["finish"],
+    },
     // 'finish' destroys a socket whose readable side has ended.
     { how: "end() after the client's FIN", then: "socket.end()", clientEndsFirst: true, events: ["finish"] },
     {

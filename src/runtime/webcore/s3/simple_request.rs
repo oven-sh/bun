@@ -91,9 +91,12 @@ pub(crate) enum S3ListObjectsResult<'a> {
     Failure(S3Error<'a>),
 }
 
-// commit result also fails if status 200 but with body containing an Error
-pub(crate) enum S3CommitResult<'a> {
+/// What a `MultiPartUpload` is told about a request of its own that returns nothing: its
+/// single PUT, its commit and its rollback.
+pub(crate) enum S3UploadStepResult<'a> {
     Success,
+    /// A failure that another attempt can change. Borrowed like `Failure`.
+    Transient(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
@@ -101,8 +104,33 @@ pub(crate) enum S3CommitResult<'a> {
 // commit result also fails if status 200 but with body containing an Error
 pub(crate) enum S3PartResult<'a> {
     Etag(&'a [u8]),
+    /// A failure that another attempt can change. Borrowed like `Failure`.
+    Transient(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
+}
+
+bun_core::comptime_string_set! {
+    /// The `<Code>` names that the AWS SDKs take as throttling or as a timeout, under any status:
+    /// https://github.com/smithy-lang/smithy-typescript/blob/main/packages/core/src/submodules/retry/service-error-classification/constants.ts
+    static TRANSIENT_CODES = {
+        b"BandwidthLimitExceeded",
+        b"EC2ThrottledException",
+        b"LimitExceededException",
+        b"PriorRequestNotComplete",
+        b"ProvisionedThroughputExceededException",
+        b"RequestLimitExceeded",
+        b"RequestThrottled",
+        b"RequestThrottledException",
+        b"RequestTimeout",
+        b"RequestTimeoutException",
+        b"SlowDown",
+        b"ThrottledException",
+        b"Throttling",
+        b"ThrottlingException",
+        b"TooManyRequestsException",
+        b"TransactionInProgressException",
+    };
 }
 
 pub(crate) struct S3HttpSimpleTask {
@@ -171,11 +199,18 @@ pub(crate) enum Callback {
     Upload(fn(S3UploadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Delete(fn(S3DeleteResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     ListObjects(fn(S3ListObjectsResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
-    Commit(fn(S3CommitResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    /// The commit of a `MultiPartUpload`. (It also fails on a 200 whose body is an `<Error>`.)
+    Commit(fn(S3UploadStepResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Part(fn(S3PartResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    /// The single PUT of a `MultiPartUpload`: 200 is the success, as for `Upload`.
+    SinglePut(fn(S3UploadStepResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    /// The rollback of a `MultiPartUpload`: 200 and 204 are the success, as for `Delete`, and
+    /// so is 404: the store no longer has the upload, which is what a rollback is for.
+    Rollback(fn(S3UploadStepResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
 }
 
 impl Callback {
+    /// A failure that is final: nothing sends the request again.
     fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
@@ -186,8 +221,31 @@ impl Callback {
             Callback::ListObjects(callback) => {
                 callback(S3ListObjectsResult::Failure(err), context)?
             }
-            Callback::Commit(callback) => callback(S3CommitResult::Failure(err), context)?,
             Callback::Part(callback) => callback(S3PartResult::Failure(err), context)?,
+            Callback::Commit(callback)
+            | Callback::SinglePut(callback)
+            | Callback::Rollback(callback) => callback(S3UploadStepResult::Failure(err), context)?,
+        }
+        Ok(())
+    }
+
+    /// A failure that another attempt can change. Only the requests of a `MultiPartUpload`
+    /// are told so: the upload is what sends them again.
+    fn transient(
+        &self,
+        code: &[u8],
+        message: &[u8],
+        context: *mut c_void,
+    ) -> bun_jsc::JsResult<()> {
+        let err = S3Error { code, message };
+        match self {
+            Callback::Part(callback) => callback(S3PartResult::Transient(err), context)?,
+            Callback::Commit(callback)
+            | Callback::SinglePut(callback)
+            | Callback::Rollback(callback) => {
+                callback(S3UploadStepResult::Transient(err), context)?
+            }
+            _ => self.fail(code, message, context)?,
         }
         Ok(())
     }
@@ -260,34 +318,84 @@ impl S3HttpSimpleTask {
             }
             self.callback
                 .not_found(code, message, self.callback_context)?;
+        } else if self.is_transient(code) {
+            self.callback
+                .transient(code, message, self.callback_context)?;
         } else {
             self.callback.fail(code, message, self.callback_context)?;
         }
         Ok(())
     }
 
+    /// Whether another attempt at the request this task failed can succeed. `code` is the
+    /// `<Code>` of its answer, if that has one.
+    fn is_transient(&self, code: &[u8]) -> bool {
+        use bun_http::Error;
+        /// `Some(true)`: the answer asks for another attempt (408, 429), or the store failed
+        /// on its own side. `Some(false)`: the store redirected or refused the request, or
+        /// will never do it (501). `None`: no answer, or one that is no failure.
+        const fn status_says(status: u32) -> Option<bool> {
+            match status {
+                408 | 429 => Some(true),
+                501 => Some(false),
+                500..=599 => Some(true),
+                300..=499 => Some(false),
+                _ => None,
+            }
+        }
+        let status = self
+            .result
+            .metadata
+            .as_ref()
+            .map_or(0, |metadata| metadata.response.status_code);
+        match self.result.fail {
+            None => status_says(status) == Some(true) || TRANSIENT_CODES.contains(code),
+            // The answer is the proxy's: one that refused the tunnel (407, 403) refuses the
+            // next one too.
+            Some(Error::ProxyConnectFailed) => self
+                .result
+                .proxy_connect_response
+                .as_ref()
+                .is_some_and(|reply| status_says(reply.response.status_code) == Some(true)),
+            // The peer did not prove who it is, or redirected to where the request cannot go.
+            Some(
+                Error::Cert(_)
+                | Error::ERR_TLS_CERT_ALTNAME_INVALID
+                | Error::TooManyRedirects
+                | Error::UnsupportedRedirectProtocol
+                | Error::RedirectURLTooLong
+                | Error::RedirectURLInvalid
+                | Error::InvalidRedirectURL,
+            ) => false,
+            // The connection failed, or the request was aborted (nothing leaves a context that
+            // stopped, so only a rollback goes again). An answer that was cut short stands.
+            Some(_) => status_says(status).unwrap_or(true),
+        }
+    }
+
     /// A commit can answer 200 and still carry an `<Error>` document.
     fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<bool> {
         let mut code: &[u8] = b"UnknownError";
         let mut message: &[u8] = b"an unexpected error has occurred";
-        let parsed;
-        if let Some(err) = self.result.fail {
-            code = err.name().as_bytes();
-        } else {
-            let bytes = self.response_buffer.list.as_slice();
-            if !bytes.is_empty() {
-                message = bytes;
-            }
-            parsed = xml_response::parse_error(bytes);
-            if let Some(error) = &parsed {
-                code = error.code.as_deref().unwrap_or(code);
-                message = error.message.as_deref().unwrap_or(message);
-            }
-            if (parsed.is_none() && status == 200) || status == 206 {
-                return Ok(false);
-            }
+        let bytes = self.response_buffer.list.as_slice();
+        if !bytes.is_empty() {
+            message = bytes;
         }
-        self.callback.fail(code, message, self.callback_context)?;
+        let parsed = xml_response::parse_error(bytes);
+        if let Some(error) = &parsed {
+            code = error.code.as_deref().unwrap_or(code);
+            message = error.message.as_deref().unwrap_or(message);
+        }
+        if (parsed.is_none() && status == 200) || status == 206 {
+            return Ok(false);
+        }
+        // The store sent the 2xx before it finished the work: the error is its own.
+        if (parsed.is_some() && (200..300).contains(&status)) || self.is_transient(code) {
+            self.callback
+                .transient(code, message, self.callback_context)?;
+        } else {
+            self.callback.fail(code, message, self.callback_context)?;
+        }
         Ok(true)
     }
 
@@ -367,6 +475,14 @@ impl S3HttpSimpleTask {
                 200 => callback(S3UploadResult::Success, this.callback_context)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },
+            Callback::SinglePut(callback) => match response.status_code {
+                200 => callback(S3UploadStepResult::Success, this.callback_context)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
+            },
+            Callback::Rollback(callback) => match response.status_code {
+                200 | 204 | 404 => callback(S3UploadStepResult::Success, this.callback_context)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
+            },
             Callback::Download(callback) => match response.status_code {
                 200 | 204 | 206 => {
                     let body = core::mem::take(&mut this.response_buffer);
@@ -385,7 +501,7 @@ impl S3HttpSimpleTask {
                 // commit multipart upload can fail with status 200
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    callback(S3CommitResult::Success, this.callback_context)?;
+                    callback(S3UploadStepResult::Success, this.callback_context)?;
                 }
             }
             Callback::Part(callback) => {

@@ -161,7 +161,7 @@ Bun automatically handles multipart uploads for large files and supports streami
 // Write a large file
 const bigFile = Buffer.alloc(10 * 1024 * 1024); // 10MB
 const writer = s3file.writer({
-  // Automatically retry on network errors up to 3 times
+  // Send a request again up to 3 times after a transient failure
   retry: 3,
 
   // Queue up to 10 requests at a time
@@ -176,6 +176,16 @@ for (let i = 0; i < 10; i++) {
 }
 await writer.end();
 ```
+
+Bun sends a request of a streamed upload again, up to `retry` times, only after a transient failure. Bun sends it again at once, with no wait. A failure is transient when another attempt can succeed:
+
+- The connection fails or times out.
+- S3 answers `408`, `429`, or a `5xx` status other than `501`.
+- S3 answers with a throttling or timeout code, such as `SlowDown` or `RequestTimeout`.
+
+Any other failure, such as `403 AccessDenied`, fails the upload on the first attempt.
+
+Each part of a multipart upload has its own count. Bun sends the request that starts a multipart upload once.
 
 ---
 

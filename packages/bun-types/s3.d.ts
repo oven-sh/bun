@@ -278,15 +278,28 @@ declare module "bun" {
     queueSize?: number;
 
     /**
-     * Number of retry attempts for failed uploads.
+     * How many times Bun sends a request of a streamed upload again after a
+     * transient failure. Bun sends it again at once, with no wait.
      * - Default: 3
      * - Maximum: 255
+     *
+     * A failure is transient when another attempt can succeed: the connection
+     * fails or times out, or S3 answers `408`, `429` or a `5xx` status other
+     * than `501`, or with a throttling or timeout code such as `SlowDown` or
+     * `RequestTimeout`. Any other failure, such as `403 AccessDenied`, fails
+     * the upload on the first attempt.
+     *
+     * A streamed upload is one that `writer()` starts, or `write()` of a
+     * `ReadableStream`, of a `Response` whose body is a stream, or of a file.
+     * Each part of a multipart upload has its own count. Bun sends the request
+     * that starts a multipart upload once. `retry` has no effect on a string
+     * or a buffer that `write()` sends in one request.
      *
      * @example
      * ```ts
      * // Setting retry attempts
      * const file = s3.file("my-file.txt", {
-     *   retry: 5 // Retry failed uploads up to 5 times
+     *   retry: 5 // Send a request again up to 5 times after a transient failure
      * });
      * ```
      */
@@ -558,7 +571,7 @@ declare module "bun" {
      * const writer = file.writer({
      *   partSize: 10 * 1024 * 1024, // 10MB parts
      *   queueSize: 4, // Upload 4 parts in parallel
-     *   retry: 3 // Retry failed parts
+     *   retry: 3 // Send a part again up to 3 times after a transient failure
      * });
      *
      * // Write large chunks of data efficiently

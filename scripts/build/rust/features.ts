@@ -182,7 +182,10 @@ export function emitFeatureCheck(
   inputs: Map<string, number | undefined>,
   exe: string,
 ): string[] {
-  if (featurePass(cfg) === undefined || cfg.nm === undefined || cfg.readobj === undefined) return [];
+  if (featurePass(cfg) === undefined) return [];
+  if (cfg.nm === undefined || cfg.readobj === undefined) {
+    throw new BuildError("The islands cannot be checked: that takes llvm-nm and llvm-readobj, and one was not found");
+  }
   const manifest = join(cfg.buildDir, "features-checked.manifest");
   writeIfChanged(manifest, `${table}\n` + [...inputs].map(([path, island]) => `${island ?? 0} ${path}\n`).join(""));
   const stamp = join(cfg.buildDir, "features-checked");

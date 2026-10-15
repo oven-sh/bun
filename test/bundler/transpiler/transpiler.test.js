@@ -6177,6 +6177,149 @@ describe("function declarations in switch case clauses", () => {
   });
 });
 
+describe("a function declared twice in a sloppy block", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  // A direct eval keeps a block-level function declaration as it is written.
+  const block =
+    "function t() { x: { function f() { return 1 } eval(''); break x; function f() { return 2 } } return f }";
+  const clauses =
+    "function t(k) { switch (k) { case 1: function f() { return 1 } eval(''); break; case 2: function f() { return 2 } } return f }";
+
+  // Each statement assigns the binding of the block to the `var` of the function.
+  it("keeps both declarations in a CommonJS file", () => {
+    expect(transpiler.transformSync(block + "\nmodule.exports = t;")).toBe(
+      `function t() {
+  x: {
+    function f() {
+      return 1;
+    }
+    function f() {
+      return 2;
+    }
+    eval("");
+    break x;
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+    expect(transpiler.transformSync(clauses + "\nmodule.exports = t;")).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      function f() {
+        return 1;
+      }
+      eval("");
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+module.exports = t;
+`,
+    );
+  });
+
+  it("assigns the `var` where each declaration stood when the names are minified", () => {
+    expect(
+      new Bun.Transpiler({ loader: "js", minify: { identifiers: true } }).transformSync(
+        "function t(k) { switch (k) { case 1: function f() { return 1 } break; case 2: function f() { return 2 } } return f }\nmodule.exports = t;",
+      ),
+    ).toBe(
+      `function e(t) {
+  {
+    const r = t;
+    {
+      let n = function() {
+        return 2;
+      };
+      switch (r) {
+        case 1:
+          var c = n;
+          break;
+        case 2:
+          var c = n;
+      }
+    }
+  }
+  return c;
+}
+module.exports = e;
+`,
+    );
+  });
+
+  // A file with no CommonJS marker runs as a module, and strict code rejects
+  // two declarations of one name in a block.
+  it("keeps one declaration in a file that can run as strict code", () => {
+    expect(transpiler.transformSync(block)).toBe(
+      `function t() {
+  x: {
+    function f() {
+      return 2;
+    }
+    eval("");
+    break x;
+  }
+  return f;
+}
+`,
+    );
+    expect(transpiler.transformSync(clauses)).toBe(
+      `function t(k) {
+  switch (k) {
+    case 1:
+      eval("");
+      break;
+    case 2:
+      function f() {
+        return 2;
+      }
+  }
+  return f;
+}
+`,
+    );
+    expect(
+      transpiler.transformSync(
+        "{ function f() { return 1 } eval(''); function f() { return 2 } function f() { return 3 } }",
+      ),
+    ).toBe(
+      `{
+  function f() {
+    return 3;
+  }
+  eval("");
+}
+`,
+    );
+    expect(
+      transpiler.transformSync(
+        "class C { m() { { function f() { return 1 } eval(''); function f() { return 2 } return f } } }\nmodule.exports = C;",
+      ),
+    ).toBe(
+      `class C {
+  m() {
+    {
+      function f() {
+        return 2;
+      }
+      eval("");
+      return f;
+    }
+  }
+}
+module.exports = C;
+`,
+    );
+  });
+});
+
 describe("minifyWhitespace keeps the space before keyword operators", () => {
   const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
 

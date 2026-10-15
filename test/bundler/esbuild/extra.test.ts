@@ -1636,6 +1636,101 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // A sloppy switch can declare one function name in more than one clause. The
+  // binding of the switch has the last function, and each declaration statement
+  // assigns it to the `var` of the enclosing function (ECMA-262 Annex B.3.3).
+  // The expected output is what node prints for "switch.cjs".
+  const declaredTwice = {
+    "/entry.js": /* js */ `
+      import rows from "./switch.cjs";
+      console.log(JSON.stringify(rows));
+    `,
+    "/switch.cjs": /* js */ `
+      function twoClauses(kind) { switch (kind) { case "a": function handler() { return "A" } break; case "b": function handler() { return "B" } break; } try { return handler(); } catch (e) { return e.name; } }
+      function threeClauses(k) { switch (k) { case 1: function h() { return 1 } break; case 2: function h() { return 2 } break; case 3: function h() { return 3 } } return typeof h === "function" ? h() : typeof h; }
+      function fallthrough(k) { switch (k) { case 1: function h() { return 1 } case 2: function h() { return 2 } break; case 3: function h() { return 3 } } return typeof h === "function" ? h() : typeof h; }
+      function sameClause(k) { switch (k) { case 1: function h() { return 1 } function h() { return 2 } break; } return typeof h === "function" ? h() : typeof h; }
+      function leaveInClause(k) { switch (k) { case 1: function h() { return 1 } if (k) break; function h() { return 2 } } return typeof h === "function" ? h() : typeof h; }
+      function leaveBefore(k) { switch (k) { case 1: if (k) break; function h() { return 1 } case 2: function h() { return 2 } } return typeof h === "function" ? h() : typeof h; }
+      function defaultFirst(k) { switch (k) { default: function h() { return "d" } break; case 1: function h() { return 1 } } return h(); }
+      function assignBetween(k) { switch (k) { case 1: function h() { return 1 } h = 5; function h() { return 2 } } return h; }
+      function readInside(k) { var seen = []; switch (k) { case 1: seen.push(h()); function h() { return 1 } seen.push(h()); case 2: function h() { return 2 } seen.push(h()); } seen.push(typeof h === "function" ? h() : typeof h); return seen.join(); }
+      function inLoop() { var seen = []; for (var i = 0; i < 3; i++) { switch (i) { case 0: function h() { return "a" } break; case 1: function h() { return "b" } } seen.push(typeof h === "function" ? h() : typeof h); } return seen.join(); }
+      function inTry(k) { try { switch (k) { case 1: function h() { return 1 } throw 0; case 2: function h() { return 2 } } } catch (e) {} finally { switch (k) { case 1: function g() { return 3 } break; default: function g() { return 4 } } } return (typeof h === "function" ? h() : typeof h) + "," + g(); }
+      module.exports = {
+        twoClauses: [twoClauses("a"), twoClauses("b"), twoClauses("c")],
+        threeClauses: [threeClauses(1), threeClauses(2), threeClauses(3), threeClauses(4)],
+        fallthrough: [fallthrough(1), fallthrough(2), fallthrough(3), fallthrough(4)],
+        sameClause: [sameClause(1), sameClause(2)],
+        leaveInClause: [leaveInClause(1), leaveInClause(2)],
+        leaveBefore: [leaveBefore(1), leaveBefore(2), leaveBefore(3)],
+        defaultFirst: [defaultFirst(1), defaultFirst(2)],
+        assignBetween: [assignBetween(1), assignBetween(2)],
+        readInside: [readInside(1), readInside(2), readInside(3)],
+        inLoop: inLoop(),
+        inTry: [inTry(1), inTry(2), inTry(3)],
+      };
+    `,
+  };
+  const declaredTwiceOutput = JSON.stringify({
+    twoClauses: ["B", "B", "TypeError"],
+    threeClauses: [3, 3, 3, "undefined"],
+    fallthrough: [3, 3, 3, "undefined"],
+    sameClause: [2, "undefined"],
+    leaveInClause: [2, "undefined"],
+    leaveBefore: ["undefined", 2, "undefined"],
+    defaultFirst: [1, 1],
+    assignBetween: [5, null],
+    readInside: ["2,2,2,2", "2,2", "undefined"],
+    inLoop: "b,b,b",
+    inTry: ["2,4", "2,4", "undefined,4"],
+  });
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    for (const [name, minify] of [
+      ["", {}],
+      ["MinifySyntax", { minifySyntax: true }],
+      ["MinifyIdentifiers", { minifyIdentifiers: true }],
+    ] as const) {
+      itBundled(`extra/FunctionHoistingDeclaredTwice${format.toUpperCase()}${name}`, {
+        files: declaredTwice,
+        format,
+        ...minify,
+        run: { stdout: declaredTwiceOutput },
+      });
+    }
+  }
+  // Strict code rejects two declarations of one name in a block, and a bundle
+  // can run as strict code. Each of these files has two and has to load.
+  itBundled("extra/FunctionHoistingDeclaredTwiceStillLoads", {
+    files: {
+      "/entry.js": /* js */ `
+        import { inModule } from "./module.js";
+        import useStrict from "./use-strict.cjs";
+        import sloppy from "./sloppy.cjs";
+        console.log(JSON.stringify([inModule(), useStrict, sloppy]));
+      `,
+      "/module.js": /* js */ `
+        export function inModule() {
+          { function f() { return 1 } eval(""); function f() { return 2 } var block = f(); }
+          switch (1) { case 0: function g() { return 1 } eval(""); case 1: function g() { return 2 } var clause = g(); }
+          class C { m() { { function h() { return 1 } eval(""); function h() { return 2 } return h(); } } }
+          return [block, clause, new C().m()];
+        }
+      `,
+      "/use-strict.cjs": /* js */ `
+        "use strict";
+        function block() { { function f() { return 1 } eval(""); function f() { return 2 } return f(); } }
+        function clause(k) { switch (k) { case 0: function g() { return 1 } eval(""); case 1: function g() { return 2 } return g(); } }
+        module.exports = [block(), clause(1)];
+      `,
+      "/sloppy.cjs": /* js */ `
+        function block() { { function f() { return 1 } eval(""); function f() { return 2 } return f(); } }
+        function clause(k) { switch (k) { case 0: function g() { return 1 } eval(""); case 1: function g() { return 2 } return g(); } }
+        module.exports = [block(), clause(1)];
+      `,
+    },
+    run: { stdout: "[[2,2,2],[2,2],[2,2]]" },
+  });
   itBundled(`extra/FunctionHoistingKeepNames1`, {
     todo: true, // keepNames requires Object.defineProperty implementation
     files: {

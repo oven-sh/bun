@@ -1454,5 +1454,36 @@ describe("bundler", () => {
       },
       run: { stdout: "1" },
     });
+
+    // A sloppy switch can declare a function name in two clauses. The binding
+    // has the last function, so only that one gets a signature.
+    itBundled("jsx/FastRefreshClauseFunctionDeclaredTwice", {
+      files: {
+        "/index.tsx": /* js */ `
+          ${prelude}
+          function make(k) {
+            switch (k) {
+              case 1:
+                function Comp() { return useThing(); }
+                break;
+              case 2:
+                function Comp() { return useThing() + useThing(); }
+            }
+            return Comp;
+          }
+          console.log(make(1)(), make(2)());
+        `,
+        "/node_modules/react-refresh/runtime.js": /* js */ `
+          export const createSignatureFunctionForTransform = () => fn => fn;
+          export const register = () => {};
+        `,
+      },
+      backend: "api",
+      reactFastRefresh: true,
+      onAfterBundle(api) {
+        expect(signatures(api.readFile("out.js"))).toBe(1);
+      },
+      run: { stdout: "2 2" },
+    });
   });
 });

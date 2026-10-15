@@ -5390,14 +5390,14 @@ pub(crate) mod __gated_printer {
                     self.print_indented_comment(s.text.slice());
                 }
                 StmtData::SFunction(s) => {
+                    // The parser takes the name of a declaration that it removes after
+                    // its visit pass.
+                    let Some(name) = s.func.name.as_ref() else {
+                        return Ok(());
+                    };
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    let name = s.func.name.as_ref().unwrap_or_else(|| {
-                        Output::panic(format_args!(
-                            "Internal error: expected func to have a name ref"
-                        ))
-                    });
                     let name_ref = name.ref_;
 
                     if s.func.flags.contains(G::FnFlags::IsExport) {

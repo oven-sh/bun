@@ -946,7 +946,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
         } else if !mark_as_dead {
-            if remove_overwritten {
+            if remove_overwritten && p.overwritten_function_declaration(stmts, stmt) {
                 // restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
                 if mark_as_dead {
@@ -1037,6 +1037,67 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = original_is_dead;
         }
         rr
+    }
+
+    /// For a declaration whose symbol has `remove_overwritten_function_declaration`.
+    /// Returns whether `s_function` is done with the statement.
+    #[cold]
+    #[inline(never)]
+    fn overwritten_function_declaration(
+        &mut self,
+        stmts: &mut StmtList<'a>,
+        stmt: &Stmt,
+    ) -> bool {
+        let scope = self.current_scope_ref();
+        // At function level the flag is on the symbol of the overwritten declaration.
+        if scope.kind_stops_hoisting() {
+            return true;
+        }
+        let StmtData::SFunction(func) = stmt.data else {
+            return false;
+        };
+        let Some(name) = func.func.name else {
+            return false;
+        };
+        // In a block the declarations of one name share the symbol, and the scope has the
+        // last one. That one is the value of the name.
+        let symbol = &mut self.symbols[name.ref_.inner_index() as usize];
+        let original_name = symbol.original_name.slice();
+        let is_last = scope
+            .get_member_with_hash(original_name, js_ast::Scope::get_member_hash(original_name))
+            .is_none_or(|member| member.loc == name.loc);
+        if is_last {
+            return false;
+        }
+        // `call_ignores_this` is about the last declaration, which is visited last.
+        symbol.set_call_ignores_this(false);
+        // Sloppy code assigns the `var` of the enclosing function where each declaration
+        // stands (ECMA-262 Annex B.3.3), so the statement stays. Strict code has no such `var`.
+        if scope.strict_mode == js_ast::StrictModeKind::SloppyMode {
+            stmts.push(*stmt);
+            self.sloppy_block_fn_redeclarations.push(func);
+        }
+        true
+    }
+
+    /// Strict code rejects two declarations of one name in a block, and only a CommonJS file
+    /// is sure to run as sloppy code. In every other file an overwritten declaration that is
+    /// still a statement loses its name, and the printer skips it.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn remove_sloppy_block_fn_redeclarations(
+        &mut self,
+        exports_kind: js_ast::ExportsKind,
+    ) {
+        // The REPL runs every input as sloppy code.
+        if (exports_kind == js_ast::ExportsKind::Cjs && !self.options.bundle)
+            || self.options.repl_mode
+        {
+            return;
+        }
+        for func in self.sloppy_block_fn_redeclarations.iter_mut() {
+            func.func.name = None;
+        }
     }
 
     fn s_class(

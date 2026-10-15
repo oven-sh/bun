@@ -663,6 +663,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // with the guarantee that all will be found.
     pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
 
+    /// Function declarations of a sloppy block whose name a later statement of the block
+    /// declares again. They are not printed in a file that can run as strict code.
+    pub(crate) sloppy_block_fn_redeclarations: List<'a, js_ast::StoreRef<S::Function>>,
+
     // ArrowFunction is a special case in the grammar. Although it appears to be
     // a PrimaryExpression, it's actually an AssignmentExpression. This means if
     // a AssignmentExpression ends up producing an ArrowFunction then nothing can
@@ -5243,6 +5247,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 MR::KeepExisting => {
                     ref_ = existing.ref_;
                 }
+                MR::KeepExistingFunction => {
+                    ref_ = existing.ref_;
+                    self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
 
@@ -8947,6 +8955,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let arena = self.arena;
 
+        if !self.sloppy_block_fn_redeclarations.is_empty() {
+            self.remove_sloppy_block_fn_redeclarations(exports_kind);
+        }
+
         // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
         //     p.treeShake(&parts, false);
         // }
@@ -9933,6 +9945,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_ref_count: 0,
             case_block_fns: Vec::new(),
             relocated_top_level_vars: BumpVec::new_in(arena),
+            sloppy_block_fn_redeclarations: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),

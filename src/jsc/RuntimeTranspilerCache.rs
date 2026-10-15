@@ -66,7 +66,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
 /// Version 36: A switch-case function is initialized where the switch is entered, not in its clause.
-const EXPECTED_VERSION: u32 = 36;
+/// Version 37: A sloppy block keeps every declaration statement of a function name.
+const EXPECTED_VERSION: u32 = 37;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

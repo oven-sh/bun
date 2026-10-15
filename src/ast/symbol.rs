@@ -119,6 +119,9 @@ bitflags::bitflags! {
         /// An import some use holds as a value or deletes from, not only `X.a`, `X[a]`, `const { a } = X`.
         const IMPORT_USED_AS_VALUE = 1 << 3;
 
+        /// A later declaration overwrites a function statement of this symbol. At function
+        /// level the two statements have two symbols, and this one is the overwritten one.
+        /// In a block the statements of one name share the symbol.
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped

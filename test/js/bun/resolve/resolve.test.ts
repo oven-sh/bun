@@ -2164,6 +2164,7 @@ describe.concurrent.skipIf(!isGlibc || !cc)("a directory read that fails", () =>
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -2194,6 +2195,16 @@ static int fault_is_on(void) {
   return !while_exists || access(while_exists, F_OK) == 0;
 }
 
+/* One byte for each read that fails, so that a test can tell that its fault fired. */
+static void note_fault(void) {
+  const char *log = getenv("READDIR_FAULT_LOG");
+  int fd = log ? open(log, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
+  if (fd < 0) return;
+  ssize_t written = write(fd, "x", 1);
+  (void)written;
+  close(fd);
+}
+
 long syscall(long nr, ...) {
   va_list ap;
   va_start(ap, nr);
@@ -2210,6 +2221,7 @@ long syscall(long nr, ...) {
     if (n > 0 && (target[n] = 0, strcmp(target, dir) == 0)) {
       if (lseek(fd, 0, SEEK_CUR) != 0) {
         if (reads_left > 0) reads_left--;
+        note_fault();
         const char *err = getenv("READDIR_FAULT_ERRNO");
         errno = err ? atoi(err) : EIO;
         return -1;
@@ -2237,17 +2249,25 @@ long syscall(long nr, ...) {
   let shimDir: ReturnType<typeof tempDir> | undefined;
   let shim: string;
 
-  beforeAll(() => {
+  // A C compiler on a busy CI machine can take longer than the default hook timeout.
+  beforeAll(async () => {
     shimDir = tempDir("resolver-readdir-fault-shim", { "shim.c": shimSource });
     shim = join(String(shimDir), "shim.so");
-    const compile = Bun.spawnSync({
+    await using compile = Bun.spawn({
       cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(shimDir), "shim.c"), "-ldl"],
       env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    if (compile.exitCode !== 0) {
-      throw new Error(`Failed to build the readdir fault shim:\n${compile.stderr.toString()}`);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(`Failed to build the readdir fault shim (exit ${exitCode}):\n${stderr || stdout}`);
     }
-  });
+  }, 30_000);
 
   afterAll(() => {
     shimDir?.[Symbol.dispose]();
@@ -2255,12 +2275,16 @@ long syscall(long nr, ...) {
 
   type Fault = { dir: string; hide?: string; count?: number; errno?: number; while?: string };
 
+  let runs = 0;
+
   async function runWithFault(args: string[], cwd: string, fault: Fault) {
     const existing = bunEnv.LD_PRELOAD;
+    const faultLog = join(String(shimDir), `faults-${runs++}`);
     const env: Record<string, string | undefined> = {
       ...bunEnv,
       LD_PRELOAD: existing ? `${shim}:${existing}` : shim,
       READDIR_FAULT_DIR: fault.dir,
+      READDIR_FAULT_LOG: faultLog,
     };
     if (fault.hide !== undefined) env.READDIR_FAULT_HIDE = fault.hide;
     if (fault.count !== undefined) env.READDIR_FAULT_COUNT = String(fault.count);
@@ -2268,6 +2292,14 @@ long syscall(long nr, ...) {
     if (fault.while !== undefined) env.READDIR_FAULT_WHILE = fault.while;
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The shim hooks libc's syscall(). If bun stops issuing getdents64 through
+    // it, no read fails, and a test that expects the healthy outcome passes
+    // for the wrong reason.
+    if (!existsSync(faultLog)) {
+      throw new Error(
+        `The shim failed no read of ${fault.dir} (exit ${exitCode}).\nstdout: ${stdout}\nstderr: ${stderr}`,
+      );
+    }
     return { stdout, stderr, exitCode };
   }
 

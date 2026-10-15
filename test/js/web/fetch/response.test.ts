@@ -67,15 +67,15 @@ test("print size", () => {
 });
 
 test("Response.redirect with invalid arguments should not crash", () => {
-  // This should not crash - issue #18414
+  // issue #18414
   // Passing a number as URL and string as init should handle gracefully
-  expect(() => Response.redirect(400, "a")).not.toThrow();
+  expect(() => (Response as any).redirect(400, "a")).not.toThrow();
 
-  // Test various invalid argument combinations - should not crash
-  expect(() => Response.redirect(42, "test")).not.toThrow();
-  expect(() => Response.redirect(true, "string")).not.toThrow();
-  expect(() => Response.redirect(null, "init")).not.toThrow();
-  expect(() => Response.redirect(undefined, "value")).not.toThrow();
+  // Test various invalid argument combinations
+  expect(() => (Response as any).redirect(42, "test")).not.toThrow();
+  expect(() => (Response as any).redirect(true, "string")).not.toThrow();
+  expect(() => (Response as any).redirect(null, "init")).not.toThrow();
+  expect(() => (Response as any).redirect(undefined, "value")).not.toThrow();
 });
 
 test("Response.redirect status code validation", () => {
@@ -135,8 +135,8 @@ test("Response.redirect rejects a non-absolute url that is not a valid header va
   // A code point above U+00FF cannot be a header value, so this throws the same
   // TypeError that `new Headers({ location: "/€" })` does, instead of silently
   // writing a latin-1-corrupted Location ("/â¬").
-  expect(() => Response.redirect("/€")).toThrow("Header 'Location' has invalid value: '/€'");
-  expect(() => Response.redirect("/搜索")).toThrow("Header 'Location' has invalid value: '/搜索'");
+  expect(() => Response.redirect("/€")).toThrow(new TypeError("Header 'Location' has invalid value"));
+  expect(() => Response.redirect("/搜索")).toThrow(new TypeError("Header 'Location' has invalid value"));
 });
 
 test("new Response(123, { statusText: 123 }) does not throw", () => {

@@ -368,7 +368,7 @@ it("chrome: cdp() enable + addEventListener receives CDP events", async () => {
 
   // removeEventListener stops delivery. Third navigate generates
   // more Network events but the count shouldn't grow.
-  view.removeEventListener("Network.requestWillBeSent", onReq);
+  view.removeEventListener("Network.requestWillBeSent", onReq as any);
   const before = events.length;
   await view.navigate(html("<body>third</body>"));
   expect(events.length).toBe(before);
@@ -406,7 +406,7 @@ it("chrome: click dispatches mousedown/mouseup/click", async () => {
   // Input.dispatchMouseEvent is sync-reply — Chrome processes the event
   // and THEN replies. No drain-barrier dance needed.
   await view.click(50, 50);
-  const events = await view.evaluate("JSON.stringify(window.__ev)");
+  const events = await view.evaluate<string>("JSON.stringify(window.__ev)");
   expect(JSON.parse(events)).toEqual(["down:true", "up:true", "click:true"]);
 });
 
@@ -427,7 +427,7 @@ it("chrome: click(selector) waits for actionability, clicks center", async () =>
   // JSON-escaped selector — no injection. Two-phase: Runtime.evaluate →
   // [cx, cy] → Input.dispatchMouseEvent down+up.
   await view.click("#btn");
-  const events = await view.evaluate("JSON.stringify(__ev)");
+  const events = await view.evaluate<string>("JSON.stringify(__ev)");
   expect(JSON.parse(events)).toEqual([{ trusted: true, x: 90, y: 100, target: "btn" }]);
 });
 
@@ -832,7 +832,7 @@ it("chrome: evaluate() throwing Error carries page-side stack", async () => {
   // IIFE wrapper — our evaluate() wraps in await(expr), so statement
   // sequences need explicit IIFE.
   const err = await view
-    .evaluate(
+    .evaluate<never>(
       `(() => {
           function inner() { throw new Error("page boom"); }
           function outer() { inner(); }
@@ -949,7 +949,7 @@ it("chrome: scrollTo with block: start aligns top", async () => {
   );
   await view.scrollTo("#t", { block: "start" });
   // block: start → target's top aligns with viewport top.
-  const top = await view.evaluate("document.getElementById('t').getBoundingClientRect().top");
+  const top = await view.evaluate<number>("document.getElementById('t').getBoundingClientRect().top");
   expect(Math.abs(top)).toBeLessThan(2);
 });
 

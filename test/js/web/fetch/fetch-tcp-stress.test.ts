@@ -7,6 +7,8 @@ import { getMaxFD, isCI, isMacOS } from "harness";
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
 const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
 
+type SocketData = { read?: boolean; written?: boolean };
+
 async function runStressTest({
   onServerWritten,
   onFetchWritten,
@@ -15,11 +17,11 @@ async function runStressTest({
   onFetchWritten: (socket) => void;
 }) {
   const total = PORT_EXHAUSTION_THRESHOLD * 2;
-  let sockets = [];
+  let sockets: Bun.Socket<SocketData>[] = [];
   const batch = 48;
   let toClose = 0;
   let pendingClose = Promise.withResolvers();
-  const objects = [];
+  const objects: { method: string; body: string; keepalive: boolean }[] = [];
   for (let i = 0; i < total; i++) {
     objects.push({
       method: "POST",
@@ -28,7 +30,7 @@ async function runStressTest({
     });
   }
 
-  const server = await Bun.listen({
+  const server = await Bun.listen<SocketData>({
     port: 0,
     socket: {
       open(socket) {},
@@ -75,7 +77,7 @@ async function runStressTest({
   for (let remaining = total; remaining > 0; remaining -= batch) {
     pendingClose = Promise.withResolvers();
     {
-      const promises = [];
+      const promises: Promise<Response>[] = [];
       toClose = batch;
       for (let i = 0; i < batch; i++) {
         promises.push(

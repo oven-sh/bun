@@ -115,7 +115,8 @@ test.concurrent("stdin with 'data' event handler should NOT receive data when pa
 // Drains the child; its stderr joins the comparison only when it failed, so a
 // crash shows up in the diff without asserting stderr empty on success (debug
 // builds write benign noise there).
-async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">) {
+type StdioResult = { stdout: string; exitCode: number; stderr?: string };
+async function stdioResult(proc: Bun.Subprocess<"pipe", "pipe", "pipe">): Promise<StdioResult> {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr };
 }
@@ -384,13 +385,13 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let stdout = "";
-  for (let r; !(r = await reader.read()).done; ) {
+  for (let r; !(r = await reader.read()).done;) {
     stdout += decoder.decode(r.value, { stream: true });
     if (stdout.includes("GOT1")) break;
   }
   proc.stdin.write("two");
   await proc.stdin.end();
-  for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({

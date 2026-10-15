@@ -1,0 +1,40 @@
+declare class A<T> // 1
+mixins B<T> {}
+
+declare class C<T> // 1
+extends D<T>
+// 2
+mixins E<T> // 3
+{}
+
+declare class F extends G
+// 1
+implements H {}
+
+declare class I extends J.K // 1
+<L> {}
+
+declare class M { static /* 1 */ (): void }
+
+declare class M1 { static <T> /* 1 */ (): void }
+
+declare class N { m(): void
+
+// 1
+
+; static s: 1 }
+
+interface O { a: 1
+
+// 1
+
+; b: 2 }
+
+declare class P { a: 1; b :   2 /* prettier-ignore */ }
+
+interface Q { a: 1; b :   2
+// prettier-ignore
+}
+
+type R = { +[K in T]: V, + // 1
+/* 2 */ [K in T]: V };

@@ -45,7 +45,6 @@ impl<T> JsCell<T> {
     /// across this call (single-JS-thread reentrancy makes overlap rare but
     /// possible — keep borrows short).
     #[inline(always)]
-    #[allow(clippy::mut_from_ref)]
     pub fn get(&self) -> &T {
         // SAFETY: single-JS-thread invariant — see type docs.
         unsafe { &*self.0.get() }

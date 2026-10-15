@@ -899,8 +899,7 @@ const SQL = function SQL(
       }
       return pool.flush();
     };
-    // The chain of statements that ends the transaction: COMMIT or ROLLBACK, with XA END ahead of it. One chain
-    // goes out, the one of the runner or the one of close(). The other waits for its answer.
+    // COMMIT or ROLLBACK (XA END ahead of it). The runner or close() starts it once, the other one waits for it.
     let ending: Promise<unknown> | undefined;
     async function endWith(command: string) {
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
@@ -908,7 +907,6 @@ const SQL = function SQL(
       }
       return run_internal_transaction_sql(command, state);
     }
-    // The ROLLBACK of close(). When COMMIT or ROLLBACK is already on its way there is nothing to roll back.
     async function rollBackNow() {
       if (state.connectionState & ReservedConnectionState.closed) return;
       if (ending) {

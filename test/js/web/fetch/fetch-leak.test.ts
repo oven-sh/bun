@@ -48,7 +48,7 @@ describe("fetch doesn't leak", () => {
       headers["Content-Encoding"] = "deflate";
     }
 
-    const serveOptions = {
+    const serveOptions: Bun.Serve.Options<undefined> = {
       port: 0,
       idleTimeout: 0,
       fetch(req) {
@@ -62,7 +62,7 @@ describe("fetch doesn't leak", () => {
 
     using server = Bun.serve(serveOptions);
 
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...bunEnv,
       SERVER: server.url.href,
       BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString(10),
@@ -124,7 +124,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
         },
       });
 
-      const rss = [];
+      const rss: number[] = [];
 
       await using process = Bun.spawn({
         cmd: [
@@ -166,8 +166,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 test("do not leak", async () => {
   await using server = createServer((req, res) => {
     res.end();
-  }).listen(0);
-  await once(server, "listening");
+  });
 
   let url;
   let isDone = false;
@@ -175,7 +174,7 @@ test("do not leak", async () => {
     if (isDone) {
       return;
     }
-    url ??= new URL(`http://127.0.0.1:${server.address().port}`);
+    url ??= new URL(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
     const controller = new AbortController();
     fetch(url, { signal: controller.signal })
       .then(res => res.arrayBuffer())
@@ -836,8 +835,6 @@ test.concurrent(
     const script = `
     const { heapStats } = require("bun:jsc");
     const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(8)) });
-    // Response::destroy releases the signal ref from its finalizer, so the
-    // signal becomes collectable only on the *next* GC.
     const count = async () => {
       Bun.gc(true);
       await new Promise(r => setImmediate(r));
@@ -874,6 +871,82 @@ test.concurrent(
   },
   isASAN ? 30_000 : 5_000,
 );
+
+test.concurrent("a fetch Response held only by its signal's abort listener is collected", async () => {
+  // A body past the receive high-water mark that is never read keeps the fetch in flight until the Response is finalized.
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const large = new Uint8Array(1024 * 1024);
+    const server = Bun.serve({ port: 0, fetch: request => new Response(request.url.endsWith("/large") ? large : new Uint8Array(8)) });
+    const statuses = [];
+    async function once(path, readBody) {
+      const controller = new AbortController();
+      const response = await fetch(new URL(path, server.url), { signal: controller.signal });
+      controller.signal.addEventListener("abort", () => statuses.push(response.status));
+      if (readBody) await response.arrayBuffer();
+    }
+    for (let i = 0; i < 16; i++) {
+      await once("/small", true);
+      await once("/small", false);
+      await once("/large", false);
+    }
+    let counts;
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+      counts = heapStats().objectTypeCounts;
+      if ((counts.Response ?? 0) <= 2) break;
+    }
+    server.stop(true);
+    console.log(JSON.stringify({ Response: counts.Response ?? 0, AbortSignal: counts.AbortSignal ?? 0 }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const counts = JSON.parse(stdout.trim());
+  // Each count includes the class's prototype object. Leaked: 49 and 49.
+  expect(counts.Response).toBeLessThanOrEqual(2);
+  expect(counts.AbortSignal).toBeLessThanOrEqual(2);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a fetch Response outlives the wrapper of the signal it was fetched with", async () => {
+  const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response("hello") });
+    const responses = [];
+    for (let i = 0; i < 20; i++) responses.push(await fetch(server.url, { signal: new AbortController().signal }));
+    let counts;
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await new Promise(resolve => setImmediate(resolve));
+      counts = heapStats().objectTypeCounts;
+      if ((counts.AbortSignal ?? 0) <= 2) break;
+    }
+    const clones = responses.map(response => response.clone());
+    const texts = await Promise.all([...responses, ...clones].map(response => response.text()));
+    server.stop(true);
+    console.log(JSON.stringify({ AbortSignal: counts.AbortSignal ?? 0, bodies: texts.filter(text => text === "hello").length }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // The count includes the class's prototype object. Rooted by the Responses: 21.
+  const result = JSON.parse(stdout.trim());
+  expect(result.AbortSignal).toBeLessThanOrEqual(2);
+  expect(result.bodies).toBe(40);
+  expect(exitCode).toBe(0);
+});
 
 // https://github.com/oven-sh/bun/issues/32659
 test("aborting an in-flight streaming fetch() discards the buffered body and errors the reader", async () => {
@@ -997,7 +1070,7 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     socket.on("error", () => {});
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
-  const { port } = server.address();
+  const { port } = server.address() as net.AddressInfo;
 
   try {
     await using proc = Bun.spawn({

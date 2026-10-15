@@ -102,6 +102,9 @@ public:
     void removeAllObservers();
     void registerPerformanceObserver(PerformanceObserver&);
     void unregisterPerformanceObserver(PerformanceObserver&);
+    // A Bun.ModuleGraph's context stopped: the observers its script made observe nothing more
+    // (they are registered with the realm's Performance, which would keep them and their graph).
+    void disconnectObserversOf(const ScriptExecutionContext&);
 
     static Seconds reduceTimeResolution(Seconds);
 

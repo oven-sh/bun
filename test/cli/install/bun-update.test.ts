@@ -1,8 +1,9 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, dirname, join } from "path";
+import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -1692,7 +1693,7 @@ it("bun update <name> rejects a name that is not in the lockfile", async () => {
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0; a-dep 1.0.1..1.0.10; dep-with-tags latest=3.0.0, pre-2=2.0.1; @types/* 1.0.0/2.0.0.
 describe("bun update <name> semantics", () => {
   type Json = Record<string, any>;
-  const verdaccio = new VerdaccioRegistry();
+  const verdaccio = new TestRegistry();
 
   beforeAll(async () => {
     await verdaccio.start();

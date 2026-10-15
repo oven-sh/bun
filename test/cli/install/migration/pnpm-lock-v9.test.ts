@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, tempDir } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
-const verdaccio = new VerdaccioRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   await verdaccio.start();
@@ -2390,7 +2391,7 @@ snapshots:
 `;
 
     const goneRegistry = () => Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
-    const project = (registry: Bun.Server, group: string) =>
+    const project = (registry: Bun.Server<undefined>, group: string) =>
       tempDir("pnpm-v9-manifest-gone", {
         "package.json": JSON.stringify({ name: "manifest-gone", [group]: { "no-deps": "1.0.1" } }),
         "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\n`,

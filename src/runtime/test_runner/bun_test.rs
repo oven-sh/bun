@@ -204,7 +204,7 @@ pub(crate) mod js_fns {
 
             let calling = match (flavor, args.callback) {
                 (Flavor::Vitest, _) => Calling::Vitest { context: true },
-                (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.get_length(global_this)? > 0 },
+                (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.without_async_context().get_length(global_this)? > 0 },
                 (Flavor::Jest, None) => Calling::default(),
             };
             // An extended `test` binds its `beforeAll` / `afterAll` with its `TestFixtures` as `this`.

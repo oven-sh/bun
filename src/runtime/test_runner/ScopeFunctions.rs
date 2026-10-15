@@ -362,7 +362,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     // In Jest, a parameter past the row's values is a `done` callback.
     let callback_length: usize = match args.callback {
-        Some(callback) if !is_vitest => callback.get_length(global)? as usize,
+        Some(callback) if !is_vitest => callback.without_async_context().get_length(global)? as usize,
         _ => 0,
     };
     let parameter: Option<SharedContextParameter> = match args.callback {
@@ -428,7 +428,8 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
                 let callback_args = if spread_rows { args_list.as_slice() } else { core::slice::from_ref(&item) };
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, callback_args)?)
+                    let bound = JSValueTestExt::bind(cb.without_async_context(), global, item, &BunString::static_("cb"), 0.0, callback_args)?;
+                    Some(bound.with_async_context_if_needed(global))
                 } else {
                     None
                 };

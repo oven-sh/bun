@@ -128,6 +128,7 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
 /// Git only says what it converts in one more call, and the file at `path` on disk shows it too.
 fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
     let is_converted = !strings::contains_char(stored, b'\r')
+        && matches!(fs::link_kind_and_size(path), Some((fs::LinkKind::File, _)))
         && fs::read(path).is_ok_and(|on_disk| strings::contains(&on_disk, b"\r\n"));
     match is_converted {
         true => strings::split(stored, b"\n")

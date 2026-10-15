@@ -5,8 +5,8 @@ import path from "node:path";
 // A Response whose body is an S3-backed Blob comes from `fetch()` of a blob:
 // URL for an S3File, from a clone of that, or from `new Response([s3file])`.
 // (`new Response(s3file)` has no body: it is a redirect to a presigned URL.)
-// GET sends an empty body for it (#43930). HEAD states that length in the
-// frame that returned the Response, and asks S3 nothing.
+// GET sends an empty body for it. HEAD states that length in the frame that
+// returned the Response, and asks S3 nothing.
 describe.concurrent("HEAD for a Response with an S3 file body", () => {
   // The requests run in a subprocess: a server that crashes on one shows up
   // as an exit code instead of taking down the test runner.

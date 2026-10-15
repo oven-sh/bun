@@ -285,6 +285,8 @@ const { owner_symbol } = require("internal/async_hooks").symbols;
 
 // In the order of the index that guessHandleType() returns.
 const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+// libuv's value on every platform.
+const UV_EOF = -4095;
 let guessHandleType;
 let pipeWrap;
 
@@ -2209,13 +2211,13 @@ function Socket(options?): void {
   }
   // A StreamBase handle (the Pipe above, or the caller's `handle`) delivers its reads to onStreamRead and starts now.
   // A native socket starts in afterConnect. This comes after the onread setup: the first read can deliver in this call.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L480-L501
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L491-L502
   if (handle !== null && $isCallable(handle.readStart)) {
     handle[owner_symbol] = this;
     handle.onread = onStreamRead;
-    if (opts.readable !== false && !opts.manualStart) {
+    if (opts.readable !== false) {
       if (opts.pauseOnCreate) pauseOnCreate(this, handle);
-      else this.read(0);
+      else if (!opts.manualStart) this.read(0);
     }
   }
   if (signal) {
@@ -2886,7 +2888,7 @@ function fdSyncWritev(data, callback) {
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   const handle = this._handle;
   if (handle) {
-    // Only a TCP handle can reset: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L849-L851
+    // Only a TCP handle can reset: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L804
     if ($isCallable(handle.readStart)) throw $ERR_INVALID_HANDLE_TYPE();
     if (this.connecting) {
       this.once("connect", () => this._reset());
@@ -4559,7 +4561,7 @@ function initSocketHandle(self) {
   }
 }
 
-// The `onread` of a StreamBase handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L164-L231
+// The `onread` of a StreamBase handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L166-L234
 function onStreamRead(nread, buffer) {
   const self = this[owner_symbol];
   if (nread > 0) {
@@ -4577,7 +4579,7 @@ function onStreamRead(nread, buffer) {
     return;
   }
   if (nread === 0) return;
-  if (nread !== uv().UV_EOF) {
+  if (nread !== UV_EOF) {
     self.destroy(new ErrnoException(nread, "read"));
     return;
   }
@@ -4586,7 +4588,7 @@ function onStreamRead(nread, buffer) {
 
 // Reads flow again. A native socket read from the moment it opened and was only paused. A StreamBase handle has
 // readStart() in place of resume(), and starts where node's tryReadStart() runs: always from _read(), and from read()
-// and resume() for an onread socket only. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L740-L748
+// and resume() for an onread socket only. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L769-L845
 function resumeHandle(self, handle, fromReadImpl) {
   const resume = handle?.resume;
   if (resume !== undefined) {

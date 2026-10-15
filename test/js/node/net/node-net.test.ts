@@ -1623,6 +1623,51 @@ describe("Socket fd adoption", () => {
       fs.closeSync(fd);
     }
   });
+
+  // node's createHandle() gives a pipe fd a Pipe handle. Here that handle has
+  // the read side only, so it is for the sockets that the synchronous-write
+  // adoption leaves alone.
+  it.skipIf(isWindows)("reads a pipe fd through a native Pipe handle", async () => {
+    const { rfd, wfd } = openFifo("read.fifo");
+    let wfdOpen = true;
+    try {
+      const socket = new Socket({ fd: rfd, writable: false });
+      const handle = (socket as any)._handle;
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => chunks.push(chunk));
+      const ended = once(socket, "end");
+      const closed = once(socket, "close");
+      fs.writeSync(wfd, "hello ");
+      fs.writeSync(wfd, "pipe");
+      fs.closeSync(wfd);
+      wfdOpen = false;
+      await ended;
+      expect(await closed).toEqual([false]);
+      expect({
+        handle: handle?.constructor?.name,
+        data: Buffer.concat(chunks).toString(),
+        bytesRead: socket.bytesRead,
+        detached: (socket as any)._handle,
+      }).toEqual({ handle: "Pipe", data: "hello pipe", bytesRead: 10, detached: null });
+    } finally {
+      if (wfdOpen) fs.closeSync(wfd);
+      // The handle leaves the caller's fd open.
+      if (fstatCode(rfd) === "open") fs.closeSync(rfd);
+    }
+  });
+
+  // A Pipe handle makes the fd non-blocking, and a synchronous write(2) to a
+  // full non-blocking pipe fails with EAGAIN.
+  it.skipIf(isWindows)("a socket that writes synchronously to its fd gets no Pipe handle", () => {
+    const { rfd, wfd } = openFifo("no-handle.fifo");
+    try {
+      const writeOnly = new Socket({ fd: wfd, readable: false, writable: true });
+      expect((writeOnly as any)._handle).toBe(null);
+      writeOnly.destroy();
+    } finally {
+      fs.closeSync(rfd);
+    }
+  });
 });
 
 describe.concurrent("socket that already sent FIN and is paused with unread data", () => {

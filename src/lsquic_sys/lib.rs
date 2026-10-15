@@ -447,8 +447,7 @@ impl Conn {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_set_ping_period_us(self.0, usec) }
     }
-    /// Returns whether an ACK was queued. lsquic queues one only when an
-    /// ack-eliciting application packet waits for it.
+    /// Whether lsquic queued an ACK. It queues none when it owes none.
     pub fn ack_now(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_conn_ack_now(c: *mut lsquic_conn) -> c_int;

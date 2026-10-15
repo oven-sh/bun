@@ -577,9 +577,10 @@ describe("session close options before the server's first packet", () => {
       ]);
     });
 
-    // A server has no connection to close before it has a ClientHello.
-    test.concurrent("destroy(undefined, { code: 5n }) sends no close without a ClientHello", async () => {
-      expect((await neverSent("destroy")).filter(connection => !connection.hello)).toEqual([]);
+    // A server has no connection to close before it has a ClientHello. This
+    // also fails when connect() did send the ClientHello.
+    test.concurrent("destroy(undefined, { code: 5n }) sends nothing", async () => {
+      expect(await neverSent("destroy")).toEqual([]);
     });
   });
 });

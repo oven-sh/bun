@@ -232,7 +232,7 @@ To perform a dry run, without installing anything:
 bun install --dry-run
 ```
 
-Bun resolves the dependency tree and lists every package that the install would put in `node_modules`. During a dry run, Bun does not:
+Bun resolves the dependency tree and lists every package in it, installed already or not. During a dry run, Bun does not:
 
 - install packages into `node_modules`
 - change an existing `package.json`
@@ -607,7 +607,7 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--shamefully-hoist`                                           | `--linker=hoisted`                                       |
 | `--progress=false`                                             | `--no-progress`                                          |
 | `--loglevel=silent`                                            | `--silent`                                               |
-| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`                                                |
+| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`: hides the progress bar, not warnings          |
 | `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                              |
 | `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                              |
 | `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these                   |
@@ -615,10 +615,11 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--ignore-engines`                                             | Nothing: `engines` is not checked                        |
 | `--unsafe-perm`                                                | Nothing: scripts run as the current user                 |
 | `--non-interactive`                                            | Nothing: an install asks no questions                    |
-| `--include=dev`, `--include=optional`, `--include=peer`        | Nothing: installed by default                            |
-| `--no-frozen-lockfile`, `--prefer-frozen-lockfile`             | Nothing: the default                                     |
+| `--prefer-frozen-lockfile`                                     | Nothing: the default                                     |
 
-`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
+`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value takes none: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
+
+`bun update` has a `--no-optional` of its own: it does not update `optionalDependencies`, but it installs them.
 
 Flags that have no exact counterpart stay errors. For some of them the error names the closest flag, such as `--no-save` for `--no-package-lock`: it does not write `bun.lock`, but it does not update `package.json` either.
 

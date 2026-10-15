@@ -66,7 +66,7 @@ bun patch-commit react
 
 If `bun install` could not apply the resulting patch, or the install is refused (for example by a [security scanner](/pm/security-scanner-api)), the commit fails and changes nothing: your edits, `package.json`, the lockfile, and any earlier patch file stay as they were.
 
-To run the same checks without writing anything, pass `--dry-run`. It prints the patch file that the commit would write.
+To run the same checks without writing anything, pass `--dry-run`. It prints the path of the patch file that the commit would write.
 
 #### Removing a patch
 

@@ -145,7 +145,7 @@ Each unique `(package, version, resolved-dependency-set)` triple gets one direct
 <Warning>
   `bun pm cache rm` deletes `<cache>/links/`. Every project that uses the global store symlinks into that directory, so
   each of them breaks until you run `bun install` in it again. Do not run `bun pm cache rm` to refresh stale registry
-  metadata. Use `bun install --force` or `bun add <pkg> --force` instead. See [Cache](/pm/cli/install#cache).
+  metadata. Use `bun add <pkg> --force` or `bun update <pkg>` instead. See [Cache](/pm/cli/install#cache).
 </Warning>
 
 ### Concurrency

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isASAN, isDebug, tls as tlsCert } from "harness";
-import { Agent, createServer, request, type ClientRequest } from "http";
+import { Agent, createServer, OutgoingMessage, request, type ClientRequest } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server, type Socket } from "net";
 import { Duplex, Readable } from "stream";
@@ -2023,10 +2023,11 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     return dechunk(await done.promise);
   }
 
-  // Every order of up to `depth` cork(), uncork(), write() and flushHeaders() calls.
-  const calls = ["cork", "uncork", "write", "flushHeaders"] as const;
+  // Every order of up to `depth` cork(), uncork(), write(), write("") and flushHeaders() calls.
+  const calls = ["cork", "uncork", "write", "empty", "flushHeaders"] as const;
+  type Call = (typeof calls)[number];
   function orders(depth: number) {
-    const all: (typeof calls)[number][][] = [[]];
+    const all: Call[][] = [[]];
     for (let from = 0, to = 1; depth > 0; depth--, from = to, to = all.length) {
       for (let i = from; i < to; i++) for (const call of calls) all.push([...all[i], call]);
     }
@@ -2034,7 +2035,7 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
   }
 
   // Runs one order on a request whose socket is an in-memory Duplex, then end() or end(chunk).
-  async function sendInMemory(order: (typeof calls)[number][], endChunk: string | undefined, connected: boolean) {
+  async function sendInMemory(order: Call[], endChunk: string | undefined, connected: boolean) {
     let wire = "";
     const socket = new Duplex({
       read() {},
@@ -2050,14 +2051,15 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     const want = { body: "", after: "", callbacks: [] as string[] };
     const callbacks: string[] = [];
     for (const call of order) {
-      if (call !== "write") {
+      if (call !== "write" && call !== "empty") {
         req[call]();
         continue;
       }
-      const data = Buffer.alloc(3, 97 + want.callbacks.length).toString();
+      const data = call === "write" ? Buffer.alloc(3, 97 + want.callbacks.length).toString() : "";
+      const name = data || `empty ${want.callbacks.length}`;
       want.body += data;
-      want.callbacks.push(data);
-      req.write(data, () => callbacks.push(data));
+      want.callbacks.push(name);
+      req.write(data, () => callbacks.push(name));
     }
     want.body += endChunk ?? "";
     want.callbacks.push("finish");
@@ -2084,14 +2086,26 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     test.each([
       ["end()", undefined],
       ["end(chunk)", "ZZ"],
-    ])("every order of a few cork, uncork, write and flushHeaders calls, then %s", async (_, endChunk) => {
+    ])("every order of a few cork, uncork, write, empty write and flushHeaders calls, then %s", async (_, endChunk) => {
       const all = orders(depth);
       const failures: string[] = [];
       for (const order of all) {
         const { got, want } = await sendInMemory(order, endChunk, connected);
         if (!Bun.deepEquals(got, want)) failures.push(`${order.join(" ")}: ${JSON.stringify(got)}`);
       }
-      expect({ orders: all.length, failures }).toEqual({ orders: depth === 3 ? 85 : 341, failures: [] });
+      expect({ orders: all.length, failures }).toEqual({ orders: depth === 3 ? 156 : 781, failures: [] });
+    });
+
+    // An empty write() overtakes nothing once a chunk waits in the cork buffer. That takes four calls, so a
+    // debug build does not reach it above.
+    test.each([
+      ["cork write write empty", undefined],
+      ["flushHeaders cork write empty write uncork", undefined],
+      ["flushHeaders cork write empty", "ZZ"],
+      ["write cork write empty empty write", undefined],
+    ])("%s runs the callbacks in the order of the calls", async (order, endChunk) => {
+      const { got, want } = await sendInMemory(order.split(" ") as Call[], endChunk, connected);
+      expect(got).toEqual(want);
     });
 
     // Orders that the enumeration does not cover: more calls, an uncork() on a later tick, an Expect head,
@@ -2181,6 +2195,36 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
         atDrain: { writableLength: 0, writableNeedDrain: false },
       });
     });
+
+    // The cork buffer leaves as one chunk: its size in hex, CRLF, the data, CRLF.
+    test.each([
+      [[4, 6], 15],
+      [[15], 20],
+      [[8, 8], 22],
+      [[255], 261],
+      [[200, 56], 263],
+      [[4096], 4104],
+    ])("writableLength counts writes of %j bytes under cork() as the %d bytes they leave as", async (pieces, framed) => {
+      const socket = new Duplex({
+        read() {},
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      });
+      const req = request({ method: "POST", createConnection: () => socket as unknown as Socket });
+      req.on("error", () => {});
+      if (connected) await once(req, "socket");
+      req.flushHeaders();
+      const head = req.writableLength;
+      req.cork();
+      for (const length of pieces) req.write(Buffer.alloc(length, "a"));
+      const corked = req.writableLength - head;
+      req.uncork();
+      // With no socket yet the chunk moves to the output queue, which counts every byte of it.
+      const uncorked = req.writableLength - head;
+      req.destroy();
+      expect({ corked, uncorked }).toEqual({ corked: framed, uncorked: connected ? 0 : framed });
+    });
   });
 
   // A request on an in-memory socket. Its cork buffer is full: write() has returned false.
@@ -2237,6 +2281,107 @@ describe("a chunked request body reaches the peer whole, in order and ahead of t
     expect({ before, after }).toEqual({
       before: { drains: 0, writableNeedDrain: true },
       after: { drains: 1, writableNeedDrain: false },
+    });
+  });
+
+  test("an empty write() into a full cork buffer returns false", async () => {
+    const socket = new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) {
+        callback();
+      },
+    });
+    const { req } = await fillCorkBuffer(socket, 16 * 1024);
+    const accepted = req.write("");
+    req.destroy();
+    expect(accepted).toBe(false);
+  });
+
+  describe("the writes in a cork buffer fail when the message or its socket is destroyed", () => {
+    const boom = Object.assign(new Error("boom"), { code: "EBOOM" });
+    const destroyed = ["aaaa ERR_STREAM_DESTROYED", "bbbbbb ERR_STREAM_DESTROYED"];
+    const failed = ["aaaa boom", "bbbbbb boom"];
+
+    // A message that is neither a request nor a response, as in the test-http-outgoing-*.js tests of Node.js.
+    class Message extends OutgoingMessage {
+      _implicitHeader() {
+        (this as any)._storeHeader("POST / HTTP/1.1\r\n", null);
+      }
+    }
+
+    function open(kind: string) {
+      const socket = new Duplex({
+        read() {},
+        write(_chunk, _encoding, callback) {
+          callback();
+        },
+      });
+      socket.on("error", () => {});
+      if (kind.includes("request")) {
+        const message = request({ method: "POST", createConnection: () => socket as unknown as Socket });
+        return { message, socket, ready: kind.includes("connected") ? once(message, "socket") : undefined };
+      }
+      const message = new Message();
+      if (kind.includes("with a socket")) {
+        (socket as any)._httpMessage = message;
+        (message as any).socket = socket;
+      }
+      return { message, socket, ready: undefined };
+    }
+
+    test.each([
+      // A request keeps the error of its destroy() to itself, so only its socket can name the cause.
+      ["a request with no socket yet", "cork write write destroy(boom) uncork", destroyed],
+      ["a request with no socket yet", "cork write write destroy(boom) end", destroyed],
+      ["a connected request", "cork write write destroy(boom) uncork", failed],
+      ["a connected request", "cork write write destroy() uncork", destroyed],
+      ["a connected request", "cork write write destroy(boom) end", failed],
+      ["a connected request", "cork write write socket.destroy(boom) uncork", failed],
+      ["a connected request", "cork write write socket.destroy() end", destroyed],
+      ["a message with no socket", "cork write write destroy(boom)", failed],
+      ["a message with no socket", "cork write write destroy()", destroyed],
+      ["a message with no socket", "cork cork write write destroy(boom)", failed],
+      ["a message with a socket", "cork write write destroy(boom)", failed],
+      ["a message with a socket", "cork write write socket.destroy(boom) uncork", failed],
+      // The flush that follows finds the buffer empty.
+      ["a connected request", "cork write write destroy(boom) uncork end", failed],
+      ["a message with no socket", "cork write write destroy(boom) uncork end", failed],
+    ])("%s: %s", async (kind, steps, expected) => {
+      const { message, socket, ready } = open(kind);
+      // With no socket yet, the steps run in the tick of request(), before the socket is assigned.
+      if (ready) await ready;
+      const got: string[] = [];
+      const chunks = ["aaaa", "bbbbbb"];
+      message.on("error", () => {});
+      message.flushHeaders();
+      for (const step of steps.split(" ")) {
+        if (step === "write") {
+          const data = chunks.shift()!;
+          message.write(data, error =>
+            got.push(`${data} ${error === boom ? "boom" : (error as NodeJS.ErrnoException | null | undefined)?.code}`),
+          );
+        } else if (step === "destroy(boom)") message.destroy(boom);
+        else if (step === "destroy()") message.destroy();
+        else if (step === "socket.destroy(boom)") socket.destroy(boom);
+        else if (step === "socket.destroy()") socket.destroy();
+        else message[step as "cork" | "uncork" | "end"]();
+      }
+      // Each callback that a step has queued with process.nextTick() runs before this resolves.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      message.destroy();
+      expect(got).toEqual(expected);
+    });
+
+    test("a destroyed message no longer counts the writes that it failed", () => {
+      const message = new Message();
+      message.flushHeaders();
+      const head = message.writableLength;
+      message.cork();
+      message.write("aaaa");
+      message.write("bbbbbb");
+      const corked = message.writableLength - head;
+      message.destroy(boom);
+      expect({ corked, destroyed: message.writableLength - head }).toEqual({ corked: 15, destroyed: 0 });
     });
   });
 

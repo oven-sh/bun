@@ -929,6 +929,10 @@ it.each([
   });
 });
 
+// A save can reload twice, so a line that was already seen is skipped.
+const nextRun = (stdout: LineReader, ...seen: string[]) =>
+  stdout.until(line => line.startsWith("RUN") && !seen.includes(line));
+
 it("--hot reloads when a missing import is created", async () => {
   writeFileSync(join(cwd, "missing-entry.js"), `import { a } from "./missing-dep.js"; console.log("RUN", a);`);
   await using runner = spawn({
@@ -945,10 +949,10 @@ it("--hot reloads when a missing import is created", async () => {
   await stderr.until(line => line.includes("Cannot find module"));
 
   writeFileSync(join(cwd, "missing-dep.js"), "export const a = 10;");
-  expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 10");
+  expect(await nextRun(stdout)).toBe("RUN 10");
 
   writeFileSync(join(cwd, "missing-dep.js"), "export const a = 20;");
-  expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 20");
+  expect(await nextRun(stdout, "RUN 10")).toBe("RUN 20");
 });
 
 // Each shape deletes dep.ts and brings it back. `failedReload` resolves once the reload for the delete has failed.
@@ -989,17 +993,15 @@ it.each(Object.entries(recreateDeletedImport))("--hot loads an import that was d
   const stdout = new LineReader(runner.stdout);
   const stderr = new LineReader(runner.stderr);
   const dep = join(String(dir), "dep.ts");
-  // A save can reload twice, so a line that was already seen is skipped.
-  const nextRun = (...seen: string[]) => stdout.until(line => line.startsWith("RUN") && !seen.includes(line));
 
-  expect(await nextRun()).toBe("RUN A");
+  expect(await nextRun(stdout)).toBe("RUN A");
   // One reload first. Without it the 10 ms shape passes most of the time on a build that has the bug.
   writeFileSync(dep, `export default "A2";`);
-  expect(await nextRun("RUN A")).toBe("RUN A2");
+  expect(await nextRun(stdout, "RUN A")).toBe("RUN A2");
 
   await recreate(dep, () => stderr.until(line => line.includes("Cannot find module")));
-  expect(await nextRun("RUN A2")).toBe("RUN B");
+  expect(await nextRun(stdout, "RUN A2")).toBe("RUN B");
   // A plain save must reload too: the recreated file is watched again.
   writeFileSync(dep, `export default "C";`);
-  expect(await nextRun("RUN B")).toBe("RUN C");
+  expect(await nextRun(stdout, "RUN B")).toBe("RUN C");
 });

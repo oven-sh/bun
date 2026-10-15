@@ -98,6 +98,8 @@ impl AnyResolveWatcher {
     }
 }
 
+const MAX_UNRESOLVED_IMPORTS: usize = 256;
+
 /// An import the resolver could not find: its directory and the entry names that would satisfy it.
 struct UnresolvedImport {
     dir_hash: HashType,
@@ -1063,7 +1065,10 @@ impl Watcher {
         let is_this = |u: &UnresolvedImport| u.dir_hash == dir_hash && u.candidates == candidates;
         {
             let _guard = self.mutex.lock_guard();
-            if self.unresolved_imports.iter().any(is_this) {
+            // A program can probe any number of names that do not exist. The first records are the ones a reload made.
+            if self.unresolved_imports.len() >= MAX_UNRESOLVED_IMPORTS
+                || self.unresolved_imports.iter().any(is_this)
+            {
                 return false;
             }
             self.unresolved_imports.push(UnresolvedImport {

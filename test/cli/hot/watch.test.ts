@@ -75,8 +75,9 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await writeFile(join(String(dir), created), "export const a = 10;");
     expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 10");
 
+    // The first save can restart the process twice, so a repeated line is skipped.
     await writeFile(join(String(dir), created), "export const a = 20;");
-    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 20");
+    expect(await stdout.until(line => line.startsWith("RUN") && line !== "RUN 10")).toBe("RUN 20");
 
     proc.kill("SIGKILL");
     await proc.exited;

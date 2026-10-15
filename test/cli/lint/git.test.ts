@@ -751,8 +751,9 @@ exports.format = async (text, { endOfLine }) =>
       expect(stdout + stderr).not.toContain("tidy.astro");
       expect(exitCode).toBe(1);
     },
-    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one.
-    isDebug || isASAN ? 120_000 : 5_000,
+    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one. Without that search it
+    // still takes over 5 seconds on Windows, next to the other tests and their calls of git.
+    isDebug || isASAN ? 120_000 : 30_000,
   );
 
   test("git converts nothing", async () => {

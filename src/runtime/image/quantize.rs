@@ -1,13 +1,18 @@
-//! Median-cut colour quantizer for `.png({ palette: true, colors: N })`.
+//! Colour quantizer for `.png({ palette: true, colors: N })`.
 //!
 //! Goal is "good enough to match Sharp's palette PNG path for screenshot
 //! compression", not perceptual perfection — Sharp uses libimagequant which
-//! is GPL, so we roll a small permissive one. Median-cut is the classic
-//! Heckbert '82 algorithm: treat the RGBA pixels as points in a 4-D box,
-//! repeatedly split the box with the largest channel range at that channel's
-//! median until you have N boxes, then each box's mean becomes a palette
-//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
-//! Floyd–Steinberg error diffusion (`dither: true`).
+//! is GPL, so we roll a small permissive one.
+//!
+//! It works on the image's distinct colours, each with its pixel count, so
+//! one colour is never shared between two palette entries. An image with at
+//! most N distinct colours keeps exactly those. Otherwise the colours start
+//! as one box in RGBA space (Heckbert '82) and one box is split in two until
+//! there are N, each choice by squared error (Wu '91): the box with the most,
+//! along its channel with the most, between the two values of that channel
+//! that leave the least. Each box's mean becomes a palette entry. Mapping is
+//! nearest-entry by squared RGBA distance, optionally with Floyd–Steinberg
+//! error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
 
@@ -25,30 +30,6 @@ pub(crate) struct QuantizeResult {
 // `palette`/`indices` are `Box<[u8]>`, so
 // `Drop` is automatic — no explicit impl needed.
 
-#[derive(Clone, Copy)]
-struct ColorBox {
-    /// Slice into the shared `order` index buffer.
-    lo: u32,
-    hi: u32,
-    min: [u8; 4],
-    max: [u8; 4],
-}
-
-impl ColorBox {
-    fn widest_channel(self) -> u8 {
-        let mut best: u8 = 0;
-        let mut span: i32 = -1;
-        for c in 0..4usize {
-            let s: i32 = i32::from(self.max[c]) - i32::from(self.min[c]);
-            if s > span {
-                span = s;
-                best = u8::try_from(c).expect("int cast");
-            }
-        }
-        best
-    }
-}
-
 unsafe extern "C" {
     fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
     -> u32;
@@ -58,8 +39,7 @@ unsafe extern "C" {
 pub(crate) struct Options {
     pub(crate) max_colors: u16,
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
-    /// cost of grain on flat areas; off by default to match Sharp's
-    /// `palette:true` default.
+    /// cost of grain on flat areas; off by default.
     // No `Default` impl — callers must
     // pass this explicitly.
     pub(crate) dither: bool,
@@ -71,97 +51,454 @@ pub(crate) fn quantize(
     h: u32,
     opts: Options,
 ) -> Result<QuantizeResult, AllocError> {
-    let max_colors = opts.max_colors;
-    let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
-    let want: u16 = 1.max(max_colors.min(256));
+    let (pixels, _) = rgba.as_chunks::<4>();
+    // Pixel counts are kept in u32 from here on.
+    let n: usize = u32::try_from(pixels.len()).expect("int cast") as usize;
+    let want: usize = usize::from(opts.max_colors.clamp(1, 256));
 
-    // `order` is a permutation of pixel indices that we partition in-place;
-    // each Box owns a contiguous [lo,hi) slice of it.
-    let mut order: Vec<u32> = (0..n).collect();
-
-    let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
-    boxes.push(shrink(rgba, &order, 0, n));
-
-    while boxes.len() < want as usize {
-        // Pick the box with the largest single-channel range — the one that
-        // most wants splitting.
-        let mut pick: usize = 0;
-        let mut best: i32 = -1;
-        for (i, b) in boxes.iter().enumerate() {
-            let c = b.widest_channel();
-            let s: i32 = i32::from(b.max[c as usize]) - i32::from(b.min[c as usize]);
-            if s > best {
-                best = s;
-                pick = i;
+    let mut indices: Vec<u8> = try_filled(n)?;
+    let palette: Vec<u8> = match scan(pixels, want, &mut indices) {
+        // Every pixel has its own entry, so there is no error to diffuse.
+        Scan::Fits(palette) => palette,
+        Scan::Over { seen, at } => {
+            let (mut bins, table) = count_colors(pixels, &seen, &indices[..at], want)?;
+            // More than `want` colours, so this is `want` entries.
+            let palette = split_boxes(&mut bins, want);
+            drop(bins);
+            let k: u16 = u16::try_from(palette.len() / 4).expect("int cast");
+            if opts.dither {
+                drop(table);
+                map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
+            } else {
+                match table {
+                    // A lookup per colour beats a search per colour when a
+                    // search is long. `table_room` keeps the table small.
+                    Some(mut slots) if k >= 16 => {
+                        for slot in slots.iter_mut().filter(|slot| slot.val != 0) {
+                            slot.val = u32::from(nearest(&palette, k, slot.key)) + 1;
+                        }
+                        map_runs(pixels, &mut indices, |key| {
+                            let slot = slot_for(&mut slots, key).expect("every colour was counted");
+                            u8::try_from(slot.val - 1).expect("int cast")
+                        });
+                    }
+                    _ => map_runs(pixels, &mut indices, |key| nearest(&palette, k, key)),
+                }
             }
+            palette
         }
-        if best <= 0 {
-            break; // every remaining box is a single colour
-        }
-        let b = boxes[pick];
-        if b.hi - b.lo < 2 {
-            break;
-        }
-
-        let ch = b.widest_channel();
-        // Partial sort by the chosen channel, then cut at the midpoint.
-        let slice = &mut order[b.lo as usize..b.hi as usize];
-        // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
-        // `maxPixels`); the other order-index sites already widen first.
-        slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
-        let mid = b.lo + (b.hi - b.lo) / 2;
-        boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        boxes.push(shrink(rgba, &order, mid, b.hi));
-    }
-
-    let k: u16 = u16::try_from(boxes.len()).expect("int cast");
-    let mut palette = vec![0u8; k as usize * 4];
-    let mut has_alpha = false;
-    for (i, b) in boxes.iter().enumerate() {
-        let mut sum: [u64; 4] = [0, 0, 0, 0];
-        for &px in &order[b.lo as usize..b.hi as usize] {
-            for c in 0..4usize {
-                sum[c] += u64::from(rgba[px as usize * 4 + c]);
-            }
-        }
-        let cnt: u64 = u64::from(b.hi - b.lo);
-        for c in 0..4usize {
-            palette[i * 4 + c] = u8::try_from((sum[c] + cnt / 2) / cnt).expect("int cast");
-        }
-        if palette[i * 4 + 3] < 255 {
-            has_alpha = true;
-        }
-    }
-
-    let mut indices = vec![0u8; n as usize];
-    if opts.dither {
-        map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
-    } else {
-        // Direct nearest-entry mapping. k ≤ 256; the inner search is the
-        // highway-dispatched kernel so it runs under the best -march.
-        for px in 0..n as usize {
-            let p = &rgba[px * 4..][..4];
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    i32::from(p[0]),
-                    i32::from(p[1]),
-                    i32::from(p[2]),
-                    i32::from(p[3]),
-                )
-            })
-            .unwrap();
-        }
-    }
+    };
 
     Ok(QuantizeResult {
+        colors: u16::try_from(palette.len() / 4).expect("int cast"),
+        has_alpha: palette
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|entry| entry[3] < 255),
         palette: palette.into_boxed_slice(),
         indices: indices.into_boxed_slice(),
-        colors: k,
-        has_alpha,
     })
+}
+
+/// `len` default values, or `AllocError` when there is no memory for them.
+fn try_filled<T: Clone + Default>(len: usize) -> Result<Vec<T>, AllocError> {
+    let mut v: Vec<T> = Vec::new();
+    v.try_reserve_exact(len).map_err(|_| AllocError)?;
+    v.resize(len, T::default());
+    Ok(v)
+}
+
+/// One slot of an open-addressing table from a colour to a non-zero number.
+#[derive(Clone, Copy, Default)]
+struct Slot {
+    /// The pixel's four bytes, little-endian on every target so the table
+    /// layout does not depend on the host.
+    key: u32,
+    /// 0 marks an empty slot.
+    val: u32,
+}
+
+/// The longest run of occupied slots a probe walks before it gives up. The
+/// hash is fixed, so an image can be built to put every colour in one run:
+/// without a limit each of its colours would walk all the others.
+const MAX_PROBE: usize = 256;
+
+/// The slot that holds `key`, or the empty slot where `key` goes. `None`
+/// when neither is within `MAX_PROBE` slots of where `key` hashes to. The
+/// length of `slots` is a power of two.
+#[inline]
+fn slot_for(slots: &mut [Slot], key: u32) -> Option<&mut Slot> {
+    let mask = slots.len() - 1;
+    // Multiplicative hash: the top bits depend on every byte of the key.
+    let mut i = (key.wrapping_mul(0x9E37_79B1) >> (32 - slots.len().trailing_zeros())) as usize;
+    for _ in 0..=MAX_PROBE {
+        if slots[i].val == 0 || slots[i].key == key {
+            return Some(&mut slots[i]);
+        }
+        i = (i + 1) & mask;
+    }
+    None
+}
+
+/// What the first pass over the pixels found.
+enum Scan {
+    /// At most `want` distinct colours. They are the palette, in the order
+    /// they first appear, and `indices` is complete.
+    Fits(Vec<u8>),
+    /// More than `want`. Pixel `at` is the first whose colour is not one of
+    /// `seen`, the `want` colours before it. `indices[..at]` index into
+    /// `seen`.
+    Over { seen: Vec<u8>, at: usize },
+}
+
+fn scan(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Scan {
+    // `want` ≤ 256 keys in 512 slots: a probe passes at most 256 of them.
+    let mut slots = [Slot::default(); 512];
+    let mut seen: Vec<u8> = Vec::with_capacity(want * 4);
+    // Flat images are runs of one colour: the previous pixel's answer.
+    let mut last: Option<(u32, u8)> = None;
+    for ((at, p), out) in pixels.iter().enumerate().zip(indices.iter_mut()) {
+        let key = u32::from_le_bytes(*p);
+        *out = match last {
+            Some((last_key, idx)) if last_key == key => idx,
+            _ => {
+                let slot = slot_for(&mut slots, key).expect("at most 256 keys");
+                if slot.val == 0 {
+                    if seen.len() == want * 4 {
+                        return Scan::Over { seen, at };
+                    }
+                    seen.extend_from_slice(p);
+                    *slot = Slot {
+                        key,
+                        val: u32::try_from(seen.len() / 4).expect("int cast"),
+                    };
+                }
+                let idx = u8::try_from(slot.val - 1).expect("int cast");
+                last = Some((key, idx));
+                idx
+            }
+        };
+    }
+    Scan::Fits(seen)
+}
+
+/// One distinct colour and the number of pixels that have it.
+#[derive(Clone, Copy)]
+struct Bin {
+    rgba: [u8; 4],
+    count: u32,
+}
+
+/// The most distinct colours the table of `count_colors` holds. An image with
+/// more is counted by sorting its pixels. The table is worth its memory when
+/// colours repeat (at most one per two pixels) and when it stays in cache for
+/// the mapping in `quantize`: 1024 per palette entry measured faster than a
+/// search per colour at every palette size from 16.
+fn table_room(pixels: usize, want: usize) -> usize {
+    (1024 * want.max(16)).min(pixels / 2)
+}
+
+/// Pixel counts by colour, for at most `room` colours.
+struct Counts {
+    /// Each `val` is the pixel count of `key`. At most half full.
+    slots: Vec<Slot>,
+    distinct: usize,
+    room: usize,
+}
+
+impl Counts {
+    /// False, with the count not added, when the table cannot take `key`:
+    /// there is no room, or no slot within reach (see `MAX_PROBE`).
+    fn add(&mut self, key: u32, count: u32) -> Result<bool, AllocError> {
+        let Some(slot) = slot_for(&mut self.slots, key) else {
+            return Ok(false);
+        };
+        if slot.val != 0 {
+            slot.val += count;
+            return Ok(true);
+        }
+        if self.distinct == self.room {
+            return Ok(false);
+        }
+        *slot = Slot { key, val: count };
+        self.distinct += 1;
+        if self.distinct * 2 > self.slots.len() {
+            let mut grown: Vec<Slot> = try_filled(self.slots.len() * 2)?;
+            for slot in self.slots.iter().filter(|slot| slot.val != 0) {
+                let Some(moved) = slot_for(&mut grown, slot.key) else {
+                    return Ok(false);
+                };
+                *moved = *slot;
+            }
+            self.slots = grown;
+        }
+        Ok(true)
+    }
+}
+
+/// Every distinct colour of an image that has more than `seen.len() / 4` of
+/// them, in no particular order. `counted` is `indices[..at]` of the scan:
+/// the pixels before `at` are counted from it, the rest from `pixels`.
+///
+/// While the colours fit the table (see `table_room`) it comes back too,
+/// each `val` the colour's pixel count.
+fn count_colors(
+    pixels: &[[u8; 4]],
+    seen: &[u8],
+    counted: &[u8],
+    want: usize,
+) -> Result<(Vec<Bin>, Option<Vec<Slot>>), AllocError> {
+    let room = table_room(pixels.len(), want);
+    let (seen, _) = seen.as_chunks::<4>();
+    // There are more colours than `seen`: they cannot all fit.
+    if seen.len() >= room {
+        return Ok((count_sorted(pixels)?, None));
+    }
+    let mut table = Counts {
+        slots: try_filled(1024)?,
+        distinct: 0,
+        room,
+    };
+
+    let mut counts = [0u32; 256];
+    for &idx in counted {
+        counts[usize::from(idx)] += 1;
+    }
+    let seeds = seen
+        .iter()
+        .zip(&counts)
+        .map(|(color, &count)| (u32::from_le_bytes(*color), count));
+    let runs = pixels[counted.len()..].chunk_by(|a, b| a == b).map(|run| {
+        let count = u32::try_from(run.len()).expect("int cast");
+        (u32::from_le_bytes(run[0]), count)
+    });
+    for (key, count) in seeds.chain(runs) {
+        if !table.add(key, count)? {
+            drop(table);
+            return Ok((count_sorted(pixels)?, None));
+        }
+    }
+
+    let mut bins: Vec<Bin> = Vec::new();
+    bins.try_reserve_exact(table.distinct)
+        .map_err(|_| AllocError)?;
+    bins.extend(
+        table
+            .slots
+            .iter()
+            .filter(|slot| slot.val != 0)
+            .map(|slot| Bin {
+                rgba: slot.key.to_le_bytes(),
+                count: slot.val,
+            }),
+    );
+    Ok((bins, Some(table.slots)))
+}
+
+/// `count_colors` without the table: sort a copy of the pixels and count each
+/// run of equal ones. 4 bytes per pixel whatever the number of colours.
+fn count_sorted(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
+    let mut keys: Vec<u32> = Vec::new();
+    keys.try_reserve_exact(pixels.len())
+        .map_err(|_| AllocError)?;
+    keys.extend(pixels.iter().map(|p| u32::from_le_bytes(*p)));
+    keys.sort_unstable();
+    let mut bins: Vec<Bin> = Vec::new();
+    bins.try_reserve_exact(keys.chunk_by(|a, b| a == b).count())
+        .map_err(|_| AllocError)?;
+    bins.extend(keys.chunk_by(|a, b| a == b).map(|run| Bin {
+        rgba: run[0].to_le_bytes(),
+        count: u32::try_from(run.len()).expect("int cast"),
+    }));
+    Ok(bins)
+}
+
+/// Pixel count, and per channel the sum and the sum of squares, of a set of
+/// pixels: enough for the set's mean and its squared error about that mean.
+#[derive(Clone, Copy, Default)]
+struct Moments {
+    n: u64,
+    sum: [u64; 4],
+    sq: [u64; 4],
+}
+
+impl Moments {
+    fn add(&mut self, bin: Bin) {
+        let count = u64::from(bin.count);
+        self.n += count;
+        for c in 0..4usize {
+            let v = u64::from(bin.rgba[c]);
+            self.sum[c] += count * v;
+            self.sq[c] += count * v * v;
+        }
+    }
+
+    fn minus(&self, other: &Moments) -> Moments {
+        let mut out = *self;
+        out.n -= other.n;
+        for c in 0..4usize {
+            out.sum[c] -= other.sum[c];
+            out.sq[c] -= other.sq[c];
+        }
+        out
+    }
+
+    /// `n` times the squared error of channel `c` about its mean. Exact:
+    /// n < 2^32, sum < 2^40, sq < 2^48.
+    fn error_times_n(&self, c: usize) -> u128 {
+        u128::from(self.n) * u128::from(self.sq[c])
+            - u128::from(self.sum[c]) * u128::from(self.sum[c])
+    }
+
+    /// `n` times the squared error over all four channels.
+    fn total_error_times_n(&self) -> u128 {
+        (0..4usize).map(|c| self.error_times_n(c)).sum()
+    }
+
+    /// The channel with the largest squared error.
+    fn channel_to_split(&self) -> usize {
+        let mut best: usize = 0;
+        for c in 1..4usize {
+            if self.error_times_n(c) > self.error_times_n(best) {
+                best = c;
+            }
+        }
+        best
+    }
+
+    fn mean(&self) -> [u8; 4] {
+        let mut out = [0u8; 4];
+        for c in 0..4usize {
+            out[c] = u8::try_from((self.sum[c] + self.n / 2) / self.n).expect("int cast");
+        }
+        out
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ColorBox {
+    /// Slice into the shared `bins` buffer.
+    lo: usize,
+    hi: usize,
+    moments: Moments,
+    /// `moments.total_error_times_n()`, kept for the choice of the next box.
+    error_times_n: u128,
+}
+
+impl ColorBox {
+    fn new(lo: usize, hi: usize, moments: &Moments) -> ColorBox {
+        ColorBox {
+            lo,
+            hi,
+            moments: *moments,
+            error_times_n: moments.total_error_times_n(),
+        }
+    }
+}
+
+/// Split `bins` into `want` boxes, or fewer when every box is down to one
+/// colour, and return each box's mean as `[k][4]u8`. The order of `bins` on
+/// entry does not change the result: every step adds bins up or sorts them
+/// first.
+fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
+    let mut all = Moments::default();
+    for &bin in bins.iter() {
+        all.add(bin);
+    }
+    let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
+    boxes.push(ColorBox::new(0, bins.len(), &all));
+    while boxes.len() < want {
+        // A split helps most where the squared error is largest. A box of
+        // one bin is one colour and has none.
+        let mut pick: Option<usize> = None;
+        for (i, b) in boxes.iter().enumerate() {
+            if b.hi - b.lo < 2 {
+                continue;
+            }
+            // error_b / n_b > error_p / n_p, cross-multiplied (< 2^114).
+            if pick.is_none_or(|p| {
+                b.error_times_n * u128::from(boxes[p].moments.n)
+                    > boxes[p].error_times_n * u128::from(b.moments.n)
+            }) {
+                pick = Some(i);
+            }
+        }
+        let Some(pick) = pick else { break };
+        let b = boxes[pick];
+        let ch = b.moments.channel_to_split();
+        let slice = &mut bins[b.lo..b.hi];
+        slice.sort_unstable_by_key(|bin| bin.rgba[ch]);
+        // `ch` has error, so it has two different values and a cut exists.
+        let Some((at, left)) = cut(slice, ch, &b.moments) else {
+            break;
+        };
+        boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
+        boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
+    }
+    let mut palette: Vec<u8> = Vec::with_capacity(boxes.len() * 4);
+    for b in &boxes {
+        palette.extend_from_slice(&b.moments.mean());
+    }
+    palette
+}
+
+/// Where to cut `bins` (sorted by channel `ch`, moments `total`) and the
+/// moments of the left part. Only a position between two different values of
+/// `ch` is a candidate, so equal colours stay together. Of those, take the
+/// one that leaves the least squared error about the two parts' means. The
+/// sum of squares is fixed, so that is the largest L²/nL + R²/nR, where L²
+/// and R² are the left and right sums squared and added over the channels.
+fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<(usize, Moments)> {
+    let mut left = Moments::default();
+    let mut best: Option<(u128, usize, Moments)> = None;
+    for i in 1..bins.len() {
+        left.add(bins[i - 1]);
+        if bins[i - 1].rgba[ch] == bins[i].rgba[ch] {
+            continue;
+        }
+        let mut left_sq: u128 = 0;
+        let mut right_sq: u128 = 0;
+        for c in 0..4usize {
+            let l = u128::from(left.sum[c]);
+            let r = u128::from(total.sum[c] - left.sum[c]);
+            left_sq += l * l;
+            right_sq += r * r;
+        }
+        let score = left_sq / u128::from(left.n) + right_sq / u128::from(total.n - left.n);
+        if best.is_none_or(|(s, _, _)| score > s) {
+            best = Some((score, i, left));
+        }
+    }
+    best.map(|(_, i, moments)| (i, moments))
+}
+
+/// Index of the palette entry nearest to the colour `key`, the first one on
+/// a tie. k ≤ 256; the search is the highway-dispatched kernel so it runs
+/// under the best -march.
+#[inline]
+fn nearest(palette: &[u8], k: u16, key: u32) -> u8 {
+    let [r, g, b, a] = key.to_le_bytes().map(i32::from);
+    // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
+    u8::try_from(unsafe { bun_image_nearest_palette(palette.as_ptr(), u32::from(k), r, g, b, a) })
+        .expect("int cast")
+}
+
+/// Write every pixel's palette index. `index_of` is asked once per run of
+/// equal pixels: flat images are mostly runs.
+fn map_runs(pixels: &[[u8; 4]], indices: &mut [u8], mut index_of: impl FnMut(u32) -> u8) {
+    let mut last: Option<(u32, u8)> = None;
+    for (p, out) in pixels.iter().zip(indices.iter_mut()) {
+        let key = u32::from_le_bytes(*p);
+        *out = match last {
+            Some((last_key, idx)) if last_key == key => idx,
+            _ => {
+                let idx = index_of(key);
+                last = Some((key, idx));
+                idx
+            }
+        };
+    }
 }
 
 /// Floyd–Steinberg error diffusion. Serial in raster order — each pixel's
@@ -260,22 +597,4 @@ fn map_floyd_steinberg(
 #[inline]
 fn clamp255(v: i32) -> i32 {
     v.clamp(0, 255)
-}
-
-/// Recompute a box's tight min/max over its pixel slice.
-fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
-    let mut min: [u8; 4] = [255, 255, 255, 255];
-    let mut max: [u8; 4] = [0, 0, 0, 0];
-    for &px in &order[lo as usize..hi as usize] {
-        for c in 0..4usize {
-            let v = rgba[px as usize * 4 + c];
-            if v < min[c] {
-                min[c] = v;
-            }
-            if v > max[c] {
-                max[c] = v;
-            }
-        }
-    }
-    ColorBox { lo, hi, min, max }
 }

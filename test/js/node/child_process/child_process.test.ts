@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   nodeExe,
@@ -1367,7 +1368,9 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
     });
   });
 
-  it("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
+  // Not on macOS: there the bytes that the parent had not read when the child
+  // exited do not arrive. The same holds for the paused pipe below.
+  it.skipIf(isMacOS)("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
     const result = await run(/* js */ `
       const { spawn } = require("node:child_process");
       const [file, args] =
@@ -1421,7 +1424,7 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
 
   // The child writes "two" only after the parent has paused the pipe, so "two"
   // stays in the paused socket until something resumes it.
-  it.skipIf(isWindows)("'close' comes for a pipe the parent paused, after its remaining bytes", async () => {
+  it.skipIf(isWindows || isMacOS)("'close' comes for a pipe the parent paused, after its remaining bytes", async () => {
     const result = await run(/* js */ `
       const { spawn } = require("node:child_process");
       const child = spawn("/bin/sh", ["-c", "printf one >&3; read line <&4; printf two >&3"], {
@@ -1462,6 +1465,18 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       })();
     `);
     expect(result).toEqual({ stdout: '{"lines":["one","two"],"pipeClosed":true}\n', stderr: "", exitCode: 0 });
+  });
+
+  // spawnSync is over when it returns, so nobody else reads the pipe after it:
+  // the pipe is resumed after 'exit' like any other.
+  it.skipIf(isWindows)("'close' comes after the pipe was the stdio of a spawnSync", async () => {
+    const result = await run(/* js */ `
+      const { spawn, spawnSync } = require("node:child_process");
+      const first = spawn("/bin/sh", ["-c", "echo unread >&3"], { stdio: ["ignore", "ignore", "inherit", "pipe"] });
+      spawnSync("/bin/sh", ["-c", "exit 0"], { stdio: [first.stdio[3], "ignore", "inherit"] });
+      first.on("close", () => console.log(JSON.stringify({ pipeClosed: first.stdio[3].destroyed })));
+    `);
+    expect(result).toEqual({ stdout: '{"pipeClosed":true}\n', stderr: "", exitCode: 0 });
   });
 
   // The second child reads the pipe now. A resume in the parent would take its

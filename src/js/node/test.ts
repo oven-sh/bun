@@ -269,12 +269,7 @@ function validateRunOptions(options: Record<string, unknown>) {
   // Node validates these via the root Test constructor, not inline here;
   // the observable error is the same synchronous throw.
   const { concurrency, timeout, signal } = options as Record<string, any>;
-  if (signal !== undefined) validateAbortSignal(signal, "options.signal");
-  if (timeout != null && timeout !== Infinity) validateNumber(timeout, "options.timeout", 0, kTimeoutMax);
-  if (concurrency != null && typeof concurrency !== "boolean") {
-    if (typeof concurrency === "number") validateUint32(concurrency, "options.concurrency", true);
-    else throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
-  }
+  validateTestOptions(undefined, concurrency, timeout, signal);
 
   return {
     files,
@@ -1476,18 +1471,14 @@ function planCount(node: TestNode) {
 
 const kEmptyTags: readonly string[] = Object.freeze([]);
 
+// Port of validateAndCanonicalizeTagValues: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/tag_filter.js#L42-L67
 function canonicalizeTags(tags: unknown, name: string): string[] {
   validateArray(tags, name);
+  if ((tags as unknown[]).length > 0) emitTagsExperimentalWarning();
   const seen = new Set<string>();
   for (let i = 0; i < (tags as unknown[]).length; i++) {
-    const tag = (tags as unknown[])[i];
-    validateString(tag, `${name}[${i}]`);
-    if (tag === "") {
-      throw $ERR_INVALID_ARG_VALUE(`${name}[${i}]`, tag, "must not be an empty string");
-    }
-    seen.add((tag as string).toLowerCase());
+    seen.add(validateAndCanonicalizeTagFilter((tags as unknown[])[i], `${name}[${i}]`));
   }
-  if (seen.size > 0) emitTagsExperimentalWarning();
   return Array.from(seen);
 }
 
@@ -1947,17 +1938,6 @@ function parseTestArgs(arg0: unknown, arg1: unknown, arg2: unknown) {
   return { name, options, fn };
 }
 
-// Shared by test and hook options: Node validates both the same way.
-function validateTimeoutAndSignal(options: TestOptions | HookOptions) {
-  const { timeout, signal } = options;
-  if (signal !== undefined) {
-    validateAbortSignal(signal, "options.signal");
-  }
-  if (timeout != null && timeout !== Infinity) {
-    validateNumber(timeout, "options.timeout", 0, kTimeoutMax);
-  }
-}
-
 // Port of Node's parseExpectFailure (test.js:528). A string is a label, a
 // function or RegExp validates the error, an object may carry both, and any
 // other object is itself the validation.
@@ -2025,12 +2005,9 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
   return makeTestFailure("test was expected to fail but passed", "expectedFailure");
 }
 
-function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
-  const { concurrency, tags, plan } = options;
-
-  // signal and concurrency are validated for Node's error contract but not yet
-  // enforced (t.signal never aborts; subtests always run serially).
-  validateTimeoutAndSignal(options);
+// The option checks of node's Test constructor, in its order: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L598-L719
+function validateTestOptions(tags: unknown, concurrency: unknown, timeout: unknown, signal: unknown) {
+  const ownTags = tags !== undefined ? canonicalizeTags(tags, "options.tags") : undefined;
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
       validateUint32(concurrency, "options.concurrency", true);
@@ -2038,16 +2015,13 @@ function validateTestOptions(options: TestOptions): { ownTags: string[] | undefi
       throw $ERR_INVALID_ARG_TYPE("options.concurrency", ["boolean", "number"], concurrency);
     }
   }
-  if (plan !== undefined) {
-    validateUint32(plan, "options.plan");
+  if (timeout != null && timeout !== Infinity) {
+    validateNumber(timeout, "options.timeout", 0, kTimeoutMax);
   }
-
-  let ownTags: string[] | undefined;
-  if (tags !== undefined) {
-    ownTags = canonicalizeTags(tags, "options.tags");
+  if (signal !== undefined) {
+    validateAbortSignal(signal, "options.signal");
   }
-
-  return { ownTags };
+  return ownTags;
 }
 
 function parseHookArgs(arg0: unknown, arg1: unknown) {
@@ -2072,8 +2046,8 @@ function parseHookArgs(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown): Hook {
   const { fn, options } = parseHookArgs(arg0, arg1);
   // Node validates hook options in the TestHook constructor and snapshots them.
-  validateTimeoutAndSignal(options);
-  const { signal, timeout } = options;
+  const { timeout, signal } = options;
+  validateTestOptions(undefined, undefined, timeout, signal);
   return { fn, timeout, signal, result: undefined };
 }
 
@@ -2276,12 +2250,12 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
   // `t.assert` snapshots the plan at first access, so hooks must see it already.
-  const { plan: planOption } = node.options;
-  if (planOption && node.plan === null) {
-    node.plan = new TestPlan(planOption);
-  }
-
   try {
+    // An invalid count fails this test. In node it leaves run() before the try: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1314-L1336
+    const { plan: planOption } = node.options;
+    if (planOption && node.plan === null) {
+      node.plan = new TestPlan(planOption);
+    }
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
         await runHook(hook, ancestor, ctx);
@@ -2420,6 +2394,19 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
   };
   const result = (parent.subtestChain = parent.subtestChain.then(run));
   return result.then(() => undefined);
+}
+
+// Node starts a subtest inside t.test(), so an invalid plan count rejects that promise: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L394
+function cancelSubtest(parent: TestNode, child: TestNode, err: unknown): Promise<undefined> {
+  parent.failedSubtests++;
+  parent.firstSubtestError ??= err;
+  parent.subtestChain = parent.subtestChain.then(() => {
+    child.finished = true;
+    child.error = makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
+    reportNodeToRunParent(child, performance.now());
+  });
+  // A suite does not hand out the promises of its tests, so only a test gets the rejection.
+  return parent.isSuite ? Promise.resolve(undefined) : Promise.reject(err);
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
@@ -2572,19 +2559,31 @@ function addTest(
   mode?: "skip" | "todo",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
-  const { ownTags } = validateTestOptions(options);
+  // signal and concurrency are only validated: t.signal never aborts and subtests always run serially.
+  const { tags, concurrency, timeout, signal } = options;
+  const ownTags = validateTestOptions(tags, concurrency, timeout, signal);
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined) {
     if (runningNode.finished) {
       // t.test() escaped its parent: Node fails the late subtest but resolves
       // the promise; don't fall through to bun:test's internal-phase throw.
+      // Node still constructs the late subtest, so the last check of the constructor runs too.
+      parseExpectFailure(options.expectFailure);
       return Promise.resolve(undefined);
     }
     if (runningNode.isRunning()) {
       // Subtest of a running test (or of an inline suite created inside one).
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
+      const { plan } = options;
+      if (plan) {
+        try {
+          child.plan = new TestPlan(plan);
+        } catch (err) {
+          return cancelSubtest(runningNode, child, err);
+        }
+      }
       if (mode === "skip" || options.skip) {
         // Chain onto subtestChain so the directive lands after earlier siblings.
         const chained = (runningNode.subtestChain = runningNode.subtestChain.then(() =>
@@ -2672,10 +2671,13 @@ function addSuite(
   mode?: "skip" | "todo",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
-  const { ownTags } = validateTestOptions(options);
+  const { tags, concurrency, timeout, signal } = options;
+  const ownTags = validateTestOptions(tags, concurrency, timeout, signal);
 
   const runningNode = executionParent ?? currentNode();
   if (runningNode !== undefined && runningNode.finished) {
+    // Node still constructs the late suite, so the last check of the constructor runs too.
+    parseExpectFailure(options.expectFailure);
     return Promise.resolve(undefined);
   }
   if (runningNode !== undefined && runningNode.isRunning()) {

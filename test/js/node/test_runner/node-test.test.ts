@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -286,6 +286,119 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // 23 node:test cases in one child: run it like the large fixtures above.
+  test.concurrent(
+    "should check the options of a declaration in node's order",
+    async () => {
+      const { exitCode, stderr } = await runTests(["41-option-validation.js"]);
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 0,
+        stderr: expect.stringContaining("\n 20 pass\n 1 skip\n 2 todo\n 0 fail\n"),
+      });
+    },
+    30_000,
+  );
+
+  // Node does not finish a run in which a test that is not a subtest has an
+  // invalid plan option. So 42 runs on bun only, and 43 (subtests) also on node.
+  test.concurrent(
+    "should fail a test whose plan option is invalid, and run the others",
+    async () => {
+      const { exitCode, stderr } = await runTests(["42-invalid-plan-option.js"]);
+      expect(stderr).toContain(`TypeError: The "count" argument must be of type number. Received type string ('x')`);
+      expect(stderr).toContain(
+        `RangeError: The value of "count" is out of range. It must be >= 0 && <= 4294967295. Received -1`,
+      );
+      expect(stderr).toContain("error: 1 subtest failed");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("\n 3 pass\n 3 fail\n"),
+      });
+    },
+    30_000,
+  );
+
+  // Runs a fixture through run() and returns one line per verdict that run()
+  // publishes: "pass: name" or "fail: name: code".
+  async function runVerdicts(filename: string) {
+    const { run } = require("node:test");
+    const verdicts: string[] = [];
+    const events = run({ files: [join(import.meta.dirname, "fixtures", filename)], env: bunEnv });
+    for await (const { type, data } of events as AsyncIterable<{ type: string; data: any }>) {
+      if (type === "test:pass") verdicts.push(`pass: ${data.name}`);
+      if (type === "test:fail") verdicts.push(`fail: ${data.name}: ${data.details.error.code}`);
+    }
+    return verdicts;
+  }
+
+  test.concurrent(
+    "should report every test to run() when a plan option is invalid",
+    async () => {
+      expect(await runVerdicts("42-invalid-plan-option.js")).toEqual([
+        "pass: a test before the invalid plans",
+        "fail: a plan that is not a number: ERR_INVALID_ARG_TYPE",
+        "fail: a plan that is out of range: ERR_OUT_OF_RANGE",
+        "pass: an invalid plan on a test that expects a failure",
+        "fail: the subtest: ERR_TEST_FAILURE",
+        "fail: a test that catches the rejection of a subtest with an invalid plan: ERR_TEST_FAILURE",
+        "pass: the tests after the invalid plans still run",
+      ]);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should fail the test that declares a subtest with an invalid plan option",
+    async () => {
+      const { exitCode, stderr } = await runTests(["43-invalid-subtest-plan.js"]);
+      expect(stderr).toContain(`RangeError: The value of "count" is out of range. It must be an integer. Received 1.5`);
+      expect(stderr).toContain(`TypeError: The "count" argument must be of type number. Received type string ('x')`);
+      expect(stderr).toContain(
+        `RangeError: The value of "count" is out of range. It must be >= 0 && <= 4294967295. Received -1`,
+      );
+      expect(stderr).toContain(`TypeError: The "count" argument must be of type number. Received type boolean (true)`);
+      expect(stderr).toContain("error: 1 subtest failed");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("\n 1 pass\n 6 fail\n"),
+      });
+    },
+    30_000,
+  );
+
+  // These fixtures state what one Node version does, so Node runs them too, when
+  // the installed node is the version bun reports. Bun's own `node` shim is not a
+  // node: it prints bun's version here. Node starts fast, but these run beside
+  // the debug children above, so they get the same headroom.
+  const node = nodeExe();
+  const nodeIsReferenceVersion =
+    node !== null &&
+    Bun.spawnSync({ cmd: [node, "-p", "process.versions.bun ?? process.versions.node"], env: bunEnv, stderr: "ignore" })
+      .stdout.toString()
+      .trim() === process.versions.node;
+  for (const [fixture, expectedExitCode, summary] of [
+    ["41-option-validation.js", 0, "\n# pass 43\n# fail 0\n# cancelled 0\n# skipped 2\n# todo 2\n"],
+    ["43-invalid-subtest-plan.js", 1, "\n# pass 2\n# fail 6\n# cancelled 3\n# skipped 1\n# todo 1\n"],
+  ] as const) {
+    test.concurrent.skipIf(!nodeIsReferenceVersion)(
+      `should give the same result on node: ${fixture}`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [node!, "--test", "--test-reporter=tap", join(import.meta.dirname, "fixtures", fixture)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toMatchObject({
+          stdout: expect.stringContaining(summary),
+          exitCode: expectedExitCode,
+        });
+      },
+      30_000,
+    );
+  }
 
   test("should enforce a hook-level signal and install t.assert.ok separately", async () => {
     const { exitCode, stderr } = await runTests(["20-hook-signal-and-assert-ok.js"]);

@@ -13,6 +13,8 @@ use super::storage_class::StorageClass;
 
 bun_core::declare_scope!(AWS, visible);
 
+use bun_core::fmt::buf_print;
+
 /// Format into a fresh `Vec<u8>` and return it.
 macro_rules! alloc_print {
     ($($arg:tt)*) => {{
@@ -351,7 +353,6 @@ impl S3Credentials {
             return Err(SignError::InvalidPath);
         }
 
-        // The limit is on the key, not on its percent-encoded form.
         if path.len() > MAX_KEY_LEN {
             return Err(SignError::InvalidPath);
         }
@@ -483,11 +484,17 @@ impl S3Credentials {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
+                // `BStr` writes at most three bytes for one, so this Vec never grows and
+                // no copy of the secret is freed with its bytes still in it.
                 let mut aws4_key = Zeroing(Vec::with_capacity(
-                    "AWS4".len() + self.secret_access_key.len(),
+                    "AWS4".len() + self.secret_access_key.len() * 3,
                 ));
-                aws4_key.0.extend_from_slice(b"AWS4");
-                aws4_key.0.extend_from_slice(&self.secret_access_key);
+                write!(
+                    &mut aws4_key.0,
+                    "AWS4{}",
+                    BStr::new(&self.secret_access_key)
+                )
+                .expect("infallible: in-memory write");
                 let sig_date = bun_sha_hmac::generate(
                     &aws4_key.0,
                     amz_day,
@@ -525,8 +532,7 @@ impl S3Credentials {
                 break 'brk_sign digest;
             };
 
-            let mut canonical =
-                HashWriter::new(bun_sha_hmac::sha::hashers::SHA256::init(), &mut hash_block);
+            let mut canonical = HashWriter::new(&mut hash_block);
             if sign_query {
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 {
@@ -605,32 +611,52 @@ impl S3Credentials {
                     signed_headers,
                 );
             }
-            let mut sha_digest = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
-            canonical.finish().r#final(&mut sha_digest);
-            let mut sha_hex = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST * 2];
-            bun_core::fmt::bytes_to_hex_lower(&sha_digest, &mut sha_hex);
+            let sha_digest = canonical.finish();
 
-            let mut string_to_sign = HashWriter::new(
-                bun_sha_hmac::hmac::HMAC::init(
-                    &sig_date_region_service_req,
-                    bun_sha_hmac::Algorithm::Sha256,
-                )
-                .ok_or(SignError::FailedToGenerateSignature)?,
-                &mut hash_block,
-            );
-            write!(
+            macro_rules! string_to_sign {
+                () => {
+                    format_args!(
+                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                        BStr::new(&amz_date),
+                        BStr::new(amz_day),
+                        BStr::new(region),
+                        service_name,
+                        HexLower(&sha_digest)
+                    )
+                };
+            }
+            // The string to sign is 124 bytes and the region, so it fits the block for every
+            // region that a service has. A longer one goes to the heap.
+            let string_to_sign_len = "AWS4-HMAC-SHA256\n\n///aws4_request\n".len()
+                + amz_date.len()
+                + amz_day.len()
+                + region.len()
+                + service_name.len()
+                + sha_digest.len() * 2;
+            let mut long_string_to_sign = Vec::new();
+            let in_block = if string_to_sign_len <= HASH_BLOCK_LEN {
+                // A region that is not UTF-8 is longer as text and can still not fit.
+                buf_print(&mut hash_block, string_to_sign!()).ok()
+            } else {
+                None
+            };
+            let string_to_sign: &[u8] = match in_block {
+                Some(string_to_sign) => string_to_sign,
+                None => {
+                    long_string_to_sign.reserve_exact(string_to_sign_len);
+                    long_string_to_sign
+                        .write_fmt(string_to_sign!())
+                        .expect("infallible: in-memory write");
+                    &long_string_to_sign
+                }
+            };
+            let signature = bun_sha_hmac::generate(
+                &sig_date_region_service_req,
                 string_to_sign,
-                "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n",
-                BStr::new(&amz_date),
-                BStr::new(amz_day),
-                BStr::new(region),
-                service_name
-            );
-            string_to_sign.update(&sha_hex);
-            let signature = string_to_sign
-                .finish()
-                .r#final(&mut hmac_sig_service)
-                .ok_or(SignError::FailedToGenerateSignature)?;
+                bun_sha_hmac::Algorithm::Sha256,
+                &mut hmac_sig_service,
+            )
+            .ok_or(SignError::FailedToGenerateSignature)?;
 
             if sign_query {
                 // Build final URL with query parameters in alphabetical order to match canonical request
@@ -867,7 +893,7 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
 }
 
 const DIGESTED_HMAC_256_LEN: usize = 32;
-/// S3 limits an object key to 1024 bytes of UTF-8.
+/// S3 limits an object key to 1024 bytes, counted before percent-encoding.
 const MAX_KEY_LEN: usize = 1024;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1250,7 +1276,7 @@ struct CanonicalRequest;
 impl CanonicalRequest {
     // Builds the canonical request at runtime with conditional writes; profile if hot.
     fn format(
-        out: &mut HashWriter<'_, bun_sha_hmac::sha::hashers::SHA256>,
+        out: &mut HashWriter<'_>,
         key: SignedHeadersKey,
         method: &[u8],
         path: &[u8],
@@ -1322,37 +1348,18 @@ impl CanonicalRequest {
 
 const HASH_BLOCK_LEN: usize = 256;
 
-/// A hash that takes its message in pieces.
-trait Absorb {
-    fn absorb(&mut self, bytes: &[u8]);
-}
-
-impl Absorb for bun_sha_hmac::sha::hashers::SHA256 {
-    #[inline]
-    fn absorb(&mut self, bytes: &[u8]) {
-        self.update(bytes);
-    }
-}
-
-impl Absorb for bun_sha_hmac::hmac::HMAC {
-    #[inline]
-    fn absorb(&mut self, bytes: &[u8]) {
-        self.update(bytes);
-    }
-}
-
-/// The canonical request and the string to sign are only hashed, so they go to the hash in
-/// pieces and no buffer has to hold all of one. `block` collects the small pieces.
-struct HashWriter<'a, H: Absorb> {
-    hash: H,
+/// The canonical request is only hashed, so it goes to SHA-256 in pieces and no buffer has
+/// to hold all of it. `block` collects the small pieces.
+struct HashWriter<'a> {
+    hash: bun_sha_hmac::sha::hashers::SHA256,
     block: &'a mut [u8; HASH_BLOCK_LEN],
     len: usize,
 }
 
-impl<'a, H: Absorb> HashWriter<'a, H> {
-    fn new(hash: H, block: &'a mut [u8; HASH_BLOCK_LEN]) -> Self {
+impl<'a> HashWriter<'a> {
+    fn new(block: &'a mut [u8; HASH_BLOCK_LEN]) -> Self {
         Self {
-            hash,
+            hash: bun_sha_hmac::sha::hashers::SHA256::init(),
             block,
             len: 0,
         }
@@ -1363,7 +1370,7 @@ impl<'a, H: Absorb> HashWriter<'a, H> {
         if bytes.len() > HASH_BLOCK_LEN - self.len {
             self.flush();
             if bytes.len() >= HASH_BLOCK_LEN {
-                self.hash.absorb(bytes);
+                self.hash.update(bytes);
                 return;
             }
         }
@@ -1373,7 +1380,7 @@ impl<'a, H: Absorb> HashWriter<'a, H> {
 
     fn flush(&mut self) {
         if self.len > 0 {
-            self.hash.absorb(&self.block[..self.len]);
+            self.hash.update(&self.block[..self.len]);
             self.len = 0;
         }
     }
@@ -1383,14 +1390,16 @@ impl<'a, H: Absorb> HashWriter<'a, H> {
         core::fmt::write(self, args).expect("infallible: write_str never fails");
     }
 
-    /// The hash, with every written byte in it.
-    fn finish(mut self) -> H {
+    /// The digest of every written byte.
+    fn finish(mut self) -> [u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST] {
         self.flush();
-        self.hash
+        let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
+        self.hash.r#final(&mut digest);
+        digest
     }
 }
 
-impl<H: Absorb> core::fmt::Write for HashWriter<'_, H> {
+impl core::fmt::Write for HashWriter<'_> {
     #[inline]
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.update(s.as_bytes());

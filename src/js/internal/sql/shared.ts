@@ -1759,12 +1759,10 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   if (!options.adapter && resolvedUrl !== null) {
     // Only `filename` and SQLITE_URL itself name a SQLite file without a SQLite URL.
-    const fromSqliteSource = optionsFilename || (adapter === "sqlite" && !optionsUrl);
+    // Options that name a server take priority over `filename`.
+    const fromSqliteSource = optionsFilename ? !namesServer(options) : adapter === "sqlite" && !optionsUrl;
 
-    if (
-      parseDefinitelySqliteUrl(resolvedUrl) !== null ||
-      (fromSqliteSource && !hasProtocol(resolvedUrl) && !namesServer(options))
-    ) {
+    if (parseDefinitelySqliteUrl(resolvedUrl) !== null || (fromSqliteSource && !hasProtocol(resolvedUrl))) {
       // Return the original URL (with query params) for SQLite parsing
       return [resolvedUrl, null, { ...options, adapter: "sqlite" }];
     }

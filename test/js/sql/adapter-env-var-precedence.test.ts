@@ -351,6 +351,19 @@ describe("SQL adapter environment variable precedence", () => {
       expect(existsSync(filename)).toBe(true);
     });
 
+    test("a plain path next to hostname resolves like the same path with sqlite://", async () => {
+      using dir = tempDir("sql-sqlite-url-next-to-hostname", {});
+      const filename = join(String(dir), "env.db");
+
+      const resolved: unknown[] = [];
+      for (const value of [filename, `sqlite://${filename}`]) {
+        process.env.SQLITE_URL = value;
+        await using sql = new SQL({ hostname: "db.example" });
+        resolved.push(sql.options);
+      }
+      expect(resolved[0]).toEqual(resolved[1]);
+    });
+
     test("DATABASE_URL with a plain path still selects Postgres", async () => {
       process.env.DATABASE_URL = "plain.db";
 

@@ -158,8 +158,9 @@ test("object URL created in one worker is usable and revocable across threads", 
           let count = 0, ok = true;
           for (const url of urls) {
             // Body.blob() returns a plain Blob; resolveObjectURL hands back the registered File.
+            const fetched = await (await fetch(url)).blob();
+            ok &&= fetched.name === undefined && (await fetched.text()) === "x";
             const blob = resolveObjectURL(url);
-            ok &&= (await (await fetch(url)).text()) === "x";
             const o = {};
             o[blob.name] = 1; // use the name as a property key on this thread
             ok &&= blob.name.startsWith("nm");

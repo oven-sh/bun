@@ -3938,7 +3938,8 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
-  callWriteHeadIfObservable(this, this[headerStateSymbol]);
+  // With no data Node's _send() writes nothing, so end() still chooses the framing.
+  callWriteHeadIfObservable(this, this[headerStateSymbol], !data?.length);
   const strict = strictContentLength(this, this[headerStateSymbol], false);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {

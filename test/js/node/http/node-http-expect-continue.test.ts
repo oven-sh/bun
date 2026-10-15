@@ -34,6 +34,8 @@ const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`;
 const statusOf = (head: string) => head.slice(0, head.indexOf("\r\n"));
 const connectionOf = (head: string) => /\r\nConnection: ([^\r]*)\r\n/.exec(head)?.[1];
 const headOf = (head: string) => ({ status: statusOf(head), connection: connectionOf(head) });
+// How the response delimits its body: the Content-Length or the Transfer-Encoding line.
+const framingOf = (head: string) => /\r\n((?:Content-Length|Transfer-Encoding): [^\r]*)\r\n/.exec(head)?.[1];
 
 // Raw bytes over one connection. until(needle) resolves with the bytes up to and
 // including needle, fin when the server ends the connection. Every failure event
@@ -103,7 +105,11 @@ async function dial(server: http.Server, viaConnectionEvent: boolean) {
 
 // A final response from a 'checkContinue' listener that sends no 100 Continue.
 // keepAlive is res.shouldKeepAlive when the listener returns.
-const rejections: [name: string, reject: Listener, expected: ReturnType<typeof headOf> & { keepAlive: boolean }][] = [
+const rejections: [
+  name: string,
+  reject: Listener,
+  expected: ReturnType<typeof headOf> & { framing: string; keepAlive: boolean },
+][] = [
   [
     "statusCode, write() and end()",
     (req, res) => {
@@ -111,7 +117,12 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.write("no");
       res.end();
     },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
+    {
+      status: "HTTP/1.1 417 Expectation Failed",
+      connection: "close",
+      framing: "Transfer-Encoding: chunked",
+      keepAlive: false,
+    },
   ],
   [
     "statusCode, flushHeaders() and end()",
@@ -120,7 +131,12 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.flushHeaders();
       res.end();
     },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
+    {
+      status: "HTTP/1.1 417 Expectation Failed",
+      connection: "close",
+      framing: "Transfer-Encoding: chunked",
+      keepAlive: false,
+    },
   ],
   [
     // Node does not look at the status code: the body stays unsent after any final response.
@@ -129,7 +145,7 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.writeHead(200);
       res.end("nope");
     },
-    { status: "HTTP/1.1 200 OK", connection: "close", keepAlive: false },
+    { status: "HTTP/1.1 200 OK", connection: "close", framing: "Transfer-Encoding: chunked", keepAlive: false },
   ],
   [
     "removeHeader('Connection'), writeHead(417) and end()",
@@ -138,7 +154,12 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.writeHead(417);
       res.end();
     },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: undefined, keepAlive: false },
+    {
+      status: "HTTP/1.1 417 Expectation Failed",
+      connection: undefined,
+      framing: "Transfer-Encoding: chunked",
+      keepAlive: false,
+    },
   ],
   [
     "writeHead(417, { Connection: 'close' }) and end()",
@@ -146,7 +167,12 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.writeHead(417, { Connection: "close" });
       res.end();
     },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
+    {
+      status: "HTTP/1.1 417 Expectation Failed",
+      connection: "close",
+      framing: "Transfer-Encoding: chunked",
+      keepAlive: false,
+    },
   ],
   [
     "setHeader('Connection', 'close'), statusCode and end()",
@@ -155,17 +181,7 @@ const rejections: [name: string, reject: Listener, expected: ReturnType<typeof h
       res.statusCode = 417;
       res.end();
     },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
-  ],
-  [
-    // The private first write. With no data Node sends nothing for it, so end() still builds the head.
-    "statusCode, _send('') and end()",
-    (req, res) => {
-      res.statusCode = 417;
-      internals(res)._send("");
-      res.end();
-    },
-    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
+    { status: "HTTP/1.1 417 Expectation Failed", connection: "close", framing: "Content-Length: 0", keepAlive: false },
   ],
 ];
 
@@ -250,13 +266,40 @@ for (const [transport, viaConnectionEvent] of [
         const { socket, until, fin, close } = await dial(server, viaConnectionEvent);
         try {
           socket.write(expectHead);
-          assert.deepStrictEqual({ ...headOf(await until("\r\n\r\n")), keepAlive }, expected);
+          const head = await until("\r\n\r\n");
+          assert.deepStrictEqual({ ...headOf(head), framing: framingOf(head), keepAlive }, expected);
           await fin;
         } finally {
           close();
         }
       });
     }
+
+    // The private first write. With no data Node sends nothing for it, so end() builds the head and chooses the framing.
+    test("statusCode, _send('') and end(): the connection closes", async () => {
+      let keepAlive: boolean | undefined;
+      const server = http.createServer();
+      server.on("checkContinue", (req: http.IncomingMessage, res: http.ServerResponse) => {
+        res.statusCode = 417;
+        internals(res)._send("");
+        res.end();
+        keepAlive = res.shouldKeepAlive;
+      });
+      const { socket, until, fin, close } = await dial(server, viaConnectionEvent);
+      try {
+        socket.write(expectHead);
+        const head = await until("\r\n\r\n");
+        assert.deepStrictEqual(
+          { ...headOf(head), keepAlive },
+          { status: "HTTP/1.1 417 Expectation Failed", connection: "close", keepAlive: false },
+        );
+        // Bun's path for server.emit("connection") chooses the framing at the first write, also before this change.
+        if (!viaConnectionEvent) assert.strictEqual(framingOf(head), "Content-Length: 0");
+        await fin;
+      } finally {
+        close();
+      }
+    });
 
     test("a rejection queued behind a pipelined response closes the connection at its turn", async () => {
       const firstMayEnd = Promise.withResolvers<void>();

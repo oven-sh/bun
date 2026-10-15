@@ -2133,10 +2133,7 @@ impl ShellExecEnv {
         Ok(())
     }
 
-    /// Routes `label = value` depending on where the assignment appeared
-    /// (`FOO=1 cmd` → cmd-local, bare `FOO=1` → the variable table).
-    /// NOTE: both targets `.ref()` the value, so callers should deref
-    /// `value` after the call.
+    /// `FOO=1 cmd` goes to `cmd_local_env`, a bare `FOO=1` to `vars`. Both ref `value`: deref it after the call.
     pub(crate) fn assign_var(
         &mut self,
         label: crate::shell::env_str::EnvStr,
@@ -2149,9 +2146,7 @@ impl ShellExecEnv {
         }
     }
 
-    /// Looks up `$HOME` (`$USERPROFILE` on Windows). Falls back to `""` (or
-    /// `/data/local/tmp` on Android) so `cd` with no args / `~` expansion
-    /// never sees a null.
+    /// `$HOME` (`$USERPROFILE` on Windows), or `""` (`/data/local/tmp` on Android) so `cd` and `~` never see a null.
     pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
         use crate::shell::env_str::EnvStr;
         let key = if cfg!(windows) {

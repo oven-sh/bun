@@ -1276,8 +1276,7 @@ booga"
     });
   });
 
-  // A variable has one value and an export attribute. `export NAME` keeps the
-  // value, and a plain assignment keeps the attribute.
+  // `export NAME` keeps the value of the name, and a plain assignment keeps its export attribute.
   describe("export attribute", () => {
     // Prints NAME=value for each NAME argument, as a child process sees it.
     const childEnv = "console.log(process.argv.slice(1).map(k => k + '=' + (process.env[k] ?? '<unset>')).join(' '))";
@@ -1345,7 +1344,7 @@ booga"
       .testMini()
       .runAsTest("a subshell, a pipeline and a command substitution copy values and attributes");
 
-    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; echo $PWD; echo $OLDPWD; pwd`
+    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; cd .; echo $PWD; echo $OLDPWD; pwd`
       .stdout(out => {
         const [pwd, oldpwd, cwd] = out.split("\n");
         expect({ pwd, oldpwd }).toEqual({ pwd: cwd, oldpwd: cwd });

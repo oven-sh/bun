@@ -127,21 +127,20 @@ impl Drop for EnvMap {
     }
 }
 
-// `VarTable` slot attributes. Zero is an exported variable that has a value,
-// so an inherited environment needs no marking.
+/// Slot attribute: the name has a value and is not exported.
 const LOCAL: u8 = 1 << 0;
+/// Slot attribute: the name is exported and has no value yet.
 const UNSET: u8 = 1 << 1;
 
 const _: () = assert!(core::mem::size_of::<EnvStr>() == 16);
 
-/// Every shell variable, one slot per name. The attribute bits of the slot say
-/// if the name is exported and if it has a value.
+/// Every shell variable: one slot per name, with its value and its attribute bits.
 pub(crate) struct VarTable {
     map: EnvMap,
 }
 
 impl VarTable {
-    /// Every entry of `env` becomes an exported variable.
+    /// Every entry of `env` becomes an exported variable: its attribute bits are already zero.
     pub(crate) fn from_exported(env: EnvMap) -> VarTable {
         VarTable { map: env }
     }
@@ -156,8 +155,7 @@ impl VarTable {
         }
     }
 
-    /// `NAME=value`. The name keeps its export attribute.
-    /// NOTE: This will `.ref()` value, like `EnvMap::insert`.
+    /// `NAME=value`: the name keeps its export attribute. Refs `value`, like `EnvMap::insert`.
     pub(crate) fn set(&mut self, name: EnvStr, value: EnvStr) {
         let slot = self.map.map.get_or_put(name).expect("OOM");
         let attrs = if slot.found_existing {
@@ -171,8 +169,7 @@ impl VarTable {
         *slot.value_ptr = value.with_var_attrs(attrs);
     }
 
-    /// `export NAME=value`, or `export NAME` for `None`: the name keeps its value.
-    /// NOTE: This will `.ref()` value, like `EnvMap::insert`.
+    /// `export NAME=value`, or `export NAME` for `None`, which keeps the value. Refs `value`.
     pub(crate) fn export(&mut self, name: EnvStr, value: Option<EnvStr>) {
         let slot = self.map.map.get_or_put(name).expect("OOM");
         if !slot.found_existing {
@@ -192,8 +189,7 @@ impl VarTable {
         }
     }
 
-    /// The value of `$NAME`.
-    /// NOTE: Make sure you deref the string when done!
+    /// The value of `$NAME`. Deref it when done, like `EnvMap::get`.
     pub(crate) fn get(&self, name: EnvStr) -> Option<EnvStr> {
         let slot = *self.map.map.get(&name)?;
         if slot.var_attrs() & UNSET != 0 {
@@ -204,8 +200,7 @@ impl VarTable {
         Some(value)
     }
 
-    /// The value a child process inherits for `name`.
-    /// NOTE: Make sure you deref the string when done!
+    /// The value a child process inherits for `name`. Deref it when done.
     pub(crate) fn get_exported(&self, name: EnvStr) -> Option<EnvStr> {
         let slot = *self.map.map.get(&name)?;
         if slot.var_attrs() != 0 {

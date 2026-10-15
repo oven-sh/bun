@@ -1448,8 +1448,7 @@ impl<'a> SpawnArgs<'a> {
         env: impl Iterator<Item = (&'e sh::EnvStr, &'e sh::EnvStr)>,
     ) {
         self.override_env = true;
-        // The exported variables are a filtered view with a lower bound of 0,
-        // so reserve for the upper bound.
+        // `VarTable::exported` is a filter, whose lower size bound is 0, so reserve for the upper bound.
         self.env_array.reserve_exact(
             env.size_hint()
                 .1

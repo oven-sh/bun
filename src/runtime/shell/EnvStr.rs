@@ -13,8 +13,7 @@ use super::ref_counted_str::RefCountedStr;
 
 /// Packed `u128` layout (LSB-first):
 /// - bits  0..48  : `ptr` (u48)
-/// - bits 48..62  : `tag`
-/// - bits 62..64  : variable attributes, zero outside a `VarTable` slot
+/// - bits 48..64  : `tag` (u16)
 /// - bits 64..128 : `len` (usize)
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -36,6 +35,7 @@ pub(crate) enum Tag {
 const PTR_MASK: u128 = (1u128 << 48) - 1;
 const TAG_SHIFT: u32 = 48;
 const TAG_MASK: u128 = 0x3FFF;
+// The top two bits of the tag field are the attributes of a `VarTable` slot, zero anywhere else.
 const VAR_ATTRS_SHIFT: u32 = 62;
 const VAR_ATTRS_MASK: u128 = 0b11;
 const LEN_SHIFT: u32 = 64;

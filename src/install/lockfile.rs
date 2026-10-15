@@ -1564,7 +1564,7 @@ impl Lockfile {
     /// Re-hoists while a pass bound or moved a peer; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         const METHOD: tree::BuilderMethod = tree::BuilderMethod::Resolvable;
-        while self.hoist::<METHOD>(log, None, true, &[], None, false)? {}
+        while self.hoist::<METHOD>(log, None, true, &[], None, tree::Layout::Locked)? {}
         TextLockfile::rebind_peers_to_printed_packages(self)?;
         Ok(())
     }
@@ -1583,7 +1583,7 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            false,
+            tree::Layout::Locked,
         )?;
         Ok(())
     }
@@ -1597,7 +1597,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-        older_layout: bool,
+        layout: tree::Layout,
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
@@ -1635,7 +1635,7 @@ impl Lockfile {
             contested: Default::default(),
             contested_rows: Default::default(),
             kept: None,
-            older_layout,
+            older_layout: layout == tree::Layout::Older,
             linked: Default::default(),
         };
 

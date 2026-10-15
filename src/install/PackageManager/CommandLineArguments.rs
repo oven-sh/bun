@@ -431,6 +431,9 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--node-linker", Near(b"--linker")),
 ];
 
+/// `bun update` has these too, but there they choose what is updated, which no flag above asks for.
+const UPDATE_FILTERS: &[&[u8]] = &[b"--dev", b"--production"];
+
 pub(crate) static ADD_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
@@ -1355,7 +1358,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             .filter_map(|&(flag, kind)| match kind {
                 AliasOf(own) => {
                     let name_end = strings::index_of_char_usize(own, b'=').unwrap_or(own.len());
-                    if has(&own[2..name_end]) {
+                    let is_filter =
+                        subcommand == Subcommand::Update && UPDATE_FILTERS.contains(&own);
+                    if has(&own[2..name_end]) && !is_filter {
                         Some((flag, own))
                     } else {
                         // Where a new dependency is saved: nothing to a command that saves none.

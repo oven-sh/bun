@@ -460,6 +460,15 @@ pub enum BuilderMethod {
     Filter,
 }
 
+/// Where the install tree puts a package when the run leaves others out.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(crate) enum Layout {
+    /// Where bun.lock has it.
+    Locked,
+    /// `Builder::older_layout`.
+    Older,
+}
+
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,

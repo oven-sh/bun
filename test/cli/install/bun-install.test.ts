@@ -16844,13 +16844,62 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
   // They say where a new dependency is saved.
   it.each([
     ["remove", ["dev"], ["--save-dev", "--save-exact", "--save-optional", "--save-peer"]],
-    ["update", [], ["--save-optional", "--save-peer"]],
+    ["update", [], ["--save-dev", "--save-optional", "--save-peer"]],
   ] as [string, string[], string[]][])("bun %s, which saves none, takes %j with %j", async (command, args, flags) => {
     const plain = await outcome([command, ...args], groups, true);
     expect(plain.stderr).not.toContain("error:");
     expect(plain.exitCode).toBe(0);
 
     for (const flag of flags) expect(await outcome([command, flag, ...args], groups, true)).toEqual(plain);
+  });
+
+  // `bun update --dev` and `--production` choose what is updated. npm's flags of those names do not.
+  it.each([
+    [[], { a: "^1.1.0", b: "^1.1.0", exitCode: 0 }],
+    [["--dev"], { a: "^1.0.0", b: "^1.1.0", exitCode: 0 }],
+    [["--save-dev"], { a: "^1.1.0", b: "^1.1.0", exitCode: 0 }],
+    [["--production"], { a: "^1.1.0", b: "^1.0.0", exitCode: 0 }],
+    [["--production=true"], { a: "^1.0.0", b: "^1.0.0", exitCode: 1 }],
+    [["--save-exact"], { a: "1.1.0", b: "1.1.0", exitCode: 0 }],
+  ] as [string[], object][])("bun update %j gives %j", async (flags, expected) => {
+    using dir = tempDir("update-foreign-flags", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { a: "^1.0.0" }, devDependencies: { b: "^1.0.0" } }),
+    });
+    const versions = ["1.0.0"];
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname.slice(1);
+        if (path.endsWith(".tgz")) return new Response(file(join(String(dir), path)));
+        return Response.json({
+          name: path,
+          "dist-tags": { latest: versions.at(-1) },
+          versions: Object.fromEntries(
+            versions.map(version => [
+              version,
+              { name: path, version, dist: { tarball: `${server.url}${path}-${version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+    for (const name of ["a", "b"]) {
+      for (const version of ["1.0.0", "1.1.0"]) {
+        await Bun.Archive.write(
+          join(String(dir), `${name}-${version}.tgz`),
+          { "package/package.json": JSON.stringify({ name, version }) },
+          { compress: "gzip" },
+        );
+      }
+    }
+    const registry = `--registry=${server.url}`;
+    expect((await bunIn(String(dir), ["install", registry])).exitCode).toBe(0);
+    versions.push("1.1.0");
+
+    const { stderr, exitCode } = await bunIn(String(dir), ["update", "--no-cache", registry, ...flags]);
+    if (exitCode) expect(stderr).toBe("error: The argument '--production' does not take a value.\n");
+    const { dependencies, devDependencies } = await file(join(String(dir), "package.json")).json();
+    expect({ ...dependencies, ...devDependencies, exitCode }).toEqual(expected);
   });
 
   it.each([

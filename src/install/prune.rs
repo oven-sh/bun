@@ -825,7 +825,7 @@ fn hoist_install_tree(
     manager: &mut PackageManager,
     all_rows: bool,
 ) -> Result<SavedTree, tree::SubtreeError> {
-    hoist_tree(manager, all_rows, true, &[], false)
+    hoist_tree(manager, all_rows, true, &[], tree::Layout::Locked)
 }
 
 fn hoist_tree(
@@ -833,7 +833,7 @@ fn hoist_tree(
     all_rows: bool,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
-    older_layout: bool,
+    layout: tree::Layout,
 ) -> Result<SavedTree, tree::SubtreeError> {
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
@@ -851,7 +851,7 @@ fn hoist_tree(
             install_root_dependencies,
             workspace_filters,
             None,
-            older_layout,
+            layout,
         )
     };
     match result {
@@ -1637,7 +1637,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
         false,
         install_root_dependencies,
         workspace_filters,
-        true,
+        tree::Layout::Older,
     )
     .is_ok()
     {

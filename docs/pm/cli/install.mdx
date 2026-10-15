@@ -598,7 +598,7 @@ A flag that `bun install` does not know is an error. So that a command line writ
 
 | Flag                                                           | What Bun does                                            |
 | -------------------------------------------------------------- | -------------------------------------------------------- |
-| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`, if it has it |
+| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`               |
 | `--no-optional`, `--ignore-optional`                           | `--omit=optional`                                        |
 | `--only=production`, `--only=prod`                             | `--omit=dev`                                             |
 | `--production=true`                                            | `--production`                                           |
@@ -619,7 +619,11 @@ A flag that `bun install` does not know is an error. So that a command line writ
 
 `--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value takes none: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
 
-`bun update` has a `--no-optional` of its own: it does not update `optionalDependencies`, but it installs them.
+`bun remove` saves no dependency, so it ignores the four `--save-*` flags. On `bun update`, `--dev`, `--production` and `--no-optional` choose what is updated, so three rows differ:
+
+- `--save-exact` is `--exact`. `--save-dev`, `--save-optional` and `--save-peer` do nothing.
+- `--production=true` is an error.
+- `--no-optional` does not update `optionalDependencies`, but it installs them. `--ignore-optional` is `--omit=optional`.
 
 Flags that have no exact counterpart stay errors. For some of them the error names the closest flag, such as `--no-save` for `--no-package-lock`: it does not write `bun.lock`, but it does not update `package.json` either.
 

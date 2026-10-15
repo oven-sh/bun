@@ -3330,11 +3330,6 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
-
     pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     #[inline]
     pub fn unwrap(self) -> Option<GenericIndex<I, M>> {

@@ -872,11 +872,8 @@ template<bool SSL>
 static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t length)
 {
     auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
-    while (length > 0) {
-        const int chunk = static_cast<int>(std::min(length, static_cast<size_t>(INT_MAX)));
-        asyncSocket->write(data, chunk);
-        data += chunk;
-        length -= chunk;
+    if (length > 0) {
+        asyncSocket->write(data, length);
     }
     return asyncSocket->getBufferedAmount() > 0;
 }

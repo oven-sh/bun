@@ -846,48 +846,16 @@ public:
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
-        size_t total_written = 0;
-        bool has_failed = false;
-
-        if (length <= INT_MAX) {
-            auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunkTail);
-            this->resetTimeout();
-            if (writtenPtr) {
-                *writtenPtr = (size_t) written;
-            }
-            return !failed;
-        }
-        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
-
-        // Handle data larger than INT_MAX by writing it in chunks of INT_MAX bytes
-        while (length > INT_MAX) {
-            // Write the maximum allowed chunk size (INT_MAX)
-            auto [written, failed] = Super::write(data.data(), INT_MAX);
-            // If the write failed, set the has_failed flag we continue writting because the data will be buffered
-            has_failed = has_failed || failed;
-            total_written += written;
-            length -= INT_MAX;
-            data = data.substr(INT_MAX);
-        }
-        // Handle the remaining data (less than INT_MAX bytes)
-        if (length > 0) {
-            // Write the final chunk with exact remaining length
-            auto [written, failed] = Super::write(data.data(), (int) length);
-            has_failed = has_failed || failed;
-            total_written += written;
-        }
-
-        /* Empty for a close-delimited body, which is raw. */
-        Super::write(chunkTail.data(), (int) chunkTail.length());
+        auto [written, failed] = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), length, chunkTail);
 
         /* Reset timeout on each sended chunk */
         this->resetTimeout();
 
         if (writtenPtr) {
-            *writtenPtr = total_written;
+            *writtenPtr = written;
         }
         /* If we did not fail the write, accept more */
-        return !has_failed;
+        return !failed;
     }
 
     /* Like write(), but the body payload is written with optionally=true so the
@@ -921,25 +889,7 @@ public:
             }
         }
 
-        size_t consumed = 0;
-        size_t length = data.length();
-        if (length <= INT_MAX) {
-            consumed = (size_t) Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), (int) length, chunked ? "\r\n" : "", true).first;
-            this->resetTimeout();
-            return consumed;
-        }
-        Super::write(chunkHeadBuffer, (int) chunkHeadLength);
-        while (consumed < length) {
-            int chunk = (int) std::min(length - consumed, (size_t) INT_MAX);
-            auto [written, failed] = Super::write(data.data() + consumed, chunk, true);
-            consumed += (size_t) written;
-            if (written < chunk || failed) break;
-        }
-
-        if (consumed == length && chunked) {
-            Super::write("\r\n", 2);
-        }
-
+        size_t consumed = Super::writeFramed({chunkHeadBuffer, chunkHeadLength}, data.data(), data.length(), chunked ? "\r\n" : "", true).first;
         this->resetTimeout();
         return consumed;
     }
@@ -951,12 +901,8 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
 
-        size_t length = data.length();
-        size_t done = 0;
-        while (done < length) {
-            int chunk = (int) std::min(length - done, (size_t) INT_MAX);
-            Super::write(data.data() + done, chunk);
-            done += (size_t) chunk;
+        if (!data.empty()) {
+            Super::write(data.data(), data.length());
         }
         if (chunked) {
             Super::write("\r\n", 2);

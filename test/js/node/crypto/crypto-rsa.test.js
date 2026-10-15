@@ -444,7 +444,10 @@ describe("padding option", () => {
     ["{}", {}],
     ["[]", []],
   ])("%s is not a padding mode", (_, padding) => {
-    const paddingError = expect.objectContaining({ code: expect.stringContaining("PADDING") });
+    const paddingError = expect.objectContaining({
+      name: "Error",
+      code: "ERR_OSSL_EVP_ILLEGAL_OR_UNSUPPORTED_PADDING_MODE",
+    });
     expect(() => crypto.privateEncrypt({ key: rsaKeyPem, padding }, message)).toThrow(paddingError);
     expect(() => crypto.publicDecrypt({ key: rsaPubPem, padding }, signed)).toThrow(paddingError);
     expect(() => crypto.publicEncrypt({ key: rsaPubPem, padding }, message)).toThrow(paddingError);

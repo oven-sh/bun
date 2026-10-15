@@ -3,7 +3,15 @@
 // node:tls sockets and the llhttp HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const {
+  kEmptyObject,
+  once,
+  ConnResetException,
+  hasObserver,
+  startPerf,
+  stopPerf,
+  kEntryTypeHttp,
+} = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
   _checkIsHttpToken: checkIsHttpToken,
@@ -482,7 +490,7 @@ ObjectDefineProperty(ClientRequest.prototype, "path", {
 
 ClientRequest.prototype._finish = function _finish() {
   OutgoingMessage.prototype._finish.$call(this);
-  if (hasObserver("http")) {
+  if (hasObserver(kEntryTypeHttp)) {
     startPerf(this, kClientRequestStatistics, {
       type: "http",
       name: "HttpClient",
@@ -835,8 +843,8 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     req.shouldKeepAlive = false;
   }
 
-  if (req[kClientRequestStatistics] && hasObserver("http")) {
-    stopPerf(req, kClientRequestStatistics, {
+  if (req[kClientRequestStatistics] && hasObserver(kEntryTypeHttp)) {
+    stopPerf(req, kClientRequestStatistics, kEntryTypeHttp, {
       detail: {
         res: {
           statusCode: res.statusCode,

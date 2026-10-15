@@ -8,7 +8,10 @@ namespace WebCore {
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
-    BunString filename = Bun::toString(impl.fileName());
+    // A FormData entry owns its filename, which is never null. A Blob that is
+    // not an entry (a WebSocket message) has no name to give.
+    const String& entryName = impl.fileName();
+    BunString filename = entryName.isNull() ? BunString { BunStringTag::Dead } : Bun::toString(entryName);
     void* dupe = Blob__dupe(impl.impl());
     Blob__setAsFile(dupe, &filename);
 

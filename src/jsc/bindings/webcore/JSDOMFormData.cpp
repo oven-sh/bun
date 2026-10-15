@@ -294,8 +294,10 @@ static String entryFileName(JSC::JSGlobalObject* lexicalGlobalObject, Blob& blob
         return convert<IDLUSVString>(*lexicalGlobalObject, filenameArg);
 
     BunString blobName = Blob__getFileNameString(blob.impl());
-    if (blobName.tag == BunStringTag::Dead)
-        return "blob"_s;
+    if (blobName.tag == BunStringTag::Dead) {
+        static NeverDestroyed<String> defaultName = MAKE_STATIC_STRING_IMPL("blob");
+        return defaultName.get();
+    }
     return blobName.transferToWTFString();
 }
 

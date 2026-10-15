@@ -3993,13 +3993,16 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-#[unsafe(no_mangle)]
 /// Turns a FormData entry's blob into a `File` named `path_str`. The entry
 /// owns the name (the `filename` argument of `append`/`set`, or the blob's
 /// own name at insert time), so it replaces the name the blob carried.
+/// `path_str` is Dead for a Blob that is not an entry; that one keeps its name.
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
-    this.name.set(path_str.clone());
+    if path_str.tag() != bun_core::Tag::Dead {
+        this.name.set(path_str.clone());
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -4011,8 +4014,7 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 /// `Blob`), which is distinct from a `File` whose name is `""`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    this.get_name_string()
-        .map_or(BunString::DEAD, Clone::clone)
+    this.get_name_string().map_or(BunString::DEAD, Clone::clone)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

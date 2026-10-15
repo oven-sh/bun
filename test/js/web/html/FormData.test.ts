@@ -99,7 +99,12 @@ describe("FormData", () => {
       form.append("a", new Blob(["x"]));
       form.set("b", new Blob(["y"], { type: "text/plain" }));
       expect(await entry(form, "a")).toEqual({ isFile: true, name: "blob", type: "", text: "x" });
-      expect(await entry(form, "b")).toEqual({ isFile: true, name: "blob", type: "text/plain;charset=utf-8", text: "y" });
+      expect(await entry(form, "b")).toEqual({
+        isFile: true,
+        name: "blob",
+        type: "text/plain;charset=utf-8",
+        text: "y",
+      });
     });
 
     it("an empty filename argument gives the File an empty name", async () => {
@@ -124,6 +129,44 @@ describe("FormData", () => {
       form.append("blob", new Blob(["x"]));
       const text = await new Response(form).text();
       expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="override.txt"', 'filename="blob"']);
+    });
+
+    it("a WebSocket Blob message has no name, so its entry is named 'blob'", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        websocket: {
+          open(ws) {
+            ws.sendBinary(new Uint8Array([1, 2, 3]));
+          },
+          message() {},
+        },
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("Upgrade failed", { status: 500 });
+        },
+      });
+      const ws = new WebSocket(`ws://localhost:${server.port}`);
+      ws.binaryType = "blob" as any;
+      const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+      ws.onmessage = event => resolve(event.data);
+      ws.onerror = reject;
+      ws.onclose = () => reject(new Error("closed before a message arrived"));
+      try {
+        const message = await promise;
+        const form = new FormData();
+        form.append("message", message);
+        expect({
+          messageName: (message as any).name,
+          entryName: (form.get("message") as File).name,
+          filename: (await new Response(form).text()).match(/filename="[^"]*"/g),
+        }).toEqual({
+          messageName: undefined,
+          entryName: "blob",
+          filename: ['filename="blob"'],
+        });
+      } finally {
+        ws.close();
+      }
     });
   });
 

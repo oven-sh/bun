@@ -127,6 +127,14 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // immediate_close() sent nothing for lsquic_conn_abort_error() on a client
+    // that had not heard from the server, never used the Initial space, and
+    // turned code 0 into INTERNAL_ERROR. A close the application asked for now
+    // goes out with its code in the highest space that has keys. lsquic's own
+    // aborts are not changed. lsquic_conn_ack_now() no longer queues an ACK
+    // when no ack-eliciting packet waits for one. With nothing received that
+    // ACK failed and became an INTERNAL_ERROR close.
+    "patches/lsquic/user-abort-close.patch",
     // A connection that sent GOAWAY answered every new peer stream with
     // STOP_SENDING, unidirectional ones included. A client that opens its
     // QPACK encoder stream after the GOAWAY (lsquic does, on a connection

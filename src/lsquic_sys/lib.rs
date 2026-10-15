@@ -447,12 +447,13 @@ impl Conn {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_set_ping_period_us(self.0, usec) }
     }
-    pub fn ack_now(&self) {
+    /// Whether lsquic queued an ACK. It queues none when it owes none.
+    pub fn ack_now(&self) -> bool {
         unsafe extern "C" {
-            fn lsquic_conn_ack_now(c: *mut lsquic_conn);
+            fn lsquic_conn_ack_now(c: *mut lsquic_conn) -> c_int;
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
-        unsafe { lsquic_conn_ack_now(self.0) }
+        unsafe { lsquic_conn_ack_now(self.0) != 0 }
     }
     pub fn use_preferred_address(&self, on: bool) {
         unsafe extern "C" {

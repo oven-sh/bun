@@ -20,6 +20,9 @@ namespace Bun {
 bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
 }
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+// The opposite crossing: a frame that learned of the stop from the gate makes it a pending TerminationException, for a
+// caller that stops on one. bindings.cpp.
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*);
 
 namespace WebCore {
 class WorkerMessagingProxy;

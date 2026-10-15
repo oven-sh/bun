@@ -267,6 +267,25 @@ for (const [kind, make, fromPromiseJob] of pairs) {
         await pipelineP(source(), make(upper), out.stream);
         assert.strictEqual(out.text(), "HELLO");
       });
+
+      // 64 KiB is the highWaterMark of the stage before the pair.
+      test("delivers four 64 KiB chunks in order to a slow destination", async () => {
+        const chunks = Array.from({ length: 4 }, (_, index) => Buffer.alloc(65536, 97 + index));
+        const got: Buffer[] = [];
+        const slow = new Writable({
+          highWaterMark: 1,
+          write(chunk, encoding, callback) {
+            got.push(chunk);
+            setImmediate(callback);
+          },
+        });
+        await pipelineP(
+          Readable.from(chunks),
+          make(text => text),
+          slow,
+        );
+        assert.ok(Buffer.concat(got).equals(Buffer.concat(chunks)));
+      });
     });
 
     describe("promises.pipeline()", () => {
@@ -515,8 +534,91 @@ describe("what counts as a pair", () => {
     });
   }
 
+  test("a userland pair, in pipeline() before a generator function", async () => {
+    const out = sink();
+    await pipelineP(
+      source(),
+      userlandPair(),
+      async function* (chunks: AsyncIterable<Buffer>) {
+        for await (const chunk of chunks) yield chunk;
+      },
+      out.stream,
+    );
+    assert.strictEqual(out.text(), "HELLO");
+  });
+
+  test("a userland pair, in pipeline() as the first stage", async () => {
+    const pair = userlandPair();
+    const out = sink();
+    const done = pipelineP(pair, out.stream);
+    const writer = pair.writable.getWriter();
+    await writer.write(Buffer.from("hello"));
+    await writer.close();
+    await done;
+    assert.strictEqual(out.text(), "HELLO");
+  });
+
+  test("a userland pair, in pipeline() as the return value of the last function stage", async () => {
+    const pair = userlandPair();
+    const { promise, done } = callback();
+    let pumped: Promise<void> | undefined;
+    const output = pipeline(
+      source(),
+      (chunks: AsyncIterable<Buffer>) => {
+        const writer = pair.writable.getWriter();
+        pumped = (async () => {
+          for await (const chunk of chunks) await writer.write(chunk);
+          await writer.close();
+        })();
+        return pair;
+      },
+      done,
+    );
+    assert.strictEqual(await text(output), "HELLO");
+    await Promise.all([promise, pumped]);
+  });
+
   test("a userland pair, in compose()", async () => {
     assert.strictEqual(await text(compose(source(), userlandPair())), "HELLO");
+  });
+
+  test("a userland pair, in compose() as the first member", async () => {
+    const composed = compose(userlandPair(), new PassThrough());
+    composed.end(Buffer.from("hello"));
+    assert.strictEqual(await text(composed), "HELLO");
+  });
+
+  test("a middle stage whose readable side has its own source: the stage before it goes to the writable side", async () => {
+    let fed = "";
+    const readable = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from("own"));
+        controller.close();
+      },
+    });
+    const writable = new WritableStream({
+      write(chunk) {
+        fed += Buffer.from(chunk);
+      },
+    });
+    const out = sink();
+    await pipelineP(source(), { readable, writable }, out.stream);
+    assert.deepStrictEqual({ fed, out: out.text() }, { fed: "hello", out: "own" });
+  });
+
+  // Node asks for an object as the `writable` side.
+  test("not an object whose writable side is a function: it is the options of promises.pipeline()", async () => {
+    const { writable } = new TransformStream();
+    const callable = Object.assign(function () {}, {
+      getWriter: () => writable.getWriter(),
+      abort: (reason: unknown) => writable.abort(reason),
+    });
+    const out = sink();
+    await pipelineP(source(), out.stream, { signal: new AbortController().signal, readable: null, writable: callable });
+    assert.strictEqual(out.text(), "hello");
+    await assert.rejects(pipelineP(source(), { readable: new ReadableStream(), writable: callable }), {
+      code: "ERR_MISSING_ARGS",
+    });
   });
 
   test("addAbortSignal() treats a pair as it treats a TransformStream", () => {
@@ -586,6 +688,16 @@ describe("a userland WritableStream as the last stage", () => {
     ["an options object", () => [], () => [{ signal: new AbortController().signal }], "hello"],
     ["a TransformStream before it", () => [webTransform(upper)], () => [], "HELLO"],
     ["a userland pair before it", () => [userlandPair()], () => [], "HELLO"],
+    [
+      "a generator function before it",
+      () => [
+        async function* (chunks: AsyncIterable<Buffer>) {
+          for await (const chunk of chunks) yield chunk;
+        },
+      ],
+      () => [],
+      "hello",
+    ],
   ] as const) {
     test(`of promises.pipeline() with ${name}`, async () => {
       const out = userlandSink();
@@ -593,6 +705,18 @@ describe("a userland WritableStream as the last stage", () => {
       assert.strictEqual(out.text(), expected);
     });
   }
+
+  test("of promises.pipeline() after a ReadableStream", async () => {
+    const out = userlandSink();
+    const web = new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from("hello"));
+        controller.close();
+      },
+    });
+    await pipelineP(web, out.stream);
+    assert.strictEqual(out.text(), "hello");
+  });
 
   test("of compose()", async () => {
     const out = userlandSink();
@@ -690,6 +814,15 @@ if (typeof Bun !== "undefined") {
       }
     });
 
+    // eos() takes a native stream only. Node throws a TypeError with no code at the same point.
+    test("compose() of a writable first member and a userland last member throws ERR_INVALID_ARG_TYPE", () => {
+      for (const last of [userlandSink().stream, userlandPair()]) {
+        const first = new PassThrough();
+        assert.throws(() => compose(first, last), { code: "ERR_INVALID_ARG_TYPE" });
+        first.end();
+      }
+    });
+
     // An object whose `writable` is not a WritableStream only looks like a pair. Node takes it for
     // one, calls getWriter() on the `writable`, and the TypeError is an unhandled rejection of a
     // pipeline that never settles. Bun does not take it for a pair.
@@ -706,8 +839,11 @@ if (typeof Bun !== "undefined") {
       }
 
       test("with a plain object as the writable side is not a stage of pipeline()", async () => {
-        const stage = { readable: new ReadableStream(), writable: {} };
-        await assert.rejects(pipelineP(source(), stage, sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
+        const stage = () => ({ readable: new ReadableStream(), writable: {} });
+        await assert.rejects(pipelineP(source(), stage(), sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
+        // Node reads the readable side of a first stage. The same test serves compose(), which
+        // writes to its first member.
+        await assert.rejects(pipelineP(stage(), sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
       });
 
       test("with two node streams is a member of compose(), through Duplex.from()", async () => {
@@ -718,25 +854,27 @@ if (typeof Bun !== "undefined") {
         assert.strictEqual(await text(composed), "hello");
       });
 
-      // The `readable` of a Subprocess is its stdout stream. Its `writable` is its stdin FileSink.
-      test("a Subprocess with piped stdio is not a stage of pipeline() or a member of compose()", async () => {
+      // The `readable` of a Subprocess is its stdout stream. Its `writable` is its stdin FileSink,
+      // which is not a WritableStream. These results change when `writable` becomes one.
+      test("a Subprocess with piped stdio is rejected with ERR_INVALID_ARG_TYPE, not with an unhandled TypeError", async () => {
         const spawn = () => Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdin: "pipe", stdout: "pipe" });
         await using inPipeline = spawn();
+        await using first = spawn();
         await using inCompose = spawn();
         await assert.rejects(pipelineP(source(), inPipeline, sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
+        await assert.rejects(pipelineP(first, sink().stream), { code: "ERR_INVALID_ARG_TYPE" });
         assert.throws(() => compose(inCompose, new PassThrough()), { code: "ERR_INVALID_ARG_TYPE" });
       });
     });
 
-    // The expected results of this file are those of Node.js 26.
+    // The expected results were recorded from Node.js v26.3.0. Node.js 23 and older cannot parse
+    // the `await using` above.
     const node = nodeExe();
     const nodeMajor = node
-      ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv })
-          .stdout.toString()
-          .trim()
-      : "";
+      ? Number(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv }).stdout)
+      : 0;
 
-    (nodeMajor === "26" ? test : test.skip)("all tests pass in Node.js 26", async () => {
+    (nodeMajor >= 24 ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

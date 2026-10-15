@@ -33,17 +33,18 @@ describe("a preload that does not resolve", () => {
   });
 
   // What the resolver finds depends on the files beside the preload, so these cases get a directory of their own.
-  test("the message is the resolver's last error; a preload that resolves still runs", async () => {
+  test("the message is the resolver's last error, and the parent's log is untouched", async () => {
     using dir = tempDir("worker-preload-resolve", {
       "package.json": JSON.stringify({ imports: { "#fs": "node:fs" } }),
       "worker.js": `postMessage(globalThis.preloaded ?? "no preload");`,
       "ok.js": `globalThis.preloaded = "ok.js ran";`,
+      "never.js": `console.log("never.js ran");`,
       "bad-tsconfig-1/tsconfig.json": `{ "compilerOptions": `,
       "bad-tsconfig-2/tsconfig.json": `{ "compilerOptions": `,
       "bad-tsconfig-2/ok.js": `globalThis.preloaded = "bad-tsconfig-2/ok.js ran";`,
       "main.js": `
         const results = [];
-        for (const preload of [["fs"], ["#fs"], ["./ok.js", "./missing.js"], ["./bad-tsconfig-1/missing.js"]]) {
+        for (const preload of [["fs"], ["#fs"], ["./never.js", "./missing.js"], ["./bad-tsconfig-1/missing.js"]]) {
           try {
             new Worker("./worker.js", { preload }).terminate();
             results.push("did not throw");
@@ -51,6 +52,8 @@ describe("a preload that does not resolve", () => {
             results.push(e.constructor.name + ": " + e.message);
           }
         }
+        // The parent's own resolver still reports its failures.
+        results.push(await import("./missing-import.js").then(() => "imported", e => e.name));
         for (const preload of ["./ok.js", "./bad-tsconfig-2/ok.js"]) {
           const worker = new Worker("./worker.js", { preload });
           results.push(
@@ -69,17 +72,19 @@ describe("a preload that does not resolve", () => {
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const expected = [
       "TypeError: " + unresolved("fs"),
       `TypeError: BuildMessage: Cannot use "#fs" as an entry point: it resolves to a builtin module`,
       "TypeError: " + unresolved("./missing.js"),
       "TypeError: " + unresolved("./bad-tsconfig-1/missing.js"),
+      "ResolveMessage",
       "ok.js ran",
       "bad-tsconfig-2/ok.js ran",
     ];
+    expect(stderr).toBe("");
     expect(stdout).toBe(JSON.stringify(expected, null, 2) + "\n");
     expect(exitCode).toBe(0);
   });

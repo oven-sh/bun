@@ -42,10 +42,10 @@ public:
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, const String& loadedPath);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, JSC::SourceProvider* source);
 
-    /// `specifier` is a module key, `<path>` or `<path>?<query>` (not URL encoded), and `loadedPath` is the `<path>` its source was read from, or null.
-    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, const String& loadedPath);
+    /// `specifier` is a module key, `<path>` or `<path>?<query>` (not URL encoded), and the URL of `source` (or null) is the `<path>` the module was read from.
+    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, JSC::SourceProvider* source);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

@@ -77,7 +77,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
     return create(vm, globalObject, structure, url);
 }
 
-ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, const String& loadedPath)
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, JSC::SourceProvider* source)
 {
     if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(specifierOrURL))) {
         return create(globalObject, url->href().string());
@@ -85,15 +85,16 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
     WTF::String specifier = specifierOrURL.toWTFString(globalObject);
     ASSERT(specifier);
-    return ImportMetaObject::createFromSpecifier(globalObject, specifier, loadedPath);
+    return ImportMetaObject::createFromSpecifier(globalObject, specifier, source);
 }
 
 extern "C" uint32_t Bun__VM__moduleKeyPathLength(void* bunVM, const BunString* key);
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, const String& loadedPath)
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, JSC::SourceProvider* source)
 {
     URL url;
     if (specifier.find('?') != notFound) {
+        const String& loadedPath = source ? source->sourceURL() : nullString();
         unsigned pathLength = loadedPath.length();
         if (pathLength >= specifier.length() || specifier[pathLength] != '?' || !specifier.startsWith(loadedPath)) {
             auto key = Bun::toString(specifier);

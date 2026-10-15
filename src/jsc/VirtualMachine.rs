@@ -3991,7 +3991,6 @@ pub struct ModuleKeyQuery {
     key: bun_core::String,
     /// In code units of `key`.
     path_len: u32,
-    path_len_utf8: u32,
 }
 
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
@@ -5110,16 +5109,28 @@ impl VirtualMachine {
         path: &bun_core::String,
         query: &bun_core::String,
     ) -> bun_core::String {
-        let path_utf8 = path.to_utf8();
-        let query_utf8 = query.to_utf8();
-        let mut joined = Vec::with_capacity(path_utf8.len() + query_utf8.len());
-        joined.extend_from_slice(&path_utf8);
-        joined.extend_from_slice(&query_utf8);
-        let key = bun_core::String::clone_utf8(&joined);
+        let (key, path_len) =
+            if path.is_8bit() && !path.is_utf8() && query.is_8bit() && !query.is_utf8() {
+                let (path, query) = (path.latin1(), query.latin1());
+                let (key, joined) =
+                    bun_core::String::create_uninitialized_latin1(path.len() + query.len());
+                if joined.len() == path.len() + query.len() {
+                    joined[..path.len()].copy_from_slice(path);
+                    joined[path.len()..].copy_from_slice(query);
+                }
+                (key, path.len())
+            } else {
+                let path = path.to_utf8();
+                let mut joined = path.to_vec();
+                joined.extend_from_slice(&query.to_utf8());
+                (
+                    bun_core::String::clone_utf8(&joined),
+                    bun_core::strings::element_length_utf8_into_utf16(&path),
+                )
+            };
         self.module_key_query = ModuleKeyQuery {
             key: key.clone(),
-            path_len: bun_core::strings::element_length_utf8_into_utf16(&path_utf8) as u32,
-            path_len_utf8: path_utf8.len() as u32,
+            path_len: path_len as u32,
         };
         key
     }
@@ -5127,7 +5138,21 @@ impl VirtualMachine {
     /// Byte length of `<path>` in the module key `<path>?<query>`: the one the last resolve joined, or else up to the first `?` that the folder listings do not have in a name.
     pub fn module_key_path_len(&mut self, key: &[u8]) -> usize {
         if self.module_key_query.key.eql_utf8(key) {
-            return self.module_key_query.path_len_utf8 as usize;
+            // A code unit is a byte in a key that is all ASCII. In any other key they are counted.
+            let units = self.module_key_query.path_len as usize;
+            if self.module_key_query.key.length() == key.len() {
+                return units;
+            }
+            let mut seen = 0;
+            for (offset, byte) in key.iter().enumerate() {
+                if byte & 0xC0 != 0x80 {
+                    if seen == units {
+                        return offset;
+                    }
+                    seen += if *byte >= 0xF0 { 2 } else { 1 };
+                }
+            }
+            return key.len();
         }
         // In a `data:` URL everything after the comma is the payload.
         if bun_core::strings::has_prefix_comptime(key, b"data:") {

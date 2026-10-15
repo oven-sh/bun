@@ -297,7 +297,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
-            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename, code.provider()->sourceURL());
+            auto* importMeta = Zig::ImportMetaObject::create(globalObject, filename, code.provider());
             RETURN_IF_EXCEPTION(scope, false);
             importMeta->setModuleGraph(vm, graph);
             args.append(importMeta);

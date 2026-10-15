@@ -2516,18 +2516,23 @@ impl<'a> Resolver<'a> {
     /// Index of the `?` that starts the query of `path` (absolute, or relative to `dir`; its first `?` is at `first`): a `?` is part of a name while the listing of its folder has that name.
     pub fn query_start_in_path(&mut self, dir: &[u8], path: &[u8], first: usize) -> Option<usize> {
         let mut question = first;
-        let mut folder_buf = bun_paths::path_buffer_pool::get();
+        let mut folder_buf = None;
         loop {
             let name_start =
                 strings::last_index_of_char(&path[..question], b'/').map_or(0, |slash| slash + 1);
             let name_end = strings::index_of_char_usize(&path[question..], b'/')
                 .map_or(path.len(), |slash| question + slash);
-            if dir.len() + name_start + 2 >= folder_buf.len() {
-                return Some(question);
-            }
-            let folder = bun_paths::resolve_path::join_abs_string_buf::<
-                bun_paths::resolve_path::platform::Auto,
-            >(dir, &mut folder_buf[..], &[&path[..name_start]]);
+            let folder: &[u8] = if &path[..name_start] == b"./" && dir.len() > 1 {
+                bun_paths::string_paths::without_trailing_slash(dir)
+            } else {
+                let buf = folder_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
+                if dir.len() + name_start + 2 >= buf.len() {
+                    return Some(question);
+                }
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(dir, &mut buf[..], &[&path[..name_start]])
+            };
             let Some(listing) = self.read_dir_info_ignore_error(folder) else {
                 return Some(question);
             };

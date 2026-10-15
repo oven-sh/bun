@@ -4245,8 +4245,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    auto* provider = record->sourceCode().provider();
-    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key, provider ? provider->sourceURL() : WTF::nullString());
+    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key, record->sourceCode().provider());
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     return importMeta;
 }

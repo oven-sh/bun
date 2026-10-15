@@ -174,6 +174,21 @@ static Vector<String> convertProtocols(JSGlobalObject& lexicalGlobalObject, JSVa
     return { convert<IDLDOMString>(lexicalGlobalObject, value) };
 }
 
+// Parses `tls` or `proxy.tls`.
+static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocketTLSOptions& result)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue rejectUnauthorizedValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, tls, Identifier::fromString(vm, "rejectUnauthorized"_s));
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (rejectUnauthorizedValue.isBoolean())
+        result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
+
+    result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
+    RETURN_IF_EXCEPTION(throwScope, );
+}
+
 static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object, WebSocketOptions& options)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -203,20 +218,10 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         RETURN_IF_EXCEPTION(throwScope, );
     }
 
-    // Parses `tls` or `proxy.tls`. The caller checks for an exception.
-    auto convertTLS = [&](JSObject* tls, WebSocketTLSOptions& result) {
-        JSValue rejectUnauthorizedValue = get(tls, Identifier::fromString(vm, "rejectUnauthorized"_s));
-        RETURN_IF_EXCEPTION(throwScope, );
-        if (rejectUnauthorizedValue.isBoolean())
-            result.rejectUnauthorized = rejectUnauthorizedValue.asBoolean();
-
-        result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
-    };
-
     JSValue tlsValue = get(object, Identifier::fromString(vm, "tls"_s));
     RETURN_IF_EXCEPTION(throwScope, );
     if (auto* tls = tlsValue.getObject()) {
-        convertTLS(tls, options.tls);
+        convertTLS(globalObject, tls, options.tls);
         RETURN_IF_EXCEPTION(throwScope, );
 
         // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
@@ -272,7 +277,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         JSValue proxyTLSValue = get(proxy, Identifier::fromString(vm, "tls"_s));
         RETURN_IF_EXCEPTION(throwScope, );
         if (auto* proxyTLS = proxyTLSValue.getObject()) {
-            convertTLS(proxyTLS, options.proxyTLS.emplace());
+            convertTLS(globalObject, proxyTLS, options.proxyTLS.emplace());
             RETURN_IF_EXCEPTION(throwScope, );
         }
     }

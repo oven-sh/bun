@@ -1494,18 +1494,11 @@ function nativeBufferedAmount(websocket: WebSocket): number {
 // A callback that has to wait runs from a drain or close event, which doesn't have the caller's AsyncLocalStorage
 // context. That includes `socket.write()` callbacks on the stream transport.
 function bindAsyncContext(cb: SendCallback): SendCallback {
-  const context = $getInternalField($asyncContext, 0);
-  if (context === undefined) return cb;
+  const frame = $getInternalField($asyncContext, 0);
+  if (frame === undefined) return cb;
 
-  return err => {
-    const previous = $getInternalField($asyncContext, 0);
-    $putInternalField($asyncContext, 0, context);
-    try {
-      cb(err);
-    } finally {
-      $putInternalField($asyncContext, 0, previous);
-    }
-  };
+  const runInFrame = require("internal/async_context_frame").run;
+  return err => runInFrame(frame, cb, undefined, err);
 }
 
 // A send callback runs once its frame has been written to the kernel, like a `socket.write()` callback.

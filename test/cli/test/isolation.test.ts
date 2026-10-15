@@ -1491,6 +1491,30 @@ describe.concurrent("bun test --isolate=modules", () => {
     );
   });
 
+  test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {
+    const state = `JSON.stringify([
+      typeof Math.max, Math.PI, "extra" in Array.prototype.map, Array.prototype.map.name, Array.prototype[0], Object.keys(Math), process.title === title,
+      typeof Object.getOwnPropertyDescriptor(Map.prototype, "size").get, typeof Object.getOwnPropertyDescriptor(Set.prototype, "size").set, Symbol.iterator in Number.prototype, JSON[Symbol.toStringTag], Object.keys(Array.prototype),
+      Object.getOwnPropertyDescriptor(URL.prototype, "href").get.name, Reflect.ownKeys(Date).length, Reflect.ownKeys(Date.now).join(), typeof Bun.inspect,
+    ])`;
+    const change = [
+      `delete Math.max; Array.prototype.map.extra = 1; Array.prototype[0] = "zero"; process.title = "changed";`,
+      `Math.max = 1; Math.added = 1; Object.defineProperty(Set.prototype, "size", { set() {} }); delete Array.prototype.map.name; Number.prototype[Symbol.iterator] = function* () {};`,
+      `Object.defineProperty(Map.prototype, "size", { value: 1 }); Object.defineProperty(URL.prototype, "href", { get() {} }); Date.now.extra = Date.extra = 1;`,
+      `delete JSON[Symbol.toStringTag]; delete Math.max; Math.max = () => 0; Array.prototype.extra = 1; Bun.inspect = 1;`,
+      ``,
+    ];
+    const files = Object.fromEntries(
+      change.map((code, i) => [
+        `${i}.test.js`,
+        `const { title } = process; test("${i}", () => { console.log(${state}); ${code} });`,
+      ]),
+    );
+    const lines = (await passes(files, change.length)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(change.length).fill(lines[0]));
+    expect(JSON.parse(lines[0]).slice(0, 5)).toEqual(["function", Math.PI, false, "map", null]);
+  });
+
   test("the global object and the builtin modules are the same for every file", async () => {
     const files = {
       "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; });`,

@@ -2,6 +2,16 @@
 // so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
+const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionShapesOfObjects",
+  1,
+);
+const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionIndexesOfChangedObjects",
+  2,
+);
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
@@ -29,6 +39,9 @@ const objects: object[] = [];
 const savedProperties: Properties[] = [];
 const savedPropertyCounts: number[] = [];
 const seen = new Map<object, true>();
+// Nearly all of the objects are untouched by a test file. Native code tells which ones may not be.
+let shapes: unknown[];
+let alwaysComparedCount: number;
 let env: Map<string, string | undefined>;
 let listeners: Map<string | symbol, Function[]>;
 
@@ -74,10 +87,15 @@ function saveProperties(object: object, isGlobalThis: boolean) {
   if (prototype) saveProperties(prototype, false);
 }
 
-function isSame(a: PropertyDescriptor, b: PropertyDescriptor) {
-  const x = a.value;
-  const y = b.value;
-  return (x === y ? x !== 0 || 1 / x === 1 / y : x !== x && y !== y) && a.get === b.get && a.set === b.set;
+// `current` inherits from Object.prototype, which a test file may have added to.
+function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
+  const x = $getByIdDirect(current, "value");
+  const y = saved.value;
+  return (
+    (x === y ? x !== 0 || 1 / x === 1 / y : x !== x && y !== y) &&
+    $getByIdDirect(current, "get") === saved.get &&
+    $getByIdDirect(current, "set") === saved.set
+  );
 }
 
 function restoreProperties(object: object, properties: Properties, size: number) {
@@ -93,8 +111,9 @@ function restoreProperties(object: object, properties: Properties, size: number)
       if (isTracked(object, key)) delete (object as any)[key];
       continue;
     }
-    const current = getDescriptor(object, key)!;
-    if (!isSame(current, saved) && (current.configurable || current.writable)) defineProperty(object, key, saved);
+    const current = getOwnPropertyDescriptor(object, key)!;
+    if (!isSame(current, saved) && ($getByIdDirect(current, "configurable") || $getByIdDirect(current, "writable")))
+      defineProperty(object, key, saved);
   }
   if (found === size) return;
   properties.$forEach((saved, key) => {
@@ -126,10 +145,16 @@ function restoreListeners() {
   }
 }
 
+function saveShapes() {
+  shapes = shapesOf(objects);
+  alwaysComparedCount = indexesOfChanged(objects, shapes).length;
+}
+
 // The first call takes the snapshot. Later calls restore it.
 export default function restoreGlobals() {
   if (!env) {
     saveProperties(globalThis, true);
+    saveShapes();
     env = new Map();
     const keys = getOwnPropertyNames(process.env);
     for (let i = 0; i < keys.length; i++) env.$set(keys[i], process.env[keys[i]]);
@@ -138,11 +163,15 @@ export default function restoreGlobals() {
     for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(process, names[i]));
     return;
   }
-  for (let i = 0; i < objects.length; i++) {
+  const changed = indexesOfChanged(objects, shapes);
+  for (let i = 0; i < changed.length; i++) {
+    const index = changed[i];
     try {
-      restoreProperties(objects[i], savedProperties[i], savedPropertyCounts[i]);
+      restoreProperties(objects[index], savedProperties[index], savedPropertyCounts[index]);
     } catch {}
   }
+  // A property that was deleted and put back is in another slot.
+  if (changed.length !== alwaysComparedCount) saveShapes();
   restoreEnv();
   restoreListeners();
 }

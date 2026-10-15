@@ -2040,7 +2040,7 @@ impl TestCommand {
         };
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload = ctx.preloads.clone();
+        vm.preload.clone_from(&ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.vitest_globals =
             ctx.test_options.globals == Some(TestGlobals::Vitest);
@@ -2826,6 +2826,7 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;

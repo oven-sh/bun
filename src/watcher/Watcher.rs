@@ -104,7 +104,7 @@ const MAX_UNRESOLVED_IMPORTS: usize = 256;
 struct UnresolvedImport {
     dir_hash: HashType,
     candidates: Vec<Box<[u8]>>,
-    /// Candidates that were in the directory when the import failed. Only a listing needs them: they are not new.
+    /// Candidates that were in the directory when the import failed. One of them created again is not a new entry.
     present: Vec<Box<[u8]>>,
 }
 
@@ -130,9 +130,8 @@ impl UnresolvedImport {
             .any(|candidate| strings::eql_case_insensitive_ascii(candidate, name, true))
     }
 
-    fn is_new_candidate(&self, listed_name: &[u8]) -> bool {
-        Self::is_candidate(&self.candidates, listed_name)
-            && !self.present.iter().any(|p| &**p == listed_name)
+    fn is_new_candidate(&self, name: &[u8]) -> bool {
+        Self::is_candidate(&self.candidates, name) && !self.present.iter().any(|p| &**p == name)
     }
 }
 
@@ -1117,7 +1116,7 @@ impl Watcher {
             return false;
         }
         if let Some(name) = name {
-            return records.any(|u| UnresolvedImport::is_candidate(&u.candidates, name));
+            return records.any(|u| u.is_new_candidate(name));
         }
         let records: Vec<&UnresolvedImport> = records.collect();
         for_each_dir_entry(dir_path, |listed_name| {

@@ -122,7 +122,7 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
       "entry.js": `
         import { writeFileSync } from "node:fs";
         let db = "none";
-        try { db = require("./db"); } catch {}
+        try { require("./db"); db = "found"; } catch {}
         console.log("RUN", db);
         writeFileSync("db.sqlite-journal", String(Date.now()));
       `,
@@ -139,7 +139,39 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     // Same bounded window as above: a correct build prints nothing here.
     expect(await stdout.within(2000)).toEqual([]);
 
-    await writeFile(join(String(dir), "db.js"), `module.exports = "found";`);
+    await writeFile(join(String(dir), "db.js"), "");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN found");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
+  test.concurrent("a caught miss does not rerun when a name that was there is created again", async () => {
+    // `./cache` misses while the name `cache` is there: a directory with no index.
+    await using dir = tempDir("watch-probed-directory", {
+      "entry.js": `
+        import { mkdirSync, rmSync } from "node:fs";
+        let cache = "none";
+        try { require("./cache"); cache = "found"; } catch {}
+        console.log("RUN", cache);
+        rmSync("cache", { recursive: true });
+        mkdirSync("cache");
+      `,
+      "cache": {},
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = new LineReader(proc.stdout);
+
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN none");
+    // Same bounded window as above: a correct build prints nothing here.
+    expect(await stdout.within(2000)).toEqual([]);
+
+    await writeFile(join(String(dir), "cache.js"), "");
     expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN found");
 
     proc.kill("SIGKILL");

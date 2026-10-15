@@ -441,6 +441,77 @@ impl BunxCommand {
         Self::get_bin_name_from_cache_directory(transpiler, bunx_cache_dir, package_name)
     }
 
+    /// The spawned install reads `bunfig.toml` and `.npmrc` from the project root, and they
+    /// can name another registry or install policy. A project that has one gets its own
+    /// tree: this hashes each file's path, size and mtime, so an edit gets a new tree too.
+    /// The cwd and every ancestor with a package.json can be that root. The listings come
+    /// from `configure_env_for_run`, so this returns `None` without a syscall when none of
+    /// them has such a file. The user-level `.npmrc` applies to every run and is not counted.
+    fn project_config_cache_key(
+        cwd: bun_resolver::DirInfoRef,
+        generation: bun_core::Generation,
+    ) -> Option<u64> {
+        let user_dirs = [
+            bun_core::env_var::HOME.get(),
+            bun_core::env_var::XDG_CONFIG_HOME.get(),
+        ];
+        let mut key: Option<u64> = None;
+        let mut is_cwd = true;
+        let mut next = Some(cwd);
+        while let Some(dir) = next {
+            next = dir.get_parent();
+            let may_be_root = core::mem::replace(&mut is_cwd, false);
+            let (has_bunfig, has_npmrc) = {
+                let _lock = bun_resolver::fs::FileSystem::instance()
+                    .fs
+                    .entries_mutex
+                    .lock_guard();
+                let Some(entries) = dir.get_entries_ref_locked(generation) else {
+                    continue;
+                };
+                if !may_be_root && !entries.has_comptime_query(b"package.json") {
+                    continue;
+                }
+                (
+                    entries.has_comptime_query(b"bunfig.toml"),
+                    entries.has_comptime_query(b".npmrc"),
+                )
+            };
+            let dir_path = strings::without_trailing_slash(dir.abs_path);
+            let is_user_dir = user_dirs.iter().flatten().any(|user_dir| {
+                strings::eql_long(strings::without_trailing_slash(user_dir), dir_path, true)
+            });
+            for (listed, name) in [
+                (has_bunfig, b"bunfig.toml".as_slice()),
+                (has_npmrc && !is_user_dir, b".npmrc".as_slice()),
+            ] {
+                if !listed {
+                    continue;
+                }
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let len = dir_path.len() + 1 + name.len();
+                if len >= buf.len() {
+                    continue;
+                }
+                buf[..dir_path.len()].copy_from_slice(dir_path);
+                buf[dir_path.len()] = bun_paths::SEP;
+                buf[dir_path.len() + 1..len].copy_from_slice(name);
+                buf[len] = 0;
+                let Ok(stat) = bun_sys::stat(ZStr::from_buf(&buf[..], len)) else {
+                    continue;
+                };
+                let mtime = bun_sys::stat_mtime(&stat);
+                let mut identity = [0u8; 24];
+                identity[..8].copy_from_slice(&(stat.st_size as u64).to_le_bytes());
+                identity[8..16].copy_from_slice(&mtime.sec.to_le_bytes());
+                identity[16..].copy_from_slice(&mtime.nsec.to_le_bytes());
+                let seed = bun_wyhash::hash_with_seed(key.unwrap_or(0), &buf[..len]);
+                key = Some(bun_wyhash::hash_with_seed(seed, &identity));
+            }
+        }
+        key
+    }
+
     /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
     #[cfg(unix)]
     fn cache_dir(
@@ -639,6 +710,8 @@ impl BunxCommand {
         )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is initialized.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
+        let project_config_key =
+            Self::project_config_cache_key(root_dir_info, this_transpiler.resolver.generation);
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
@@ -725,6 +798,9 @@ impl BunxCommand {
         if let Some(age) = opts.minimum_release_age {
             package_fmt.extend_from_slice(b"+min-age=");
             package_fmt.extend_from_slice(age);
+        }
+        if let Some(key) = project_config_key {
+            package_fmt.extend_from_slice(format!("+config={key:x}").as_bytes());
         }
         bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
@@ -962,11 +1038,25 @@ impl BunxCommand {
         let minimum_release_age_arg = opts
             .minimum_release_age
             .map(|age| [b"--minimum-release-age=".as_slice(), age].concat());
+        // The install runs from the invoking directory, so it takes bunfig.toml, .npmrc and
+        // .env from the root `bun add` would pick there, and installs into the cache directory.
+        let mut install_dir_buf = bun_paths::path_buffer_pool::get();
+        let install_dir: &[u8] = if bun_paths::is_absolute(bunx_cache_dir) {
+            bunx_cache_dir
+        } else {
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(
+                top_level_dir,
+                &mut install_dir_buf[..],
+                &[bunx_cache_dir],
+            )
+        };
         let mut args: Vec<&[u8]> = vec![
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
             install_param.as_slice(),
             b"--no-summary",
+            b"--bunx-install-dir",
+            install_dir,
         ];
         if update_request.version.tag == VersionTag::DistTag || tree == Tree::Stale {
             // No manifest cache, so that @latest is fetched from the registry.
@@ -1004,7 +1094,7 @@ impl BunxCommand {
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
             envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
-            cwd: Box::<[u8]>::from(bunx_cache_dir),
+            cwd: Box::<[u8]>::from(top_level_dir),
             stderr: proc_sync::SyncStdio::Inherit,
             stdout: proc_sync::SyncStdio::Inherit,
             stdin: proc_sync::SyncStdio::Inherit,

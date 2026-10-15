@@ -908,7 +908,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(self.manager.options.config_dir()),
             extra_fds,
             ..Default::default()
         };
@@ -1009,7 +1009,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(self.manager.options.config_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),

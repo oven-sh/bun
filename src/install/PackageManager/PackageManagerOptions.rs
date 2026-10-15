@@ -46,6 +46,9 @@ pub struct Options {
     /// `.npmrc` `//host/path/` credential lines, resolved by request URL.
     pub(crate) url_auth: Vec<Npm::registry::UrlAuth>,
     pub(crate) cache_directory: &'static [u8],
+    /// `bun add --bunx-install-dir`: the directory project config was read from. Paths that
+    /// config names resolve against it, not against the install directory. Empty otherwise.
+    pub(crate) config_root: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
@@ -140,6 +143,7 @@ impl Default for Options {
             registries: Npm::registry::Map::default(),
             url_auth: Vec::new(),
             cache_directory: b"",
+            config_root: b"",
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
@@ -652,6 +656,15 @@ fn expand_home_tilde(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 }
 
 impl Options {
+    /// The directory that paths named in project config resolve against.
+    pub(crate) fn config_dir(&self) -> &'static [u8] {
+        if self.config_root.is_empty() {
+            crate::bun_fs::FileSystem::instance().top_level_dir()
+        } else {
+            self.config_root
+        }
+    }
+
     pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
@@ -721,7 +734,15 @@ impl Options {
 
         if let Some(config) = bun_install_ref {
             if let Some(cache_directory) = config.cache_directory.as_deref() {
-                self.cache_directory = leak_static(&expand_home_tilde(cache_directory));
+                let cache_directory = expand_home_tilde(cache_directory);
+                self.cache_directory =
+                    if self.config_root.is_empty() || bun_paths::is_absolute(&cache_directory) {
+                        leak_static(&cache_directory)
+                    } else {
+                        leak_static(bun_paths::resolve_path::join_abs_string::<
+                            bun_paths::resolve_path::platform::Loose,
+                        >(self.config_root, &[&cache_directory]))
+                    };
             }
 
             if let Some(ca) = &config.ca {
@@ -1174,6 +1195,12 @@ impl Options {
         // `bun pm why` command options
         self.top_only = cli.top_only;
         self.depth = cli.depth;
+
+        // A bunx install adds one package to a root that starts as `{}`, so a frozen
+        // lockfile from the project's or the user's config can never be satisfied.
+        if !self.config_root.is_empty() {
+            self.enable.set(Enable::FROZEN_LOCKFILE, false);
+        }
 
         // If the lockfile is frozen, don't save it to disk.
         if self.enable.contains(Enable::FROZEN_LOCKFILE) {

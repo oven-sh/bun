@@ -1936,6 +1936,9 @@ pub fn init(
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
     let mut no_project = false;
+    // `--bunx-install-dir`: the walk only finds the directory that project config is read
+    // from, so it must not write to, create, or stop on anything in that project.
+    let read_only_walk = cli.bunx_install_dir.is_some();
     let root_package_json_file = 'root_package_json_file: {
         let this_cwd: &[u8];
         let mut created_package_json = false;
@@ -1944,7 +1947,8 @@ pub fn init(
             // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
             let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
                 && !cli.dry_run
-                && !cli.no_save;
+                && !cli.no_save
+                && !read_only_walk;
 
             while let Some((dir, opened)) = walk.next(if need_write {
                 bun_sys::O::RDWR
@@ -1961,6 +1965,11 @@ pub fn init(
                         break 'child f;
                     }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
+                    Err(_) if read_only_walk => {
+                        this_cwd = without_trailing_slash_windows_path(dir);
+                        no_project = true;
+                        break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+                    }
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
                         Output::err(
                             "EACCES",
@@ -2014,7 +2023,7 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
-            if cli.no_project_ok {
+            if cli.no_project_ok || read_only_walk {
                 // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
                 this_cwd = original_cwd;
                 no_project = true;
@@ -2040,9 +2049,22 @@ pub fn init(
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
             // Above `bunx`'s tree are the user's cache and home: no workspace of it.
-            let is_bunx_install =
-                bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
+            // A read-only walk starts in the project that `bunx` runs in.
+            let is_bunx_install = !read_only_walk
+                && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
             if !created_package_json && !no_project && !is_bunx_install {
+                // A read-only walk ends the workspace search at a parent package.json it
+                // cannot read or parse. The install does not use that file.
+                macro_rules! read_parent {
+                    ($result:expr) => {
+                        match $result {
+                            Ok(value) => value,
+                            Err(_) if read_only_walk => break,
+                            Err(err) => return Err(err.into()),
+                        }
+                    };
+                }
+                let mut read_only_log = read_only_walk.then(bun_ast::Log::init);
                 // Finding the workspace root must not depend on its package.json being writable.
                 while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
                     let Ok(json_file) = opened else {
@@ -2050,9 +2072,9 @@ pub fn init(
                     };
                     #[cfg(windows)]
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();
-                    let json_stat_size = json_file.get_end_pos()?;
+                    let json_stat_size = read_parent!(json_file.get_end_pos());
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
-                    let json_len = json_file.pread_all(&mut json_buf, 0)?;
+                    let json_len = read_parent!(json_file.pread_all(&mut json_buf, 0));
                     // As opened: the fd's realpath may be on another drive or outside the project.
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
                     // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
@@ -2067,10 +2089,13 @@ pub fn init(
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let parsed =
-                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
-                            &mut *ctx.log
-                        })?;
+                    let parsed = read_parent!(crate::bun_json::ParsedJson::parse_package_json(
+                        &json_source,
+                        match read_only_log.as_mut() {
+                            Some(log) => log,
+                            None => unsafe { &mut *ctx.log },
+                        }
+                    ));
                     let json = parsed.root;
                     if subcommand == Subcommand::Pm {
                         if let Some(name) = json.get(b"name").and_then(|e| {
@@ -2213,7 +2238,7 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let mut entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2277,8 +2302,48 @@ pub fn init(
         ctx.install = Some(Box::new(install));
     }
 
+    // `--bunx-install-dir`: project config is loaded, so leave the project. From here on
+    // the root is the install directory, as if `bun add` had started there. Only
+    // `original_cwd_clone` keeps the invoking cwd (the base of a relative `cafile`).
+    let mut config_root: &'static [u8] = b"";
+    if let Some(install_dir) = cli.bunx_install_dir {
+        config_root = fs.dirname_store().append(fs.top_level_dir())?;
+        bun_sys::chdir(&ZBox::from_bytes(install_dir))?;
+        // SAFETY: main-thread globals, written the same way as after `load_config` above.
+        unsafe {
+            let cwd = &mut *CWD_BUF.get();
+            let cwd_len = bun_sys::getcwd(&mut cwd[..])?;
+            let len = without_trailing_slash_windows_path(&cwd[..cwd_len]).len();
+            cwd[len] = 0;
+            fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), len));
+            let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
+            let tld_no_slash = strings::without_trailing_slash(fs.top_level_dir());
+            let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
+            root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
+            root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
+            root_buf[plen] = 0;
+            ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
+        }
+        original_package_json_path_buf.clear();
+        original_package_json_path_buf.extend_from_slice(fs.top_level_dir());
+        push_package_json(&mut original_package_json_path_buf);
+
+        workspace_package_json_cache = WorkspacePackageJSONCache {
+            map: Default::default(),
+        };
+        workspace_name_hash = None;
+        entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+            // SAFETY: same BSSMap-owned slot and single-threaded access as the first read.
+            fs::EntriesOption::Entries(e) => unsafe {
+                &mut *std::ptr::from_mut::<fs::DirEntry>(*e)
+            },
+            fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        };
+    }
+
     let options = Options {
         global: cli.global,
+        config_root,
         ..Default::default()
     };
 

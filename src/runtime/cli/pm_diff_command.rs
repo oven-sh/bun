@@ -1432,7 +1432,11 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                         rebase_key_onto(&mut kn, &shown_n, disp_n);
                         let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
                         let same_key = ko.text == kn.text;
-                        if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
+                        if !same_key && shown_o.text == shown_n.text {
+                            // What the re-prints do not tell apart is in the files' own lines.
+                            change.semantic = Semantic::Text;
+                            unified_hunks(o, n, flags.context, style, &mut change);
+                        } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
                             change.origin = Some([shown_o.origin, shown_n.origin]);
                             unified_hunks(
                                 &shown_o.text,

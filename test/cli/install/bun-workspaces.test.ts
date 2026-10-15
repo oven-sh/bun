@@ -4284,7 +4284,7 @@ describe("a workspace outside the project", () => {
       }
 
       const { out, exitCode } = await run(project, env, "pm", "ls");
-      expect(out).toContain("app@workspace:../app");
+      expect(out).toContain(`app@workspace:${join("..", "app")}`);
       expect(exitCode).toBe(0);
     });
   });

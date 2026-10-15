@@ -757,10 +757,7 @@ impl HiddenFromDiff {
         let mut iter = sys::iterate_dir(self.folder.fd);
         while let Some(entry) = iter.next()? {
             let name = entry.name.slice_u8();
-            // The entry of a patched package has the file as well.
-            if entry.kind != sys::EntryKind::Directory
-                && strings::has_prefix(name, crate::bun_hash_tag)
-                && !sys::exists(resolve_path::join::<platform::Auto>(&[cache_entry, name]))
+            if entry.kind != sys::EntryKind::Directory && is_tag_of_another_entry(cache_entry, name)
             {
                 let name = ZBox::from_bytes(name);
                 sys::renameat(self.folder.fd, &name, self.stash.fd, &name)?;
@@ -934,13 +931,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     );
 
     // An earlier `bun patch` may have handed the folder out: what differs in it is somebody's work.
+    let cache_entry =
+        resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
     let keeps_changes = is_loaded
         && !manager.options.enable.force_install()
         && !is_link(&folder)
-        && has_its_own_files(&folder)
+        && may_be_a_copy_of(&cache_entry, &folder)
         && {
-            let cache_entry =
-                resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
             let Some(changes) = diff_against_cache(manager, &cache_entry, &folder) else {
                 Global::crash();
             };
@@ -1008,6 +1005,36 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 pub(crate) fn has_its_own_files(folder: &[u8]) -> bool {
     let package_json = resolve_path::join::<platform::Auto>(&[folder, b"package.json"]);
     sys::lstat(&ZBox::from_bytes(package_json)).map_or(true, |stat| stat.st_nlink == 1)
+}
+
+/// The `.bun-tag-<hash>` of a patched entry, which `cache_entry` is not.
+fn is_tag_of_another_entry(cache_entry: &[u8], name: &[u8]) -> bool {
+    strings::has_prefix(name, crate::bun_hash_tag)
+        && !sys::exists(resolve_path::join::<platform::Auto>(&[cache_entry, name]))
+}
+
+/// False for what an install laid, from this entry or from another.
+fn may_be_a_copy_of(cache_entry: &[u8], folder: &[u8]) -> bool {
+    let modified = |dir: &[u8]| {
+        let package_json = resolve_path::join::<platform::Auto>(&[dir, b"package.json"]);
+        (sys::lstat(&ZBox::from_bytes(package_json)).ok()).map(|stat| sys::stat_mtime(&stat))
+    };
+    // clonefile(2) gives a file of its own the times of the entry's. (So does a copy on Windows.)
+    let is_clone = cfg!(target_os = "macos")
+        && modified(cache_entry).is_some_and(|time| modified(folder) == Some(time));
+    if is_clone || !has_its_own_files(folder) {
+        return false;
+    }
+    let Ok(dir) = Dir::cwd().open_dir(folder, ITERATE) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(dir.fd);
+    while let Ok(Some(entry)) = iter.next() {
+        if is_tag_of_another_entry(cache_entry, entry.name.slice_u8()) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether an install ran scripts in the folder that the copy replaced: what they wrote is gone.

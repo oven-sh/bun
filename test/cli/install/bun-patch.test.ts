@@ -1409,6 +1409,32 @@ describe.concurrent("bun patch on a folder that has changes", () => {
       expect(await Bun.file(index).text()).toBe(patched + "// more\n");
     });
   });
+
+  // An install that copies or clones files leaves no hard link to tell its folder by. This one is
+  // of the patched package, and without the patch file `bun patch` starts from the published one.
+  test.each(["hoisted", "isolated"] as const)(
+    "what an install laid of a patch whose file is gone is replaced (%s linker, copyfile backend)",
+    async linker => {
+      await using tmp = tempDir("bun-patch-copyfile", {
+        "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
+        "bunfig.toml": `[install]\nlinker = "${linker}"\nglobalStore = false\n`,
+      });
+      const dir = String(tmp);
+      const env = projectEnv(dir);
+      const backend = ["--backend", "copyfile"];
+      const index = join(dir, "node_modules", "no-deps", "index.js");
+      await bunOk(dir, env, "install", ...backend);
+      const original = await Bun.file(index).text();
+      await bunOk(dir, env, "patch", "no-deps", ...backend);
+      await Bun.write(index, patched);
+      await bunOk(dir, env, "patch", "--commit", "no-deps", ...backend);
+      expect(await Bun.file(index).text()).toBe(patched);
+      rmSync(join(dir, "patches"), { recursive: true });
+
+      expect(await bunOk(dir, env, "patch", "no-deps", ...backend)).not.toContain("kept");
+      expect(await Bun.file(index).text()).toBe(original);
+    },
+  );
 });
 
 // bun has no command that removes a patch. `bun patch --commit` used to say "No changes detected"

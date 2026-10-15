@@ -1840,6 +1840,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       "directive-space.js": [`"use strict";\nf();\n`, `"use  strict";\nf();\n`],
       "directive-semi.js": [`"use strict";\nf();\n`, `;"use strict";\nf();\n`],
       "directive-paren.js": [`"use strict";\nf();\n`, `("use strict");\nf();\n`],
+      "directive-escape.js": [`"use strict";\nf();\n`, `"use\\x20strict";\nf();\n`],
       "hashbang.js": [`#!/usr/bin/env node\nf();\n`, `#!/usr/bin/envnode\nf();\n`],
       "hashbang-space.js": [`#!/usr/bin/env node\nf();\n`, `#!/usr/bin/env  node\nf();\n`],
       "pure.js": [`/* @__PURE__ */ run("a b");\nf();\n`, `/* @__PURE__ */ run("a  b");\nf();\n`],
@@ -2010,6 +2011,8 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
           "b/strict.min.js": long,
           "a/strict-inside.min.js": long.replace("{", `{"use strict";`),
           "b/strict-inside.min.js": long,
+          "a/strict-paren.min.js": `"use strict";` + long,
+          "b/strict-paren.min.js": `("use strict");` + long,
           "b/new-bin.min.js": "#!/bin/sh\n" + long,
           "b/new-strict.min.js": `"use strict";` + long,
           "b/new-pure.min.js": banner + `/* @__PURE__ */ String()||run("a");` + long,
@@ -2019,6 +2022,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     );
     expect(files["strict.min.js"]).toEqual([`- "use strict";`]);
     expect(files["strict-inside.min.js"]).toEqual([`-   "use strict";`]);
+    expect(files["strict-paren.min.js"].map(line => line.slice(0, 2))).toEqual(["- ", "+ "]);
     expect(files["new-bin.min.js"][0]).toBe("+ #!/bin/sh");
     expect(files["new-strict.min.js"][0]).toBe(`+ "use strict";`);
     expect(files["new-pure.min.js"].slice(0, 2)).toEqual(["+ /*! lib 1.0 | MIT */", `+ String() || run("a");`]);

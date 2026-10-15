@@ -80,9 +80,10 @@ impl InstalledFilter {
             ResolutionTag::Root | ResolutionTag::Symlink => return true,
             // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
             ResolutionTag::Workspace => {
-                self.path.set_length(self.top_len);
-                let _ = self.path.append(resolution.workspace().slice(buf));
-                return bun_sys::exists(self.path.slice());
+                // Not `append`: Windows takes a `..` in an absolute path literally.
+                let mut member = AutoAbsPath::init_top_level_dir();
+                let _ = member.join(&[resolution.workspace().slice(buf)]);
+                return bun_sys::exists(member.slice());
             }
             _ => {}
         }

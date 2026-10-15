@@ -71,12 +71,6 @@ define_id!(
     ParenId,
 );
 
-impl From<Atom> for u32 {
-    #[inline]
-    fn from(v: Atom) -> u32 {
-        v.0
-    }
-}
 impl From<u32> for Atom {
     #[inline]
     fn from(v: u32) -> Atom {

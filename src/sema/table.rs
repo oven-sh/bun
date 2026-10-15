@@ -149,18 +149,6 @@ impl Packed for () {
     fn unpack(_: u32) {}
 }
 
-impl Packed for u8 {
-    type Cell = AtomicU32;
-    #[inline]
-    fn pack(self) -> u32 {
-        1 + u32::from(self)
-    }
-    #[inline]
-    fn unpack(raw: u32) -> u8 {
-        (raw - 1) as u8
-    }
-}
-
 impl Packed for (crate::types::TypeId, bool) {
     type Cell = AtomicU32;
     #[inline]

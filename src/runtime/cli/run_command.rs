@@ -99,7 +99,7 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) enum EntryPath {
     /// The file to run.
     Resolved,
-    /// A path as `node` takes it. `Run::start` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
+    /// A path as `node` takes it. `boot` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
     Unresolved,
 }
 
@@ -1001,7 +1001,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
-        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
+        // cron-execution branch (a synthetic `cwd/[eval]` path) and `EntryPath::Unresolved` swap it
         // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
@@ -1098,6 +1098,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
+        if entry_kind == EntryPath::Unresolved
+            && vm.module_loader.eval_source.is_none()
+            && let Some(resolved) =
+                Self::resolve_entry_path(vm, entry, Self::preserve_symlinks_main(ctx))
+            && resolved != entry
+        {
+            vm.set_main_for_argv(entry);
+            vm.set_main(resolved);
+            run_entry = resolved;
+        }
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
@@ -1124,14 +1134,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
-            entry_kind,
             unchecked: (is_checked && watches).then_some(loader),
         }
         .start()
     }
 
     /// The module key of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
-    fn resolve_entry_path(vm: &mut VirtualMachine, entry: &'static [u8]) -> Option<&'static [u8]> {
+    fn resolve_entry_path(
+        vm: &mut VirtualMachine,
+        entry: &'static [u8],
+        preserve_symlinks: bool,
+    ) -> Option<&'static [u8]> {
         let top_level_dir = vm.top_level_dir();
         // Like the module loader, keep the resolver's messages out of `vm.log`.
         let mut log = bun_ast::Log::default();
@@ -1142,10 +1155,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             bun_resolver::Resolver::scoped_log(resolver, ::core::ptr::NonNull::from(&mut log))
         };
         // SAFETY: `vm` is borrowed for this call, so nothing else uses its resolver.
-        let resolved = unsafe { &mut *resolver }
-            .resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun)
-            .ok()?;
-        Some(resolved.path_const()?.text)
+        let resolver = unsafe { &mut *resolver };
+        let for_imports =
+            ::core::mem::replace(&mut resolver.opts.preserve_symlinks, preserve_symlinks);
+        let resolved = resolver.resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun);
+        resolver.opts.preserve_symlinks = for_imports;
+        Some(resolved.ok()?.path_const()?.text)
+    }
+
+    /// Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main` (`resolveMainPath`).
+    fn preserve_symlinks_main(ctx: &ContextData) -> bool {
+        ctx.runtime_options.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false)
     }
 
     /// Entry point for
@@ -1263,7 +1286,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
-            entry_kind: EntryPath::Resolved,
             unchecked: None,
         }
         .start()
@@ -1285,7 +1307,6 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
-    entry_kind: EntryPath,
     /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
     /// process waits for a change.
     unchecked: Option<Option<Loader>>,
@@ -1338,7 +1359,6 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
-            entry_kind,
             unchecked,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
@@ -1470,16 +1490,6 @@ impl Run<'_> {
             if !tld.is_empty() {
                 entry = tld;
             }
-        }
-
-        // Resolve last: `NODE_PRESERVE_SYMLINKS` and the `--watch`/`--hot` watcher must be on the resolver.
-        if entry_kind == EntryPath::Unresolved
-            && vm.module_loader.eval_source.is_none()
-            && let Some(resolved) = RunCommand::resolve_entry_path(vm, entry)
-            && resolved != entry
-        {
-            vm.set_main_for_argv(entry);
-            entry = resolved;
         }
 
         let has_type_errors = unchecked.is_some_and(|loader| {
@@ -2551,11 +2561,7 @@ impl RunCommand {
         // for this one resolve.
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
+            this_transpiler.resolver.opts.preserve_symlinks = Self::preserve_symlinks_main(ctx);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
             let resolved = match this_transpiler.resolver.resolve(

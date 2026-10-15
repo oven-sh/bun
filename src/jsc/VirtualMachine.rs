@@ -5275,10 +5275,23 @@ impl VirtualMachine {
                         .as_bytes()
                     };
 
-                    // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
+                    let mut busted = self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    );
+                    // The specifier can name a directory that now has an `index` file or a `package.json`.
+                    if source_to_use.len() + normalized_specifier.len() + 4 < buf.len() {
+                        let parts: [&[u8]; 2] = [source_to_use, normalized_specifier];
+                        let directory = bun_paths::resolve_path::join_abs_string_buf_z::<
+                            bun_paths::resolve_path::platform::Auto,
+                        >(top_level_dir, buf, &parts)
+                        .as_bytes();
+                        busted |= self.transpiler.resolver.bust_dir_cache(
+                            bun_paths::string_paths::without_trailing_slash_windows_path(directory),
+                        );
+                    }
+
+                    // Only re-query if we previously had something cached.
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

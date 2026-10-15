@@ -400,12 +400,14 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
       all += `require("./only-in-graphs-${i}.cjs");\n`;
     }
     writeFileSync(file("only-in-graphs.cjs"), all);
-    const load = async () => {
+    writeFileSync(file("only-in-graphs-first.cjs"), "");
+    const load = async (entry = "only-in-graphs.cjs") => {
       const graph = new ModuleGraph();
-      await graph.import(file("only-in-graphs.cjs"));
+      await graph.import(file(entry));
       return graph;
     };
-    await load();
+    // Another file, so the baseline has none of the code that is counted, whether or not this graph is collected by then.
+    await (async () => void (await load("only-in-graphs-first.cjs")))();
     const { FunctionCodeBlock: baseline } = await baselineOf("FunctionCodeBlock");
     await (async () => {
       const held = [await load(), await load()];

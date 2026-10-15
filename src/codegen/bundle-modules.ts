@@ -758,7 +758,15 @@ declare module "module" {
     interface Function {
       readonly $call: Function.prototype["call"];
       readonly $apply: Function.prototype["apply"];
-      readonly $bind: Function.prototype["bind"];
+      readonly $bind: Function["bind"];
+    }
+
+    interface CallableFunction {
+      readonly $bind: CallableFunction["bind"];
+    }
+
+    interface NewableFunction {
+      readonly $bind: NewableFunction["bind"];
     }
 
     namespace NodeJS {

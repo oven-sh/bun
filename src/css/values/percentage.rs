@@ -1,9 +1,10 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, ParserError, PrintErr, Printer, Token};
+use crate::generics::ParseNumeric;
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
-use crate::values::calc::Calc;
-use crate::values::number::CSSNumber;
+use crate::values::calc::{Calc, MathFunction};
+use crate::values::number::{CSSNumber, CSSNumberFns, NumericRange};
 use crate::values::protocol;
 use core::cmp::Ordering;
 
@@ -14,17 +15,29 @@ pub struct Percentage {
 
 impl Percentage {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Percentage> {
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(
+        input: &mut css::Parser,
+        range: NumericRange,
+    ) -> CssResult<Percentage> {
         if let Ok(calc_value) = input.try_parse(Calc::<Percentage>::parse) {
             if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+                return Ok(Percentage {
+                    v: range.clamp(v.v),
+                });
             }
             // Handle calc() expressions that can't be reduced to a simple value (e.g., containing NaN, variables, etc.)
             // Return an error since we can't determine the percentage value at parse time
             return Err(input.new_custom_error(ParserError::invalid_value));
         }
 
+        let location = input.current_source_location();
         let percent = input.expect_percentage()?;
-        Ok(Percentage { v: percent })
+        Ok(Percentage {
+            v: range.check(percent, location)?,
+        })
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -158,20 +171,45 @@ impl<D> DimensionPercentage<D> {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self>
     where
         Self: crate::values::calc::CalcValue,
-        D: protocol::Parse,
+        D: ParseNumeric + protocol::TryMap,
     {
-        if let Ok(calc_value) = input.try_parse(Calc::<Self>::parse) {
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(input: &mut css::Parser, range: NumericRange) -> CssResult<Self>
+    where
+        Self: crate::values::calc::CalcValue,
+        D: ParseNumeric + protocol::TryMap,
+    {
+        match input.try_parse(Calc::<Self>::parse) {
+            Ok(Calc::Value(v)) => {
+                if range == NumericRange::All {
+                    return Ok(*v);
+                }
+                if let Some(value) = v.try_map(|value| range.clamp(value)) {
+                    return Ok(value);
+                }
+                if matches!(&*v, Self::Percentage(p) if p.v >= 0.0 || p.v.is_nan()) {
+                    return Ok(*v);
+                }
+                // A negative percentage cannot be emitted as a literal in this range.
+                // Preserve the math boundary rather than clamp it before its basis is known.
+                return Ok(Self::Calc(Box::new(Calc::Function(Box::new(
+                    MathFunction::Calc(Calc::Value(v)),
+                )))));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(Calc::Number(_)) => {
+                return Err(input.new_custom_error(ParserError::invalid_value));
+            }
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
-        if let Ok(length) = input.try_parse(D::parse) {
+        if let Ok(length) = input.try_parse(|i| D::parse_with_range(i, range)) {
             return Ok(Self::Dimension(length));
         }
 
-        if let Ok(percentage) = input.try_parse(Percentage::parse) {
+        if let Ok(percentage) = input.try_parse(|i| Percentage::parse_with_range(i, range)) {
             return Ok(Self::Percentage(percentage));
         }
 
@@ -446,10 +484,17 @@ impl NumberOrPercentage {
     // Hand-rolled as the trivial two-variant try-parse cascade so
     // `AlphaValue::parse` doesn't panic at runtime.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
-        if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(
+        input: &mut css::Parser,
+        range: NumericRange,
+    ) -> CssResult<NumberOrPercentage> {
+        if let Ok(n) = input.try_parse(|i| CSSNumberFns::parse_with_range(i, range)) {
             return Ok(NumberOrPercentage::Number(n));
         }
-        Percentage::parse(input).map(NumberOrPercentage::Percentage)
+        Percentage::parse_with_range(input, range).map(NumberOrPercentage::Percentage)
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -474,3 +519,16 @@ impl PartialEq for Percentage {
 }
 
 crate::css_eql_partialeq!(NumberOrPercentage);
+
+impl ParseNumeric for Percentage {
+    #[inline]
+    fn parse_with_range(input: &mut css::Parser, range: NumericRange) -> CssResult<Self> {
+        Percentage::parse_with_range(input, range)
+    }
+}
+impl ParseNumeric for NumberOrPercentage {
+    #[inline]
+    fn parse_with_range(input: &mut css::Parser, range: NumericRange) -> CssResult<Self> {
+        NumberOrPercentage::parse_with_range(input, range)
+    }
+}

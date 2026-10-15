@@ -1,17 +1,18 @@
 use crate::compat::Feature;
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
+use crate::css_parser::{CssResult, Maybe, Parser, ParserOptions, PrintErr, Printer, Token};
+use crate::generics::{Parse, ParseNumeric, ParseWithOptions};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
-use crate::values::number::CSSNumber;
+use crate::values::number::{CSSNumber, CSSNumberFns, NumericRange};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
 use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::ToCss)]
 pub enum LengthOrNumber {
     /// A number.
     Number(CSSNumber),
@@ -20,8 +21,15 @@ pub enum LengthOrNumber {
 }
 
 impl LengthOrNumber {
-    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]
-    // (f32 resolves via generics::{Parse,ToCss} for f32). is_compatible KEPT.
+    // to_css — provided by #[derive(css::ToCss)]
+    // (f32 resolves via generics::ToCss for f32). is_compatible KEPT.
+
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        if let Ok(value) = input.try_parse(|i| CSSNumberFns::parse_with_range(i, range)) {
+            return Ok(Self::Number(value));
+        }
+        Ok(Self::Length(Length::parse_with_range(input, range)?))
+    }
 
     pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
@@ -40,7 +48,7 @@ impl Default for LengthOrNumber {
 pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
 /// Either a [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage), or the `auto` keyword.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::ToCss)]
 pub enum LengthPercentageOrAuto {
     /// The `auto` keyword.
     Auto,
@@ -49,7 +57,23 @@ pub enum LengthPercentageOrAuto {
 }
 
 impl LengthPercentageOrAuto {
-    // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]. is_compatible KEPT.
+    // to_css — provided by #[derive(css::ToCss)]. is_compatible KEPT.
+
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"auto"))
+            .is_ok()
+        {
+            return Ok(Self::Auto);
+        }
+        Ok(Self::Length(LengthPercentage::parse_with_range(
+            input, range,
+        )?))
+    }
 
     pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
@@ -58,6 +82,30 @@ impl LengthPercentageOrAuto {
         }
     }
 }
+
+macro_rules! impl_ranged_parse {
+    ($($T:ty),+ $(,)?) => {$(
+        impl Parse for $T {
+            #[inline]
+            fn parse(input: &mut Parser) -> CssResult<Self> {
+                <$T>::parse_with_range(input, NumericRange::All)
+            }
+        }
+        impl ParseWithOptions for $T {
+            #[inline]
+            fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+                <$T>::parse_with_range(input, NumericRange::All)
+            }
+        }
+        impl ParseNumeric for $T {
+            #[inline]
+            fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+                <$T>::parse_with_range(input, range)
+            }
+        }
+    )+};
+}
+impl_ranged_parse!(LengthOrNumber, LengthPercentageOrAuto);
 
 const PX_PER_IN: f32 = 96.0;
 const PX_PER_CM: f32 = PX_PER_IN / 2.54;
@@ -266,15 +314,20 @@ define_length_units! {
 
 impl LengthValue {
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
         let location = input.current_source_location();
         let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
-                if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
+                let value = range.check(dim.num.value, location)?;
+                if let Some(v) = Self::from_unit_ci(dim.unit, value) {
                     return Ok(v);
                 }
             }
-            Token::Number(num) => return Ok(Self::Px(num.value)),
+            Token::Number(num) => return Ok(Self::Px(range.check(num.value, location)?)),
             _ => {}
         }
         Err(location.new_unexpected_token_error(token))
@@ -414,15 +467,30 @@ impl Length {
     }
 
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
-        if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
-            // PERF: I don't like this redundant allocation
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Length> {
+        match input.try_parse(Calc::<Length>::parse) {
+            Ok(Calc::Value(v)) => {
+                if range == NumericRange::All {
+                    return Ok(*v);
+                }
+                if let Some(value) = v.try_map(|value| range.clamp(value)) {
+                    return Ok(value);
+                }
+                return Ok(Self::Calc(Box::new(Calc::Function(Box::new(
+                    MathFunction::Calc(Calc::Value(v)),
+                )))));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(Calc::Number(_)) => {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
+            }
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
-        let len = LengthValue::parse(input)?;
+        let len = LengthValue::parse_with_range(input, range)?;
         Ok(Self::Value(len))
     }
 
@@ -724,6 +792,24 @@ impl protocol::Parse for LengthValue {
         LengthValue::parse(input)
     }
 }
+impl ParseNumeric for LengthValue {
+    #[inline]
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        LengthValue::parse_with_range(input, range)
+    }
+}
+impl ParseNumeric for Length {
+    #[inline]
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        Length::parse_with_range(input, range)
+    }
+}
+impl ParseNumeric for LengthPercentage {
+    #[inline]
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        LengthPercentage::parse_with_range(input, range)
+    }
+}
 impl protocol::ToCss for LengthValue {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -814,6 +900,12 @@ impl protocol::Parse for Angle {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
         Angle::parse(input)
+    }
+}
+impl ParseNumeric for Angle {
+    #[inline]
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        Angle::parse_with_range(input, range)
     }
 }
 impl protocol::ToCss for Angle {

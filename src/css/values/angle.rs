@@ -3,7 +3,7 @@ use crate::css_parser::{
     CssResult as Result, Maybe, Parser, ParserError, PrintErr, Printer, Token,
 };
 use crate::values::calc::Calc;
-use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::number::{CSSNumber, CSSNumberFns, NumericRange};
 use crate::values::percentage::DimensionPercentage;
 
 use core::cmp::Ordering;
@@ -34,13 +34,21 @@ impl Angle {
     // ~toCssImpl
 
     pub(crate) fn parse(input: &mut Parser) -> Result<Angle> {
-        Angle::parse_internal(input, false)
+        Angle::parse_with_range(input, NumericRange::All)
     }
 
-    fn parse_internal(input: &mut Parser, allow_unitless_zero: bool) -> Result<Angle> {
+    pub(crate) fn parse_with_range(input: &mut Parser, range: NumericRange) -> Result<Angle> {
+        Angle::parse_internal(input, false, range)
+    }
+
+    fn parse_internal(
+        input: &mut Parser,
+        allow_unitless_zero: bool,
+        range: NumericRange,
+    ) -> Result<Angle> {
         if let Ok(calc_value) = input.try_parse(Calc::<Angle>::parse) {
             if let Calc::Value(value) = calc_value {
-                return Ok(*value);
+                return Ok(value.map(|value| range.clamp(value)));
             }
             // Angles are always compatible, so they will always compute to a value.
             return Err(input.new_custom_error(ParserError::invalid_value));
@@ -50,7 +58,7 @@ impl Angle {
         let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
-                let value = dim.num.value;
+                let value = range.check(dim.num.value, location)?;
                 let unit = dim.unit;
                 return crate::match_ignore_ascii_case! { unit, {
                     b"deg" => Ok(Angle::Deg(value)),
@@ -71,7 +79,7 @@ impl Angle {
     }
 
     pub(crate) fn parse_with_unitless_zero(input: &mut Parser) -> Result<Angle> {
-        Angle::parse_internal(input, true)
+        Angle::parse_internal(input, true, NumericRange::All)
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

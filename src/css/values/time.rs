@@ -1,7 +1,7 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, PrintErr, Printer, Token};
 use crate::values::calc::Calc;
-use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::number::{CSSNumber, CSSNumberFns, NumericRange};
 
 /// A CSS [`<time>`](https://www.w3.org/TR/css-values-4/#time) value, in either
 /// seconds or milliseconds.
@@ -25,16 +25,26 @@ pub enum Time {
     Milliseconds(CSSNumber) = 2,
 }
 
+impl crate::generics::ParseNumeric for Time {
+    #[inline]
+    fn parse_with_range(input: &mut css::Parser, range: NumericRange) -> Result<Self> {
+        Time::parse_with_range(input, range)
+    }
+}
+
 impl Time {
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
 
     pub fn parse(input: &mut css::Parser) -> Result<Time> {
+        Self::parse_with_range(input, NumericRange::All)
+    }
+
+    pub(crate) fn parse_with_range(input: &mut css::Parser, range: NumericRange) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {
             Ok(vv) => match vv {
                 Calc::Value(v) => {
-                    let ret: Time = *v;
-                    return Ok(ret);
+                    return Ok(v.map(|value| range.clamp(value)));
                 }
                 // Time is always compatible, so they will always compute to a value.
                 _ => return Err(input.new_error_for_next_token()),
@@ -46,12 +56,13 @@ impl Time {
         let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
+                let value = range.check(dim.num.value, location)?;
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
-                    Ok(Time::Seconds(dim.num.value))
+                    Ok(Time::Seconds(value))
                 } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
                     b"ms", dim.unit,
                 ) {
-                    Ok(Time::Milliseconds(dim.num.value))
+                    Ok(Time::Milliseconds(value))
                 } else {
                     Err(location.new_unexpected_token_error(Token::Ident(dim.unit)))
                 }

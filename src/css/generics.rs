@@ -30,7 +30,7 @@ use crate::values::angle::Angle;
 use crate::values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, Ident, IdentFns,
 };
-use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns, NumericRange};
 use crate::values::rect::Rect;
 use crate::values::size::Size2D;
 use crate::{PrintErr, VendorPrefix};
@@ -1064,6 +1064,13 @@ pub trait Parse: Sized {
     fn parse(input: &mut Parser) -> CssResult<Self>;
 }
 
+/// A numeric value whose grammar position can restrict its allowed range.
+pub trait ParseNumeric: Parse {
+    /// Checks literals against `range` and clamps resolved calculations to it.
+    /// Operands inside a calculation are unrestricted.
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self>;
+}
+
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
 ///
 /// Falling back to `parse` when a type has no `parse_with_options`
@@ -1172,6 +1179,12 @@ impl Parse for f32 {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
         CSSNumberFns::parse(input)
+    }
+}
+impl ParseNumeric for f32 {
+    #[inline]
+    fn parse_with_range(input: &mut Parser, range: NumericRange) -> CssResult<Self> {
+        CSSNumberFns::parse_with_range(input, range)
     }
 }
 impl Parse for CSSInteger {

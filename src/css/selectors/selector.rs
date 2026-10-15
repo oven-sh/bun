@@ -1235,24 +1235,29 @@ pub(crate) mod serialize {
                 })?;
             }
             PseudoElement::ViewTransition => dest.write_str(b"::view-transition")?,
-            PseudoElement::ViewTransitionGroup { part_name } => {
+            PseudoElement::ViewTransitionGroup { part } => {
                 dest.write_str(b"::view-transition-group(")?;
-                part_name.to_css(dest)?;
+                part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionImagePair { part_name } => {
+            PseudoElement::ViewTransitionImagePair { part } => {
                 dest.write_str(b"::view-transition-image-pair(")?;
-                part_name.to_css(dest)?;
+                part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionOld { part_name } => {
+            PseudoElement::ViewTransitionOld { part } => {
                 dest.write_str(b"::view-transition-old(")?;
-                part_name.to_css(dest)?;
+                part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
-            PseudoElement::ViewTransitionNew { part_name } => {
+            PseudoElement::ViewTransitionNew { part } => {
                 dest.write_str(b"::view-transition-new(")?;
-                part_name.to_css(dest)?;
+                part.to_css(dest)?;
+                dest.write_char(b')')?;
+            }
+            PseudoElement::ViewTransitionGroupChildren { part } => {
+                dest.write_str(b"::view-transition-group-children(")?;
+                part.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::DetailsContent => dest.write_str(b"::details-content")?,

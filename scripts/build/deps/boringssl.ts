@@ -31,7 +31,7 @@ export const boringssl: Dependency = {
   versionMacro: "BORINGSSL",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "oven-sh/boringssl",
     commit: BORINGSSL_COMMIT,
   }),

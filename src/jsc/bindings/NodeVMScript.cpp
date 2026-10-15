@@ -1,4 +1,5 @@
 #include "NodeVMScript.h"
+#include "CodeGenerationFromStrings.h"
 #include "BunClientData.h"
 
 #include "ErrorCode.h"
@@ -36,7 +37,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         JSObject* options = asObject(optionsArg);
 
         // Validate contextName and contextOrigin are strings
-        auto contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s));
+        auto contextNameOpt = options->getIfPropertyExists(globalObject, optionNames(vm).contextName(vm));
         RETURN_IF_EXCEPTION(scope, false);
         if (contextNameOpt) {
             if (!contextNameOpt.isUndefined() && !contextNameOpt.isString()) {
@@ -46,7 +47,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
             any = true;
         }
 
-        auto contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s));
+        auto contextOriginOpt = options->getIfPropertyExists(globalObject, optionNames(vm).contextOrigin(vm));
         RETURN_IF_EXCEPTION(scope, false);
         if (contextOriginOpt) {
             if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
@@ -70,7 +71,7 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
         RETURN_IF_EXCEPTION(scope, false);
 
         // Handle importModuleDynamically option
-        JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importModuleDynamically"_s));
+        JSValue importModuleDynamicallyValue = options->getIfPropertyExists(globalObject, optionNames(vm).importModuleDynamically(vm));
         RETURN_IF_EXCEPTION(scope, {});
 
         if (importModuleDynamicallyValue) {
@@ -94,6 +95,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString;
@@ -135,12 +137,13 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, importer, jsUndefined()));
 
-    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
+    SourceCode source = makeSource(sourceString, JSC::SourceOrigin(sourceOriginURL(vm, options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, providerStartPosition(options.lineOffset, options.columnOffset));
 
     NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
+    ensureStillAliveHere(importer);
 
     // Node's vm.Script throws SyntaxError at construction; the REPL's
     // recoverable-error flow (and user code) relies on that.
@@ -171,7 +174,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     if (!cachedData.isEmpty()) {
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
+        Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
         // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
         script->cachedDataRejected(unlinkedBlock ? TriState::False : TriState::True);
@@ -255,6 +258,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
     visitor.append(thisObject->m_unlinkedCodeBlock);
+    NodeVMScriptFetcher::visitSource(visitor, thisObject->m_source);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
@@ -513,7 +517,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     NodeVMContextOptions contextOptions {};
     JSValue importer;
 
-    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, "contextCodeGeneration", &importer);
+    getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, optionNames(vm).contextCodeGeneration(vm), &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
@@ -603,7 +607,7 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
-        auto displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s));
+        auto displayErrorsOpt = options->getIfPropertyExists(globalObject, optionNames(vm).displayErrors(vm));
         RETURN_IF_EXCEPTION(scope, false);
         if (displayErrorsOpt) {
             if (!displayErrorsOpt.isUndefined()) {
@@ -621,7 +625,7 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
         }
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s));
+        auto breakOnSigintOpt = options->getIfPropertyExists(globalObject, optionNames(vm).breakOnSigint(vm));
         RETURN_IF_EXCEPTION(scope, false);
         if (breakOnSigintOpt) {
             if (!breakOnSigintOpt.isUndefined()) {

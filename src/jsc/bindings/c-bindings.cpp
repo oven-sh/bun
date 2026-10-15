@@ -146,10 +146,7 @@ extern "C" void dump_zone_malloc_stats()
 
 #endif
 
-// Accurate per-process memory footprint, in bytes. Unlike RSS this excludes
-// pages already returned to the OS that the kernel keeps mapped lazily
-// (Darwin's MADV_FREE_REUSABLE), so leak tests get the same answer on every
-// platform. Returns 0 when no platform-specific accessor is available; the
+// Accurate per-process memory footprint, in bytes. Returns 0 when the platform has no accessor; the
 // JS caller falls back to process.memoryUsage.rss().
 //
 // Darwin:  task_info(TASK_VM_INFO).phys_footprint — Activity Monitor's number;
@@ -158,15 +155,12 @@ extern "C" void dump_zone_malloc_stats()
 //          shared pages by share count instead of fully to every mapper.
 // Windows: GetProcessMemoryInfo PrivateUsage — commit charge for this process.
 #if OS(DARWIN)
-#include <mach/mach.h>
+extern "C" int getRSS(size_t* rss);
 extern "C" size_t Bun__memoryFootprint()
 {
-    task_vm_info_data_t info;
-    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
-    kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO,
-        reinterpret_cast<task_info_t>(&info), &count);
-    if (kr != KERN_SUCCESS) return 0;
-    return static_cast<size_t>(info.phys_footprint);
+    size_t footprint = 0;
+    if (getRSS(&footprint) != 0) return 0;
+    return footprint;
 }
 #elif OS(LINUX)
 extern "C" size_t Bun__memoryFootprint()

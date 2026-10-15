@@ -13,7 +13,9 @@ class GlobalObject;
 namespace Bun {
 using namespace JSC;
 
+// Bytes. phys_footprint (Activity Monitor's number) on macOS, the resident set size elsewhere.
 extern "C" int getRSS(size_t* rss);
+extern "C" int getPeakRSS(size_t* peak);
 
 class Process : public WebCore::JSEventEmitter {
     using Base = WebCore::JSEventEmitter;
@@ -140,9 +142,11 @@ public:
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 
-// Routes its argument onto the uncaught-exception path. Used by the
-// process.nextTick drain and, via $newCppFunction, by the node-style
-// callback shims in src/js.
+// Routes its argument onto the uncaught-exception path. Used, via $newCppFunction, by the
+// node-style callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// process.cwd() as a JSString, cached on the process object until it changes.
+JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
 
 } // namespace Bun

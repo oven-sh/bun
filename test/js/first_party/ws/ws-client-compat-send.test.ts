@@ -1,6 +1,8 @@
 // send(), ping() and pong() of a `ws` client, against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tls } from "harness";
+import { isWindows, tempDir, tls } from "harness";
+import { openAsBlob } from "node:fs";
+import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
 import {
   attempt,
@@ -548,6 +550,23 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
 
     // npm ws compresses the fragments, the native client does not. A receiver needs what is asserted here: RSV1 on the
     // first frame at most, and one message.
+    // npm ws reads any Blob later. The built-in cannot read a file inside send(), and says so.
+    test.skipIf(!builtin).each([
+      { blob: "Bun.file()", make: (file: string) => Bun.file(file) },
+      { blob: "fs.openAsBlob()", make: (file: string) => openAsBlob(file) },
+    ])("send($blob, { fin: false }) throws, reports no success and leaves no fragment open", async ({ make }) => {
+      using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
+      const blob = await make(path.join(String(dir), "data.txt"));
+      await using client = await openClient(implementation);
+      const { ws, conn: peer } = client;
+      const results: unknown[] = [];
+      expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
+      const sent = new Promise(resolve => ws.send("x", resolve));
+      expect(await peer.roundTrip()).toEqual(['text "x"']);
+      expect(await sent).toBeNull();
+      expect(results.filter(result => !(result instanceof Error))).toEqual([]);
+    });
+
     test("a fragmented message arrives whole", async () => {
       await using client = await openClient(
         implementation,

@@ -92,7 +92,7 @@ fn is_compress_options(options: i32) -> bool {
         && (decompressor == 1 || (8..=15).contains(&decompressor))
 }
 
-/// `(response, websocket, handlers, handshake, maxPayload, flags, compression, head)`: makes the connection of
+/// `(response, websocket, handlers, handshake, maxPayload, flags, compression)`: makes the connection of
 /// `response` a WebSocket that answers with `handshake`. Returns its `ServerWebSocket`, or `undefined` with
 /// nothing written when `response` is not a native response or can no longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket(
@@ -102,8 +102,6 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
     const AUTO_PONG: i32 = 1 << 0;
     const SKIP_UTF8_VALIDATION: i32 = 1 << 1;
 
-    // `head`: inside the request's dispatch `HttpContext::onData` still owns those bytes and gives them
-    // to the WebSocket when the dispatch returns.
     let [
         response,
         websocket,
@@ -112,8 +110,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         max_payload,
         flags,
         compression,
-        _head,
-    ] = frame.arguments_as_array::<8>();
+    ] = frame.arguments_as_array::<7>();
     let Some(response) = response.as_class_ref::<NodeHTTPResponse>() else {
         return Ok(JSValue::UNDEFINED);
     };
@@ -138,18 +135,18 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
             "compression must be 0 or the uWS CompressOptions of a compressor and a decompressor"
         )));
     }
-    let mut server = response.server;
-    server.keep_ws_package_handlers(global, handlers)?;
 
     Ok(response
         .upgrade_for_ws_package(
+            global,
             websocket,
+            handlers,
             handshake,
             max_payload,
             flags & AUTO_PONG != 0,
             flags & SKIP_UTF8_VALIDATION != 0,
             compression,
-        )
+        )?
         .unwrap_or(JSValue::UNDEFINED))
 }
 

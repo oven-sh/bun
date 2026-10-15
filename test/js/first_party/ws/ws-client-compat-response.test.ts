@@ -5,7 +5,16 @@ import { tls as harnessTls, isWindows } from "harness";
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
-import { createPeer, dial, event, implementations, openClient, type RawSocket } from "./ws-raw-peer";
+import {
+  createPeer,
+  dial,
+  event,
+  implementations,
+  openClient,
+  type RawSocket,
+  runScript,
+  scriptTimeout,
+} from "./ws-raw-peer";
 
 const closedBeforeOpen = [
   'error Error "WebSocket was closed before the connection was established" rs=2',
@@ -31,7 +40,9 @@ async function writeInPieces(conn: RawSocket, pieces: readonly string[]) {
   }
 }
 
-describe.each(implementations)("ws client, the server's answer ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client, the server's answer ($name)", row => {
+  const { ws: implementation, builtin, specifier } = row;
+
   describe("the body of a response that is not a 101, after 'unexpected-response'", () => {
     /** The response of 'unexpected-response' to `head`, and the server's end of the connection. */
     async function unexpected(head: string, secure = false) {
@@ -167,6 +178,106 @@ describe.each(implementations)("ws client, the server's answer ($name)", ({ ws: 
       expect(body.length).toBe(16 * chunk.length);
       expect(body === Buffer.alloc(16 * 65536, "abcdefgh").toString()).toBe(true);
     });
+
+    describe("a reader that waits", () => {
+      const piece = Buffer.alloc(65536, "abcdefgh");
+      /** Answers with `head`, then writes `pieces` of the body as fast as the client takes them. */
+      const pump = (head: string, pieces: number) => (conn: RawSocket) => {
+        const more = () => {
+          while (pieces-- > 0 && conn.socket.write(piece));
+        };
+        conn.socket.on("drain", more);
+        conn.socket.write(head);
+        more();
+        return null;
+      };
+      /** `response` and its `events`, once more of the body has come than it wants to hold. */
+      const held = `
+        const ws = new WebSocket(process.env.PEER_URL);
+        ws.on("error", error => console.log("ws error", showError(error)));
+        const [, response] = await new Promise(resolve => ws.on("unexpected-response", (...args) => resolve(args)));
+        for (const name of ["aborted", "end", "error"]) response.on(name, () => console.log(name));
+        while (response.readableLength < response.readableHighWaterMark) await new Promise(setImmediate);
+      `;
+
+      test.concurrent(
+        "does not hold the process",
+        async () => {
+          await using peer = await createPeer({ respond: pump("HTTP/1.1 503 Service Unavailable\r\n\r\n", Infinity) });
+          const script = `(async () => {
+            ${held}
+            process.on("exit", () => console.log("exit, complete", response.complete));
+          })();`;
+          // The timer of the next test would end the body of a client that has not stopped it.
+          const env = { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" };
+          expect(await runScript({ specifier }, script, env)).toEqual({
+            lines: ["exit, complete false"],
+            stderr: "",
+            exitCode: 0,
+          });
+        },
+        scriptTimeout,
+      );
+
+      // Only the built-in gives up on a server that stops in the middle of a body. The global WebSocket is the clock:
+      // made later, with the same time to live.
+      test.concurrent.skipIf(!builtin)(
+        "is not taken for a server that has stopped",
+        async () => {
+          const head = `HTTP/1.1 503 Service Unavailable\r\nContent-Length: ${64 * piece.length}\r\n\r\n`;
+          await using peer = await createPeer({
+            respond: conn => (conn.headLines[0].startsWith("GET /clock ") ? null : pump(head, 64)(conn)),
+          });
+          const script = `(async () => {
+            ${held}
+            await new Promise(resolve => (new globalThis.WebSocket(process.env.PEER_URL + "/clock").onclose = resolve));
+            console.log("the global WebSocket gave up");
+            let length = 0;
+            for await (const chunk of response) length += chunk.length;
+            console.log("read", length, "complete", response.complete);
+          })();`;
+          const env = { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" };
+          expect((await runScript({ specifier }, script, env)).lines).toEqual([
+            "the global WebSocket gave up",
+            "end",
+            `read ${64 * piece.length} complete true`,
+          ]);
+        },
+        scriptTimeout,
+      );
+    });
+
+    test.concurrent.skipIf(!builtin).each([
+      { kind: "that ends with the connection", headers: "" },
+      { kind: "with a Content-Length", headers: "Content-Length: 6\r\n" },
+      { kind: "in chunks", headers: "Transfer-Encoding: chunked\r\n", first: "2\r\nno\r\n" },
+    ])(
+      "a server that stops in the middle of a body $kind: the body is cut off, not over",
+      async ({ headers, first = "no" }) => {
+        await using peer = await createPeer({
+          respond: () => `HTTP/1.1 503 Service Unavailable\r\n${headers}\r\n${first}`,
+        });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL);
+          ws.on("error", error => console.log("ws error", showError(error)));
+          ws.on("unexpected-response", (request, response) => {
+            response.on("data", chunk => console.log("data", show(chunk)));
+            response.on("aborted", () => console.log("aborted"));
+            response.on("end", () => console.log("end"));
+            response.on("error", error => console.log("error", showError(error)));
+            response.on("close", () => console.log("close, complete", response.complete));
+          });
+        `;
+        const env = { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" };
+        expect((await runScript({ specifier }, script, env)).lines).toEqual([
+          'data Buffer("no")',
+          "aborted",
+          'error Error "aborted" ECONNRESET',
+          "close, complete false",
+        ]);
+      },
+      scriptTimeout,
+    );
 
     test("terminate() while it is still coming closes the connection", async () => {
       const { client, response, conn } = await unexpected(chunked);

@@ -181,7 +181,7 @@ impl ResponseBody {
         }
     }
 
-    /// Whether a connection that ends now, however it does, has delivered all of it.
+    /// Whether a connection that the peer ends now, however it does, has delivered all of it.
     fn is_complete(&self) -> bool {
         matches!(self, Self::Length(0) | Self::UntilClose)
     }
@@ -665,9 +665,11 @@ where
     ) {
         if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
             match this.response_body.take() {
-                Some(body) => {
-                    ws.did_end_response_body(!body.is_complete(), !system_code.is_empty());
-                }
+                Some(body) => ws.did_end_response_body(
+                    // Our timer is not the peer: nobody ended the body.
+                    code == ErrorCode::Timeout || !body.is_complete(),
+                    !system_code.is_empty(),
+                ),
                 None => ws.did_fail(code, 0, system_code, detail),
             }
         }
@@ -1033,8 +1035,10 @@ where
         chunk.extend_from_slice(data);
         let ended = body.decode(&mut chunk);
         this.response_body.set(Some(body));
-        // `ws` has no timer for the body: the next piece has this long, whether the peer or the reader waits.
-        this.tcp.get().set_timeout(handshake_timeout_seconds());
+        // `ws` has no timer for the body: this is how long the peer has for the next piece.
+        if !ws.is_paused() {
+            this.tcp.get().set_timeout(handshake_timeout_seconds());
+        }
         if !chunk.is_empty() {
             ws.did_receive_response_body(&chunk);
         }
@@ -1044,7 +1048,8 @@ where
     }
 
     /// `pause()` / `resume()` while CONNECTING hold back the body of a response that is no upgrade, never
-    /// the handshake. What one read brought is still delivered.
+    /// the handshake. What one read brought is still delivered. A reader that waits neither times the
+    /// peer out nor holds the process, as in node:http.
     ///
     /// Takes `ThisPtr<Self>` because a resume that the kernel refuses closes the socket; see `cancel`.
     pub(crate) fn set_paused(this: ThisPtr<Self>, paused: bool) {
@@ -1054,9 +1059,14 @@ where
         let _guard = RefPtr::from_this(this);
         let tcp = this.tcp.get();
         if paused {
+            tcp.set_timeout(0);
+            this.poll_ref
+                .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
             tcp.pause_stream();
         } else {
             tcp.set_timeout(handshake_timeout_seconds());
+            this.poll_ref
+                .with_mut(|p| p.r#ref(VirtualMachineRef::get().loop_ctx()));
             tcp.resume_stream();
         }
     }

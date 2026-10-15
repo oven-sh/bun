@@ -6,10 +6,12 @@ import {
   closePayload,
   createPeer,
   dial,
+  encodeFrame,
   event,
   implementations,
   OP,
   openClient,
+  type Payload,
   runScript,
   scriptTimeout,
   show,
@@ -22,6 +24,7 @@ const closedBeforeOpen = [
   'error Error "WebSocket was closed before the connection was established" rs=2',
   "close 1006 Buffer() rs=3",
 ];
+const lost = "close 1006 Buffer() rs=3";
 const invalidCode = 'throws TypeError "First argument must be a valid error code number"';
 const reasonTooLong = 'throws RangeError "The message must not be greater than 123 bytes"';
 type Client = Awaited<ReturnType<typeof openClient>>;
@@ -316,6 +319,67 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
       expect(conn.tcp).toEqual(["end"]);
     });
 
+    // What the socket already holds is still parsed. Nothing is answered: no Pong, no Close frame.
+    describe("with frames that came with the 101, in the 'open' listener", () => {
+      test.each<{ held: string; frames: [opcode: number, payload?: Payload][]; cut?: number; events: string[] }>([
+        {
+          held: "a message and a Close frame",
+          frames: [
+            [OP.text, "one"],
+            [OP.close, closePayload(1000, "bye")],
+          ],
+          events: ['message Buffer("one") text rs=2', 'close 1000 Buffer("bye") rs=3'],
+        },
+        {
+          held: "a Close frame",
+          frames: [[OP.close, closePayload(1000, "bye")]],
+          events: ['close 1000 Buffer("bye") rs=3'],
+        },
+        { held: "a message", frames: [[OP.text, "one"]], events: ['message Buffer("one") text rs=2', lost] },
+        {
+          held: "two messages",
+          frames: [
+            [OP.text, "one"],
+            [OP.binary, "two"],
+          ],
+          events: ['message Buffer("one") text rs=2', 'message Buffer("two") binary rs=2', lost],
+        },
+        {
+          held: "a Ping and a message",
+          frames: [
+            [OP.ping, "p"],
+            [OP.text, "one"],
+          ],
+          events: ['ping Buffer("p") rs=2', 'message Buffer("one") text rs=2', lost],
+        },
+        { held: "a message without its last byte", frames: [[OP.text, "one"]], cut: -1, events: [lost] },
+        {
+          held: "a frame that is no frame",
+          frames: [[3, "x"]],
+          events: ['error RangeError "Invalid WebSocket frame: invalid opcode 3" WS_ERR_INVALID_OPCODE rs=2', lost],
+        },
+      ])("$held", async ({ frames, cut, events }) => {
+        const held = Buffer.concat(frames.map(frame => encodeFrame(...frame))).subarray(0, cut);
+        await using client = await dial(implementation, {}, { afterUpgrade: held });
+        const { ws } = client;
+        ws.on("open", () => ws.terminate());
+        await client.closed;
+        expect(client.events).toEqual([...opening, ...events]);
+        expect(await (await client.peer.connection()).rest()).toEqual([]);
+      });
+
+      test("a Close frame that was not answered makes no clean close", async () => {
+        const held = encodeFrame(OP.close, closePayload(1000, "bye"));
+        await using client = await dial(implementation, {}, { afterUpgrade: held });
+        const { ws } = client;
+        ws.on("open", () => ws.terminate());
+        const [{ code, reason, wasClean }] = await new Promise<[CloseEvent]>(resolve =>
+          ws.addEventListener("close", event => resolve([event as unknown as CloseEvent])),
+        );
+        expect({ code, reason, wasClean }).toEqual({ code: 1000, reason: "bye", wasClean: false });
+      });
+    });
+
     test("after close(): 'close' 1006, not the code of close()", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
@@ -419,9 +483,10 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
       { call: "close()", act: ws => ws.close() },
       { call: "terminate()", act: ws => ws.terminate() },
     ] as { call: string; act(ws: Client["ws"]): void }[])(
-      "$call in the 'upgrade' listener: no 'open'",
+      "$call in the 'upgrade' listener: no 'open', and what came with the 101 is dropped",
       async ({ act }) => {
-        await using client = await dial(implementation);
+        const held = Buffer.concat([encodeFrame(OP.text, "one"), encodeFrame(OP.close, closePayload(1000, "bye"))]);
+        await using client = await dial(implementation, {}, { afterUpgrade: held });
         client.ws.prependListener("upgrade", () => act(client.ws));
         await client.closed;
         expect(client.events).toEqual(["upgrade 101 rs=2", ...closedBeforeOpen]);

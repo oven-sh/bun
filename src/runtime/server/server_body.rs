@@ -479,8 +479,8 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
 
 /// Whether a comma-separated header value names `token`, in any case.
 fn has_token(list: &[u8], token: &[u8]) -> bool {
-    strings::split(list, b",")
-        .any(|item| strings::eql_case_insensitive_ascii(item.trim_ascii(), token, true))
+    http::HeaderValueIterator::init(list)
+        .any(|item| strings::eql_case_insensitive_ascii(item, token, true))
 }
 
 type ServerRequestContext<const SSL: bool, const DEBUG: bool> =

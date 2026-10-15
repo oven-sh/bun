@@ -417,6 +417,8 @@ export type PeerOptions = {
   respond?: (connection: RawSocket) => string | Buffer | null;
   /** A TLS server with the certificate of `harness`. */
   secure?: boolean;
+  /** More options of that TLS server. */
+  tls?: tls.TlsOptions;
   /** Listen on this unix socket path. */
   path?: string;
 };
@@ -451,7 +453,7 @@ export async function createPeer(options: PeerOptions = {}) {
   };
 
   const server = options.secure
-    ? tls.createServer({ ...harnessTls, allowHalfOpen: true }, onConnection)
+    ? tls.createServer({ ...harnessTls, allowHalfOpen: true, ...options.tls }, onConnection)
     : net.createServer({ allowHalfOpen: true }, onConnection);
   // Also the TCP socket of a client that gives up during the TLS handshake.
   server.on("connection", socket => sockets.add(socket));

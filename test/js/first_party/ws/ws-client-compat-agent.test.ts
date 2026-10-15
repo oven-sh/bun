@@ -9,6 +9,7 @@ import net from "node:net";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 import {
+  attempt,
   closedPort,
   createPeer,
   encodeFrame,
@@ -688,6 +689,132 @@ describe.each(implementations)("ws client, how it connects ($name)", ({ ws: impl
       ]);
       expect(stream.destroyed).toBe(true);
       expect(await conn.rest()).toEqual([]);
+    });
+  });
+
+  describe("signal", () => {
+    // The class is AbortError on Node. Bun's node:http makes an Error with that name.
+    const aborted = ['error "The operation was aborted" ABORT_ERR rs=2', lost];
+    const reason = new Error("my reason");
+
+    /** The events of a client that fails, and whether `cause` of its error is the reason of the signal. */
+    async function failure(client: ReturnType<typeof connect>, signal: AbortSignal) {
+      const [[error]] = await Promise.all([event(client.ws, "error"), event(client.ws, "close")]);
+      const events = client.events.map(line => line.replace(/^error \w+ /, "error "));
+      return { events, name: error.name, cause: error.cause === signal.reason };
+    }
+    const failed = { events: aborted, name: "AbortError", cause: true };
+
+    test.each([
+      { when: "aborted before the constructor", signal: () => AbortSignal.abort() },
+      { when: "aborted with a reason before the constructor", signal: () => AbortSignal.abort(reason) },
+    ])("$when: the constructor returns, then 'error' and 'close' 1006, and no request goes out", async row => {
+      await using peer = await createPeer();
+      const signal = row.signal();
+      using client = connect(peer.url + "/aborted", { signal });
+      expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
+      expect(await failure(client, signal)).toEqual(failed);
+      using control = connect(peer.url + "/control", {});
+      expect((await peer.connection()).headLines[0]).toBe("GET /control HTTP/1.1");
+    });
+
+    test("abort() right after the constructor: no request goes out", async () => {
+      await using peer = await createPeer();
+      const controller = new AbortController();
+      using client = connect(peer.url + "/aborted", { signal: controller.signal });
+      controller.abort();
+      expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
+      expect(await failure(client, controller.signal)).toEqual(failed);
+      using control = connect(peer.url + "/control", {});
+      expect((await peer.connection()).headLines[0]).toBe("GET /control HTTP/1.1");
+    });
+
+    test.each([
+      { call: "abort()", args: [] },
+      { call: "abort(reason)", args: [reason] },
+    ])("$call while the server holds its answer: 'error', 'close' 1006, and the connection ends", async ({ args }) => {
+      await using peer = await createPeer({ respond: () => null });
+      const controller = new AbortController();
+      using client = connect(peer.url, { signal: controller.signal });
+      const conn = await peer.connection();
+      controller.abort(...args);
+      expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
+      expect(await failure(client, controller.signal)).toEqual(failed);
+      expect(await conn.rest()).toEqual([]);
+    });
+
+    test("AbortSignal.timeout() while the server holds its answer", async () => {
+      await using peer = await createPeer({ respond: () => null });
+      const signal = AbortSignal.timeout(20);
+      using client = connect(peer.url, { signal });
+      expect(await failure(client, signal)).toEqual(failed);
+      expect((signal.reason as Error).name).toBe("TimeoutError");
+    });
+
+    test("abort() once the socket is open does nothing", async () => {
+      await using peer = await createPeer();
+      const controller = new AbortController();
+      using client = connect(peer.url, { signal: controller.signal });
+      const conn = await peer.connection();
+      expect(await conn.roundTrip()).toEqual([]);
+      controller.abort();
+      expect(await conn.roundTrip()).toEqual([]);
+      expect([client.ws.readyState, ...client.events]).toEqual([WebSocket.OPEN, ...opening]);
+    });
+
+    test("what is no AbortSignal makes the constructor throw", () => {
+      expect(attempt(() => new WebSocket("ws://127.0.0.1:1", { signal: {} } as {})).replace(/ ".*"/, "")).toBe(
+        "throws TypeError ERR_INVALID_ARG_TYPE",
+      );
+    });
+  });
+
+  describe("secureContext", () => {
+    const { cert, key } = certificate;
+    const refused = ["error Error DEPTH_ZERO_SELF_SIGNED_CERT rs=2", lost];
+    const garbage = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----";
+
+    test.each([
+      {
+        label: "with the `ca`",
+        options: () => ({ secureContext: tls.createSecureContext({ ca: cert }) }),
+        events: opening,
+      },
+      { label: "without a `ca`", options: () => ({ secureContext: tls.createSecureContext({}) }), events: refused },
+      // It stands for all the options it was made from. The same options next to it do not count.
+      {
+        label: "with the `ca`, next to a `ca` that is none",
+        options: () => ({ secureContext: tls.createSecureContext({ ca: cert }), ca: garbage }),
+        events: opening,
+      },
+      {
+        label: "without a `ca`, next to the `ca`",
+        options: () => ({ secureContext: tls.createSecureContext({}), ca: cert }),
+        events: refused,
+      },
+    ])("$label", async ({ options, events }) => {
+      await using peer = await createPeer({ secure: true });
+      using client = connect(peer.url, options());
+      await Promise.race([event(client.ws, "open"), event(client.ws, "close")]);
+      expect(client.events.map(withoutMessage)).toEqual(events);
+    });
+
+    test.each([
+      {
+        label: "with `cert` and `key`",
+        context: { ca: cert, cert, key },
+        seen: { authorized: true, name: "server-bun" },
+      },
+      { label: "without them", context: { ca: cert }, seen: { authorized: false, name: undefined } },
+    ])("$label, and a server that asks for a certificate", async ({ context, seen }) => {
+      await using peer = await createPeer({
+        secure: true,
+        tls: { requestCert: true, rejectUnauthorized: false, ca: cert },
+      });
+      using client = connect(peer.url, { secureContext: tls.createSecureContext(context) });
+      await event(client.ws, "open");
+      const socket = (await peer.connection()).socket as tls.TLSSocket;
+      expect({ authorized: socket.authorized, name: socket.getPeerCertificate().subject?.CN }).toEqual(seen);
     });
   });
 });

@@ -10,7 +10,7 @@ import http2 from "node:http2";
 import https from "node:https";
 import net from "node:net";
 import path from "node:path";
-import { type Duplex, duplexPair } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import { Server as SocketIO } from "socket.io";
 import type { WebSocket, WebSocketServer } from "ws";
 import {
@@ -115,6 +115,73 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       );
       await using listening = await serve(server);
       await expectEcho(listening.connect());
+    });
+
+    describe("the socket behind a Duplex of the framework's own", () => {
+      /** An OPEN server socket on a Duplex that passes everything on to the socket of the request, and counts. */
+      async function openBehindDuplex() {
+        const listening = await serve(http.createServer());
+        const wss = new WebSocketServer({ noServer: true });
+        const passed = { in: 0, out: 0, ended: false };
+        let wrapper!: Duplex;
+        listening.server.on("upgrade", (req, socket, head) => {
+          wrapper = new Duplex({
+            read: () => void socket.resume(),
+            write: (chunk, encoding, callback) => ((passed.out += chunk.length), void socket.write(chunk, callback)),
+            final: callback => ((passed.ended = true), void socket.end(callback)),
+            destroy: (error, callback) => (socket.destroy(), callback(error)),
+          });
+          socket.on("data", chunk => ((passed.in += chunk.length), wrapper.push(chunk) || socket.pause()));
+          socket.on("end", () => wrapper.push(null));
+          socket.on("close", () => wrapper.destroy());
+          wss.handleUpgrade(req, wrapper, head, emitConnection(wss, req));
+        });
+        const connection = await listening.open(wss);
+        return { ...connection, wrapper, passed, [Symbol.asyncDispose]: () => listening[Symbol.asyncDispose]() };
+      }
+
+      test("every byte goes through it, the 101 too, and it is `_socket`", async () => {
+        await using server = await openBehindDuplex();
+        const { ws, req, client, events, wrapper, passed } = server;
+        expect((ws as any)._socket).toBe(wrapper);
+        expect(wrapper).not.toBe(req.socket);
+        const request = client.socket.bytesWritten;
+        expect(passed).toEqual({ in: 0, out: client.head.length + 4, ended: false });
+
+        client.text("up");
+        client.ping("p");
+        expect(await client.roundTrip()).toEqual(['pong "p"']);
+        ws.send("down");
+        ws.send(Buffer.alloc(70_000));
+        expect(await client.roundTrip()).toEqual(['text "down"', "binary 70000 bytes"]);
+        expect(events).toEqual(['message Buffer("up") text rs=1', 'ping Buffer("p") rs=1']);
+        expect(passed).toEqual({
+          in: client.socket.bytesWritten - request,
+          out: client.socket.bytesRead,
+          ended: false,
+        });
+      });
+
+      test("a closing handshake ends it", async () => {
+        await using server = await openBehindDuplex();
+        const { ws, client, events, wrapper, passed } = server;
+        ws.close(1000, "bye");
+        expect(await client.next()).toBe('close 1000 "bye"');
+        client.close(1000, "bye");
+        await server.closed;
+        expect(events).toEqual(['close 1000 Buffer("bye") rs=3']);
+        expect(await client.next()).toBe("EOF");
+        expect({ ended: passed.ended, destroyed: wrapper.destroyed }).toEqual({ ended: true, destroyed: true });
+      });
+
+      test("terminate() destroys it", async () => {
+        await using server = await openBehindDuplex();
+        server.ws.terminate();
+        expect(server.wrapper.destroyed).toBe(true);
+        await server.closed;
+        expect(server.events).toEqual(["close 1006 Buffer() rs=3"]);
+        expect(await server.client.next()).toBe("EOF");
+      });
     });
 
     test("the socket in a Proxy that hides symbols, refused by verifyClient()", async () => {

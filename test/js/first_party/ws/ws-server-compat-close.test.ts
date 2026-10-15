@@ -9,17 +9,21 @@ import {
   attempt,
   closePayload,
   createServer,
+  encodeFrame,
   event,
   implementations,
   OP,
   openServer,
+  type Payload,
   RawClient,
   serve,
   show,
   showError,
   showFrame,
+  watch,
 } from "./ws-raw-peer";
 
+const lost = "close 1006 Buffer() rs=3";
 const invalidCode = 'throws TypeError "First argument must be a valid error code number"';
 const reasonTooLong = 'throws RangeError "The message must not be greater than 123 bytes"';
 const a = (count: number) => Buffer.alloc(count, "a").toString();
@@ -293,6 +297,63 @@ describe.each(implementations)("ws server, closing ($name)", ({ ws: implementati
       expect(await client.rest()).toEqual([]);
       await client.closed;
       expect(client.tcp).toEqual(["end", "close"]);
+    });
+
+    // What the socket already holds is still parsed. Nothing is answered: no Pong, no Close frame.
+    describe("with frames that came with the request, in the 'connection' listener", () => {
+      test.each<{ held: string; frames: [opcode: number, payload?: Payload][]; cut?: number; events: string[] }>([
+        {
+          held: "a message and a Close frame",
+          frames: [
+            [OP.text, "one"],
+            [OP.close, closePayload(1000, "bye")],
+          ],
+          events: ['message Buffer("one") text rs=2', 'close 1000 Buffer("bye") rs=3'],
+        },
+        {
+          held: "a Close frame",
+          frames: [[OP.close, closePayload(1000, "bye")]],
+          events: ['close 1000 Buffer("bye") rs=3'],
+        },
+        { held: "a message", frames: [[OP.text, "one"]], events: ['message Buffer("one") text rs=2', lost] },
+        {
+          held: "two messages",
+          frames: [
+            [OP.text, "one"],
+            [OP.binary, "two"],
+          ],
+          events: ['message Buffer("one") text rs=2', 'message Buffer("two") binary rs=2', lost],
+        },
+        {
+          held: "a Ping and a message",
+          frames: [
+            [OP.ping, "p"],
+            [OP.text, "one"],
+          ],
+          events: ['ping Buffer("p") rs=2', 'message Buffer("one") text rs=2', lost],
+        },
+        { held: "a message without its last byte", frames: [[OP.text, "one"]], cut: -1, events: [lost] },
+        {
+          held: "a frame that is no frame",
+          frames: [[3, "x"]],
+          events: ['error RangeError "Invalid WebSocket frame: invalid opcode 3" WS_ERR_INVALID_OPCODE rs=2', lost],
+        },
+      ])("$held", async ({ frames, cut, events }) => {
+        const held = Buffer.concat(frames.map(([opcode, payload]) => encodeFrame(opcode, payload, { mask: true })));
+        await using server = await createServer(implementation);
+        const seen: string[] = [];
+        const closed = new Promise<void>(resolve =>
+          server.wss.on("connection", ws => {
+            watch(ws, seen);
+            ws.on("close", () => resolve());
+            ws.terminate();
+          }),
+        );
+        const client = server.connect({ afterRequest: held.subarray(0, cut) });
+        await closed;
+        expect(seen).toEqual(events);
+        expect(await client.rest()).toEqual([]);
+      });
     });
 
     test("after close(): 'close' 1006, not the code of close()", async () => {

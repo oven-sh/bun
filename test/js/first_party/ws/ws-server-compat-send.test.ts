@@ -1,9 +1,11 @@
 // send(), ping() and pong() of a `ws` server socket, against a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { openAsBlob } from "node:fs";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
 import type { WebSocket as Socket } from "ws";
 import {
@@ -235,6 +237,23 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
       ws.send("b", { fin: undefined });
       ws.send("c", { fin: 1 as any });
       expect(await client.roundTrip()).toEqual(['text "a" !fin', 'continuation "b" !fin', 'continuation "c"']);
+    });
+
+    // npm ws reads any Blob later. The built-in cannot read a file inside send(), and says so.
+    test.skipIf(!builtin).each([
+      { blob: "Bun.file()", make: (file: string) => Bun.file(file) },
+      { blob: "fs.openAsBlob()", make: (file: string) => openAsBlob(file) },
+    ])("send($blob, { fin: false }) throws, reports no success and leaves no fragment open", async ({ make }) => {
+      using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
+      const blob = await make(path.join(String(dir), "data.txt"));
+      await using server = await openServer(implementation);
+      const { ws, client: peer } = server;
+      const results: unknown[] = [];
+      expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
+      const sent = new Promise(resolve => ws.send("x", resolve));
+      expect(await peer.roundTrip()).toEqual(['text "x"']);
+      expect(await sent).toBeNull();
+      expect(results.filter(result => !(result instanceof Error))).toEqual([]);
     });
 
     test("a ping goes out between two fragments", async () => {
@@ -552,7 +571,8 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
             const call = calls++;
             ws.send(data, () => order.push(call) === calls && resolve());
           };
-          send(Buffer.alloc(8 * MiB));
+          // Until the kernel does not take all of it.
+          while (ws.bufferedAmount === 0 && calls < 32) send(Buffer.alloc(8 * MiB));
           expect(ws.bufferedAmount).toBeGreaterThan(0);
           const one = Buffer.alloc(1);
           // The pause is for the other process. It does not return to the event loop.

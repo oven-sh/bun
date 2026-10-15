@@ -1944,11 +1944,11 @@ describe("client TLS options", () => {
             dial(server.url, { ...options, tls: { ca: ca1 } }),
             dial(server.url, { ...options, tls: {} }),
           ]);
-          return [way, outcomes];
+          return [way, outcomes] as [string, string[]];
         }),
       );
       const expected = [anonymous, "refused", "refused", "refused"];
-      expect(results).toEqual(Object.keys(ways).map(way => [way, expected]));
+      expect(results).toEqual(Object.keys(ways).map((way): [string, string[]] => [way, expected]));
     });
 
     it("no option is read from Object.prototype", async () => {

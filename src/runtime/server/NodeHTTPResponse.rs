@@ -557,6 +557,9 @@ impl NodeHTTPResponse {
     }
 
     /// What an upgrade needs from the response and its server. Ask before anything is written.
+    ///
+    /// `server` is read last. Script can hold a response for longer than its server lives; the server
+    /// is there while the connection is open (`NewServer::is_drained`).
     pub(crate) fn can_upgrade(&self) -> bool {
         !self
             .flags
@@ -571,28 +574,35 @@ impl NodeHTTPResponse {
     /// Returns the `ServerWebSocket`, or `None` with nothing written.
     pub(crate) fn upgrade_for_ws_package(
         &self,
+        global: &JSGlobalObject,
         websocket: JSValue,
+        handlers: JSValue,
         handshake: &[u8],
         max_payload_length: u32,
         auto_pong: bool,
         skip_utf8_validation: bool,
         compress_options: i32,
-    ) -> Option<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         if !self.can_upgrade() {
-            return None;
-        }
-        self.resume_socket();
-        if !self.can_upgrade() {
-            return None;
+            return Ok(None);
         }
         let mut server = self.server;
-        let handler = server.ws_package_handler()?;
-        let context = server.ws_package_context(
+        server.keep_ws_package_handlers(global, handlers)?;
+        self.resume_socket();
+        if !self.can_upgrade() {
+            return Ok(None);
+        }
+        let Some(handler) = server.ws_package_handler() else {
+            return Ok(None);
+        };
+        let Some(context) = server.ws_package_context(
             max_payload_length,
             auto_pong,
             skip_utf8_validation,
             compress_options != 0,
-        )?;
+        ) else {
+            return Ok(None);
+        };
 
         let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
         // SAFETY: `init` just made `ws`; its JS wrapper owns it.
@@ -601,7 +611,7 @@ impl NodeHTTPResponse {
         let armed_reader = self.armed_this_value.get();
         let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) else {
             ws_ref.discard_unopened();
-            return None;
+            return Ok(None);
         };
         self.update_flags(|f| f.insert(Flags::UPGRADED));
         let ended_unfinished_body = self.leave_pending(BodyReadState::Upgraded);
@@ -635,7 +645,7 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
-        if upgraded { ws_ref.js_value() } else { None }
+        Ok(if upgraded { ws_ref.js_value() } else { None })
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {

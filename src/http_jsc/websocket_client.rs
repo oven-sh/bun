@@ -301,12 +301,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// `terminate()`.
+    /// `terminate()`. For `ws` it is the loss of the connection: `handle_close` and
+    /// `handle_tunnel_close` still parse what the client holds, with nowhere to send an answer.
+    /// A listener they call can get here again, with the connection gone: they go on.
     pub(crate) fn cancel(this: ThisPtr<Self>) {
         log!("cancel");
         let _guard = RefPtr::from_this(this);
         match this.io() {
             Io::Stream => cpp_websocket::without_checkpoint(|| this.finish(Outcome::Closed)),
+            Io::Socket if this.options.ws_mode => {
+                cpp_websocket::without_checkpoint(|| this.tcp.get().close_now());
+            }
+            Io::Tunnel(tunnel) if this.options.ws_mode => {
+                if tunnel.has_socket() {
+                    cpp_websocket::without_checkpoint(|| Self::handle_tunnel_close(this));
+                }
+            }
             Io::Socket | Io::Tunnel(_) => this.finish(Outcome::Closed),
         }
     }

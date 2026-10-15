@@ -1,8 +1,11 @@
 // A `ws` socket whose connection is a plain JS stream: handleUpgrade() with any Duplex, a client with
 // `createConnection`. The other end of the stream is a raw peer, or a second `ws` socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { openAsBlob } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
+import path from "node:path";
 import { Duplex, duplexPair } from "node:stream";
 import zlib from "node:zlib";
 import type { ServerOptions, WebSocket } from "ws";
@@ -877,6 +880,23 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           "text !fin",
           "continuation",
         ]);
+      });
+
+      // npm ws reads any Blob later. The built-in cannot read a file inside send(), and says so.
+      test.skipIf(!builtin).each([
+        { blob: "Bun.file()", make: (file: string) => Bun.file(file) },
+        { blob: "fs.openAsBlob()", make: (file: string) => openAsBlob(file) },
+      ])("send($blob, { fin: false }) throws, reports no success and leaves no fragment open", async ({ make }) => {
+        using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
+        const blob = await make(path.join(String(dir), "data.txt"));
+        await using connection = await open(implementation, role);
+        const { ws, peer } = connection;
+        const results: unknown[] = [];
+        expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
+        const sent = new Promise(resolve => ws.send("x", resolve));
+        expect(await peer.roundTrip()).toEqual(['text "x"']);
+        expect(await sent).toBeNull();
+        expect(results.filter(result => !(result instanceof Error))).toEqual([]);
       });
 
       test("a Blob keeps its place", async () => {

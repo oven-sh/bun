@@ -284,6 +284,19 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       expect(lines.sort()).toEqual(["Cookie: foo=bar", "Host: example.test", "User-Agent: mine", "x-num: 5"]);
     });
 
+    test.each<{ name: string; value: string[]; sent: string[] }>([
+      { name: "cookie", value: ["a=1", "b=2"], sent: ["cookie: a=1; b=2"] },
+      { name: "Cookie", value: ["a=1", "b=2", "c=3"], sent: ["cookie: a=1; b=2; c=3"] },
+      { name: "COOKIE", value: ["a=1"], sent: ["cookie: a=1"] },
+      { name: "X-Empty", value: [], sent: [] },
+    ])("$name: $value is sent as $sent", async ({ name, value, sent }) => {
+      await using client = await dial(implementation, { headers: { [name]: value } as {} });
+      const lines = (await client.peer.connection()).headLines.filter(line =>
+        line.toLowerCase().startsWith(name.toLowerCase()),
+      );
+      expect(lines.map(line => line.replace(/^[^:]+/, name => name.toLowerCase()))).toEqual(sent);
+    });
+
     test("a header whose value is an array", async () => {
       await using client = await dial(implementation, { headers: { "X-Multi": ["a", "b"] } as {} });
       const lines = (await client.peer.connection()).headLines.filter(line => /^x-multi/i.test(line));
@@ -524,7 +537,8 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       await using client = await dial(
         implementation,
         {
-          proxy: "http://127.0.0.1:9",
+          // Bun's own option, which the types of `ws` do not have.
+          ...{ proxy: "http://127.0.0.1:9" },
           headers: { "X-Bad": "a\r\nb" },
           finishRequest: (request: ClientRequest) => void setImmediate(() => request.end()),
         },

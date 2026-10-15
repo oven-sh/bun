@@ -15,7 +15,7 @@ const {
   setRef,
   streamClosed,
 } = $cpp("JSWebSocket.cpp", "createWebSocketBindingForWs") as NativeClientBinding;
-const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHTTPResponseToWebSocket", 8) as (
+const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHTTPResponseToWebSocket", 7) as (
   response: unknown,
   websocket: WebSocket,
   handlers: ServerHandlers,
@@ -23,7 +23,6 @@ const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHT
   maxPayload: number,
   flags: number,
   compression: number,
-  head: Buffer | undefined,
 ) => NativeServer | undefined;
 const serverSendFrame = $newRustFunction("node_http_binding.rs", "sendWebSocketFrame", 5) as (
   handle: NativeServer,
@@ -282,6 +281,7 @@ interface AgentConnectOptions extends HttpAgentOptions {
 }
 
 interface ClientOptions extends Omit<HttpsRequestOptions, "agent" | "headers" | "host" | "path" | "port"> {
+  secureContext?: import("node:tls").SecureContext;
   agent?: Agent | boolean;
   allowSynchronousEvents?: boolean;
   autoPong?: boolean;
@@ -1162,7 +1162,6 @@ class WebSocket extends EventEmitter {
         maxPayload,
         (this._autoPong ? 1 : 0) | (options.skipUTF8Validation ? 2 : 0),
         perMessageDeflate ? perMessageDeflate.nativeOptions : 0,
-        head,
       );
 
       if (native === undefined) return false;
@@ -1350,18 +1349,27 @@ class WebSocket extends EventEmitter {
       opcode = 0;
     }
 
-    this[kFirstFragment] = !!fin;
-
     const transport = this[kTransport];
 
+    // Throws for a Blob that is a file. Nothing is sent then, so the message has not begun either.
     if (transport === UPGRADED) {
-      written(this, serverSendFrame(this[kNative] as NativeServer, data, opcode, !!fin, !!compress) === -1, cb);
+      const status = serverSendFrame(this[kNative] as NativeServer, data, opcode, !!fin, !!compress);
+
+      this[kFirstFragment] = !!fin;
+      written(this, status === -1, cb);
     } else if (transport === DIALLED) {
       clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
+      this[kFirstFragment] = !!fin;
       written(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
       this[kWriteCallback] = cb;
-      clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
+      try {
+        clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
+      } catch (err) {
+        this[kWriteCallback] = undefined;
+        throw err;
+      }
+      this[kFirstFragment] = !!fin;
       writeCallbackNotTaken(this);
     }
   }
@@ -1378,7 +1386,14 @@ class WebSocket extends EventEmitter {
     if (native === null) return;
 
     this._readyState = CLOSING;
-    native.terminate();
+    // Over a stream the engine goes on until socketOnClose(), which gives it what the socket still holds.
+    if (this[kTransport] !== STREAM) {
+      const closeFrameSent = this._closeFrameSent;
+
+      // What the native client still holds comes out of this call. A Close frame in it gets no answer.
+      native.terminate();
+      this._closeFrameSent = closeFrameSent;
+    }
     if (this[kTransport] !== DIALLED) this._socket!.destroy();
   }
 }
@@ -1940,6 +1955,7 @@ function connectError(native: NativeClient, error: NativeError): Error {
   }
 
   const detail = error.$detail;
+  const errno = (require("node:os").constants.errno as Dictionary<number | undefined>)[code];
   let err: ConnectError;
 
   if (detail) {
@@ -1955,22 +1971,17 @@ function connectError(native: NativeClient, error: NativeError): Error {
       err = new Error(`getaddrinfo ENOTFOUND ${url.hostname}`);
       err.syscall = "getaddrinfo";
       err.hostname = url.hostname;
+    } else if (errno === undefined) {
+      return error;
     } else if (url.protocol === "ws+unix:" || url.protocol === "wss+unix:") {
-      const path = url.pathname.split(":")[0];
-      err = new Error(`connect ${code} ${path}`);
-      err.syscall = "connect";
-      err.address = path;
+      return new (require("internal/shared").ExceptionWithHostPort)(-errno, "connect", url.pathname.split(":")[0]);
     } else {
       const port = +url.port || (url.protocol === "wss:" ? 443 : 80);
       const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
-      err = new Error(`connect ${code} ${host}:${port}`);
-      err.syscall = "connect";
-      err.address = host;
-      err.port = port;
+      return new (require("internal/shared").ExceptionWithHostPort)(-errno, "connect", host, port);
     }
   }
 
-  const errno = (require("node:os").constants.errno as Dictionary<number | undefined>)[code];
   if (errno !== undefined) err.errno = -errno;
   err.code = code;
   return err;
@@ -2123,6 +2134,20 @@ function validateUpgrade(
   }
 
   return true;
+}
+
+// The `signal` option of http.request(), which destroys the request. Once the socket is open there is none.
+function abortOnSignal(websocket: WebSocket, signal: AbortSignal): void {
+  require("internal/validators").validateAbortSignal(signal, "options.signal");
+
+  const onAbort = () => void websocket._req?.destroy($makeAbortError(undefined, { cause: signal.reason }));
+
+  if (signal.aborted) {
+    process.nextTick(onAbort);
+  } else {
+    signal.addEventListener("abort", onAbort, { once: true });
+    websocket.once("close", () => signal.removeEventListener("abort", onAbort));
+  }
 }
 
 function handshakeOnTimeout(websocket: WebSocket): void {
@@ -2285,7 +2310,9 @@ class ClientRequest extends EventEmitter {
       const entry = this[kHeaders][key];
       const value = entry[1];
 
-      headers[entry[0]] = $isArray(value) ? value.join(", ") : value;
+      if (!$isArray(value)) headers[entry[0]] = value;
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L672
+      else if (value.length) headers[entry[0]] = value.join(key === "cookie" ? "; " : ", ");
     }
     nativeOptions.headers = headers;
     nativeOptions.extensions = this[kHeaders]["sec-websocket-extensions"]?.[1] as string | undefined;
@@ -2343,9 +2370,7 @@ class ClientRequest extends EventEmitter {
 }
 
 function connResetException(message: string): ConnectError {
-  const err: ConnectError = new Error(message);
-  err.code = "ECONNRESET";
-  return err;
+  return new (require("internal/shared").ConnResetException)(message);
 }
 
 function releaseNative(req: ClientRequest): void {
@@ -2665,6 +2690,8 @@ function initAsClient(
       opts.localAddress ||
       opts.localPort ||
       opts.finishRequest ||
+      opts.signal ||
+      opts.secureContext ||
       ($isObject(agent) && connectsItself(agent)))
   ) {
     opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
@@ -2687,6 +2714,7 @@ function initAsClient(
       for (const replaced of fromAgent ? [connect, fromAgent] : [connect]) {
         for (let i = 0; i < nodeClientTlsKeys.length; i++) delete replaced[nodeClientTlsKeys[i]];
         delete replaced.ALPNProtocols;
+        delete replaced.secureContext;
         delete replaced.secureProtocol;
       }
       delete connect.tls;
@@ -2781,6 +2809,9 @@ function initAsClient(
   if (websocket._redirects) {
     websocket.emit("redirect", websocket.url, req);
   }
+
+  const { signal } = opts;
+  if (signal && websocket._redirects === 0) abortOnSignal(websocket, signal);
 
   // It also runs for a request that `finishRequest` ends late or never.
   if (handshakeTimeout) {
@@ -3136,11 +3167,13 @@ class WebSocketServer extends EventEmitter {
   }
 }
 
-// The native response of `req`. A request that node:http did not make (a framework's own object) stands for the
-// one its socket was handed over with.
+// The native response of the connection, when `socket` is the connection itself and `req` came in on it. Through
+// anything that stands around it every byte has to go, as through any stream. A request that node:http did not make
+// (a framework's own object) stands for the one `socket` was handed over with.
 function nativeResponse(req: ServerRequest, socket: ServerSocket): unknown {
-  const response = req[(kHeaderSource ??= require("internal/http").kHeaderSource)];
-  return response === undefined ? socket[kInternalSocketData] : response;
+  const response = socket[kInternalSocketData];
+  const ofRequest = req[(kHeaderSource ??= require("internal/http").kHeaderSource)];
+  return ofRequest === undefined || ofRequest === response ? response : undefined;
 }
 
 function addListeners(server: HttpServer, map: Dictionary<(...args: any[]) => void>): () => void {

@@ -1189,3 +1189,61 @@ test.concurrent("a client that resets a TLS connection while a long handshake is
   expect({ stdout, stderr }).toEqual({ stdout: "echo:still serving\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// The request outlives its connection and its server. Under ASAN the upgrade read the freed server.
+test.concurrent.each(["another stream", "its own socket, made to look open"])(
+  "handleUpgrade() with the request of a server that is gone, and %s",
+  async stream => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const http = require("node:http");
+          const net = require("node:net");
+          const { once } = require("node:events");
+          const { Duplex } = require("node:stream");
+          const { WebSocketServer } = require("ws");
+
+          async function requestOfAServerThatClosed() {
+            const server = http.createServer();
+            const upgrade = once(server, "upgrade");
+            await once(server.listen(0, "127.0.0.1"), "listening");
+            const client = net.connect(server.address().port, "127.0.0.1");
+            client.write(
+              "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
+                "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+            );
+            const [request, socket] = await upgrade;
+            socket.destroy();
+            await once(client, "close");
+            await new Promise(resolve => server.close(resolve));
+            return request;
+          }
+
+          const request = await requestOfAServerThatClosed();
+          for (let i = 0; i < 10; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+
+          let socket = new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } });
+          if (process.argv[1] !== "another stream") {
+            socket = Object.defineProperties(request.socket, { readable: { value: true }, writable: { value: true } });
+          }
+          socket.on("error", () => {});
+          new WebSocketServer({ noServer: true }).handleUpgrade(request, socket, Buffer.alloc(0), () => {});
+          console.log("returned");
+          process.exit(0);
+        `,
+        stream,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "returned\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);

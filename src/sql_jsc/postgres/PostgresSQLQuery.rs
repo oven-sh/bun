@@ -507,8 +507,9 @@ impl PostgresSQLQuery {
                 !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
             this.update_flags(|f| f.describe_first = describe_first);
             // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
-            // written behind a simple query, and a COPY has no parameters to lose.
-            if declared.is_empty() && this.is_copy_statement() {
+            // written behind a simple query, and the server takes no parameter in a COPY.
+            if this.is_copy_statement() {
+                declared.clear();
                 this.update_flags(|f| f.simple = true);
             }
         }

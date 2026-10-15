@@ -584,8 +584,11 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await count();
       // On the second run a statement is prepared, and what is prepared is pipelined.
       for (let run = 0; run < 2; run++) {
-        const all = [sql`${sql.unsafe(text)}`, count(), count()].map(query => query.then(rows => [...rows], failure));
-        expect(await Promise.all(all)).toEqual([withoutStream, [{ rows: 0 }], [{ rows: 0 }]]);
+        // With values a text is a prepared statement, but not this one.
+        for (const copy of [() => sql`${sql.unsafe(text)}`, () => sql.unsafe(text, [1])]) {
+          const all = [copy(), count(), count()].map(query => query.then(rows => [...rows], failure));
+          expect(await Promise.all(all)).toEqual([withoutStream, [{ rows: 0 }], [{ rows: 0 }]]);
+        }
       }
       expect(await pidOf(sql)).toBe(pid);
     },

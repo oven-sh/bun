@@ -3755,6 +3755,10 @@ declare module "bun" {
      * command reports that the executable was built without it, and an
      * excluded API is `undefined`.
      *
+     * A built-in module written in JavaScript can be excluded by name, like
+     * `"node:http2"`. Importing it then throws. Bun does not check whether
+     * another built-in module needs it.
+     *
      * Passing a name that does not exist fails and lists the ones that do.
      *
      * Equivalent CLI flag: `--compile-exclude-features` (repeatable, or separated by commas)

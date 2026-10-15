@@ -109,6 +109,11 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    // bun build --compile --compile-exclude-features
+    if (!m.codeLength) [[unlikely]] {
+        throwTypeError(globalObject, throwScope, makeString("this executable was built without "_s, moduleName));
+        return {};
+    }
     SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
     maybeAddCodeCoverage(vm, source);
 

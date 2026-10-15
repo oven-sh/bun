@@ -1369,6 +1369,8 @@ pub struct BundleOptions<'a> {
     pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
+    /// `--compile-exclude-features`. An internal module that the executable will not have gets no bytecode.
+    pub compile_exclude_features: Vec<Box<[u8]>>,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1574,6 +1576,7 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: self.optimize_bytecode,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
+            compile_exclude_features: self.compile_exclude_features.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1826,6 +1829,7 @@ impl<'a> BundleOptions<'a> {
             optimize_bytecode: true,
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
+            compile_exclude_features: Vec::new(),
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

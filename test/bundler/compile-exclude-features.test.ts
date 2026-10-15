@@ -27,6 +27,8 @@ const app = `
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+// With --bytecode an executable has bytecode for the builtin modules that the program imports.
+await import("node:http2").catch(() => {});
 const worker = new Worker("data:text/javascript,postMessage(40 + 2)");
 const posted = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
 worker.terminate();
@@ -169,13 +171,15 @@ test("requires --compile", async () => {
 describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", () => {
   const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
   const features = Object.keys(commands) as (keyof typeof commands)[];
-  // What two features share goes only once both are excluded, so each set of them is an executable of its own.
-  const sets: string[][] = Array.from({ length: 1 << features.length }, (_, bits) =>
-    features.filter((_, i) => bits & (1 << i)),
-  );
-  const apis = { semver: "Bun.semver", csrf: "Bun.CSRF" };
-  const executables = [...sets, ...Object.keys(apis).map(api => [api])];
-  const without = (...set: string[]) => "without-" + (set.join("-") || "nothing");
+  // What two features share goes only once both are excluded, so a set of them is an executable of its own. `check,lint` and
+  // `check,fmt` leave out nothing that `check` and `fmt` do not.
+  const sets: string[][] = [[], ["check"], ["lint"], ["fmt"], ["lint", "fmt"], [...features]];
+  const apis = { semver: "Bun.semver", csrf: "Bun.CSRF", image: "Bun.Image" };
+  const typeOf = { "Bun.semver": "object", "Bun.CSRF": "object", "Bun.Image": "function" };
+  const several = ["csrf", "image", "node:http2", "node:dgram"];
+  // The last is a module that other builtin modules import.
+  const executables = [...sets, ["semver"], several, ["node:events"]];
+  const without = (...set: string[]) => "without-" + (set.join("-").replaceAll(":", "_") || "nothing");
   const expectToWork = async (name: string) => {
     const ran = await run([join(cwd, exe(name))], cwd);
     expect(JSON.parse(ran.stdout)).toEqual(working);
@@ -196,13 +200,25 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     cwd = String(dir);
     // Given several times, or separated by commas.
     const flags = (set: string[]) => (set.length === 2 ? set : set.length ? [set.join(",")] : []);
-    const compiled = await Promise.all(
-      executables.map(set =>
-        compile(cwd, without(...set), ...flags(set).map(names => `--compile-exclude-features=${names}`)),
-      ),
-    );
+    const [fromTheApi, ...compiled] = await Promise.all([
+      Bun.build({
+        entrypoints: [join(cwd, "app.ts")],
+        compile: { outfile: join(cwd, without("lint")), excludeFeatures: ["lint"] },
+      }),
+      ...executables
+        .filter(set => set.join() !== "lint")
+        .map(set =>
+          compile(
+            cwd,
+            without(...set),
+            ...flags(set).map(names => `--compile-exclude-features=${names}`),
+            ...(set === several ? ["--bytecode", "--format=esm"] : []),
+          ),
+        ),
+    ]);
+    expect(fromTheApi.success).toBe(true);
     expect(compiled.map(c => c.stderr).join("")).not.toContain("error");
-    expect(compiled.map(c => c.exitCode)).toEqual(executables.map(() => 0));
+    expect(compiled.map(c => c.exitCode)).toEqual(compiled.map(() => 0));
   });
   afterAll(async () => {
     // Windows goes on with a report of its own about a crash, and has the executable open for that long.
@@ -257,21 +273,87 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     expect(size(...features)).toBeLessThan(size("lint", "fmt") - 5 * MB);
   });
 
-  test.concurrent.each(Object.entries(apis))("without %s", async (excluded, api) => {
-    await expectToWork(without(excluded));
-    const types = `JSON.stringify({ ${Object.values(apis).map(api => `"${api}": typeof ${api}`)} })`;
-    const { stdout, exitCode } = await asBun(cwd, without(excluded), "-p", types);
-    const expected = Object.fromEntries(Object.values(apis).map(it => [it, it === api ? "undefined" : "object"]));
-    expect(JSON.parse(stdout)).toEqual(expected);
-    expect(exitCode).toBe(0);
+  test.concurrent.each([["semver"], several].map(set => [set.join(","), set] as const))(
+    "without %s",
+    async (_, set) => {
+      await expectToWork(without(...set));
+      const types = `JSON.stringify({ ${Object.values(apis).map(api => `"${api}": typeof ${api}`)} })`;
+      const { stdout, exitCode } = await asBun(cwd, without(...set), "-p", types);
+      const expected = Object.entries(apis).map(([name, api]) => [api, set.includes(name) ? "undefined" : typeOf[api]]);
+      expect(JSON.parse(stdout)).toEqual(Object.fromEntries(expected));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // A class, C++, three libraries of C and what an assembler made of one of them.
+  test.concurrent("Bun.Image", async () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8Dwn4GBgYGJAQoAHxcCAr7B8sAAAAAASUVORK5CYII=";
+    const script = `
+      const png = Buffer.from("${png}", "base64");
+      const attempt = async f => { try { return await f(); } catch (e) { return e.message; } };
+      console.log(JSON.stringify({
+        jpeg: await attempt(async () => (await new Bun.Image(png).resize(4, 4).jpeg().bytes())[0]),
+        body: await attempt(async () => (await new Response(new Bun.Image(png).webp()).blob()).type),
+        file: await attempt(async () => (await Bun.write("two.png", png), (await Bun.file("two.png").image().metadata()).width)),
+        other: await new Response("still").text(),
+      }));`;
+    const [full, slim] = await Promise.all(
+      [without(), without(...several)].map(name => asBun(cwd, name, "-e", script)),
+    );
+    expect(JSON.parse(full.stdout)).toEqual({ jpeg: 0xff, body: "image/webp", file: 2, other: "still" });
+    expect(JSON.parse(slim.stdout)).toEqual({
+      jpeg: expect.stringContaining("not a constructor"),
+      body: expect.stringContaining("not a constructor"),
+      file: "this executable was built without Bun.Image",
+      other: "still",
+    });
   });
 
-  // Too small to make the file much smaller, and gone all the same. On Windows an island has code only.
-  test.skipIf(isWindows)("what is excluded is not in the file", () => {
-    const text = "Missing required token parameter";
+  test.concurrent("builtin modules", async () => {
+    const script = `
+      const attempt = async name => { try { return typeof (await import(name)).default; } catch (e) { return e.message; } };
+      console.log(JSON.stringify(Object.fromEntries(await Promise.all(
+        ["node:http2", "node:dgram", "node:events", "node:path", "node:stream"].map(async name => [name, await attempt(name)]),
+      ))));`;
+    const results = await Promise.all(
+      [[], several, ["node:events"]].map(set => asBun(cwd, without(...set), "-e", script)),
+    );
+    const all = { "node:http2": "object", "node:dgram": "object", "node:events": "function", "node:path": "object", "node:stream": "function" }; // prettier-ignore
+    expect(results.map(it => JSON.parse(it.stdout))).toEqual([
+      all,
+      {
+        ...all,
+        "node:http2": "this executable was built without node:http2",
+        "node:dgram": "this executable was built without node:dgram",
+      },
+      // What imports it says what is missing.
+      {
+        ...all,
+        "node:http2": "this executable was built without node:events",
+        "node:dgram": "this executable was built without node:events",
+        "node:events": "this executable was built without node:events",
+        "node:stream": "this executable was built without node:events",
+      },
+    ]);
+    // In the source of node:http2 and in bytecode made of it, which this program would have had.
+    const text = "HTTP2_HEADER_ACCEPT_CHARSET";
     expect(readFileSync(join(cwd, exe(without()))).includes(text)).toBe(true);
-    expect(readFileSync(join(cwd, exe(without("semver")))).includes(text)).toBe(true);
-    expect(readFileSync(join(cwd, exe(without("csrf")))).includes(text)).toBe(false);
+    expect(readFileSync(join(cwd, exe(without(...several)))).includes(text)).toBe(false);
+  });
+
+  // Also of what is too small to make the file smaller. On Windows an island has code only.
+  test.skipIf(isWindows)("what is excluded is not in the file", () => {
+    const [full, withoutSemver, withoutSeveral] = [[], ["semver"], several].map(set =>
+      readFileSync(join(cwd, exe(without(...set)))),
+    );
+    // Of Bun.CSRF, which is Rust, and of a library of Bun.Image, which is C.
+    for (const text of ["Missing required token parameter", "Bogus Huffman table definition"]) {
+      expect({ text, in: [full, withoutSemver, withoutSeveral].map(file => file.includes(text)) }).toEqual({
+        text,
+        in: [true, true, false],
+      });
+    }
   });
 
   // Nothing moves, so it reads against the symbols of the release like any other.
@@ -307,20 +389,10 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     expect(help.stderr).toContain("this executable was built without this command");
   });
 
-  test.concurrent("Bun.build", async () => {
-    const result = await Bun.build({
-      entrypoints: [join(cwd, "app.ts")],
-      compile: { outfile: join(cwd, "from-the-api"), excludeFeatures: ["lint", "fmt"] },
-    });
-    expect(result.success).toBe(true);
-    await expectToWork("from-the-api");
-    expect((await asBun(cwd, "from-the-api", "lint", "one.ts")).stderr).toContain("built without this command");
-  });
-
   test.concurrent("a name that does not exist", async () => {
     const { stdout, stderr, exitCode } = await compile(cwd, "nope", "--compile-exclude-features=lint,nope");
     expect(stdout + stderr).toContain(
-      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n  semver\n  csrf\n',
+      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n  semver\n  csrf\n  image\n  bun:ffi\n',
     );
     expect(existsSync(join(cwd, exe("nope")))).toBe(false);
     expect(exitCode).not.toBe(0);

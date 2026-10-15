@@ -489,6 +489,10 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
+        this_transpiler
+            .options
+            .compile_exclude_features
+            .clone_from(&ctx.bundler_options.compile_exclude_features);
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode

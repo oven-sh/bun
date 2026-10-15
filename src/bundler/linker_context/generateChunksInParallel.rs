@@ -1723,12 +1723,14 @@ fn builtins_of(target_section: Option<&[u8]>) -> Option<bun_exe_format::builtins
     }
 }
 
-/// The internal modules the program imports, and the ones those import.
+/// The internal modules the program imports, and the ones those import, of those that the executable will have.
 fn wanted_internal_modules(
     c: &LinkerContext,
     builtins: &bun_exe_format::builtins::Builtins<'_>,
 ) -> Vec<u32> {
     let import_records = c.graph.ast.items_import_records();
+    let excluded: Vec<&[u8]> = c.options.exclude_features.iter().map(|it| &**it).collect();
+    let gone = builtins.without(&excluded);
     let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {
         let Some(records) = import_records.get(source_index.get() as usize) else {
@@ -1757,7 +1759,7 @@ fn wanted_internal_modules(
                 None => continue,
             };
             if let Some(id) = builtins.find(canonical) {
-                if !wanted.contains(&id) {
+                if !wanted.contains(&id) && !gone.contains(&id) {
                     wanted.push(id);
                 }
             }
@@ -1766,7 +1768,7 @@ fn wanted_internal_modules(
     let mut i = 0;
     while i < wanted.len() {
         for dep in builtins.dependencies(wanted[i]) {
-            if !wanted.contains(&dep) {
+            if !wanted.contains(&dep) && !gone.contains(&dep) {
                 wanted.push(dep);
             }
         }

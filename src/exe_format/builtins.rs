@@ -23,9 +23,9 @@ const HEADER_SIZE: usize = 48;
 const RECORD_SIZE: usize = 6 * 4;
 
 const MH_MAGIC_64: u32 = 0xfeed_facf;
-const MACHO_SECTNAME: &[u8] = b"__bun_builtins";
-const ELF_SECTION_NAME: &[u8] = b".bun_builtins";
-const PE_SECTION_NAME: [u8; 8] = *b".bunblt\0";
+pub const MACHO_SECTNAME: &[u8] = b"__bun_builtins";
+pub const ELF_SECTION_NAME: &[u8] = b".bun_builtins";
+pub const PE_SECTION_NAME: [u8; 8] = *b".bunblt\0";
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr, PartialEq, Eq)]
 pub enum BuiltinsError {
@@ -58,6 +58,8 @@ pub struct Builtins<'a> {
     /// Identifies these sources to bytecode generated from them (JSC's `decodeBuiltinFunction` stamp).
     pub source_stamp: u32,
     count: u32,
+    modules_offset: usize,
+    data_offset: usize,
     records: &'a [u8],
     dep_offsets: &'a [u8],
     deps: &'a [u8],
@@ -121,11 +123,24 @@ impl<'a> Builtins<'a> {
         Ok(Self {
             source_stamp,
             count,
+            modules_offset,
+            data_offset,
             records,
             dep_offsets,
             deps,
             data,
         })
+    }
+
+    pub fn count(&self) -> u32 {
+        self.count
+    }
+
+    /// Where in the section the source of `id` starts, and where its length is written, in 4 bytes.
+    pub fn source_offsets(&self, id: u32) -> Option<(usize, usize)> {
+        let record = (id < self.count).then_some(id as usize * RECORD_SIZE)?;
+        let source = u32_at(self.records, record + 16) as usize;
+        Some((self.data_offset + source, self.modules_offset + record + 20))
     }
 
     pub fn module(&self, id: u32) -> Option<Module<'a>> {
@@ -140,6 +155,40 @@ impl<'a> Builtins<'a> {
             url: span(1),
             source: span(2),
         })
+    }
+
+    /// The modules that a program can import. The others, `internal:…`, only builtin modules can.
+    pub fn public_names(&self) -> impl Iterator<Item = &'a [u8]> {
+        let this = *self;
+        (0..self.count)
+            .filter_map(move |id| this.module(id))
+            .map(|module| module.name)
+            .filter(|name| !is_internal(name))
+    }
+
+    /// The modules that an executable without `excluded` (`--compile-exclude-features`) does not have: those, whatever
+    /// imports them, and the internal ones that only modules that go import. One that no module imports is loaded by
+    /// native code, and stays.
+    pub fn without(&self, excluded: &[&[u8]]) -> Vec<u32> {
+        let name_of = |id| self.module(id).map_or(&b""[..], |it| it.name);
+        let mut is_gone: Vec<bool> = (0..self.count)
+            .map(|id| excluded.contains(&name_of(id)))
+            .collect();
+        loop {
+            let next = (0..self.count).find(|&id| {
+                let mut importers = (0..self.count)
+                    .filter(|&it| self.dependencies(it).any(|dep| dep == id))
+                    .peekable();
+                !is_gone[id as usize]
+                    && is_internal(name_of(id))
+                    && importers.peek().is_some()
+                    && importers.all(|it| is_gone[it as usize])
+            });
+            match next {
+                Some(id) => is_gone[id as usize] = true,
+                None => return (0..self.count).filter(|&id| is_gone[id as usize]).collect(),
+            }
+        }
     }
 
     /// The id of the module whose registry specifier is exactly `name`.
@@ -160,6 +209,10 @@ impl<'a> Builtins<'a> {
         let deps = self.deps;
         (start..end).map(move |i| u16_at(deps, i * 2) as u32)
     }
+}
+
+fn is_internal(name: &[u8]) -> bool {
+    name.starts_with(b"internal:")
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {

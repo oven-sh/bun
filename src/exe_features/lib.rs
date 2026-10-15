@@ -24,6 +24,7 @@ mod macho;
 mod pe;
 
 use bun_collections::index_sort::sort_slice_by_key;
+use bun_exe_format::builtins::{self, Builtins};
 use core::ops::Range;
 
 use bytes::{i32_at, slice, slice_mut, u32_at};
@@ -163,6 +164,25 @@ impl Container {
         Ok(islands)
     }
 
+    /// The section with the builtin modules of JavaScript (src/codegen/bundle-modules.ts), and what it says is in it.
+    fn builtins<'a, 's>(
+        self,
+        file: &'a [u8],
+        sections: &'s [Section<'s>],
+    ) -> Option<(&'s Section<'s>, Builtins<'a>)> {
+        let called: &[u8] = match self {
+            Container::Elf => builtins::ELF_SECTION_NAME,
+            Container::MachO => builtins::MACHO_SECTNAME,
+            Container::Pe => bun_core::slice_to_nul(&builtins::PE_SECTION_NAME),
+        };
+        let section = sections.iter().find(|s| s.name == called)?;
+        let length = (section.addresses.end - section.addresses.start) as usize;
+        Some((
+            section,
+            Builtins::parse(slice(file, section.offset, length).ok()?).ok()?,
+        ))
+    }
+
     fn without_pages(self, file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
         match self {
             Container::Elf => elf::without_pages(file, dead),
@@ -192,7 +212,11 @@ pub fn names(file: &[u8]) -> Result<Vec<&[u8]>> {
     let sections = container.sections(file)?;
     // Without islands only the doors could be shut, and all of the features would still be there.
     contents_of(file, &sections, called_islands)?;
-    names_in(file, &sections, called_names)
+    let mut names = names_in(file, &sections, called_names)?;
+    if let Some((_, builtins)) = container.builtins(file, &sections) {
+        names.extend(builtins.public_names());
+    }
+    Ok(names)
 }
 
 /// For each island, from number 1, whether none of the features that need it stays. `table` is `1;1,2,3;2,3`, `is_excluded` is of
@@ -227,7 +251,16 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
     {
         let sections = container.sections(&file)?;
         let names = names_in(&file, &sections, called_names)?;
-        if !excluded.iter().all(|name| names.contains(name)) {
+        let builtins = container.builtins(&file, &sections);
+        let is_module = |name: &[u8]| {
+            builtins
+                .as_ref()
+                .is_some_and(|it| it.1.public_names().any(|public| public == name))
+        };
+        if !excluded
+            .iter()
+            .all(|name| names.contains(name) || is_module(name))
+        {
             return Err(Error::NoSuchFeature);
         }
         let is_excluded: Vec<bool> = names.iter().map(|name| excluded.contains(name)).collect();
@@ -242,13 +275,28 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
         }
 
         let is_dead = dead_islands(contents_of(&file, &sections, called_islands)?, &is_excluded)?;
-        let mut islands = container.islands(&file, &sections)?;
-        sort_slice_by_key(&mut islands, |(_, addresses)| addresses.start);
-        for (number, addresses) in islands {
+        // What goes, and whether it is code.
+        let mut gone: Vec<(Range<u64>, bool)> = Vec::new();
+        for (number, addresses) in container.islands(&file, &sections)? {
             let index = number.checked_sub(1).ok_or(Error::InvalidExecutable)?;
-            if !*is_dead.get(index).ok_or(Error::InvalidExecutable)? {
-                continue;
+            if *is_dead.get(index).ok_or(Error::InvalidExecutable)? {
+                gone.push((addresses, true));
             }
+        }
+        if let Some((section, builtins)) = &builtins {
+            for id in builtins.without(excluded) {
+                let (source, length) = builtins
+                    .source_offsets(id)
+                    .ok_or(Error::InvalidExecutable)?;
+                let size = builtins.module(id).map_or(0, |it| it.source.len()) as u64;
+                let start = section.addresses.start + source as u64;
+                gone.push((start..start + size, false));
+                // A module without source is one that this executable was built without (InternalModuleRegistry.cpp).
+                zeros.push((section.offset + length, 4));
+            }
+        }
+        sort_slice_by_key(&mut gone, |(addresses, _)| addresses.start);
+        for (addresses, is_code) in gone {
             let holds = |s: &&Section<'_>| {
                 s.addresses.start <= addresses.start && addresses.end <= s.addresses.end
             };
@@ -258,7 +306,8 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
                 .filter(|_| addresses.start <= addresses.end);
             let section = section.ok_or(Error::InvalidExecutable)?;
             let offset = section.offset + (addresses.start - section.addresses.start) as usize;
-            traps.push((offset, (addresses.end - addresses.start) as usize));
+            let length = (addresses.end - addresses.start) as usize;
+            if is_code { &mut traps } else { &mut zeros }.push((offset, length));
             // What no section has, between this one and the one before it, holds nothing.
             match dead.last_mut().filter(|before| {
                 let between = before.end..addresses.start;

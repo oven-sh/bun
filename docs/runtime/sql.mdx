@@ -517,7 +517,7 @@ Bun selects SQLite when the connection string matches these patterns:
 - `file://...` - File protocol URLs
 - `file:...` - File protocol without slashes
 
-Bun also selects SQLite when the options object has a `filename` and no `adapter`. The `filename` can be a plain path such as `./database.db`. A `filename` takes priority over `DATABASE_URL` and the other connection URL variables. The `hostname`, `host` and `path` options take priority over a `filename`.
+Bun also selects SQLite when the options object has a `filename` and no `adapter`. The `filename` can be a plain path such as `./database.db`. A `filename` takes priority over `DATABASE_URL` and the other connection URL variables. The `hostname`, `host` and `path` options take priority over a plain-path `filename`.
 
 ```ts
 // These all use SQLite automatically (no adapter needed)
@@ -1488,7 +1488,7 @@ try {
 	<Accordion title="How do I know which database adapter is being used?">
 		Bun detects the adapter automatically from the connection string or the options object:
 
-    	- An options object with a `filename` and no `adapter` uses SQLite
+    	- An options object with a `filename`, and no `adapter`, `hostname`, `host` or `path`, uses SQLite
     	- URLs starting with `mysql://` or `mysql2://` use MySQL
     	- URLs matching SQLite patterns (`:memory:`, `sqlite://`, `file://`) use SQLite
     	- Everything else defaults to PostgreSQL

@@ -399,9 +399,11 @@ yourself with Bun.serve().
           try {
             Bun.spawn(cmd);
           } catch (error: any) {
-            const [errorLabel, noteLabel] = enableANSIColors
-              ? ["\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m", "\x1b[34mnote\x1b[0m\x1b[2m:\x1b[0m"]
-              : ["error:", "note:"];
+            // `enableANSIColors` is also true when only stdout has colours, and these lines go to stderr.
+            const [errorLabel, noteLabel] =
+              enableANSIColors && process.stderr.isTTY
+                ? ["\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m", "\x1b[34mnote\x1b[0m\x1b[2m:\x1b[0m"]
+                : ["error:", "note:"];
             console.error(`${errorLabel} ${error?.message || error}`);
             console.error(`${noteLabel} Open ${url} in your browser`);
           }

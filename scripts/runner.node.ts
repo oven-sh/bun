@@ -1985,6 +1985,9 @@ async function spawnBun(
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    // test/leaksan.supp names functions, so LeakSanitizer needs a symbolizer to apply it. It looks for one on PATH,
+    // which some tests replace.
+    ASAN_SYMBOLIZER_PATH: process.env.ASAN_SYMBOLIZER_PATH ?? which(["llvm-symbolizer"]),
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),

@@ -1,0 +1,7 @@
+const a = < /* prettier-ignore */ ><b   /></>;
+
+const c = <><b   /></ /* prettier-ignore */ >;
+
+const d = <
+// prettier-ignore
+><b   /></>;

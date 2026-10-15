@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isPosix, isRoot } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -20,7 +20,6 @@ import { join } from "path";
 import { createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
-const isRoot = process.getuid?.() === 0;
 
 $.nothrow();
 

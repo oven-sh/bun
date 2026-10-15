@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use std::ffi::CString;
 
 use bstr::BStr;
+use bun_core::fmt::for_terminal;
 use bun_core::{Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
@@ -23,6 +24,7 @@ use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
+use crate::cache_publish::StagedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -31,6 +33,10 @@ use crate::{Error, PackageManager};
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
     pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task<'static>>) {
+        debug_assert!(
+            !self.options.runtime_auto_install,
+            "a git child exits through this thread's event loop"
+        );
         self.increment_pending_tasks(1);
         self.git_tasks.push_back(task);
     }
@@ -91,8 +97,14 @@ impl Finalize {
             }),
             Finalize::PublishRepo(staging) => {
                 let name = task.request_git_clone().name.slice().to_vec();
+                // A bare clone has no completion marker: like `begin_clone`, any folder is one.
                 staging
-                    .publish(&mut task.log, &name, &bare_repo_folder_name(task.id))
+                    .publish(
+                        &mut task.log,
+                        &name,
+                        &bare_repo_folder_name(task.id),
+                        |_| true,
+                    )
                     .map(|dir| Task::Data {
                         git_clone: ManuallyDrop::new(dir.into_raw()),
                     })
@@ -148,35 +160,38 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
         }
     };
     let _ = dir.delete_tree(b".git");
-    // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
-    let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
-
     // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
     let _ = dir.delete_tree(b".bun-tag");
-    let tagged = bun_sys::File::openat(
-        dir.fd(),
-        bun_core::zstr!(".bun-tag"),
-        bun_sys::O::WRONLY
-            | bun_sys::O::CREAT
-            | bun_sys::O::EXCL
-            | if cfg!(windows) {
-                0
-            } else {
-                bun_sys::O::NOFOLLOW
-            },
-        0o664,
-    )
-    .and_then(|f| f.write_all(&resolved));
+    let prepared = strip_node_modules(&dir)
+        .map_err(|err| ("cleaning \"node_modules\"", err))
+        .and_then(|()| {
+            bun_sys::File::openat(
+                dir.fd(),
+                bun_core::zstr!(".bun-tag"),
+                bun_sys::O::WRONLY
+                    | bun_sys::O::CREAT
+                    | bun_sys::O::EXCL
+                    | if cfg!(windows) {
+                        0
+                    } else {
+                        bun_sys::O::NOFOLLOW
+                    },
+                0o664,
+            )
+            .and_then(|f| f.write_all(&resolved))
+            .map_err(|err| ("writing \".bun-tag\"", err))
+        });
     // Windows cannot rename a directory with an open handle inside it.
     dir.close();
-    if let Err(err) = tagged {
+    if let Err((what, err)) = prepared {
         staging.discard();
         task.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "writing \".bun-tag\" for \"{}\" failed: {}",
-                BStr::new(&name),
+                "{} for \"{}\" failed: {}",
+                what,
+                for_terminal(BStr::new(&name)),
                 BStr::new(err.name())
             ),
         );
@@ -184,8 +199,62 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
     }
 
     let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name)?;
+    let package_dir = staging.publish(&mut task.log, &name, &folder_name, is_tagged_checkout)?;
     read_package_json(task, package_dir)
+}
+
+/// As npm and pnpm do. A package that bundles dependencies keeps it, without the links in it.
+fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
+    use bun_sys::{E, EntryKind, O};
+
+    // Most repositories commit nothing here; this also removes a link or a file.
+    match checkout.delete_file_z(bun_core::zstr!("node_modules")) {
+        Ok(()) => return Ok(()),
+        Err(err) if err.get_errno() == E::ENOENT => return Ok(()),
+        Err(_) => {}
+    }
+    if !bundles_dependencies(checkout) {
+        return checkout.delete_tree(b"node_modules");
+    }
+
+    let mut folders: Vec<Vec<u8>> = vec![b"node_modules".to_vec()];
+    while let Some(folder) = folders.pop() {
+        let dir = checkout.open_at_with(&folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)?;
+        // Deleted once all are read: a directory that changes under its iterator can skip entries.
+        let mut links: Vec<Vec<u8>> = Vec::new();
+        let mut entries = bun_sys::iterate_dir(dir.fd());
+        while let Some(entry) = entries.next()? {
+            let name = entry.name.slice_u8();
+            let kind = match entry.kind {
+                EntryKind::Unknown => {
+                    let stat = bun_sys::lstatat(dir.fd(), &bun_core::ZBox::from_bytes(name))?;
+                    bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode)
+                }
+                known => known,
+            };
+            match kind {
+                EntryKind::Directory => folders.push([folder.as_slice(), name].join(&Path::SEP)),
+                EntryKind::SymLink => links.push(name.to_vec()),
+                _ => {}
+            }
+        }
+        for link in &links {
+            dir.delete_tree(link)?;
+        }
+    }
+    Ok(())
+}
+
+fn bundles_dependencies(checkout: &bun_sys::Dir) -> bool {
+    const KEYS: &[&[u8]] = &[b"bundleDependencies", b"bundledDependencies"];
+    let Ok((file, contents)) = bun_sys::File::read_file_from(checkout.fd(), b"package.json") else {
+        return false;
+    };
+    let _ = file.close();
+    crate::initialize_mini_store();
+    let source = bun_ast::Source::init_path_string("package.json", &contents[..]);
+    crate::bun_json::ParsedJson::parse_package_json(&source, &mut bun_ast::Log::init())
+        .is_ok_and(|parsed| parsed.root.has_any_property_named(KEYS))
 }
 
 /// Closes `package_dir`.
@@ -216,7 +285,7 @@ fn read_package_json(
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "\"package.json\" for \"{}\" failed to open: {}",
-                        BStr::new(&name),
+                        for_terminal(BStr::new(&name)),
                         BStr::new(err.name())
                     ),
                 );
@@ -233,7 +302,7 @@ fn read_package_json(
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "\"package.json\" for \"{}\" failed to resolve: {}",
-                    BStr::new(&name),
+                    for_terminal(BStr::new(&name)),
                     BStr::new(err.name())
                 ),
             );
@@ -298,43 +367,42 @@ impl CacheStaging {
         let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(&self.tmp_name);
     }
 
+    /// Opens `folder_name`: the staging folder, or one there already that passes `is_complete`.
     fn publish(
         self,
         log: &mut bun_ast::Log,
         name: &[u8],
         folder_name: &[u8],
+        is_complete: fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
-        let renamed = bun_sys::renameat_concurrently_a(
-            self.cache_dir,
-            &self.tmp_name,
-            self.cache_dir,
-            folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
-        );
-        // After an exchange the temporary name holds the folder that was replaced.
-        self.discard();
-        if let Err(err) = renamed {
-            log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "moving \"{}\" to cache dir failed: {}",
-                    BStr::new(name),
-                    err
-                ),
-            );
-            return Err(Error::InstallFailed);
-        }
-        bun_sys::Dir::borrow(&self.cache_dir)
-            .open_at(folder_name)
-            .map_err(Error::from)
+        StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
+            .publish_and_open(
+                self.cache_dir,
+                &bun_core::ZBox::from_bytes(folder_name),
+                &is_complete,
+            )
+            .map_err(|err| {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "moving \"{}\" to cache dir failed: {}",
+                        for_terminal(BStr::new(name)),
+                        err
+                    ),
+                );
+                Error::InstallFailed
+            })
     }
 }
 
+/// `.bun-tag` is written last, so a checkout that has it is complete.
+fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
+    bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
+}
+
 /// `<hex(clone task id)>.git`: the cache folder of a bare clone.
-fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
+pub(crate) fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
     format!("{}.git", bun_core::fmt::hex_int_lower::<16>(clone_id.get())).into_bytes()
 }
 
@@ -427,10 +495,19 @@ impl GitSubprocess {
         unsafe { &mut *self.task.as_ptr() }
     }
 
-    fn log_error(&self, args: core::fmt::Arguments<'_>) {
-        self.task()
-            .log
-            .add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    /// A clone or commit lookup that only optional dependencies wait for fails with warnings.
+    fn is_required(&self) -> bool {
+        self.tag == Tag::GitCheckout || self.manager().is_network_task_required(self.task().id)
+    }
+
+    fn log_failure(&self, args: core::fmt::Arguments<'_>) {
+        let is_required = self.is_required();
+        let log = &mut self.task().log;
+        if is_required {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        } else {
+            log.add_warning_fmt(None, bun_ast::Loc::EMPTY, args);
+        }
     }
 
     fn new_staging(&self) -> Result<Vec<u8>, Error> {
@@ -450,7 +527,8 @@ impl GitSubprocess {
         this.urls.with_mut(|urls| {
             urls.extend(Repository::try_ssh(&url));
             urls.extend(Repository::try_https(&url));
-            if urls.is_empty() {
+            // git reads anything that is not a URL as a path relative to the project.
+            if urls.is_empty() && strings::contains(&url, b"://") {
                 urls.push(url);
             }
         });
@@ -473,15 +551,31 @@ impl GitSubprocess {
                 )
                 .to_vec();
                 this.step.set(Step::Fetch(dir));
-                Self::spawn(this, &[b"-C", &path, b"fetch", b"--quiet"])
+                // A bare clone has no fetch refspec; --prune clears refs renamed upstream.
+                Self::spawn(
+                    this,
+                    &[
+                        b"-C",
+                        &path,
+                        b"fetch",
+                        b"--quiet",
+                        b"--prune",
+                        b"origin",
+                        b"+refs/heads/*:refs/heads/*",
+                        b"+refs/tags/*:refs/tags/*",
+                    ],
+                )
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                 if offline {
-                    this.log_error(format_args!(
+                    this.log_failure(format_args!(
                         "--offline: git repository for \"{}\" is not in the cache",
-                        BStr::new(&this.name)
+                        for_terminal(BStr::new(&this.name))
                     ));
                     return Err(Error::InstallFailed);
+                }
+                if this.urls.get().is_empty() {
+                    return Err(Error::RepositoryNotFound);
                 }
                 Self::spawn_clone(this)
             }
@@ -505,6 +599,10 @@ impl GitSubprocess {
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--bare",
+                // The refresh fetches "origin" by name. Not `-o origin`: git before 2.39 refuses it with --bare.
+                b"-c",
+                b"clone.defaultRemoteName=origin",
+                b"--",
                 &url,
                 &tmp_path,
             ],
@@ -550,17 +648,17 @@ impl GitSubprocess {
         let repo_dir = req.repo_dir;
         let resolved = req.resolved.slice().to_vec();
         if !is_safe_resolved_tag(&resolved) {
-            this.log_error(format_args!(
+            this.log_failure(format_args!(
                 "invalid git commit \"{}\" for \"{}\"",
-                BStr::new(&resolved),
-                BStr::new(&this.name)
+                bun_core::fmt::escape_control_chars(&resolved),
+                for_terminal(BStr::new(&this.name))
             ));
             return Err(Error::InstallFailed);
         }
 
         match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
             Ok(dir) => {
-                if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
+                if is_tagged_checkout(&dir) {
                     Self::finish_on_pool(this, Finalize::CachedCheckout(dir));
                     return Ok(());
                 }
@@ -582,6 +680,7 @@ impl GitSubprocess {
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--no-checkout",
+                b"--",
                 &repo_path,
                 &tmp_path,
             ],
@@ -593,11 +692,11 @@ impl GitSubprocess {
     /// Spawns `git <args>` with stdout and stderr captured. On `Ok` the child
     /// may already have exited and freed `this`.
     fn spawn(this: ThisPtr<Self>, args: &[&[u8]]) -> Result<(), Error> {
-        let env = GitEnv::get(this.manager().env_mut());
+        let env = GitEnv::get();
         let Some(git) = &env.git else {
-            this.log_error(format_args!(
+            this.log_failure(format_args!(
                 "\"git\" is not installed (needed for \"{}\")",
-                BStr::new(&this.name)
+                for_terminal(BStr::new(&this.name))
             ));
             return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
@@ -779,13 +878,13 @@ impl GitSubprocess {
         if !ok && !not_found {
             this.report_failure(status, stderr);
         }
-        let name = BStr::new(&this.name);
+        let name = for_terminal(BStr::new(&this.name));
         match step {
             Step::Fetch(dir) => {
                 if ok {
                     Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
                 } else {
-                    this.log_error(format_args!("\"git fetch\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -804,7 +903,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.log_error(format_args!("\"git clone\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git clone\" for \"{}\" failed", name));
                     Self::fail(
                         this,
                         if not_found {
@@ -843,7 +942,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.log_error(format_args!("\"git clone\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git clone\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -852,7 +951,7 @@ impl GitSubprocess {
                     let staging = this.staging.take().expect("checkout has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishCheckout(staging));
                 } else {
-                    this.log_error(format_args!("\"git checkout\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git checkout\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -861,22 +960,22 @@ impl GitSubprocess {
 
     /// Mirrors git's stderr and termination kind, which name the cause.
     fn report_failure(&self, status: &Status, stderr: &[u8]) {
-        match (status, self.read_error.take()) {
-            (_, Some(err)) => {
-                Output::err_generic("reading the output of git failed: {}", (err,));
-            }
-            (Status::Exited(exit), None) => {
-                Output::err_generic("git failed with exit code {}", (exit.code,));
-            }
-            (Status::Signaled(sig), None) => {
-                Output::err_generic("git failed with signal {}", (sig,));
-            }
-            (Status::Err(err), None) => {
-                Output::err_generic("spawning git failed: {}", (err,));
-            }
-            (Status::Running, None) => {
-                Output::err_generic("git failed with unknown status", ());
-            }
+        let is_required = self.is_required();
+        // `--silent` drops warnings.
+        if !is_required && self.manager().options.log_level.is_silent() {
+            return;
+        }
+        let cause = match (status, self.read_error.take()) {
+            (_, Some(err)) => format!("reading the output of git failed: {err}"),
+            (Status::Exited(exit), None) => format!("git failed with exit code {}", exit.code),
+            (Status::Signaled(sig), None) => format!("git failed with signal {sig}"),
+            (Status::Err(err), None) => format!("spawning git failed: {err}"),
+            (Status::Running, None) => "git failed with unknown status".to_owned(),
+        };
+        if is_required {
+            bun_core::err_generic!("{}", cause);
+        } else {
+            bun_core::warn!("{}", cause);
         }
         if !stderr.is_empty() {
             let ew = Output::error_writer();

@@ -1,5 +1,8 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
+import { Readable } from "node:stream";
+import { asyncIterableBodyShapes, handWrittenBodyShapes, settled } from "../streams/async-iterable-body-shapes";
 
 test("Response.bytes() with async iterable body does not crash with null deref", async () => {
   await using proc = Bun.spawn({
@@ -95,8 +98,8 @@ for (const [label, make] of [
   });
 }
 
-// Canceling the body in-process reaches the generator: it is returned (or the reason thrown
-// into it), not drained in the background.
+// Canceling the body in-process reaches the generator: it is returned, not drained in the
+// background.
 test("breaking out of for await over an async generator body stops the generator", async () => {
   const macrotask = () => new Promise(resolve => setImmediate(resolve));
   let produced = 0;
@@ -122,23 +125,26 @@ test("breaking out of for await over an async generator body stops the generator
   expect(produced).toBeLessThanOrEqual(5);
 });
 
-test("cancel(reason) on an async generator body throws the reason into the generator", async () => {
+// A reason does not change how the body is closed: return(), like `for await`. The reason is
+// never thrown into the generator, which could catch it and go on.
+test("cancel(reason) on an async generator body returns the generator: finally runs, catch does not", async () => {
   const reason = new Error("consumer gave up");
-  let seen: unknown;
-  async function* rethrows() {
+  const ran: string[] = [];
+  async function* gen() {
     try {
       for (let i = 0; i < 50; i++) yield new Uint8Array(64 * 1024);
     } catch (e) {
-      seen = e;
+      ran.push("catch");
       throw e;
+    } finally {
+      ran.push("finally");
     }
   }
   {
-    const reader = new Response(rethrows()).body!.getReader();
+    const reader = new Response(gen()).body!.getReader();
     await reader.read();
-    // The generator letting the reason propagate is a normal cancel: it resolves.
     expect(await reader.cancel(reason)).toBeUndefined();
-    expect(seen).toBe(reason);
+    expect(ran).toEqual(["finally"]);
   }
 
   async function* cleanupFails() {
@@ -174,32 +180,132 @@ test("cancel(reason) on an async generator body throws the reason into the gener
   expect(await body.cancel()).toBeUndefined();
   expect(events).toEqual(["return"]);
 
-  // Hand-written iterators whose throw() lets the reason out in other shapes than a
-  // rejected native promise: a synchronous rethrow and a rejecting thenable.
-  const handWritten = (throwImpl: (e: unknown) => any) => ({
-    [Symbol.asyncIterator]() {
-      return {
-        next: async () => ({ done: false, value: new Uint8Array(64 * 1024) }),
-        throw: throwImpl,
-      };
-    },
-  });
-  for (const throwImpl of [
-    (e: unknown) => {
-      throw e;
-    },
-    (e: unknown) => ({ then: (_: unknown, reject: (e: unknown) => void) => reject(e) }),
-  ]) {
-    const reader = new Response(handWritten(throwImpl)).body!.getReader();
-    await reader.read();
-    expect(await reader.cancel(reason)).toBeUndefined();
-  }
-  // A different error from throw() is still a failed cancel.
-  const reader = new Response(
-    handWritten(() => {
-      throw new Error("cleanup failed");
+  // throw() is not a cleanup hook. An iterator that has only that one hears nothing.
+  let thrown = 0;
+  const reader = new Response({
+    [Symbol.asyncIterator]: () => ({
+      next: async () => ({ done: false as const, value: new Uint8Array(64 * 1024) }),
+      throw: async () => {
+        thrown++;
+        return { done: true as const, value: undefined };
+      },
     }),
-  ).body!.getReader();
+  }).body!.getReader();
   await reader.read();
-  await expect(reader.cancel(reason)).rejects.toThrow("cleanup failed");
+  expect(await reader.cancel(reason)).toBeUndefined();
+  expect(thrown).toBe(0);
+});
+
+const someReason = () => new Error("the consumer gave up");
+
+// Each way reads at least one chunk first, so a generator body is inside its `try`.
+const waysToLeave: [name: string, leave: (body: ReadableStream<Uint8Array>) => Promise<unknown>][] = [
+  [
+    // The control: a cancel with no reason closed the iterator before as well.
+    "reader.cancel() (control)",
+    async body => {
+      const reader = body.getReader();
+      await reader.read();
+      expect(await reader.cancel()).toBeUndefined();
+    },
+  ],
+  [
+    "reader.cancel(reason)",
+    async body => {
+      const reader = body.getReader();
+      await reader.read();
+      expect(await reader.cancel(someReason())).toBeUndefined();
+    },
+  ],
+  [
+    "pipeTo() a sink whose write() throws",
+    body =>
+      body
+        .pipeTo(
+          new WritableStream({
+            write() {
+              throw someReason();
+            },
+          }),
+        )
+        .catch(() => {}),
+  ],
+  [
+    "pipeTo() aborted by its signal",
+    body => {
+      const controller = new AbortController();
+      return body
+        .pipeTo(
+          new WritableStream({
+            write() {
+              controller.abort();
+            },
+          }),
+          { signal: controller.signal },
+        )
+        .catch(() => {});
+    },
+  ],
+  [
+    "pipeThrough(), then reader.cancel(reason)",
+    async body => {
+      const reader = body.pipeThrough(new TransformStream()).getReader();
+      await reader.read();
+      await reader.cancel(someReason());
+    },
+  ],
+  [
+    // The reason the source gets is an array of the two branch reasons.
+    "tee(), both branches cancelled",
+    async body => {
+      const [a, b] = body.tee();
+      const reader = a.getReader();
+      await reader.read();
+      await Promise.all([reader.cancel(), b.cancel()]);
+    },
+  ],
+  [
+    "Readable.fromWeb(body).destroy(error)",
+    async body => {
+      const readable = Readable.fromWeb(body as any);
+      readable.on("error", () => {});
+      await once(readable, "data");
+      readable.destroy(someReason());
+    },
+  ],
+];
+
+describe.each(asyncIterableBodyShapes)("%s is closed with return() when the consumer leaves by", (_, make) => {
+  test.concurrent.each(waysToLeave)("%s", async (_, leave) => {
+    const shape = make();
+    await leave(new Response(shape.body).body!);
+    expect(await settled(shape)).toEqual(shape.expected);
+  });
+
+  test.concurrent("reader.cancel(reason) on a Request body", async () => {
+    const shape = make();
+    const request = new Request("http://localhost/", { method: "POST", body: shape.body, duplex: "half" } as any);
+    const reader = request.body!.getReader();
+    await reader.read();
+    await reader.cancel(someReason());
+    expect(await settled(shape)).toEqual(shape.expected);
+  });
+});
+
+describe.each(handWrittenBodyShapes)("%s is closed with return() before its first next() by", (_, make) => {
+  test.concurrent("body.cancel(reason)", async () => {
+    const shape = make();
+    expect(await new Response(shape.body).body!.cancel(someReason())).toBeUndefined();
+    expect(await settled(shape)).toEqual(shape.expected);
+  });
+
+  test.concurrent("a fetch() that is aborted before it sends the body", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const shape = make();
+    const controller = new AbortController();
+    const response = fetch(server.url, { method: "POST", body: shape.body, signal: controller.signal } as any);
+    controller.abort();
+    await expect(response).rejects.toThrow("aborted");
+    expect(await settled(shape)).toEqual(shape.expected);
+  });
 });

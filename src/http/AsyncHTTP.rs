@@ -106,6 +106,11 @@ fn http_thread_timer_read() -> u64 {
     crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
+/// A CR, LF or NUL ends the header line that a configured value (token, OTP, user agent) is written into as is.
+pub fn breaks_header_line(value: &[u8]) -> bool {
+    bun_core::strings::contains_any(value, b"\r\n\0")
+}
+
 /// The `Basic <b64(user:pass)>` credentials for a URL's userinfo, as sent in
 /// `Authorization` / `Proxy-Authorization`. `None` when the URL has no
 /// userinfo, or (logged) when it does not percent-decode.
@@ -615,6 +620,11 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
+        // `HTTPClient::start` sends any other scheme over plain TCP (`fetch("host:port/path")` relies on it); no blocking caller means that.
+        if !self.client.url.has_http_like_protocol() {
+            return Err(crate::Error::UnsupportedProtocol);
+        }
+
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);

@@ -1,7 +1,8 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 describe("path parameters", () => {
   let server: Server<undefined>;
@@ -618,6 +619,93 @@ describe("route reloading", () => {
   });
 });
 
+// A reload without a routes object used to keep the callback routes and drop
+// every other kind: static, file, directory and `false` routes fell through
+// to the wildcard route or to fetch.
+describe("reload() without a routes object keeps every kind of route", () => {
+  const fetchHandler = (version: number) => () => new Response(`fetch v${version}`, { status: 404 });
+
+  async function serveEveryKind() {
+    const dir = tempDir("bun-serve-routes-reload-keeps-every-kind", {
+      "file.txt": "file",
+      "public/asset.txt": "asset",
+    });
+    const server = Bun.serve({
+      port: 0,
+      fetch: fetchHandler(1),
+      routes: {
+        "/static": new Response("static"),
+        "/method": { GET: new Response("static GET"), POST: () => new Response("callback POST") },
+        "/callback": () => new Response("callback"),
+        "/param/:name": req => new Response(`param ${req.params.name}`),
+        "/file": Bun.file(join(String(dir), "file.txt")),
+        "/public/*": { dir: join(String(dir), "public") },
+        "/wildcard/*": () => new Response("wildcard"),
+        "/wildcard/skipped": false,
+      },
+    });
+    const probe = async () => {
+      const answers: Record<string, string> = {};
+      for (const [method, path] of [
+        ["GET", "/static"],
+        ["GET", "/method"],
+        ["POST", "/method"],
+        ["GET", "/callback"],
+        ["GET", "/param/x"],
+        ["GET", "/file"],
+        ["GET", "/public/asset.txt"],
+        ["GET", "/wildcard/kept"],
+        ["GET", "/wildcard/skipped"],
+        ["GET", "/missing"],
+      ]) {
+        const res = await fetch(new URL(path, server.url), { method });
+        answers[`${method} ${path}`] = `${res.status} ${await res.text()}`;
+      }
+      return answers;
+    };
+    return {
+      server,
+      probe,
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  const everyKind = (version: number) => ({
+    "GET /static": "200 static",
+    "GET /method": "200 static GET",
+    "POST /method": "200 callback POST",
+    "GET /callback": "200 callback",
+    "GET /param/x": "200 param x",
+    "GET /file": "200 file",
+    "GET /public/asset.txt": "200 asset",
+    "GET /wildcard/kept": "200 wildcard",
+    "GET /wildcard/skipped": `404 fetch v${version}`,
+    "GET /missing": `404 fetch v${version}`,
+  });
+
+  it.each([
+    ["fetch", () => ({ fetch: fetchHandler(2) }), 2],
+    ["error", () => ({ error: () => new Response("error") }), 1],
+    ["websocket", () => ({ websocket: { message() {} } }), 1],
+    ["no reloadable key", () => ({ development: false }), 1],
+  ] as const)("reload({ %s })", async (_, options, version) => {
+    using served = await serveEveryKind();
+    expect(await served.probe()).toEqual(everyKind(1));
+    served.server.reload(options() as ServeOptions);
+    expect(await served.probe()).toEqual(everyKind(version));
+  });
+
+  it("routes: {} still removes every kind", async () => {
+    using served = await serveEveryKind();
+    served.server.reload({ fetch: fetchHandler(2), routes: {} } as ServeOptions);
+    const answers = await served.probe();
+    expect(answers).toEqual(Object.fromEntries(Object.keys(answers).map(key => [key, "404 fetch v2"])));
+  });
+});
+
 describe("reload() keeps the server able to answer", () => {
   it("rejects routes: {} on a routes-only server, and keeps serving the old routes", async () => {
     using server = Bun.serve({
@@ -659,18 +747,25 @@ describe("reload() keeps the server able to answer", () => {
     expect(await (await fetch(server.url)).text()).toBe("fetch");
   });
 
-  // Unlike callback routes, static routes are replaced by every reload, even
-  // one without a routes object, so they cannot stand in for a missing handler.
-  it("rejects a reload that names no handler on a server whose only routes are static", async () => {
+  it("allows a reload that names no handler at all on a static-routes-only server", async () => {
     using server = Bun.serve({
       port: 0,
       routes: { "/": new Response("static") },
     });
-    expect(() => server.reload({ development: false } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    server.reload({ development: false } as ServeOptions);
     expect(await (await fetch(server.url)).text()).toBe("static");
   });
 
-  // Same for node:http's request handler: a reload that omits it clears it.
+  it("rejects routes: {} on a static-routes-only server, and keeps serving the old routes", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: { "/": new Response("static") },
+    });
+    expect(() => server.reload({ routes: {} } as ServeOptions)).toThrow("Bun.serve() needs either:");
+    expect(await (await fetch(server.url)).text()).toBe("static");
+  });
+
+  // node:http's request handler is cleared by a reload that omits it.
   it("rejects a reload that names no handler on a server whose only handler is onNodeHTTPRequest", () => {
     using server = Bun.serve({
       port: 0,

@@ -655,7 +655,8 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
 /// What the config handed to [`NewServer::on_reload_from_zig`] is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReloadScope {
-    /// `server.reload(options)`: the carry-over rules `FromJSOptions` describes.
+    /// `server.reload(options)`: a patch. The `fetch`, `error`, `routes` and
+    /// `websocket` it leaves out stay.
     Partial,
     /// A `Bun.serve()` that takes a live server over under `--hot`: the whole
     /// server, so the `fetch`, `error` and `routes` it leaves out are cleared.

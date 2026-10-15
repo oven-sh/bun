@@ -1098,6 +1098,45 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// A reload without a routes object keeps an html route like every other kind
+// of route, together with the chunk routes its bundle registered on the server.
+test.concurrent("server.reload() without routes keeps an html route and its chunks", async () => {
+  using dir = tempDir("bun-serve-html-reload-keeps-route", {
+    "index.html": `<!DOCTYPE html><html><head><title>kept</title><script type="module" src="./app.ts"></script></head><body></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        routes: { "/": html },
+        fetch: () => new Response("fetch v1", { status: 404 }),
+      });
+      async function probe() {
+        const page = await fetch(server.url);
+        const chunk = (await page.text()).match(/src="([^"]+\\.js)"/)?.[1];
+        if (!chunk) return { page: page.status, chunk: "none" };
+        const script = await fetch(new URL(chunk, server.url));
+        await script.text();
+        return { page: page.status, chunk: script.status };
+      }
+
+      const before = await probe();
+      server.reload({ fetch: () => new Response("fetch v2", { status: 404 }) });
+      const after = await probe();
+      const other = await (await fetch(new URL("/other", server.url))).text();
+      console.log(JSON.stringify({ before, after, other }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ before: { page: 200, chunk: 200 }, after: { page: 200, chunk: 200 }, other: "fetch v2" }),
+    exitCode: 0,
+  });
+});
+
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure
 // relativizes the failing file against that root and hit a debug assertion

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import { connect, type Socket } from "net";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { createAdversarialProxy, proxyFreeEnv } from "../../js/bun/http/proxy-stress-helpers";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
 //   -i                              Auto-install dependencies during execution. Equivalent to --install=fallback.
@@ -1853,5 +1854,281 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     });
     expect({ stdout: result.stdout, seen }).toEqual({ stdout: "PRIVATE\n", seen: [authorization] });
     expect(result.exitCode).toBe(0);
+  });
+});
+
+// `ca` / `cafile` name the CA of a private registry, in the `[install]` section of bunfig.toml or
+// in `.npmrc`. The auto-install of a script reads them like `bun install` does, and only for its
+// own requests.
+describe("auto-install verifies the registry with the configured ca / cafile", () => {
+  // An ASAN build starts too slowly to run all of these at once within the default timeout.
+  const cell = test.concurrentIf(!isASAN);
+  const thing = "thing from the private registry";
+  const unrelatedCa = readFileSync(join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem"), "utf8");
+  const pkg = (async () => {
+    const tarball = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name: "@corp/thing", version: "1.0.0", main: "index.js" }),
+      "package/index.js": `module.exports = ${JSON.stringify(thing)};\n`,
+    }).bytes("gzip");
+    return { tarball, integrity: "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64") };
+  })();
+  const manifestPath = "/@corp%2fthing";
+  const tarballPath = "/@corp/thing/-/thing-1.0.0.tgz";
+  const bothRequests = [manifestPath, tarballPath];
+  const importIt = `import thing from "@corp/thing";\nconsole.log(thing);\n`;
+  // Past PATH_MAX on Linux and macOS, and a name no file system accepts.
+  const tooLong = Buffer.alloc(5000, "a").toString() + ".pem";
+
+  /**
+   * A registry that has `@corp/thing@1.0.0`, behind the harness certificate unless `tls` is `undefined`.
+   * `requests` is each path it was asked for. `tarballOrigin` puts the tarball on another server.
+   */
+  async function serveRegistry(options: { tls?: typeof tls; tarballOrigin?: string } = { tls }) {
+    const { tarball, integrity } = await pkg;
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: options.tls,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname === tarballPath) return new Response(tarball);
+        if (pathname !== manifestPath) return new Response("{}", { status: 404 });
+        const dist = { tarball: (options.tarballOrigin ?? server.url.origin) + tarballPath, integrity };
+        return Response.json({
+          name: "@corp/thing",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "@corp/thing", version: "1.0.0", main: "index.js", dist } },
+        });
+      },
+    });
+    return { requests, origin: server.url.origin, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  /**
+   * Runs `bun index.js` in `<dir>/app`, which has no `node_modules`, with `<dir>/home` as the home
+   * directory. `files` gets `<dir>/app`. `index.js` imports `@corp/thing` and prints it by default.
+   */
+  async function run(options: { files: (app: string) => Record<string, string>; env?: Record<string, string> }) {
+    using dir = tempDir("autoinstall-ca", { "home/.keep": "", "app/.keep": "" });
+    const app = join(String(dir), "app");
+    const home = join(String(dir), "home");
+    for (const [name, contents] of Object.entries({ "index.js": importIt, ...options.files(app) })) {
+      await Bun.write(join(app, name), contents);
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: app,
+      env: {
+        ...bunEnv,
+        ...proxyFreeEnv,
+        // bunEnv spreads process.env, and CI runners export some of these.
+        XDG_CONFIG_HOME: undefined,
+        NPM_CONFIG_USERCONFIG: undefined,
+        npm_config_userconfig: undefined,
+        NPM_CONFIG_REGISTRY: undefined,
+        npm_config_registry: undefined,
+        BUN_CONFIG_REGISTRY: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+        HOME: home,
+        USERPROFILE: home,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        ...options.env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const bunfig = (install: Record<string, unknown>) => Bun.TOML.stringify({ install });
+  const installed = { stdout: thing + "\n", stderr: "", exitCode: 0 };
+
+  cell.each([
+    ["an absolute cafile", (app: string) => ({ cafile: join(app, "registry.pem") })],
+    ["a relative cafile", () => ({ cafile: "certs/registry.pem" })],
+    ["a ca string", () => ({ ca: tls.cert })],
+    ["a ca list", () => ({ ca: [unrelatedCa, tls.cert] })],
+    // With both set, `bun install` reads the file only.
+    ["a cafile next to a ca", () => ({ cafile: "registry.pem", ca: unrelatedCa })],
+  ])("from bunfig.toml: %s", async (_, ca) => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: app => ({
+        "bunfig.toml": bunfig({ registry: registry.origin, ...ca(app) }),
+        "registry.pem": tls.cert,
+        "certs/registry.pem": tls.cert,
+      }),
+    });
+    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
+  });
+
+  // The runtime takes the registry from `.npmrc` too, so the CA that `.npmrc` has for it counts.
+  cell.each([
+    ["cafile", () => `cafile=registry.pem\n`],
+    ["ca", () => `ca=${JSON.stringify(tls.cert)}\n`],
+  ])("from .npmrc: %s", async (_, ca) => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: () => ({ ".npmrc": `registry=${registry.origin}/\n${ca()}`, "registry.pem": tls.cert }),
+    });
+    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
+  });
+
+  // `ca` and `cafile` are one setting. A merge of the two files would read only `.npmrc`'s file.
+  cell("bunfig.toml replaces the ca and the cafile of .npmrc", async () => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: () => ({
+        ".npmrc": `registry=${registry.origin}/\ncafile=unrelated.pem\n`,
+        "unrelated.pem": unrelatedCa,
+        "bunfig.toml": bunfig({ ca: tls.cert }),
+      }),
+    });
+    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
+  });
+
+  // fetch() starts the HTTP client first here, and it never gets the install CA.
+  cell("for require() and import() after a fetch(), which still rejects the certificate", async () => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: () => ({
+        "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }),
+        "index.js": `
+          const fetched = () => fetch(${JSON.stringify(registry.origin)}).then(res => res.status, err => err.code);
+          const before = await fetched();
+          const required = require("@corp/thing");
+          const imported = (await import("@corp/thing")).default;
+          console.log(JSON.stringify({ before, required, imported, after: await fetched() }));
+        `,
+      }),
+    });
+    expect(JSON.parse(result.stdout)).toEqual({
+      before: "DEPTH_ZERO_SELF_SIGNED_CERT",
+      required: thing,
+      imported: thing,
+      after: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
+    expect({ requests: registry.requests, exitCode: result.exitCode }).toEqual({ requests: bothRequests, exitCode: 0 });
+  });
+
+  cell("a relative cafile is relative to the directory the process started in", async () => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: () => ({
+        "bunfig.toml": bunfig({ registry: registry.origin, cafile: "registry.pem" }),
+        "registry.pem": tls.cert,
+        "elsewhere/registry.pem": unrelatedCa,
+        "index.js": `
+          process.chdir("elsewhere");
+          console.log((await import("@corp/thing")).default);
+        `,
+      }),
+    });
+    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
+  });
+
+  cell("an https tarball of an http registry", async () => {
+    using tarballs = await serveRegistry();
+    using registry = await serveRegistry({ tls: undefined, tarballOrigin: tarballs.origin });
+    const result = await run({
+      files: () => ({ "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }) }),
+    });
+    expect({ ...result, manifest: registry.requests, tarball: tarballs.requests }).toEqual({
+      ...installed,
+      manifest: [manifestPath],
+      tarball: [tarballPath],
+    });
+  });
+
+  // The registry's certificate is checked inside the CONNECT tunnel. A later fetch() to the same
+  // host must open a tunnel of its own: the one the install left is verified with the install CA.
+  cell("through an HTTPS_PROXY tunnel that fetch() does not reuse", async () => {
+    using registry = await serveRegistry();
+    await using proxy = await createAdversarialProxy();
+    const result = await run({
+      files: () => ({
+        "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }),
+        "index.js": `
+          const imported = (await import("@corp/thing")).default;
+          const fetched = await fetch(${JSON.stringify(registry.origin)}).then(res => res.status, err => err.code);
+          console.log(JSON.stringify({ imported, fetched }));
+        `,
+      }),
+      env: { HTTPS_PROXY: proxy.url },
+    });
+    expect(JSON.parse(result.stdout)).toEqual({ imported: thing, fetched: "DEPTH_ZERO_SELF_SIGNED_CERT" });
+    expect(registry.requests).toEqual(bothRequests);
+    expect(new Set(proxy.connections.map(c => `${c.method} ${c.target}`))).toEqual(
+      new Set([`CONNECT ${new URL(registry.origin).host}`]),
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
+  // As in `bun install`: the certificates that NODE_EXTRA_CA_CERTS adds to the default ones do not count.
+  cell("the CA replaces the default trust store", async () => {
+    using registry = await serveRegistry();
+    const result = await run({
+      files: () => ({
+        "bunfig.toml": bunfig({ registry: registry.origin, cafile: "unrelated.pem" }),
+        "unrelated.pem": unrelatedCa,
+        "registry.pem": tls.cert,
+      }),
+      env: { NODE_EXTRA_CA_CERTS: "registry.pem" },
+    });
+    expect(noteLines(result.stderr)).toEqual([
+      "note: DEPTH_ZERO_SELF_SIGNED_CERT downloading package manifest @corp/thing",
+    ]);
+    expect({ stdout: result.stdout, requests: registry.requests, exitCode: result.exitCode }).toEqual({
+      stdout: "",
+      requests: [],
+      exitCode: 1,
+    });
+  });
+
+  // Not a process exit as in `bun install`: the import fails, says why in the words of
+  // `bun install`, and is not tried again.
+  cell.each([
+    [
+      "a cafile that does not exist",
+      () => ({ cafile: "missing.pem" }),
+      (app: string) => `could not find CA file: '${join(app, "missing.pem")}'`,
+    ],
+    [
+      "a cafile path that is too long to open",
+      () => ({ cafile: tooLong }),
+      (app: string) => `could not find CA file: '${join(app, tooLong)}'`,
+    ],
+    [
+      "a cafile with no certificate",
+      () => ({ cafile: "empty.pem" }),
+      (app: string) => `invalid CA file: '${join(app, "empty.pem")}'`,
+    ],
+    ["a ca that is no certificate", () => ({ ca: "not a certificate" }), () => "the CA is invalid"],
+  ])("reports %s", async (_, ca, reason) => {
+    using registry = await serveRegistry();
+    let app = "";
+    const result = await run({
+      files: dir => ((app = dir), { "bunfig.toml": bunfig({ registry: registry.origin, ...ca() }), "empty.pem": "" }),
+    });
+    expect(noteLines(result.stderr)).toEqual([
+      `note: FailedToOpenSocket (${reason(app)}) downloading package manifest @corp/thing`,
+    ]);
+    expect({ stdout: result.stdout, requests: registry.requests, exitCode: result.exitCode }).toEqual({
+      stdout: "",
+      requests: [],
+      exitCode: 1,
+    });
+  });
+
+  // The CA is read when a registry request needs it, so a wrong path costs nothing before that.
+  cell("a cafile that does not exist is not read for an http registry", async () => {
+    using registry = await serveRegistry({ tls: undefined });
+    const result = await run({
+      files: () => ({ "bunfig.toml": bunfig({ registry: registry.origin, cafile: "missing.pem" }) }),
+    });
+    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
   });
 });

@@ -1758,14 +1758,12 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   }
 
   if (!options.adapter && resolvedUrl !== null) {
+    // Only `filename` and SQLITE_URL itself name a SQLite file without a SQLite URL.
+    const fromSqliteSource = optionsFilename || (adapter === "sqlite" && !optionsUrl);
+
     if (
       parseDefinitelySqliteUrl(resolvedUrl) !== null ||
-      // A path with no `://` is a SQLite file name when it comes from `filename`,
-      // a SQLite-only option, or from SQLITE_URL itself, the only variable the
-      // environment lookup answers with "sqlite". Step 3 would prefix it with
-      // `postgres://`. A value with a URL scheme, and options that also name a
-      // server, resolve below.
-      ((optionsFilename || (adapter === "sqlite" && !optionsUrl)) && !hasProtocol(resolvedUrl) && !namesServer(options))
+      (fromSqliteSource && !hasProtocol(resolvedUrl) && !namesServer(options))
     ) {
       // Return the original URL (with query params) for SQLite parsing
       return [resolvedUrl, null, { ...options, adapter: "sqlite" }];

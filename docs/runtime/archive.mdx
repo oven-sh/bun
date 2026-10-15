@@ -144,6 +144,8 @@ console.log(`Extracted ${count} entries`);
 
 **Security note**: Bun.Archive validates paths during extraction. It rejects absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`) and unsafe symlink targets. It normalizes away path traversal components (`..`) to prevent directory escape attacks: `dir/sub/../file` becomes `dir/file`.
 
+On POSIX systems, `extract()` does not follow a symbolic link that already exists in the target directory. A file in the archive replaces a link that has the same name. If a link stands in place of a directory that an entry needs, `extract()` rejects with an `ELOOP` error. The `path` of the error is the entry.
+
 ### Filtering Extracted Files
 
 Use glob patterns to extract only specific files. Bun matches patterns against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. When you pass only negative patterns, Bun includes all entries that don't match them:
@@ -232,6 +234,7 @@ Common error scenarios:
 - **Corrupted/truncated archives** - `new Bun.Archive()` loads the archive data; Bun may defer errors until read/extract operations
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
+- **Symbolic link in the way** - On POSIX systems, `extract()` throws an error with the code `ELOOP` if an existing symbolic link stands in place of a directory that an entry needs. The `path` of the error is the entry
 - **Invalid paths** - Operations throw for malformed file paths
 
 For additional security with untrusted archives, you can enumerate and validate paths before extraction:

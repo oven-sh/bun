@@ -299,6 +299,7 @@ describe.concurrent("element text that no server prints", () => {
 
   test("the mock serves a well-formed element", async () => {
     expect(await decode("float8_array", "{1e-07,1.5}")).toEqual({ v: [1e-7, 1.5] });
+    expect(await decode("json_array", "{0,-0,0.5,-1.5e+300,1E5,[1]}")).toEqual({ v: [0, -0, 0.5, -1.5e300, 1e5, [1]] });
   });
 
   // The parser of the element type refuses the text. The element must not decode as a prefix of
@@ -326,6 +327,15 @@ describe.concurrent("element text that no server prints", () => {
     ["json_array", "{-}"],
     ["json_array", "{truetrue}"],
     ["json_array", "{falsy}"],
+    // JSON has no NaN, no Infinity, no sign `+`, no leading zero and no bare `.`
+    ["json_array", "{NaN}"],
+    ["json_array", "{Infinity}"],
+    ["json_array", "{-Infinity}"],
+    ["json_array", "{-inf}"],
+    ["json_array", "{+1}"],
+    ["json_array", "{01}"],
+    ["json_array", "{1.}"],
+    ["json_array", "{.5}"],
   ] as const)("%s %s rejects", async (type, text) => {
     expect(await decode(type, text)).toEqual({ error: "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT" });
   });

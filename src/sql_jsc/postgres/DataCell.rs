@@ -187,6 +187,39 @@ fn after_element(slice: &[u8], len: usize, separator: u8) -> Option<&[u8]> {
     }
 }
 
+/// Length of the JSON number at the start of `text`, 0 when there is none:
+/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`
+fn json_number_len(text: &[u8]) -> usize {
+    let digits = |from: usize| {
+        text[from..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
+    let mut len = usize::from(text.first() == Some(&b'-'));
+    let integer = digits(len);
+    if integer == 0 || (integer > 1 && text[len] == b'0') {
+        return 0;
+    }
+    len += integer;
+    if text.get(len) == Some(&b'.') {
+        let fraction = digits(len + 1);
+        if fraction == 0 {
+            return 0;
+        }
+        len += 1 + fraction;
+    }
+    if let Some(b'e' | b'E') = text.get(len) {
+        let sign = usize::from(matches!(text.get(len + 1), Some(b'+' | b'-')));
+        let exponent = digits(len + 1 + sign);
+        if exponent == 0 {
+            return 0;
+        }
+        len += 1 + sign + exponent;
+    }
+    len
+}
+
 fn parse_array(
     bytes: &[u8],
     bigint: bool,
@@ -396,6 +429,19 @@ fn parse_array(
                         continue;
                     }
                 }
+                // parse_f64 takes more than a JSON number (`inf`, `nan`, `+1`, `.5`), so the
+                // JSON grammar is checked first. It also finds the end of the element.
+                (b'-' | b'0'..=b'9', ElementKind::Json) => {
+                    let len = json_number_len(slice);
+                    if len > 0
+                        && let Some(rest) = after_element(slice, len, separator)
+                        && let Some(number) = bun_core::fmt::parse_f64(&slice[..len])
+                    {
+                        array.push(SQLDataCell::float8(number));
+                        slice = rest;
+                        continue;
+                    }
+                }
                 _ => {}
             }
 
@@ -445,18 +491,14 @@ fn parse_array(
                         None => parse_date_time_text(array_type, element, global_object)?,
                     },
                 )),
-                // A JSON string or object has a quote or a brace, so it is quoted. What is left
-                // is a number (true and false are matched above) or an array of those.
+                // A JSON string or object has a quote or a brace, so it is quoted. A number, true
+                // and false are matched above. What is left is an array of those.
                 ElementKind::Json if ch == b'[' => array.push(SQLDataCell::json(element)),
-                ElementKind::Json => array.push(SQLDataCell::float8(
-                    bun_core::fmt::parse_f64(element)
-                        .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
-                )),
                 // the only escape sequence possible here is \b
                 ElementKind::Text if element == b"\\b" => array.push(SQLDataCell::string(b"\x08")),
                 ElementKind::Text => array.push(SQLDataCell::string(element)),
-                // `t`, `f` and an integer are matched above. Nothing else is one of these.
-                ElementKind::Bool | ElementKind::Int8String => {
+                // `t`, `f`, an integer and a JSON scalar are matched above. Nothing else is one of these.
+                ElementKind::Bool | ElementKind::Int8String | ElementKind::Json => {
                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                 }
                 // bytea_output=hex starts with a backslash, so it is always quoted

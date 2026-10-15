@@ -775,14 +775,40 @@ fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist)
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
 
-    // Linear sweep. iced handles variable-length encoding; on undecodable
-    // bytes (data-in-text) it returns Code::INVALID and we skip. False
-    // positives from data-in-text are rare in practice — LLVM puts jump
-    // tables in .rodata, not inline.
+    // Linear sweep, resynchronised at every symbol start. iced handles
+    // variable-length encoding; on undecodable bytes it returns Code::INVALID
+    // and we skip. Data in .text (JSC's LLInt puts a 4-byte opcode id in front
+    // of every llint_op_* label; hand-written asm occasionally has constants
+    // after a ret) desyncs a pure linear sweep, and what the following bytes
+    // then decode as depends on link layout. Every symbol start is a real
+    // instruction boundary, so an instruction that would straddle one is
+    // garbage: drop it and restart decoding at the symbol.
+    let sec_end = sec_addr + bytes.len() as u64;
+    let mut starts: Vec<u64> = syms
+        .iter()
+        .map(|s| s.addr)
+        .filter(|&a| a > sec_addr && a < sec_end)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let mut next_start = 0usize;
+
     let mut decoder = Decoder::with_ip(64, bytes, sec_addr, DecoderOptions::NONE);
     let mut insn = Instruction::default();
     while decoder.can_decode() {
         decoder.decode_out(&mut insn);
+        let (ip, next_ip) = (insn.ip(), decoder.ip());
+        while next_start < starts.len() && starts[next_start] <= ip {
+            next_start += 1;
+        }
+        if next_start < starts.len() && starts[next_start] < next_ip {
+            let resync = starts[next_start];
+            decoder
+                .set_position((resync - sec_addr) as usize)
+                .expect("symbol start inside section");
+            decoder.set_ip(resync);
+            continue;
+        }
         if insn.is_invalid() {
             continue;
         }

@@ -13,7 +13,7 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 
 // On Linux, debug builds symbolize crash traces by spawning llvm-symbolizer;
 // without it the fallback printer has no Rust symbol names to assert on.
-const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
+const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-23"));
 
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
@@ -403,7 +403,7 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
   await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
 
-  expect(proc.exited).resolves.not.toBe(0);
+  await expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
 

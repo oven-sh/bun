@@ -1,0 +1,117 @@
+---
+title: Migrate from oxfmt to bun fmt
+sidebarTitle: Migrate from oxfmt
+mode: center
+---
+
+`bun fmt` reads your `.oxfmtrc.json` and prints what oxfmt 0.72 prints. In most projects you only change the command.
+
+Start with `--doctor`. It shows what Bun will do with your config, and it doesn't format or write anything.
+
+```sh terminal icon="terminal"
+bun fmt --doctor
+```
+
+```txt
+Using .oxfmtrc.json (oxfmt config)
+
+    3 files are formatted natively
+
+Still needed:   oxfmt (the "format" script runs it)
+```
+
+---
+
+Change the scripts.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "format": "oxfmt", // [!code --]
+    "format:check": "oxfmt --check", // [!code --]
+    "format": "bun fmt", // [!code ++]
+    "format:check": "bun fmt --check" // [!code ++]
+  }
+}
+```
+
+Flags and arguments stay the same. Change CI and Git hooks too.
+
+If your script is called `fmt`, don't skip this: `bun fmt` runs a `fmt` script when `package.json` has one, so you'd still get oxfmt.
+
+---
+
+Check that nothing changes. With an oxfmt config, a run prints what oxfmt prints.
+
+```sh terminal icon="terminal"
+bun fmt --check
+```
+
+```txt
+$ bun fmt --check
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 4ms on 3 files using 64 threads.
+```
+
+If you're on a version of oxfmt before 0.72, a few files change once, like when you upgrade oxfmt.
+
+---
+
+Run `--doctor` again. No script runs oxfmt anymore, so you can uninstall it.
+
+```txt
+You can remove: oxfmt
+Not checked:    other tools' configs, CI files, Git hooks
+```
+
+```sh terminal icon="terminal"
+bun remove oxfmt
+```
+
+No `.oxfmtrc.json`? Add one with `{}` in it first. Without a config file, the `oxfmt` dependency is how Bun knows to format like oxfmt and not like Prettier.
+
+---
+
+Bun reads everything oxfmt reads:
+
+- `.oxfmtrc.json`, `.oxfmtrc.jsonc`, and `oxfmt.config.ts`, with `overrides` and `ignorePatterns`
+- The `fmt` key of `vite.config.ts`, if you use vite-plus
+- Every option, including `sortImports`, `sortPackageJson`, `sortTailwindcss`, `jsdoc`, and `svelte`
+- `// oxfmt-ignore` and `// prettier-ignore` comments
+- Every flag of oxfmt 0.72 except `--lsp` and `--migrate`
+
+It also follows oxfmt's defaults: lines wrap at 100 columns, every `.gitignore` in the repository counts, TOML files are formatted, and `.prettierrc` is ignored.
+
+---
+
+Still have a `.prettierrc` next to `.oxfmtrc.json`? Bun uses `.oxfmtrc.json` and tells you so. Delete the one you no longer use, or pick one with `--config`.
+
+```txt
+note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
+```
+
+---
+
+Keep `oxfmt` if your editor's oxc extension uses it. `bun fmt` has no language server.
+
+---
+
+## Differences from oxfmt
+
+If `bun fmt` and oxfmt 0.72 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
+
+- **The output is oxfmt 0.72's**, whatever version you had installed.
+- **No `--lsp` or `--migrate`.**
+- **Errors and warnings are worded differently.**
+- **An invalid TOML file is left alone**, with a warning. oxfmt rewrites the parts it can read.
+- **A file that isn't valid UTF-8 is still formatted**, and the invalid bytes are kept. oxfmt exits with code `2`.
+- **Where oxfmt's output changes what a file means, Bun's differs.** That's rare. In TOML oxfmt joins the lines of an inline table with a comment, which comments out the rest of the table. Bun keeps one entry per line. In Svelte oxfmt drops the comment in `{#if a /* b */}`, the space in `<hr />some <b>words</b>`, and an empty `{:catch}`, and it empties the `<script>` after a comment that mentions `<style>`. Bun keeps them.
+
+---
+
+See also:
+
+- [`bun fmt`](/format)
+- [Migrate from oxlint to bun lint](/guides/lint/migrate-from-oxlint)

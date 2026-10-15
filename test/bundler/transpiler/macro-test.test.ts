@@ -1,4 +1,4 @@
-import { escapeHTML } from "bun" assert { type: "macro" };
+import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
@@ -12,9 +12,10 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
-} from "./macro.ts" assert { type: "macro" };
+  symbolKeys,
+} from "./macro.ts" with { type: "macro" };
 
-import * as macros from "./macro.ts" assert { type: "macro" };
+import * as macros from "./macro.ts" with { type: "macro" };
 
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
@@ -36,6 +37,14 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+// A Symbol key has no source form. The inlined object keeps the string keys
+// only, like JSON.stringify, instead of a string key named by the description.
+test("object with Symbol keys", () => {
+  const value = symbolKeys();
+  expect(value).toEqual({ v: 2 });
+  expect(Reflect.ownKeys(value)).toEqual(["v"]);
 });
 
 test("escaping", () => {
@@ -131,6 +140,35 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+// This file used `assert` for its own imports until TypeScript 7 made that a syntax error (TS2880).
+test("the `assert { type: 'macro' }` spelling works for every form of import", async () => {
+  using dir = tempDir("macro-import-assertion", {
+    "macro.ts": `export function identity(arg: any) {\n  return arg;\n}\nexport default function () {\n  return "default";\n}\n`,
+    "index.ts": `
+      import { escapeHTML } from "bun" assert { type: "macro" };
+      import defaultMacro, { identity, identity as alias, default as defaultAlias } from "./macro.ts" assert { type: "macro" };
+      import * as macros from "./macro.ts" assert { type: "macro" };
+      console.log(JSON.stringify([escapeHTML("<a>"), defaultMacro(), identity(1), alias(2), defaultAlias(), macros.identity(3)]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Every call is replaced by its result, so the macros ran at transpile time. Debug builds print
+  // "[macro] call identity" to stdout first, so only the tail of stdout is matched.
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(
+      /console\.log\(JSON\.stringify\(\["&lt;a&gt;", "default", 1, 2, "default", 3\]\)\);$/,
+    ),
+    exitCode: 0,
+  });
 });
 
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside

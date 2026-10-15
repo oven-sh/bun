@@ -1689,10 +1689,14 @@ it.concurrent("the path that onLoad is given stays what it was when the module i
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
-    // With the system allocator, ASAN reports a read of the freed bytes (at once, when it does not symbolize).
-    env: isWindows
-      ? bunEnv
-      : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+    env: {
+      ...bunEnv,
+      // With the system allocator, ASAN reports a read of the freed bytes.
+      ...(isWindows ? {} : { Malloc: "1" }),
+      // symbolize=0: symbolizing a failure report outlasts the test timeout.
+      // detect_leaks=0: Malloc=1 exposes JSC's never-freed startup allocations to LSAN.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

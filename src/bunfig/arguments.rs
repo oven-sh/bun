@@ -242,6 +242,17 @@ pub fn load_config_for_tool(
         }
     }
 
+    // `bun --config other.toml test` would run other.toml as a script, which does nothing and exits with 0.
+    if user_config_path_.is_some_and(<[u8]>::is_empty)
+        && let Some(path) = ctx.positionals.first().filter(|it| it.ends_with(b".toml"))
+    {
+        Output::err_generic(
+            "--config takes its path after \"=\": --config={}",
+            format_args!("{}", BStr::new(path.as_ref())),
+        );
+        Global::exit(exit_code_of_failure(cmd));
+    }
+
     load_global_bunfig(cmd, ctx);
 
     let mut config_buf = bun_paths::path_buffer_pool::get();

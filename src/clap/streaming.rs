@@ -254,7 +254,10 @@ where
                 if next_is_eql && param.takes_value == clap::Values::None {
                     return Err(self.err(arg, Some(short), None, ArgError::DoesntTakeValue));
                 }
-                return Ok(Some(Arg { param, value: None }));
+                return Ok(Some(Arg {
+                    param,
+                    value: next_is_eql.then(|| &arg[next_index + 1..]),
+                }));
             }
 
             if arg.len() <= next_index {

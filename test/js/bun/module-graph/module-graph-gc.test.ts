@@ -85,6 +85,10 @@ const dir = String(
         await asked.promise;
         server.stop().then(() => control.heard.push("stopped " + server.id));
       }
+      // An open terminal is a GC root, and its callbacks are the graph's.
+      export function openTerminal() {
+        new Bun.Terminal({ data() { control.heard.push("terminal data"); }, exit() { control.heard.push("terminal exit"); } });
+      }
       // A rewrite whose <div> is never closed, with an onEndTag() callback that reaches the output Response.
       export function rewriteThatWaitsForAnEndTag() {
         let controller;
@@ -581,6 +585,19 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       expect(await accepts(state.httpPort)).toBe(false);
     });
   }
+
+  test("a Bun.Terminal that is open when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+      const io = await graph.import(file("io.mjs"));
+      graph.run(() => io.openTerminal());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(state.heard).toEqual([]);
+  });
 
   // The tick's promise is the host's to settle: the job is still there when it does, and gone afterwards.
   for (const how of ["resolves", "rejects"] as const) {

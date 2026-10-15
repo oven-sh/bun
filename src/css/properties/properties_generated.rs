@@ -896,8 +896,9 @@ impl PartialEq for PropertyId {
 
 impl Eq for PropertyId {}
 
-// Agrees with `eq`. The prefix is not hashed: ids that differ only in the
-// prefix are rare, and `eq` tells them apart.
+// Agrees with `eq`. The prefix is not hashed: it would cost a second write
+// for every declaration in `StyleRule::hash_key`. Ids that differ only in
+// the prefix share a bucket there, and `eq` tells them apart.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {

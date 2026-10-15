@@ -52,16 +52,18 @@ const script = `
     "scattered-custom-props": [
       Array.from({ length: n }, (_, i) => \`:root{--x\${i}:\${i}}.q\${i}{z-index:9}\`).join(""),
       undefined,
+      // Each rule declares a different custom property, so none is a duplicate.
+      out => ":" + (out.split(":root{").length - 1),
     ],
     "distinct-selectors": [
       Array.from({ length: n }, (_, i) => \`.a\${i}{color:red}\`).join(""),
       { chrome: 80 << 16 },
     ],
   };
-  for (const [name, [src, targets]] of Object.entries(floods)) {
+  for (const [name, [src, targets, count]] of Object.entries(floods)) {
     const out = targets === undefined ? c.minifyTest(src, "") : c._test(src, "", targets);
     if (typeof out !== "string" || out.length === 0) throw new Error(name + " produced no output");
-    console.log("OK:" + name);
+    console.log("OK:" + name + (count ? count(out) : ""));
   }
 `;
 
@@ -88,7 +90,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:webkit-gradient",
       "OK:clamp",
       "OK:distinct-custom-props",
-      "OK:scattered-custom-props",
+      "OK:scattered-custom-props:2000",
       "OK:distinct-selectors",
       "",
     ].join("\n"),
@@ -210,6 +212,10 @@ test("duplicate-rule detection distinguishes custom property names", () => {
   expect(cssInternals.minifyTest(":where(.x){--a:1}:where(.x){--a:2}", "", { chrome: 80 << 16 })).toBe(
     ":where(.x){--a:2}",
   );
+  // The same in the `!important` list.
+  expect(cssInternals.minifyTest(".z{--a:1 !important}.q{z-index:9}.z{--b:2 !important}", "")).toBe(
+    ".z{--a:1!important}.q{z-index:9}.z{--b:2!important}",
+  );
 });
 
 // `is_duplicate` compared the *total* declaration count but then zipped the
@@ -237,10 +243,34 @@ test("duplicate-rule detection respects the normal/!important split", () => {
     ".q{z-index:9}.z{color:#00f!important}",
   );
   // The lightningcss tests for 93b9e66 (test_duplicate_rules_preserve_importance).
+  // The first one passes without the fix: in bun an at-rule between two style
+  // rules stops the duplicate check.
   expect(
     cssInternals.minifyTest(".x { --c: first !important } @layer a { .y { --c: middle } } .x { --c: last }", ""),
   ).toBe(".x{--c:first!important}@layer a{.y{--c:middle}}.x{--c:last}");
   expect(cssInternals.minifyTest(".x { color: red !important } .y { color: green } .x { color: blue }", "")).toBe(
     ".x{color:red!important}.y{color:green}.x{color:#00f}",
   );
+  // The first one again, with a style rule in place of the at-rule.
+  expect(cssInternals.minifyTest(".x{--c:first !important}.y{--c:middle}.x{--c:last}", "")).toBe(
+    ".x{--c:first!important}.y{--c:middle}.x{--c:last}",
+  );
+});
+
+// Ids that differ only in the vendor prefix have the same hash, so these pairs
+// reach the id comparison of each declaration list in `is_duplicate`.
+test("duplicate-rule detection compares the ids of both declaration lists", () => {
+  expect(cssInternals.minifyTest(".z{-webkit-transition:opacity 1s}.q{z-index:9}.z{transition:opacity 2s}", "")).toBe(
+    ".z{-webkit-transition:opacity 1s}.q{z-index:9}.z{transition:opacity 2s}",
+  );
+  expect(
+    cssInternals.minifyTest(
+      ".z{-webkit-transition:opacity 1s !important}.q{z-index:9}.z{transition:opacity 2s !important}",
+      "",
+    ),
+  ).toBe(".z{-webkit-transition:opacity 1s!important}.q{z-index:9}.z{transition:opacity 2s!important}");
+  // The same prefix: the earlier rule *is* dead.
+  expect(
+    cssInternals.minifyTest(".z{-webkit-transition:opacity 1s}.q{z-index:9}.z{-webkit-transition:opacity 2s}", ""),
+  ).toBe(".q{z-index:9}.z{-webkit-transition:opacity 2s}");
 });

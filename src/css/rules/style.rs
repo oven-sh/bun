@@ -463,20 +463,19 @@ impl<R> StyleRule<R> {
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
         let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
-            a.len() == b.len()
-                && a.iter()
-                    .zip(b.iter())
-                    .all(|(a, b)| a.property_id() == b.property_id())
+            a.iter()
+                .zip(b.iter())
+                .all(|(a, b)| a.property_id() == b.property_id())
         };
-        self.selectors.eql(&other.selectors)
-            && same_property_ids(
-                &self.declarations.declarations,
-                &other.declarations.declarations,
-            )
-            && same_property_ids(
-                &self.declarations.important_declarations,
-                &other.declarations.important_declarations,
-            )
+        let (a, b) = (&self.declarations, &other.declarations);
+        // Cheapest checks first: a rule that changed in a merge stays in its
+        // old bucket, and the selector comparison is the costly part.
+        a.declarations.len() == b.declarations.len()
+            && a.important_declarations.len() == b.important_declarations.len()
+            && self.selectors.v.len() == other.selectors.v.len()
+            && same_property_ids(&a.declarations, &b.declarations)
+            && same_property_ids(&a.important_declarations, &b.important_declarations)
+            && self.selectors.eql(&other.selectors)
     }
 }
 

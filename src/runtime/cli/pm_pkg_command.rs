@@ -229,15 +229,23 @@ impl PmPkgCommand {
             [value] => *value,
             values => {
                 let mut object = E::Object::default();
+                // Only a repaired label can repeat another one, so `put` looks it up from then on.
+                let mut repaired = false;
                 for (key, value) in found.keys().iter().zip(values) {
-                    // `put` borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
+                    // The object borrows the label. print_json writes ill-formed UTF-8 as `\x00`.
                     let label: &[u8] = match bstr::ByteSlice::to_str_lossy(&key[..]) {
                         std::borrow::Cow::Borrowed(valid) => valid.as_bytes(),
                         std::borrow::Cow::Owned(replaced) => {
+                            repaired = true;
                             cli_arena().alloc_slice_copy(replaced.as_bytes())
                         }
                     };
-                    object.put(cli_arena(), label, *value)?;
+                    if repaired {
+                        object.put(cli_arena(), label, *value)?;
+                    } else {
+                        let label = Expr::init(E::String::init(label), value.loc);
+                        object.append_property(label, *value);
+                    }
                 }
                 Expr::init(object, Loc::EMPTY)
             }

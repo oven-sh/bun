@@ -290,6 +290,26 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
+    // The keys 0xFE and 0xFF both print as U+FFFD. They are one member with the later value, as in npm.
+    it.skipIf(isWindows)("should print one member for two non-UTF-8 keys that share a label", async () => {
+      using dir = tempDir("pm-pkg-get-bytes", {
+        "package.json": Buffer.from('{"\xfe":1,"\xff":2}', "latin1"),
+      });
+      await using proc = spawn({
+        cmd: ["sh", "-c", `exec "$0" pm pkg get "$(printf '\\376')" "$(printf '\\377')"`, bunExe()],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: pretty({ "\uFFFD": 2 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("should handle boolean values", async () => {
       const { output, code } = await runPmPkg(["get", "testBoolean"], readonlyDir);
       expect(output.trim()).toBe("true");

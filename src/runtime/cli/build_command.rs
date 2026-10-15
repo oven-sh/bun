@@ -712,6 +712,14 @@ impl BuildCommand {
                 }
             };
 
+            // `bun install --analyze`: the scanner callback already ran the install, and the
+            // bundler returned an empty `BuildResult` because it generates no chunks for a
+            // scan. There is nothing to write or summarize; the "Bundled N modules" line and
+            // the metafile below would describe a build that never ran.
+            if fetcher.is_some() {
+                return Ok(());
+            }
+
             // Write metafile if requested
             if let Some(metafile_json) = build_result.metafile.as_deref() {
                 if !ctx.bundler_options.metafile.is_empty() {

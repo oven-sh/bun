@@ -2,7 +2,6 @@
 
 use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
-use bun_core::Global;
 use bun_install::package_manager_real::command_line_arguments::CommandLineArguments;
 use bun_install::package_manager_real::{Subcommand, update_package_json_and_install_and_cli};
 
@@ -68,13 +67,11 @@ pub(crate) fn analyze_dependencies_and_install(
             });
 
             // SAFETY: both come from the caller's `&mut` borrows, which outlive `BuildCommand::exec`; the
-            // bundler is done with them when it calls this, and this never returns `Ok`.
+            // bundler is done with them when it calls this.
             let (cli, ctx) = unsafe { (&mut *self.cli, &mut *self.ctx) };
             cli.positionals = positionals.as_slice();
 
-            (self.install)(ctx, cli).map_err(bun_bundler::Error::from)?;
-
-            Global::exit(0);
+            (self.install)(ctx, cli).map_err(bun_bundler::Error::from)
         }
     }
 

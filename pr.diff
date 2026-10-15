@@ -1,0 +1,951 @@
+diff --git a/docs/pm/npmrc.mdx b/docs/pm/npmrc.mdx
+index 79b7736634..fc070ef2c2 100644
+--- a/docs/pm/npmrc.mdx
++++ b/docs/pm/npmrc.mdx
+@@ -19,7 +19,7 @@ Values may reference environment variables. Bun replaces `${NAME}` with the vari
+ 
+ As in npm, an unquoted value ends at the first `;` or `#` (write `\;` or `\#` to keep the character), and whitespace around keys and values is dropped.
+ 
+-[Auto-install](/runtime/auto-install#registries) reads the default registry, the scoped registries, and the registry credentials from `.npmrc`. The other options on this page apply to `bun install` and the other package manager commands only.
++[Auto-install](/runtime/auto-install#registries) reads the default registry, the scoped registries, the registry credentials, and [`ca` / `cafile`](#ca-and-cafile-configure-ca-certificates) from `.npmrc`. The other options on this page apply to `bun install` and the other package manager commands only.
+ 
+ <Note>
+   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
+diff --git a/docs/runtime/auto-install.mdx b/docs/runtime/auto-install.mdx
+index bf5e5a381e..9934d0212a 100644
+--- a/docs/runtime/auto-install.mdx
++++ b/docs/runtime/auto-install.mdx
+@@ -45,7 +45,7 @@ When the registry answers that a package does not exist (404), Bun does not ask
+ 
+ ## Registries
+ 
+-Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, and their credentials from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
++Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, their credentials, and their CA certificates from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
+ 
+ ```ini .npmrc icon="npm"
+ @myorg:registry=https://npm.myorg.com/
+@@ -54,6 +54,16 @@ Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unl
+ 
+ Bun reads the user's `.npmrc`, then `.npmrc` in the directory where you started `bun`. It does not search parent directories. A value in `bunfig.toml` overrides the same value in `.npmrc`. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only.
+ 
++If a private certificate authority signs a registry's certificate, name it with [`ca` or `cafile`](/runtime/bunfig#install-ca-and-install-cafile):
++
++```toml bunfig.toml icon="settings"
++[install]
++registry = "https://npm.myorg.com/"
++cafile = "myorg-ca.pem"
++```
++
++Auto-install then verifies its registries against those certificates instead of the default ones, as `bun install` does. `fetch()` and the other requests of your code do not use them. A relative `cafile` is relative to the directory where you started `bun`. Bun reads the certificates at the first request to an `https://` registry. If Bun cannot load them, the import fails and the error says why.
++
+ Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
+ 
+ ---
+diff --git a/docs/runtime/bunfig.mdx b/docs/runtime/bunfig.mdx
+index 0fe3f17ccb..10f313ff80 100644
+--- a/docs/runtime/bunfig.mdx
++++ b/docs/runtime/bunfig.mdx
+@@ -1016,6 +1016,8 @@ cafile = "path/to/cafile"
+ 
+ Set one of the two. If both are set, only `cafile` is used. `--ca` or `--cafile` on the command line replaces both.
+ 
++[Auto-install](/runtime/auto-install#registries) verifies its registries against these certificates too.
++
+ ### `install.cache`
+ 
+ To configure the cache behavior:
+diff --git a/src/http/HTTPContext.rs b/src/http/HTTPContext.rs
+index f608aa0c6c..a13122e9db 100644
+--- a/src/http/HTTPContext.rs
++++ b/src/http/HTTPContext.rs
+@@ -545,19 +545,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
+         let mut err = uws::create_bun_socket_error_t::none;
+         self.secure = match opts.create_ssl_context(&mut err) {
+             Some(ctx) => Some(ctx),
+-            None => {
+-                return Err(match err {
+-                    uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
+-                    uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
+-                    uws::create_bun_socket_error_t::invalid_ca => InitError::InvalidCA,
+-                    uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
+-                    uws::create_bun_socket_error_t::none
+-                    | uws::create_bun_socket_error_t::invalid_ciphers
+-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
+-                        InitError::FailedToOpenSocket
+-                    }
+-                });
+-            }
++            None => return Err(err.into()),
+         };
+         // SAFETY: secure was just set to Some.
+         unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+diff --git a/src/http/HTTPThread.rs b/src/http/HTTPThread.rs
+index 87ed77aa96..ca04c5c2e7 100644
+--- a/src/http/HTTPThread.rs
++++ b/src/http/HTTPThread.rs
+@@ -85,6 +85,9 @@ pub struct HttpThread {
+     /// `Option::take` is the once-guard (no atomics needed — `connect` is never
+     /// reentrant).
+     lazy_https_init: Option<InitOpts>,
++    /// The default HTTPS context holds the CA options of [`InitOpts`]. The h3
++    /// client verifies against the default roots only, so requests stay on TCP.
++    pub(crate) default_ctx_has_user_ca: bool,
+ 
+     pub(crate) queued_tasks: Queue,
+     /// Tasks popped from `queued_tasks` that couldn't start because
+@@ -167,6 +170,7 @@ impl HttpThread {
+                 session_cache: crate::session_cache::SessionCache::new(),
+             },
+             lazy_https_init: None,
++            default_ctx_has_user_ca: false,
+             queued_tasks: Queue::new(),
+             deferred_tasks: Vec::new(),
+             has_pending_queued_abort: false,
+@@ -461,13 +465,7 @@ impl HttpThread {
+                     // `impl Drop for HTTPContext` tolerates an uninitialized
+                     // group (skips close_all/destroy when `group.loop_` is
+                     // null), so dropping `ctx` here is safe.
+-                    return Err(match err {
+-                        InitError::InvalidCRL => crate::Error::InvalidCRL,
+-                        InitError::FailedToOpenSocket
+-                        | InitError::InvalidCA
+-                        | InitError::InvalidCAFile
+-                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
+-                    });
++                    return Err(client.tls_init_failed(err));
+                 }
+ 
+                 let now = self.timer_read();
+@@ -1308,6 +1306,7 @@ mod _event_loop_draft {
+             // bun-install-registry.test.ts "non-existent --cafile" /
+             // "invalid cafile"), even if the registry is plain HTTP and no SSL
+             // connect would ever happen.
++            thread.default_ctx_has_user_ca = true;
+             if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
+                 (opts.on_init_error)(err, &opts);
+             }
+diff --git a/src/http/InitError.rs b/src/http/InitError.rs
+index 2c6505a3b2..3eaeef2c24 100644
+--- a/src/http/InitError.rs
++++ b/src/http/InitError.rs
+@@ -11,3 +11,19 @@ pub enum InitError {
+     #[error("InvalidCRL")]
+     InvalidCRL,
+ }
++
++/// Why a TLS context could not be built from its options.
++impl From<bun_uws::create_bun_socket_error_t> for InitError {
++    fn from(err: bun_uws::create_bun_socket_error_t) -> Self {
++        use bun_uws::create_bun_socket_error_t as CtxError;
++        match err {
++            CtxError::load_ca_file => InitError::LoadCAFile,
++            CtxError::invalid_ca_file => InitError::InvalidCAFile,
++            CtxError::invalid_ca => InitError::InvalidCA,
++            CtxError::invalid_crl => InitError::InvalidCRL,
++            CtxError::none | CtxError::invalid_ciphers | CtxError::invalid_ecdh_curve => {
++                InitError::FailedToOpenSocket
++            }
++        }
++    }
++}
+diff --git a/src/http/InternalState.rs b/src/http/InternalState.rs
+index d2c6cb245a..13dde0bd5e 100644
+--- a/src/http/InternalState.rs
++++ b/src/http/InternalState.rs
+@@ -56,6 +56,8 @@ pub struct InternalState<'a> {
+     pub(crate) fail: Option<Error>,
+     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+     pub(crate) connect_errno: i32,
++    /// Why the request's TLS options built no TLS context, when `fail` is that.
++    pub(crate) tls_init_error: Option<crate::InitError>,
+     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
+     /// 0 otherwise. The JS side turns it into the resolver error
+     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
+@@ -140,6 +142,7 @@ impl Default for InternalState<'_> {
+             request_sent_len: 0,
+             fail: None,
+             connect_errno: 0,
++            tls_init_error: None,
+             dns_error: 0,
+             dns_hostname: None,
+             request_stage: HTTPStage::Pending,
+diff --git a/src/http/ProxyTunnel.rs b/src/http/ProxyTunnel.rs
+index b6ea15bf7b..9c161107de 100644
+--- a/src/http/ProxyTunnel.rs
++++ b/src/http/ProxyTunnel.rs
+@@ -598,10 +598,7 @@ impl ProxyTunnel {
+         };
+         let Some(ssl_ctx) = ssl_ctx else {
+             // Invalid TLS options; the errors a direct request reports for them.
+-            let error = match err {
+-                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
+-                _ => crate::Error::FailedToOpenSocket,
+-            };
++            let error = this.tls_init_failed(err.into());
+             this.close_and_fail::<IS_SSL>(error, socket);
+             return;
+         };
+diff --git a/src/http/lib.rs b/src/http/lib.rs
+index 08db6b3844..c94fe78b14 100644
+--- a/src/http/lib.rs
++++ b/src/http/lib.rs
+@@ -496,6 +496,9 @@ pub struct HTTPClientResult<'a> {
+     pub certificate_info: Option<CertificateInfo>,
+     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
+     pub connect_errno: i32,
++    /// Why the request's TLS options (`ca`, a CA file, ...) built no TLS context, when `fail` is
++    /// `FailedToOpenSocket` or `InvalidCRL` for that reason; `None` otherwise.
++    pub tls_init_error: Option<InitError>,
+     /// The proxy's reply to CONNECT when `fail` is `ProxyConnectFailed`. Kept
+     /// apart from `metadata`, which is only ever the origin's response head.
+     /// Boxed: it is large and rare, and every result is moved and dropped
+@@ -589,6 +592,7 @@ impl<'a> HTTPClientResult<'a> {
+             body_size: self.body_size,
+             certificate_info: self.certificate_info,
+             connect_errno: self.connect_errno,
++            tls_init_error: self.tls_init_error,
+             proxy_connect_response: self.proxy_connect_response,
+         }
+     }
+@@ -2079,10 +2083,7 @@ impl<'a> HTTPClient<'a> {
+         ) {
+             return false;
+         }
+-        if self.has_tls_options_unsupported_by_h3() {
+-            return false;
+-        }
+-        h3_alt_svc_enabled()
++        h3_alt_svc_enabled() && !self.has_tls_options_unsupported_by_h3()
+     }
+ 
+     fn has_tls_options_unsupported_by_h3(&self) -> bool {
+@@ -2091,6 +2092,7 @@ impl<'a> HTTPClient<'a> {
+                 .tls_props
+                 .as_ref()
+                 .is_some_and(|tls| tls.get().requires_custom_request_ctx)
++            || http_thread().default_ctx_has_user_ca
+     }
+ 
+     pub(crate) fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+@@ -2267,6 +2269,18 @@ impl<'a> HTTPClient<'a> {
+         self.fail(crate::Error::Timeout);
+     }
+ 
++    /// The request's TLS options built no TLS context: keeps why, and returns what the request fails with.
++    pub(crate) fn tls_init_failed(&mut self, err: InitError) -> crate::Error {
++        self.state.tls_init_error = Some(err);
++        match err {
++            InitError::InvalidCRL => crate::Error::InvalidCRL,
++            InitError::FailedToOpenSocket
++            | InitError::InvalidCA
++            | InitError::InvalidCAFile
++            | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
++        }
++    }
++
+     /// `socket(2)` / `connect(2)` / the poll registration failed synchronously:
+     /// keep what it failed with for `FailedToOpenSocket`. Winsock reports
+     /// through its own last-error, so there the generic code stays.
+@@ -4637,6 +4651,7 @@ impl<'a> HTTPClient<'a> {
+                     dns_error: self.state.dns_error,
+                     dns_hostname: self.state.dns_hostname.take(),
+                     connect_errno: self.state.connect_errno,
++                    tls_init_error: self.state.tls_init_error,
+                     proxy_connect_response: None,
+                     has_more: self.state.fail.is_none()
+                         && (!self.state.is_done() || self.state.has_pending_compressed()),
+@@ -4658,6 +4673,7 @@ impl<'a> HTTPClient<'a> {
+             dns_error: self.state.dns_error,
+             dns_hostname: self.state.dns_hostname.take(),
+             connect_errno: self.state.connect_errno,
++            tls_init_error: self.state.tls_init_error,
+             proxy_connect_response,
+             // check if we are reporting cert errors, do not have a fail state and we are not done
+             has_more: certificate_info.is_some()
+diff --git a/src/http/ssl_config.rs b/src/http/ssl_config.rs
+index 0a85d66ecd..c80438b2a3 100644
+--- a/src/http/ssl_config.rs
++++ b/src/http/ssl_config.rs
+@@ -152,6 +152,17 @@ impl SSLConfig {
+         }
+     }
+ 
++    /// Borrow `ca_file_name` as a `&CStr` (None if null).
++    #[inline]
++    pub fn ca_file_name_cstr(&self) -> Option<&CStr> {
++        if self.ca_file_name.is_null() {
++            None
++        } else {
++            // SAFETY: see `cstr_bytes` invariant — heap-owned, NUL-terminated.
++            Some(unsafe { CStr::from_ptr(self.ca_file_name) })
++        }
++    }
++
+     /// Borrow `server_name` as bytes (no trailing NUL). None if null.
+     #[inline]
+     pub fn server_name_bytes(&self) -> Option<&[u8]> {
+diff --git a/src/install/NetworkTask.rs b/src/install/NetworkTask.rs
+index 38edf2b264..a70da6dbd1 100644
+--- a/src/install/NetworkTask.rs
++++ b/src/install/NetworkTask.rs
+@@ -733,7 +733,12 @@ impl NetworkTask {
+ 
+         // SAFETY: `self.url_buf` outlives the request, same as `header_buf` above (see `s3/simple_request.rs`).
+         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+-        let http_proxy = pm.http_proxy(&url);
++        let tls_props = pm.tls_props();
++        let http_options = AsyncHTTPOptions {
++            http_proxy: pm.http_proxy(&url),
++            tls_props,
++            ..Default::default()
++        };
+         let completion_callback = self.get_completion_callback();
+         let mut request = AsyncHTTP::init(
+             http::Method::GET,
+@@ -743,10 +748,7 @@ impl NetworkTask {
+             b"",
+             completion_callback,
+             http::FetchRedirect::Follow,
+-            AsyncHTTPOptions {
+-                http_proxy,
+-                ..Default::default()
+-            },
++            http_options,
+         );
+         request.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+         request.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
+@@ -933,8 +935,10 @@ impl NetworkTask {
+         // the identical pattern in `for_manifest` above.
+         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
+ 
++        let tls_props = pm.tls_props();
+         let mut http_options = AsyncHTTPOptions {
+             http_proxy: pm.http_proxy(&url),
++            tls_props,
+             ..Default::default()
+         };
+ 
+diff --git a/src/install/PackageManager.rs b/src/install/PackageManager.rs
+index ad4194c19d..54b2f4694d 100644
+--- a/src/install/PackageManager.rs
++++ b/src/install/PackageManager.rs
+@@ -955,6 +955,17 @@ impl PackageManager {
+         self.env().get_tls_reject_unauthorized()
+     }
+ 
++    pub(crate) fn tls_props(&self) -> Option<http::ssl_config::SharedPtr> {
++        self.options.tls_props.clone()
++    }
++
++    /// The absolute `cafile` that [`Self::tls_props`] names, if any.
++    pub(crate) fn tls_props_ca_file(&self) -> &ZStr {
++        let ca_file =
++            (self.options.tls_props.as_deref()).and_then(http::SSLConfig::ca_file_name_cstr);
++        ca_file.map_or(ZStr::EMPTY, ZStr::from_cstr)
++    }
++
+     /// A blocking request, with the proxy and the certificate check the environment asks for.
+     pub fn registry_request<'a>(
+         &self,
+@@ -1345,42 +1356,67 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
+     } else {
+         ZStr::from_slice_with_nul(opts.abs_ca_file_name)
+     };
++    let failure = TlsInitFailure(err, abs_ca_z);
+     match err {
+-        http::InitError::LoadCAFile => {
+-            let mut normalizer = PosixToWinNormalizer::default();
+-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
+-            if !bun_sys::exists_z(normalized) {
+-                Output::err(
+-                    "HTTPThread",
+-                    "could not find CA file: '{s}'",
+-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+-                );
+-            } else {
+-                Output::err(
+-                    "HTTPThread",
+-                    "invalid CA file: '{s}'",
+-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+-                );
++        http::InitError::FailedToOpenSocket => Output::err_generic("{}", (failure,)),
++        _ => Output::err("HTTPThread", "{}", (failure,)),
++    }
++    Global::crash();
++}
++
++/// Why the HTTP client built no TLS context from `ca` / `cafile`. `.1` is the absolute `cafile`.
++pub(crate) struct TlsInitFailure<'a>(pub(crate) http::InitError, pub(crate) &'a ZStr);
++
++impl core::fmt::Display for TlsInitFailure<'_> {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        let ca_file = bstr::BStr::new(self.1.as_bytes());
++        match self.0 {
++            http::InitError::LoadCAFile => {
++                let mut normalizer = PosixToWinNormalizer::default();
++                let normalized =
++                    normalizer.resolve_z(FileSystem::instance().top_level_dir(), self.1);
++                if bun_sys::exists_z(normalized) {
++                    write!(f, "invalid CA file: '{ca_file}'")
++                } else {
++                    write!(f, "could not find CA file: '{ca_file}'")
++                }
++            }
++            http::InitError::InvalidCAFile => write!(f, "invalid CA file: '{ca_file}'"),
++            http::InitError::InvalidCA => f.write_str("the CA is invalid"),
++            http::InitError::InvalidCRL => f.write_str("the CRL is invalid"),
++            http::InitError::FailedToOpenSocket => {
++                f.write_str("failed to start HTTP client thread")
+             }
+-        }
+-        http::InitError::InvalidCAFile => {
+-            Output::err(
+-                "HTTPThread",
+-                "invalid CA file: '{s}'",
+-                &[&bstr::BStr::new(abs_ca_z.as_bytes())],
+-            );
+-        }
+-        http::InitError::InvalidCA => {
+-            Output::err("HTTPThread", "the CA is invalid", ());
+-        }
+-        http::InitError::InvalidCRL => {
+-            Output::err("HTTPThread", "the CRL is invalid", ());
+-        }
+-        http::InitError::FailedToOpenSocket => {
+-            Output::err_generic("failed to start HTTP client thread", ());
+         }
+     }
+-    Global::crash();
++}
++
++/// `ca` / `cafile` of the install options as the TLS config of a single request, for a process
++/// whose HTTP thread serves other requests too. With both set, the TLS layer uses the file.
++/// A relative `cafile` is relative to `start_dir`. The join has no length limit: a path the OS
++/// cannot open fails the request like a CA file that does not exist.
++fn request_tls_props(options: &Options, start_dir: &[u8]) -> Option<http::ssl_config::SharedPtr> {
++    if options.ca.is_empty() && options.ca_file_name.is_empty() {
++        return None;
++    }
++    let mut config = http::SSLConfig::zero();
++    if !options.ca_file_name.is_empty() {
++        let mut spill = Vec::new();
++        config.ca_file_name = bun_core::dupe_z(if bun_paths::is_absolute(options.ca_file_name) {
++            options.ca_file_name
++        } else {
++            resolve_path::join_abs_string_spill::<platform::Auto>(
++                start_dir,
++                &mut spill,
++                &[options.ca_file_name],
++            )
++        });
++    }
++    if !options.ca.is_empty() {
++        config.ca = Some(options.ca.iter().map(|pem| bun_core::dupe_z(pem)).collect());
++    }
++    config.requires_custom_request_ctx = true;
++    Some(http::ssl_config::global_registry::intern(config))
+ }
+ 
+ // ──────────────────────────────────────────────────────────────────────────
+@@ -2646,6 +2682,7 @@ fn init_with_runtime_once(
+         Some(&npmrc),
+         Subcommand::Install,
+     )?;
++    manager.options.tls_props = request_tls_props(&manager.options, start_dir);
+ 
+     manager.timestamp_for_manifest_cache_control =
+         ((u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32)
+diff --git a/src/install/PackageManager/PackageManagerOptions.rs b/src/install/PackageManager/PackageManagerOptions.rs
+index 963fd99173..3f8ccfa136 100644
+--- a/src/install/PackageManager/PackageManagerOptions.rs
++++ b/src/install/PackageManager/PackageManagerOptions.rs
+@@ -73,6 +73,9 @@ pub struct Options {
+ 
+     pub(crate) ca: Box<[Box<[u8]>]>,
+     pub(crate) ca_file_name: &'static [u8],
++    /// `ca` / `ca_file_name` as the TLS config of each registry request. Only the runtime's
++    /// auto-install sets it: `bun install` puts them on the HTTP thread, which is its own.
++    pub(crate) tls_props: Option<bun_http::ssl_config::SharedPtr>,
+ 
+     // if set to `false` in bunfig, save a binary lockfile
+     pub(crate) save_text_lockfile: Option<bool>,
+@@ -170,6 +173,7 @@ impl Default for Options {
+             publish_config: PublishConfig::default(),
+             ca: Box::default(),
+             ca_file_name: b"",
++            tls_props: None,
+             save_text_lockfile: None,
+             lockfile_only: false,
+             runtime_auto_install: false,
+@@ -661,7 +665,7 @@ impl Options {
+         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
+         // resolver storage (`Option<NonNull<api::BunInstall>>`).
+         bun_install_ref: Option<&Api::BunInstall>,
+-        // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
++        // Runtime auto-install's `.npmrc`: only the registries, their credentials and their CA are read.
+         runtime_npmrc: Option<&Api::BunInstall>,
+         subcommand: Subcommand,
+     ) -> crate::Result<()> {
+@@ -717,6 +721,19 @@ impl Options {
+                     self.url_auth.push(url_auth);
+                 }
+             }
++
++            // `ca` + `cafile` are one setting: a later layer replaces both or neither.
++            if config.ca.is_some() || config.cafile.is_some() {
++                self.ca = match &config.ca {
++                    Some(Api::Ca::List(ca_list)) => ca_list.clone(),
++                    Some(Api::Ca::Str(ca_str)) => vec![ca_str.clone()].into_boxed_slice(),
++                    None => Box::default(),
++                };
++                self.ca_file_name = match config.cafile.as_deref() {
++                    Some(cafile) => leak_static(&expand_home_tilde(cafile)),
++                    None => b"",
++                };
++            }
+         }
+ 
+         if let Some(config) = bun_install_ref {
+@@ -724,18 +741,6 @@ impl Options {
+                 self.cache_directory = leak_static(&expand_home_tilde(cache_directory));
+             }
+ 
+-            if let Some(ca) = &config.ca {
+-                match ca {
+-                    Api::Ca::List(ca_list) => {
+-                        self.ca.clone_from(ca_list);
+-                    }
+-                    Api::Ca::Str(ca_str) => {
+-                        // Single-element slice; own it (no `Box::leak`).
+-                        self.ca = vec![ca_str.clone()].into_boxed_slice();
+-                    }
+-                }
+-            }
+-
+             if let Some(node_linker) = config.node_linker {
+                 // `Api::NodeLinker` is a re-export of `bun_install_types::NodeLinker`.
+                 self.node_linker = node_linker;
+@@ -762,10 +767,6 @@ impl Options {
+                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+             }
+ 
+-            if let Some(cafile) = config.cafile.as_deref() {
+-                self.ca_file_name = leak_static(&expand_home_tilde(cafile));
+-            }
+-
+             if config.disable_cache.unwrap_or(false) {
+                 self.enable.set(Enable::CACHE, false);
+                 self.enable.set(Enable::MANIFEST_CACHE, false);
+diff --git a/src/install/PackageManager/runTasks.rs b/src/install/PackageManager/runTasks.rs
+index dd5f034df9..ef21afe192 100644
+--- a/src/install/PackageManager/runTasks.rs
++++ b/src/install/PackageManager/runTasks.rs
+@@ -700,7 +700,11 @@ fn run_tasks_erased(
+                             manager.log_mut(),
+                             manager.is_network_task_required(task.task_id),
+                             "{} downloading package manifest <b>{}<r>",
+-                            DownloadFailure(err.name(), &task.response),
++                            DownloadFailure(
++                                err.name(),
++                                &task.response,
++                                manager.tls_props_ca_file()
++                            ),
+                             bstr::BStr::new(name),
+                         );
+ 
+@@ -989,7 +993,7 @@ fn run_tasks_erased(
+                         manager.log_mut(),
+                         is_required,
+                         "{} downloading tarball <b>{}@{}<r>",
+-                        DownloadFailure(err.name(), &task.response),
++                        DownloadFailure(err.name(), &task.response, manager.tls_props_ca_file()),
+                         bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
+                         bun_core::fmt::for_terminal(
+                             extract
+@@ -1636,17 +1640,29 @@ fn download_outcome(response: &http::HTTPClientResult<'static>) -> (bool, bool)
+         response.fail,
+         Some(http::Error::Cert(_) | http::Error::ERR_TLS_CERT_ALTNAME_INVALID)
+     );
++    // `ca` / `cafile` that do not load now do not load on the next attempt either.
+     let retry = !bad_certificate
++        && response.tls_init_error.is_none()
+         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
+     (failed, retry)
+ }
+ 
+ /// `ProxyConnectFailed (407)`: a refused CONNECT is reported with the proxy's status.
+-struct DownloadFailure<'a>(&'static str, &'a http::HTTPClientResult<'static>);
++/// `FailedToOpenSocket (could not find CA file: '/ca.pem')`: `ca` / `cafile` that do not load, with
++/// the reason. `.2` is [`PackageManager::tls_props_ca_file`].
++struct DownloadFailure<'a>(
++    &'static str,
++    &'a http::HTTPClientResult<'static>,
++    &'a bun_core::ZStr,
++);
+ 
+ impl core::fmt::Display for DownloadFailure<'_> {
+     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        use http::InitError::{InvalidCA, InvalidCAFile, LoadCAFile};
+         f.write_str(self.0)?;
++        if let Some(err @ (LoadCAFile | InvalidCAFile | InvalidCA)) = self.1.tls_init_error {
++            return write!(f, " ({})", super::TlsInitFailure(err, self.2));
++        }
+         match &self.1.proxy_connect_response {
+             Some(reply) => write!(f, " ({})", reply.response.status_code),
+             None => Ok(()),
+diff --git a/test/cli/install/bun-install-registry.test.ts b/test/cli/install/bun-install-registry.test.ts
+index 2e2fdcb729..4d0537e088 100644
+--- a/test/cli/install/bun-install-registry.test.ts
++++ b/test/cli/install/bun-install-registry.test.ts
+@@ -380,6 +380,54 @@ describe.concurrent("certificate authority", () => {
+     expect(proxy.targets).toEqual([`localhost:${server.port}`, `localhost:${server.port}`]);
+   });
+ 
++  // The HTTP/3 client has no CA options: it verifies against the default roots. A registry that
++  // advertises `Alt-Svc: h3` must not move the next request off the connection `--cafile` applies to.
++  test("--cafile keeps requests off an Alt-Svc h3 upgrade", async () => {
++    const { packageDir, packageJson, env } = await setupTest();
++    const tarball = await file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")).bytes();
++    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
++    const requests: string[] = [];
++    const respond = (transport: "tcp" | "h3") => (req: Request) => {
++      const { pathname } = new URL(req.url);
++      requests.push(`${transport} ${pathname}`);
++      const headers = { "alt-svc": `h3=":${quic.port}"; ma=86400` };
++      if (pathname !== "/no-deps") return new Response(tarball, { headers });
++      const dist = { tarball: `https://localhost:${origin.port}/no-deps-1.0.0.tgz`, integrity };
++      return Response.json(
++        {
++          name: "no-deps",
++          "dist-tags": { latest: "1.0.0" },
++          versions: { "1.0.0": { name: "no-deps", version: "1.0.0", dist } },
++        },
++        { headers },
++      );
++    };
++    // Only `quic` speaks HTTP/3, on a port of its own, so a request it logs did take the upgrade.
++    using quic = Bun.serve({ port: 0, fetch: respond("h3"), ...tls, http3: true, http1: false });
++    using origin = Bun.serve({ port: 0, fetch: respond("tcp"), ...tls });
++    await Promise.all([
++      write(packageJson, JSON.stringify({ name: "foo", version: "1.1.1", dependencies: { "no-deps": "1.0.0" } })),
++      write(
++        join(packageDir, "bunfig.toml"),
++        Bun.TOML.stringify({ install: { cache: false, registry: `https://localhost:${origin.port}/` } }),
++      ),
++      write(join(packageDir, "cafile"), tls.cert),
++    ]);
++
++    const { stdout, stderr, exited } = spawn({
++      cmd: [bunExe(), "install", "--cafile", "cafile"],
++      cwd: packageDir,
++      stderr: "pipe",
++      stdout: "pipe",
++      env: { ...env, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1", BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
++    });
++    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
++    expect(err).not.toContain("error:");
++    expect(out).toContain("+ no-deps@1.0.0");
++    expect(requests).toEqual(["tcp /no-deps", "tcp /no-deps-1.0.0.tgz"]);
++    expect(exitCode).toBe(0);
++  });
++
+   test(`non-existent --cafile`, async () => {
+     const { packageDir, packageJson, env } = await setupTest();
+     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+diff --git a/test/cli/run/run-autoinstall.test.ts b/test/cli/run/run-autoinstall.test.ts
+index 5b230ec442..9114a7cc4c 100644
+--- a/test/cli/run/run-autoinstall.test.ts
++++ b/test/cli/run/run-autoinstall.test.ts
+@@ -1,10 +1,11 @@
+ import { describe, expect, test } from "bun:test";
+-import { existsSync, mkdirSync, readdirSync } from "fs";
++import { existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
+ import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tls } from "harness";
+ import { mkfifo } from "mkfifo";
+ import { connect, type Socket } from "net";
+ import { join } from "path";
+ import { pathToFileURL } from "url";
++import { createAdversarialProxy, proxyFreeEnv } from "../../js/bun/http/proxy-stress-helpers";
+ 
+ //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
+ //   -i                              Auto-install dependencies during execution. Equivalent to --install=fallback.
+@@ -1855,3 +1856,279 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
+     expect(result.exitCode).toBe(0);
+   });
+ });
++
++// `ca` / `cafile` name the CA of a private registry, in the `[install]` section of bunfig.toml or
++// in `.npmrc`. The auto-install of a script reads them like `bun install` does, and only for its
++// own requests.
++describe("auto-install verifies the registry with the configured ca / cafile", () => {
++  // An ASAN build starts too slowly to run all of these at once within the default timeout.
++  const cell = test.concurrentIf(!isASAN);
++  const thing = "thing from the private registry";
++  const unrelatedCa = readFileSync(join(import.meta.dir, "../../js/node/test/fixtures/keys/ca1-cert.pem"), "utf8");
++  const pkg = (async () => {
++    const tarball = await new Bun.Archive({
++      "package/package.json": JSON.stringify({ name: "@corp/thing", version: "1.0.0", main: "index.js" }),
++      "package/index.js": `module.exports = ${JSON.stringify(thing)};\n`,
++    }).bytes("gzip");
++    return { tarball, integrity: "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64") };
++  })();
++  const manifestPath = "/@corp%2fthing";
++  const tarballPath = "/@corp/thing/-/thing-1.0.0.tgz";
++  const bothRequests = [manifestPath, tarballPath];
++  const importIt = `import thing from "@corp/thing";\nconsole.log(thing);\n`;
++  // Past PATH_MAX on Linux and macOS, and a name no file system accepts.
++  const tooLong = Buffer.alloc(5000, "a").toString() + ".pem";
++
++  /**
++   * A registry that has `@corp/thing@1.0.0`, behind the harness certificate unless `tls` is `undefined`.
++   * `requests` is each path it was asked for. `tarballOrigin` puts the tarball on another server.
++   */
++  async function serveRegistry(options: { tls?: typeof tls; tarballOrigin?: string } = { tls }) {
++    const { tarball, integrity } = await pkg;
++    const requests: string[] = [];
++    const server = Bun.serve({
++      port: 0,
++      hostname: "127.0.0.1",
++      tls: options.tls,
++      fetch(req) {
++        const { pathname } = new URL(req.url);
++        requests.push(pathname);
++        if (pathname === tarballPath) return new Response(tarball);
++        if (pathname !== manifestPath) return new Response("{}", { status: 404 });
++        const dist = { tarball: (options.tarballOrigin ?? server.url.origin) + tarballPath, integrity };
++        return Response.json({
++          name: "@corp/thing",
++          "dist-tags": { latest: "1.0.0" },
++          versions: { "1.0.0": { name: "@corp/thing", version: "1.0.0", main: "index.js", dist } },
++        });
++      },
++    });
++    return { requests, origin: server.url.origin, [Symbol.dispose]: () => void server.stop(true) };
++  }
++
++  /**
++   * Runs `bun index.js` in `<dir>/app`, which has no `node_modules`, with `<dir>/home` as the home
++   * directory. `files` gets `<dir>/app`. `index.js` imports `@corp/thing` and prints it by default.
++   */
++  async function run(options: { files: (app: string) => Record<string, string>; env?: Record<string, string> }) {
++    using dir = tempDir("autoinstall-ca", { "home/.keep": "", "app/.keep": "" });
++    const app = join(String(dir), "app");
++    const home = join(String(dir), "home");
++    for (const [name, contents] of Object.entries({ "index.js": importIt, ...options.files(app) })) {
++      await Bun.write(join(app, name), contents);
++    }
++    await using proc = Bun.spawn({
++      cmd: [bunExe(), "index.js"],
++      cwd: app,
++      env: {
++        ...bunEnv,
++        ...proxyFreeEnv,
++        // bunEnv spreads process.env, and CI runners export some of these.
++        XDG_CONFIG_HOME: undefined,
++        NPM_CONFIG_USERCONFIG: undefined,
++        npm_config_userconfig: undefined,
++        NPM_CONFIG_REGISTRY: undefined,
++        npm_config_registry: undefined,
++        BUN_CONFIG_REGISTRY: undefined,
++        NODE_EXTRA_CA_CERTS: undefined,
++        HOME: home,
++        USERPROFILE: home,
++        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
++        ...options.env,
++      },
++      stdout: "pipe",
++      stderr: "pipe",
++    });
++    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
++    return { stdout, stderr, exitCode };
++  }
++
++  const bunfig = (install: Record<string, unknown>) => Bun.TOML.stringify({ install });
++  const installed = { stdout: thing + "\n", stderr: "", exitCode: 0 };
++
++  cell.each([
++    ["an absolute cafile", (app: string) => ({ cafile: join(app, "registry.pem") })],
++    ["a relative cafile", () => ({ cafile: "certs/registry.pem" })],
++    ["a ca string", () => ({ ca: tls.cert })],
++    ["a ca list", () => ({ ca: [unrelatedCa, tls.cert] })],
++    // With both set, `bun install` reads the file only.
++    ["a cafile next to a ca", () => ({ cafile: "registry.pem", ca: unrelatedCa })],
++  ])("from bunfig.toml: %s", async (_, ca) => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: app => ({
++        "bunfig.toml": bunfig({ registry: registry.origin, ...ca(app) }),
++        "registry.pem": tls.cert,
++        "certs/registry.pem": tls.cert,
++      }),
++    });
++    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
++  });
++
++  // The runtime takes the registry from `.npmrc` too, so the CA that `.npmrc` has for it counts.
++  cell.each([
++    ["cafile", () => `cafile=registry.pem\n`],
++    ["ca", () => `ca=${JSON.stringify(tls.cert)}\n`],
++  ])("from .npmrc: %s", async (_, ca) => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: () => ({ ".npmrc": `registry=${registry.origin}/\n${ca()}`, "registry.pem": tls.cert }),
++    });
++    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
++  });
++
++  // `ca` and `cafile` are one setting. A merge of the two files would read only `.npmrc`'s file.
++  cell("bunfig.toml replaces the ca and the cafile of .npmrc", async () => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: () => ({
++        ".npmrc": `registry=${registry.origin}/\ncafile=unrelated.pem\n`,
++        "unrelated.pem": unrelatedCa,
++        "bunfig.toml": bunfig({ ca: tls.cert }),
++      }),
++    });
++    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
++  });
++
++  // fetch() starts the HTTP client first here, and it never gets the install CA.
++  cell("for require() and import() after a fetch(), which still rejects the certificate", async () => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: () => ({
++        "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }),
++        "index.js": `
++          const fetched = () => fetch(${JSON.stringify(registry.origin)}).then(res => res.status, err => err.code);
++          const before = await fetched();
++          const required = require("@corp/thing");
++          const imported = (await import("@corp/thing")).default;
++          console.log(JSON.stringify({ before, required, imported, after: await fetched() }));
++        `,
++      }),
++    });
++    expect(JSON.parse(result.stdout)).toEqual({
++      before: "DEPTH_ZERO_SELF_SIGNED_CERT",
++      required: thing,
++      imported: thing,
++      after: "DEPTH_ZERO_SELF_SIGNED_CERT",
++    });
++    expect({ requests: registry.requests, exitCode: result.exitCode }).toEqual({ requests: bothRequests, exitCode: 0 });
++  });
++
++  cell("a relative cafile is relative to the directory the process started in", async () => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: () => ({
++        "bunfig.toml": bunfig({ registry: registry.origin, cafile: "registry.pem" }),
++        "registry.pem": tls.cert,
++        "elsewhere/registry.pem": unrelatedCa,
++        "index.js": `
++          process.chdir("elsewhere");
++          console.log((await import("@corp/thing")).default);
++        `,
++      }),
++    });
++    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
++  });
++
++  cell("an https tarball of an http registry", async () => {
++    using tarballs = await serveRegistry();
++    using registry = await serveRegistry({ tls: undefined, tarballOrigin: tarballs.origin });
++    const result = await run({
++      files: () => ({ "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }) }),
++    });
++    expect({ ...result, manifest: registry.requests, tarball: tarballs.requests }).toEqual({
++      ...installed,
++      manifest: [manifestPath],
++      tarball: [tarballPath],
++    });
++  });
++
++  // The registry's certificate is checked inside the CONNECT tunnel. A later fetch() to the same
++  // host must open a tunnel of its own: the one the install left is verified with the install CA.
++  cell("through an HTTPS_PROXY tunnel that fetch() does not reuse", async () => {
++    using registry = await serveRegistry();
++    await using proxy = await createAdversarialProxy();
++    const result = await run({
++      files: () => ({
++        "bunfig.toml": bunfig({ registry: registry.origin, ca: tls.cert }),
++        "index.js": `
++          const imported = (await import("@corp/thing")).default;
++          const fetched = await fetch(${JSON.stringify(registry.origin)}).then(res => res.status, err => err.code);
++          console.log(JSON.stringify({ imported, fetched }));
++        `,
++      }),
++      env: { HTTPS_PROXY: proxy.url },
++    });
++    expect(JSON.parse(result.stdout)).toEqual({ imported: thing, fetched: "DEPTH_ZERO_SELF_SIGNED_CERT" });
++    expect(registry.requests).toEqual(bothRequests);
++    expect(new Set(proxy.connections.map(c => `${c.method} ${c.target}`))).toEqual(
++      new Set([`CONNECT ${new URL(registry.origin).host}`]),
++    );
++    expect(result.exitCode).toBe(0);
++  });
++
++  // As in `bun install`: the certificates that NODE_EXTRA_CA_CERTS adds to the default ones do not count.
++  cell("the CA replaces the default trust store", async () => {
++    using registry = await serveRegistry();
++    const result = await run({
++      files: () => ({
++        "bunfig.toml": bunfig({ registry: registry.origin, cafile: "unrelated.pem" }),
++        "unrelated.pem": unrelatedCa,
++        "registry.pem": tls.cert,
++      }),
++      env: { NODE_EXTRA_CA_CERTS: "registry.pem" },
++    });
++    expect(noteLines(result.stderr)).toEqual([
++      "note: DEPTH_ZERO_SELF_SIGNED_CERT downloading package manifest @corp/thing",
++    ]);
++    expect({ stdout: result.stdout, requests: registry.requests, exitCode: result.exitCode }).toEqual({
++      stdout: "",
++      requests: [],
++      exitCode: 1,
++    });
++  });
++
++  // Not a process exit as in `bun install`: the import fails, says why in the words of
++  // `bun install`, and is not tried again.
++  cell.each([
++    [
++      "a cafile that does not exist",
++      () => ({ cafile: "missing.pem" }),
++      (app: string) => `could not find CA file: '${join(app, "missing.pem")}'`,
++    ],
++    [
++      "a cafile path that is too long to open",
++      () => ({ cafile: tooLong }),
++      (app: string) => `could not find CA file: '${join(app, tooLong)}'`,
++    ],
++    [
++      "a cafile with no certificate",
++      () => ({ cafile: "empty.pem" }),
++      (app: string) => `invalid CA file: '${join(app, "empty.pem")}'`,
++    ],
++    ["a ca that is no certificate", () => ({ ca: "not a certificate" }), () => "the CA is invalid"],
++  ])("reports %s", async (_, ca, reason) => {
++    using registry = await serveRegistry();
++    let app = "";
++    const result = await run({
++      files: dir => ((app = dir), { "bunfig.toml": bunfig({ registry: registry.origin, ...ca() }), "empty.pem": "" }),
++    });
++    expect(noteLines(result.stderr)).toEqual([
++      `note: FailedToOpenSocket (${reason(app)}) downloading package manifest @corp/thing`,
++    ]);
++    expect({ stdout: result.stdout, requests: registry.requests, exitCode: result.exitCode }).toEqual({
++      stdout: "",
++      requests: [],
++      exitCode: 1,
++    });
++  });
++
++  // The CA is read when a registry request needs it, so a wrong path costs nothing before that.
++  cell("a cafile that does not exist is not read for an http registry", async () => {
++    using registry = await serveRegistry({ tls: undefined });
++    const result = await run({
++      files: () => ({ "bunfig.toml": bunfig({ registry: registry.origin, cafile: "missing.pem" }) }),
++    });
++    expect({ ...result, requests: registry.requests }).toEqual({ ...installed, requests: bothRequests });
++  });
++});

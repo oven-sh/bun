@@ -1090,7 +1090,7 @@ for (const [i, transport] of ["broadcast", "port"].entries())
     { channel: "peers" },
   );
 
-for (const [topology, list] of Object.entries(cells))
+for (const [topology, list] of Object.entries(cells).filter(([name]) => name.startsWith(process.env.MGW_ONLY ?? "")))
   describe.concurrent("ModuleGraph and workers, " + topology, () => {
     for (const { name, script, cell, expected } of list)
       test(name, async () => {

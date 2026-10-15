@@ -426,11 +426,20 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
         let b = boxes[pick];
         let ch = b.moments.channel_to_split();
         let slice = &mut bins[b.lo..b.hi];
-        slice.sort_unstable_by_key(|bin| bin.rgba[ch]);
         // `ch` has error, so it has two different values and a cut exists.
-        let Some((at, left)) = cut(slice, ch, &b.moments) else {
+        let Some(value) = cut(slice, ch, &b.moments) else {
             break;
         };
+        // The bins below `value` go first.
+        let mut at: usize = 0;
+        let mut left = Moments::default();
+        for i in 0..slice.len() {
+            if slice[i].rgba[ch] < value {
+                left.add(slice[i]);
+                slice.swap(at, i);
+                at += 1;
+            }
+        }
         boxes[pick] = ColorBox::new(b.lo, b.lo + at, &left);
         boxes.push(ColorBox::new(b.lo + at, b.hi, &b.moments.minus(&left)));
     }
@@ -441,31 +450,52 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
     palette
 }
 
-/// The cut of `bins` (sorted by `ch`) that leaves the least squared error, and the left part's
-/// moments. Only between two different values of `ch`, so equal colours stay together. The sum of
-/// squares is fixed, so least error is the largest L²/nL + R²/nR over the channel sums L and R.
-fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<(usize, Moments)> {
-    let mut left = Moments::default();
-    let mut best: Option<(u128, usize, Moments)> = None;
-    for i in 1..bins.len() {
-        left.add(bins[i - 1]);
-        if bins[i - 1].rgba[ch] == bins[i].rgba[ch] {
+/// Pixel count and channel sums of the bins that have one value of a channel.
+#[derive(Clone, Copy, Default)]
+struct Sums {
+    n: u64,
+    sum: [u64; 4],
+}
+
+/// The cut of `bins` along `ch` that leaves the least squared error: the least value of `ch` in
+/// the second part. The sum of squares is fixed, so least error is the largest
+/// L²/nL + R²/nR over the channel sums L and R of the two parts.
+fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<u8> {
+    let mut at_value = [Sums::default(); 256];
+    for bin in bins {
+        let sums = &mut at_value[usize::from(bin.rgba[ch])];
+        let count = u64::from(bin.count);
+        sums.n += count;
+        for c in 0..4usize {
+            sums.sum[c] += count * u64::from(bin.rgba[c]);
+        }
+    }
+    let mut left = Sums::default();
+    let mut best: Option<(u128, u8)> = None;
+    for (value, sums) in at_value.iter().enumerate() {
+        if sums.n == 0 {
             continue;
+        }
+        left.n += sums.n;
+        // Nothing is past the last value.
+        if left.n == total.n {
+            break;
         }
         let mut left_sq: u128 = 0;
         let mut right_sq: u128 = 0;
         for c in 0..4usize {
+            left.sum[c] += sums.sum[c];
             let l = u128::from(left.sum[c]);
             let r = u128::from(total.sum[c] - left.sum[c]);
             left_sq += l * l;
             right_sq += r * r;
         }
         let score = left_sq / u128::from(left.n) + right_sq / u128::from(total.n - left.n);
-        if best.is_none_or(|(s, _, _)| score > s) {
-            best = Some((score, i, left));
+        if best.is_none_or(|(s, _)| score > s) {
+            best = Some((score, u8::try_from(value + 1).expect("int cast")));
         }
     }
-    best.map(|(_, i, moments)| (i, moments))
+    best.map(|(_, value)| value)
 }
 
 /// Index of the palette entry nearest to the colour `key`, the first one on a tie.

@@ -100,6 +100,8 @@ pub(crate) struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// `ProcessAutoKiller` scope when the sequence that is running started. Only a group of one sequence reads it.
+    pub(crate) auto_kill_mark: u32,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -167,6 +169,8 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// An afterAll hook: the cleanup of every process that is still tracked.
+    pub(crate) after_all: bool,
 }
 
 impl ExecutionSequence {
@@ -189,7 +193,25 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            after_all: false,
         }
+    }
+
+    /// `entry` runs after the test callback of this sequence: afterEach, onTestFinished.
+    fn runs_after_test(&self, entry: &ExecutionEntry) -> bool {
+        let Some(test_entry) = self.test_entry else {
+            return false;
+        };
+        // SAFETY: arena-owned entries, alive for the lifetime of BunTest which owns Execution
+        let mut next = unsafe { test_entry.as_ref() }.next;
+        while let Some(after) = next {
+            if core::ptr::eq(after, entry) {
+                return true;
+            }
+            // SAFETY: see above
+            next = unsafe { (*after).next };
+        }
+        false
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -282,6 +304,7 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            auto_kill_mark: 0,
         }
     }
 
@@ -326,15 +349,16 @@ impl Execution {
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill_scope();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        let auto_killer = &mut global_this.bun_vm().as_mut().auto_killer;
+                        // A cleanup hook that times out leaves what it was going to stop without a cleanup.
+                        let kill_count = if sequence.after_all {
+                            auto_killer.kill()
+                        } else if sequence.runs_after_test(entry) {
+                            auto_killer.kill_since(self.auto_kill_mark)
+                        } else {
+                            auto_killer.kill_scope()
+                        };
+                        report_killed_processes(kill_count.processes);
                     }
                 }
             }
@@ -963,6 +987,17 @@ fn step_sequence(
     }
 }
 
+pub(crate) fn report_killed_processes(count: u32) {
+    if count > 0 {
+        bun_core::pretty_errorln!(
+            "<d>killed {} dangling process{}<r>",
+            count,
+            if count != 1 { "es" } else { "" },
+        );
+        bun_core::Output::flush();
+    }
+}
+
 /// returns None if the while loop should continue
 fn step_sequence_one(
     buntest_strong: &BunTestPtr,
@@ -1015,6 +1050,7 @@ fn step_sequence_one(
     sequence.executing = true;
     if Some(next_item_ptr) == sequence.first_entry {
         Execution::on_sequence_started(sequence);
+        this.auto_kill_mark = global_this.bun_vm().as_mut().auto_killer.scope();
     }
     Execution::on_entry_started(next_item);
 

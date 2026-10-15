@@ -275,6 +275,104 @@ testKill("a beforeAll timeout only kills the children of that hook", async () =>
   expect(exitCode).toBe(1);
 });
 
+// An afterEach that times out was the cleanup of its test. What the test and its
+// hooks started has no other cleanup, so it is killed too. The beforeAll child is not.
+testKill("an afterEach timeout kills the children of its test, not of beforeAll", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+
+    let fromBeforeAll: ReturnType<typeof spawnEcho>;
+    let fromBeforeEach: ReturnType<typeof spawnEcho>;
+    let fromTest: ReturnType<typeof spawnEcho>;
+    let isFirstTest = true;
+    afterAll(() => fromBeforeAll.kill());
+
+    beforeAll(() => {
+      fromBeforeAll = spawnEcho();
+    });
+
+    beforeEach(() => {
+      if (isFirstTest) fromBeforeEach = spawnEcho();
+    });
+
+    afterEach(async () => {
+      if (!isFirstTest) return;
+      isFirstTest = false;
+      await new Promise(() => {});
+    }, 100);
+
+    test("its afterEach hangs", () => {
+      fromTest = spawnEcho();
+    });
+
+    test("only the beforeAll child is still running", async () => {
+      await Promise.all([fromBeforeEach.exited, fromTest.exited]);
+      expect(await echo(fromBeforeAll, "beforeAll")).toBe("beforeAll");
+    });
+  `);
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 2 dangling processes"]);
+  expect(combined).toContain("(fail) its afterEach hangs");
+  expect(combined).toContain("(pass) only the beforeAll child is still running");
+  expect(combined).toContain(" 1 pass\n");
+  expect(combined).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
+});
+
+// An afterAll that times out was the cleanup of everything that is still running.
+testKill("an afterAll timeout kills the children of beforeAll", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, beforeAll, test } from "bun:test";
+
+    let fromBeforeAll: ReturnType<typeof spawnEcho>;
+
+    beforeAll(() => {
+      fromBeforeAll = spawnEcho();
+    });
+
+    test("passes", () => {});
+
+    afterAll(async () => {
+      await new Promise(() => {});
+      fromBeforeAll.kill();
+    }, 100);
+  `);
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+  expect(combined).toContain("(pass) passes");
+  expect(exitCode).toBe(1);
+});
+
+// --bail exits before afterAll runs, so the runner stops what is still tracked.
+testKill.each([
+  ["an assertion fails", `test("fails", () => { expect(1).toBe(2); });`],
+  ["a test times out", `test("fails", async () => { await new Promise(() => {}); }, 100);`],
+])("--bail kills the children of beforeAll when %s", async (_failure, failingTest) => {
+  const { combined, exitCode } = await runTestFile(
+    /* ts */ `
+      import { afterAll, beforeAll, expect, test } from "bun:test";
+
+      let fromBeforeAll: ReturnType<typeof spawnEcho>;
+      afterAll(() => fromBeforeAll.kill());
+
+      beforeAll(() => {
+        fromBeforeAll = spawnEcho();
+      });
+
+      ${failingTest}
+
+      test("never runs", () => {});
+    `,
+    ["--bail"],
+  );
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
+  expect(combined).toContain("(fail) fails");
+  expect(combined).toContain("Bailed out after 1 failure");
+  expect(combined).not.toContain("never runs");
+  expect(exitCode).toBe(1);
+});
+
 // The wait loop of spawnSync sees the deadline pass and runs the same kill.
 testKill.each([
   ["Bun.spawnSync", `Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(30000)"] })`],
@@ -362,9 +460,9 @@ testKill("a callback that returns after its deadline keeps its children", async 
     const timeout = 500;
     async function returnsLate() {
       const start = performance.now();
-      children.push(spawnEcho());
       await new Promise(resolve => setImmediate(resolve));
-      Bun.sleepSync(timeout + 50 - (performance.now() - start));
+      children.push(spawnEcho());
+      while (performance.now() - start < timeout + 50) Bun.sleepSync(10);
     }
 
     beforeAll(returnsLate, timeout);

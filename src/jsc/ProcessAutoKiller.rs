@@ -30,8 +30,13 @@ impl ProcessAutoKiller {
         self.scope = self.scope.wrapping_add(1);
     }
 
-    /// Every tracked process, for the `--isolate` swap between files. A timeout uses [`Self::kill_scope`].
-    pub(crate) fn kill(&mut self) -> Result {
+    /// The current scope, as a mark for [`Self::kill_since`].
+    pub fn scope(&self) -> u32 {
+        self.scope
+    }
+
+    /// Every tracked process: for the `--isolate` swap between files, and where no cleanup hook is left to run.
+    pub fn kill(&mut self) -> Result {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
             count += Self::kill_and_release(entry.key);
@@ -39,13 +44,20 @@ impl ProcessAutoKiller {
         Result { processes: count }
     }
 
-    /// Earlier scopes stay tracked (and alive) so that [`Self::kill`] still covers them.
+    /// The processes of the current scope.
     pub fn kill_scope(&mut self) -> Result {
+        self.kill_since(self.scope.wrapping_sub(1))
+    }
+
+    /// The processes of every scope begun after `mark` was read from [`Self::scope`].
+    /// Earlier scopes stay tracked (and alive) so that [`Self::kill`] still covers them.
+    pub fn kill_since(&mut self, mark: u32) -> Result {
+        let span = self.scope.wrapping_sub(mark);
         let mut count: u32 = 0;
         let mut index = self.processes.len();
         while index > 0 {
             index -= 1;
-            if self.processes.values()[index] != self.scope {
+            if self.scope.wrapping_sub(self.processes.values()[index]) >= span {
                 continue;
             }
             // Walking backwards, so the entry swapped into `index` was already visited.

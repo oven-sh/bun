@@ -1078,6 +1078,7 @@ impl BunTest {
                     Order::AllOrderResult::EMPTY
                 };
                 afterall_order.set_failure_skip_to(&mut order);
+                afterall_order.mark_after_all(&mut order);
 
                 self.execution.load_from_order(&mut order);
                 debug::dump_order(&self.execution)?;

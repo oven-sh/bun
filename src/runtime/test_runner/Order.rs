@@ -118,6 +118,7 @@ impl Order {
 
         // update skip_to values for afterAll to skip the remaining afterAll items
         afterall_order.set_failure_skip_to(self);
+        afterall_order.mark_after_all(self);
 
         Ok(())
     }
@@ -257,6 +258,12 @@ impl AllOrderResult {
         let skip_to = this.groups.len();
         for group in &mut this.groups[self.start..self.end] {
             group.failure_skip_to = skip_to;
+        }
+    }
+
+    pub(crate) fn mark_after_all(&self, this: &mut Order) {
+        for group in &this.groups[self.start..self.end] {
+            this.sequences[group.sequence_start].after_all = true;
         }
     }
 }

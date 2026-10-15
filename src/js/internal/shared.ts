@@ -240,24 +240,12 @@ function getLazy<T>(initializer: () => T) {
 }
 
 // ─── Node-style performance-entry observation ────────────────────────────────
-// For the entry types that only Node has ('net', 'http', ...). Mirrors
-// lib/internal/perf/observe.js: producers check hasObserver() before doing any
-// work, startPerf() stashes a context on the producing object, and stopPerf()
-// builds the entry and queues it for the PerformanceObservers of its type.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L540-L566
+// Node's hasObserver(), startPerf() and stopPerf(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L540-L566
 
-// How many PerformanceObservers observe each of these types. Only hasObserver()
-// reads it. PerformanceObserver (native) keeps the counts and writes each change
-// here (Performance::observedTypesDidChange). Not a typed array: making one at
-// load would make the typed array classes in every process that loads a node:
-// module.
+// The copy that hasObserver() reads of the observer counts that native code keeps (Performance::observedTypesDidChange).
 const observerCounts = [0, 0, 0, 0, 0, 0, 0];
 
-// What hasObserver(), stopPerf() and enqueueNodeEntry() take for a type, which is
-// its index in observerCounts: the value of node's NODE_PERFORMANCE_ENTRY_TYPE_*
-// constant, and 6 for 'function', which has none. PerformanceEntry::nodeTypeIndex
-// (PerformanceEntry.h) is the native side.
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_perf_common.h#L37-L43
+// An entry type's index in observerCounts, which is PerformanceEntry::nodeTypeIndex (PerformanceEntry.h).
 const kEntryTypeGc = 0;
 const kEntryTypeHttp = 1;
 const kEntryTypeHttp2 = 2;
@@ -275,8 +263,7 @@ type QueueNodeEntry = (entry: PerformanceNodeEntry, type: number) => void;
 let queueNodeEntry: QueueNodeEntry | undefined;
 
 /**
- * Queue a finished entry for every PerformanceObserver of its type, which is
- * the kEntryType* constant for the entry's entryType. Used by callers that
+ * Hand a finished entry to every registered observer. Used by callers that
  * construct the entry themselves (e.g. perf_hooks timerify) instead of the
  * startPerf/stopPerf pair.
  */
@@ -287,10 +274,7 @@ function enqueueNodeEntry(entry: PerformanceNodeEntry, type: number) {
 
 // Node's PerformanceNodeEntry — the shape used by every JS-side entry type
 // ('function', 'net', 'dns', 'http'). Lives here (not in perf_hooks.ts) so
-// stopPerf can construct it without a circular require. Its prototype chain
-// is linked under PerformanceEntry when the first observer of one of these
-// types registers (Performance::willObserveNodeTypes): every construction is
-// gated behind hasObserver(), so none comes before that.
+// stopPerf can construct it without a circular require.
 class PerformanceNodeEntry {
   name;
   entryType;

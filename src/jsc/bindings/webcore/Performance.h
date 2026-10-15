@@ -79,11 +79,9 @@ struct PerformanceMarkOptions;
 struct PerformanceMeasureOptions;
 enum class PerformanceEntryType : uint16_t;
 
-// internal/shared's enqueueNodeEntry(entry, type): queues an entry of one of Node's types, which
-// a node: module built, for the observers of that type. `type` is the type's kEntryType* index.
+// internal/shared's enqueueNodeEntry(entry, type), where `type` is the entry type's kEntryType* index.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionQueueNodePerformanceEntry);
-// What node:perf_hooks exports of the realm's own classes, whatever script made of the globals
-// of their names.
+// The realm's own Performance* classes, for node:perf_hooks.
 JSC::JSValue createNodePerfHooksBinding(Zig::GlobalObject*);
 
 class Performance final : public RefCounted<Performance>, public ContextDestructionObserver, public EventTarget {
@@ -123,17 +121,13 @@ public:
     // (they are registered with the realm's Performance, which would keep them and their graph).
     void disconnectObserversOf(const ScriptExecutionContext&);
 
-    // Before an observer registers for one of Node's entry types. The first time in a realm,
-    // internal/shared is loaded: its hasObserver() reads a copy of the counts kept here from then
-    // on, and its PerformanceNodeEntry becomes a PerformanceEntry. Throws what the load throws.
+    // The first time in a realm, loads internal/shared, binds its copy of the counts and makes PerformanceNodeEntry a PerformanceEntry.
     void willObserveNodeTypes(JSDOMGlobalObject&);
     // A registered observer went from observing `before` to observing `after`.
     void observedTypesDidChange(OptionSet<PerformanceEntryType> before, OptionSet<PerformanceEntryType> after);
     // A registered observer has entries queued that no delivery is scheduled for yet.
     void scheduleDelivery(PerformanceObserver&);
-    // Queues `entry` for the observers of `type`: the wrapper of a mark or of a measure, which
-    // the binding of performance.mark() and measure() has just made, or an entry of one of
-    // Node's types.
+    // `entry` is the wrapper of a mark or of a measure, or an entry of one of Node's types.
     void queueEntry(JSC::VM& vm, JSC::JSObject& entry, PerformanceEntryType type)
     {
         if (!m_observers.isEmpty())
@@ -180,12 +174,9 @@ private:
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;
-    // The observers that deliver on an immediate and have had an entry queued since the last
-    // one ran, in the order they got their first: the order node calls them in.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
+    // In the order they got their first entry since the last immediate, which is the order node calls them in.
     ListHashSet<RefPtr<PerformanceObserver>> m_observersPendingOnImmediate;
-    // How many registered observers observe each of Node's entry types, by
-    // PerformanceEntry::nodeTypeIndex.
+    // Registered observers per Node entry type, by PerformanceEntry::nodeTypeIndex.
     std::array<uint32_t, 7> m_nodeObserverCounts {};
     // internal/shared's observerCounts, the copy that hasObserver() reads. The module keeps it alive.
     JSC::Weak<JSC::JSArray> m_nodeObserverCountsForScript;

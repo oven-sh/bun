@@ -141,9 +141,7 @@ JSPerformanceObserverEntryList* JSPerformanceObserverEntryList::create(JSDOMGlob
     auto& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // The list has the entries in startTime order, as node's has. A node: module queues an entry
-    // when what it times has ended, so the queue is often not in that order.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L170-L181
+    // In startTime order, as node's list: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L170-L181
     unsigned length = queued.length();
     Vector<std::pair<double, unsigned>, 16> order;
     order.reserveInitialCapacity(length);
@@ -173,8 +171,7 @@ JSPerformanceObserverEntryList* JSPerformanceObserverEntryList::create(JSDOMGlob
 
     JSArray* entries = &queued;
     if (!isSorted) {
-        // By startTime, then by place in the queue: entries that started together stay in the
-        // order they were queued in.
+        // Entries that started together stay in queue order: the index is the second key.
         std::sort(order.begin(), order.end());
         MarkedArgumentBuffer sorted;
         for (auto& position : order) {
@@ -228,8 +225,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObj
     return JSValue::encode(JSPerformanceObserverEntryList::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-// Whether the name (or the entryType) of an entry that a node: module built is `expected`. Such an
-// entry holds them as properties.
+// An entry that a node: module built holds its name and its entryType as properties.
 static bool performanceNodeEntryPropertyEquals(JSGlobalObject& lexicalGlobalObject, JSValue entry, PropertyName propertyName, const String& expected)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -243,8 +239,7 @@ static bool performanceNodeEntryPropertyEquals(JSGlobalObject& lexicalGlobalObje
     return string == expected;
 }
 
-// A new array of the entries of the list that have this name and this entryType. A null string
-// matches every entry.
+// A new array of the entries with this name and this entryType. A null string matches every entry.
 static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGlobalObject, JSPerformanceObserverEntryList& list, const String& name, const String& entryType)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -264,14 +259,12 @@ static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGloba
         throwOutOfMemoryError(&lexicalGlobalObject, scope);
         return nullptr;
     }
-    // A mark or a measure has its name and its type in its PerformanceEntry. An entry that a node:
-    // module built has them as properties. No PerformanceEntry has the type 0.
+    // No PerformanceEntry has the type 0: an entryType that is not a type matches no mark or measure.
     bool filtersByName = !name.isNull();
     bool filtersByType = !entryType.isNull();
     auto type = filtersByType ? PerformanceEntry::parseEntryTypeString(entryType).value_or(static_cast<PerformanceEntry::Type>(0)) : static_cast<PerformanceEntry::Type>(0);
     bool hasOnlyPerformanceEntries = list.hasOnlyPerformanceEntries();
-    // For a list of marks and measures nothing in the loop runs script, so the elements stay where
-    // they are.
+    // With marks and measures only, nothing in the loop runs script, so the elements stay where they are.
     auto* contiguous = hasOnlyPerformanceEntries && entries->indexingMode() == ArrayWithContiguous ? entries->butterfly()->contiguous().data() : nullptr;
     Identifier entryTypeName;
     for (unsigned index = 0; index < length; ++index) {

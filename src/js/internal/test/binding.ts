@@ -68,9 +68,6 @@ function internalBinding(name: string) {
       return $processBindingConstants;
     case "quic":
       return require("internal/quic/binding");
-    // How many PerformanceObservers observe each of node's entry types, as
-    // node's binding has it. Native code keeps the counts: this is the copy
-    // that the node: modules read.
     case "performance":
       return { observerCounts: require("internal/shared").observerCounts };
     case "uv": {

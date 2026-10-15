@@ -45,8 +45,7 @@ enum class PerformanceEntryType : uint16_t {
     Mark = 1 << 1,
     Measure = 1 << 2,
     Resource = 1 << 3,
-    // Node's entry types. An entry of one of them is a JS object that a node: module builds
-    // (PerformanceNodeEntry in internal/shared), never a PerformanceEntry.
+    // Node's entry types. An entry of one of them is a JS object (internal/shared's PerformanceNodeEntry), never a PerformanceEntry.
     Gc = 1 << 4,
     Http = 1 << 5,
     Http2 = 1 << 6,
@@ -74,9 +73,7 @@ public:
         return { Type::Gc, Type::Http, Type::Http2, Type::Net, Type::Dns, Type::Quic, Type::Function };
     }
     static constexpr unsigned numberOfNodeTypes = 7;
-    // A Node type's index, which is internal/shared's kEntryType* constant for it: the value of
-    // node's NODE_PERFORMANCE_ENTRY_TYPE_* constant, and 6 for 'function', which has none.
-    // https://github.com/nodejs/node/blob/v26.3.0/src/node_perf_common.h#L37-L43
+    // internal/shared's kEntryType* constants: node's https://github.com/nodejs/node/blob/v26.3.0/src/node_perf_common.h#L37-L43, then 'function'.
     static constexpr unsigned nodeTypeIndex(Type type)
     {
         return std::countr_zero(static_cast<uint16_t>(type)) - std::countr_zero(static_cast<uint16_t>(Type::Gc));

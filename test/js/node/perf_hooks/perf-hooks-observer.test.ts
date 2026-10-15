@@ -434,7 +434,12 @@ describe("the callback of a PerformanceObserver", () => {
       worker.on("exit", code => console.log(JSON.stringify([...events, "exit " + code])));
     `);
     assert.strictEqual(stderr, "");
-    assert.deepStrictEqual(JSON.parse(stdout), [reported, "exit 0"]);
+    const [messages, exit] = JSON.parse(stdout);
+    // (On some platforms Node.js v26.3.0 calls the handler of the worker twice for each.)
+    assert.deepStrictEqual(
+      [typeof Bun === "undefined" ? [...new Set(messages)] : messages, exit],
+      [reported, "exit 0"],
+    );
     assert.strictEqual(exitCode, 0);
   });
 });

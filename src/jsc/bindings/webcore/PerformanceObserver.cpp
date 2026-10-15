@@ -74,18 +74,14 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
         return Exception { TypeError };
 
     auto* context = scriptExecutionContext();
-    // The observers that a Bun.ModuleGraph's script made stop with it
-    // (Performance::disconnectObserversOf). What the script had queued still runs, and observes
-    // nothing more.
+    // What a disposed Bun.ModuleGraph had queued still runs: its observers observe nothing more (Performance::disconnectObserversOf).
     if (context && context->isForModuleGraph() && context->isStopped())
         return {};
 
     auto& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Node's checks, in node's order. A member that is null is set for some of them and missing
-    // for others:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L257-L301
+    // Node's checks in node's order, null members included: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L257-L301
     if (!init.hasEntryTypes && !init.hasType)
         return Exception { TypeError, "no type or entryTypes were provided"_s };
     if (init.entryTypes && init.type)
@@ -119,9 +115,7 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
                 filter.add(*type);
         }
         if (filter.isEmpty()) {
-            // Node stops an observer that is told to observe nothing it knows. One that is
-            // registered for web types only keeps observing them, as the specification says.
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L313-L316
+            // Node disconnects (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L313-L316). The specification keeps an observer of web types registered.
             if (!m_registered || deliversOnImmediate())
                 disconnect();
             return {};
@@ -139,9 +133,7 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
         RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
     }
 
-    // As node does, the buffered entries join the queue, behind what is in it and in the order
-    // they started, and are delivered with it.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L304-L310
+    // The buffered entries join the queue in start order, as in node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L304-L310
     if (init.type && init.buffered) {
         Vector<RefPtr<PerformanceEntry>> buffered;
         m_performance->appendBufferedEntriesByType(*init.type, buffered);
@@ -197,8 +189,7 @@ void PerformanceObserver::disconnect()
 void PerformanceObserver::queueEntrySlow(JSC::VM& vm, JSPerformanceObserver& wrapper, JSC::JSObject& entry)
 {
     auto* globalObject = wrapper.globalObject();
-    // Out of memory: the entry is not queued, and performance.mark() or the node: module that
-    // produced it goes on.
+    // On out of memory the entry is not queued, and its producer goes on.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* pending = wrapper.m_pendingEntries.get();
     bool isFirst = !pending;

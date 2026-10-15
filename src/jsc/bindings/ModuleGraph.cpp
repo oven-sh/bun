@@ -297,8 +297,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphFrameOfFrame, (JSGlobalObject * gl
     return JSValue::encode(enteredWith ? JSValue(enteredWith) : jsUndefined());
 }
 
-// For internal/shared's isStoppedModuleGraphRunning(): whether `frame`, an async context, is of a
-// disposed graph.
+// For internal/shared's isStoppedModuleGraphRunning(): whether the async context `frame` is of a disposed graph.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFrameOfStoppedModuleGraph, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), callFrame->argument(0))));

@@ -291,8 +291,7 @@ void Performance::willObserveNodeTypes(JSDOMGlobalObject& globalObject)
     JSC::JSValue nodeEntryPrototype = nodeEntry.get(&globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, );
 
-    // The module does not link them itself: that would make the PerformanceEntry constructor in
-    // every process that loads a node: module.
+    // Linked here, not at module load: that would create the PerformanceEntry constructor in every process that loads a node: module.
     asObject(nodeEntryPrototype)->setPrototypeDirect(vm, JSPerformanceEntry::prototype(vm, globalObject));
     asObject(nodeEntry)->setPrototypeDirect(vm, JSPerformanceEntry::getConstructor(vm, &globalObject));
     m_nodeObserverCountsForScript = JSC::Weak<JSC::JSArray>(JSC::asArray(counts));
@@ -339,8 +338,7 @@ void Performance::queueEntryForObservers(JSC::VM& vm, JSC::JSObject& entry, Perf
         scheduleTaskIfNeeded();
 }
 
-// Out of line: an observer of marks and measures alone never gets here, and
-// queueEntryForObservers() is what it adds to each performance.mark().
+// Out of line, to keep small what an observer of marks adds to each performance.mark().
 NEVER_INLINE void Performance::scheduleImmediateDelivery(PerformanceObserver& observer)
 {
     m_observersPendingOnImmediate.add(&observer);
@@ -374,14 +372,8 @@ void Performance::scheduleTaskIfNeeded()
     });
 }
 
-// setImmediate() keeps the async context of its caller, and the callbacks run in it: node shows
-// them the AsyncLocalStorage stores of the script that produced the first entry.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
-// In a realm with a Bun.ModuleGraph, the immediate is set and the callbacks are called in no async
-// context. The immediate is then the realm's, so the disposal of the graph that produced the entry
-// does not drop it. No callback sees the stores of another graph or keeps that graph alive. Each
-// callback enters its own graph's context (JSPerformanceObserverCallback::handleEvent), as the
-// callback of an observer of marks does.
+// With a Bun.ModuleGraph in the realm, the immediate is set and run in no async context: it stays the
+// realm's when a graph is disposed, and no callback sees the AsyncLocalStorage stores of another graph.
 class NoAsyncContextInRealmWithModuleGraphs {
     WTF_MAKE_NONCOPYABLE(NoAsyncContextInRealmWithModuleGraphs);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -418,6 +410,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDeliverPerformanceEntries, (JSC::JSGlobalObje
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// Node's one setImmediate() for every pending observer: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
 void Performance::scheduleImmediateIfNeeded()
 {
     if (m_hasScheduledImmediateDelivery)

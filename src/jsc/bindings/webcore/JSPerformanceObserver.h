@@ -65,9 +65,7 @@ public:
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-    // What is queued for the observer, in the order it was queued: the wrappers of marks and
-    // measures, and the entries of Node's types, which are JS objects. Empty until the first
-    // entry is queued, and after takeRecords(), disconnect() and each delivery.
+    // The queue, in the order entries were queued: wrappers of marks and measures, and entries of Node's types. Null when empty.
     mutable JSC::WriteBarrier<JSC::JSArray> m_pendingEntries;
 
 protected:
@@ -99,9 +97,7 @@ template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
 };
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
-// Puts `value` behind the elements of `array` if that takes no allocation and runs no script:
-// the array holds any value and has room. Unlike push(), what it does not do is left to the
-// caller (putDirectIndex(), which calls no setter that script put on Array.prototype).
+// Appends without allocating or running script, or returns false: the caller then uses putDirectIndex(), never push().
 inline bool tryAppendToArrayQuickly(JSC::VM& vm, JSC::JSArray* array, JSC::JSValue value)
 {
     if (array->indexingMode() != JSC::ArrayWithContiguous) [[unlikely]]

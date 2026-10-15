@@ -87,12 +87,10 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
         entryTypesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "entryTypes"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
-    // A null `entryTypes` or `type` is not converted: PerformanceObserver::observe() decides what
-    // it means, as node does.
+    // null is not converted: PerformanceObserver::observe() decides what it means.
     result.hasEntryTypes = !entryTypesValue.isUndefined();
     if (!entryTypesValue.isUndefinedOrNull()) {
-        // An object that is not iterable gets the error of a value that is not an object, with
-        // its code.
+        // Not iterable: the ERR_INVALID_ARG_TYPE of a value that is not an object.
         JSValue iteratorMethod;
         auto* entryTypesObject = entryTypesValue.getObject();
         if (entryTypesObject) {
@@ -181,8 +179,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceObserver"_s);
-    // In node a missing callback is an invalid one:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L245-L248
+    // A missing callback is an invalid one: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L245-L248
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto callback = convert<IDLCallbackFunction<JSPerformanceObserverCallback>>(
         *lexicalGlobalObject,
@@ -205,8 +202,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceObserverDOMConstructorConstruct, JSPerformanceObserverDOMConstructor::construct);
 
-// node:perf_hooks exports this constructor, and there it is a class:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L239
+// In node this is a class: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L239
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConstructor::call(JSGlobalObject* lexicalGlobalObject, CallFrame*)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

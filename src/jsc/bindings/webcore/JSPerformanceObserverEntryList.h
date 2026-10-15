@@ -24,14 +24,11 @@
 
 namespace WebCore {
 
-// The entries are JS values, not PerformanceEntry objects: an entry of one of Node's types is a JS
-// object that a node: module built.
+// Holds JS values: an entry of one of Node's types is a JS object with no PerformanceEntry.
 class JSPerformanceObserverEntryList : public JSDOMObject {
 public:
     using Base = JSDOMObject;
-    // `queued` is an observer's queue, which script has not seen. The list takes it over and
-    // orders it by startTime. Null, with an exception pending, when reading the startTime of an
-    // entry of one of Node's types threw.
+    // Takes over an observer's queue and orders it by startTime. Null, with an exception pending, if reading a startTime threw.
     static JSPerformanceObserverEntryList* create(JSDOMGlobalObject&, JSC::JSArray& queued);
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
@@ -57,8 +54,7 @@ public:
 
     // No script has this array: nothing changes it once the list is made.
     JSC::JSArray* entries() const { return m_entries.get(); }
-    // Every entry is the wrapper of a PerformanceEntry (a mark, a measure): none is an entry of
-    // one of Node's types.
+    // Every entry is the wrapper of a mark or of a measure.
     bool hasOnlyPerformanceEntries() const { return m_hasOnlyPerformanceEntries; }
 
 protected:

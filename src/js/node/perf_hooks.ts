@@ -14,8 +14,7 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
-// The realm's own classes, whatever script made of the globals of their names
-// before this module loaded.
+// The realm's own classes: script can have replaced the globals of these names.
 const {
   0: Performance,
   1: PerformanceEntry,

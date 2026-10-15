@@ -70,8 +70,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     JSLockHolder lock(vm);
     auto& lexicalGlobalObject = globalObject;
     JSValue thisValue = toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, thisObject);
-    // The list sorts the entries, which reads the startTime of each entry that a node: module
-    // built: a property that script can have redefined.
+    // Sorting reads the startTime of Node's entries, a property that script can have redefined.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* list = JSPerformanceObserverEntryList::create(globalObject, entries);
     if (auto* exception = scope.exception()) [[unlikely]] {

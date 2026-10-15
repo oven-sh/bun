@@ -661,6 +661,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // with the guarantee that all will be found.
     pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
 
+    /// The statements that `finish_sloppy_block_fn_redeclarations` renames in a file that
+    /// can run as strict code.
+    pub(crate) sloppy_block_fn_redeclarations:
+        List<'a, crate::parser::SloppyBlockFnRedeclaration>,
+
     // ArrowFunction is a special case in the grammar. Although it appears to be
     // a PrimaryExpression, it's actually an AssignmentExpression. This means if
     // a AssignmentExpression ends up producing an ArrowFunction then nothing can
@@ -5240,6 +5245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::KeepExisting => {
                     ref_ = existing.ref_;
+                    // "{ function foo() {} function foo() {} }"
+                    if kind == js_ast::symbol::Kind::HoistedFunction {
+                        self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                    }
                 }
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
@@ -9930,6 +9939,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
+            sloppy_block_fn_redeclarations: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),

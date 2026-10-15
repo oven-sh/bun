@@ -1087,6 +1087,13 @@ pub struct TempRef {
     pub(crate) r#ref: Ref,
 }
 
+/// A function declaration of a sloppy block whose name a later statement of the block
+/// declares again.
+pub struct SloppyBlockFnRedeclaration {
+    pub(crate) func: js_ast::StoreRef<S::Function>,
+    pub(crate) scope: js_ast::StoreRef<js_ast::Scope>,
+}
+
 pub struct ThenCatchChain {
     pub(crate) next_target: js_ast::ExprData,
     pub(crate) has_multiple_args: bool,

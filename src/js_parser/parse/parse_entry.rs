@@ -1941,6 +1941,10 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if !p.sloppy_block_fn_redeclarations.is_empty() {
+            p.finish_sloppy_block_fn_redeclarations(exports_kind);
+        }
+
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:

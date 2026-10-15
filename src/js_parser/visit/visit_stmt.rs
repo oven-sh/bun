@@ -3,8 +3,8 @@ use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
-    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
-    statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects,
+    SloppyBlockFnRedeclaration, StmtsKind, statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::ast_result::CommonJSExportValue;
@@ -33,6 +33,17 @@ fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList
 #[inline]
 fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
+}
+
+/// What `s_function` does with a declaration that a later one of the same name overwrites.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OverwrittenFn {
+    No,
+    /// The statement is not printed.
+    Remove,
+    /// The statement stays in its sloppy block, where it assigns the `var` of the enclosing
+    /// function (ECMA-262 Annex B.3.3).
+    Keep,
 }
 
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
@@ -914,12 +925,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
-        if p.this_expr_count == this_expr_count_before {
-            p.symbols[name_ref.inner_index() as usize].set_call_ignores_this(true);
-        }
+        // The declarations of one name in a block share the symbol, and the last one is visited last.
+        p.symbols[name_ref.inner_index() as usize]
+            .set_call_ignores_this(p.this_expr_count == this_expr_count_before);
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
-        let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
+        let overwritten = if name_symbol.remove_overwritten_function_declaration() {
+            p.overwritten_function_declaration(stmt)
+        } else {
+            OverwrittenFn::No
+        };
 
         // Handle exporting this function from a namespace
         if data.func.flags.contains(flags::Function::IsExport)
@@ -946,7 +961,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Expr::init_identifier(func_name.ref_, func_name.loc),
             ));
         } else if !mark_as_dead {
-            if remove_overwritten {
+            if overwritten == OverwrittenFn::Remove {
                 // restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
                 if mark_as_dead {
@@ -1004,7 +1019,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rr: Result<(), Error> = Ok(());
         if p.options.features.react_fast_refresh {
-            if let Some(hook) = react_hook_data.as_mut() {
+            if let Some(hook) = react_hook_data.as_mut()
+                && overwritten == OverwrittenFn::No
+            {
                 let signature_cb = hook.signature_cb;
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
                 let init = p.get_react_refresh_hook_signal_init(
@@ -1037,6 +1054,81 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = original_is_dead;
         }
         rr
+    }
+
+    /// Whether a later statement of the current block declares the function `name` again.
+    /// The declarations of one name in a block share the symbol, and the scope has the last one.
+    pub(crate) fn is_overwritten_block_fn(&self, name: js_ast::LocRef) -> bool {
+        let symbol = &self.symbols[name.ref_.inner_index() as usize];
+        if !symbol.remove_overwritten_function_declaration() {
+            return false;
+        }
+        let original_name = symbol.original_name.slice();
+        self.current_scope()
+            .get_member_with_hash(original_name, js_ast::Scope::get_member_hash(original_name))
+            .is_some_and(|member| member.loc != name.loc)
+    }
+
+    /// For a declaration whose symbol has `remove_overwritten_function_declaration`. At function
+    /// level that is the symbol of the overwritten declaration. In a block it is the one symbol
+    /// of the name.
+    #[cold]
+    #[inline(never)]
+    fn overwritten_function_declaration(&mut self, stmt: &Stmt) -> OverwrittenFn {
+        let scope = self.current_scope_ref();
+        if scope.kind_stops_hoisting() {
+            return OverwrittenFn::Remove;
+        }
+        let StmtData::SFunction(func) = stmt.data else {
+            return OverwrittenFn::No;
+        };
+        if !func.func.name.is_some_and(|name| self.is_overwritten_block_fn(name)) {
+            return OverwrittenFn::No;
+        }
+        // Strict code has no `var` to assign.
+        if scope.strict_mode != js_ast::StrictModeKind::SloppyMode {
+            return OverwrittenFn::Remove;
+        }
+        self.sloppy_block_fn_redeclarations
+            .push(SloppyBlockFnRedeclaration { func, scope });
+        OverwrittenFn::Keep
+    }
+
+    /// Strict code rejects two declarations of one name in a block, and only a CommonJS file
+    /// is sure to run as sloppy code. In every other file an overwritten declaration that is
+    /// still a statement becomes an empty function with a name of its own.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn finish_sloppy_block_fn_redeclarations(&mut self, exports_kind: js_ast::ExportsKind) {
+        // The REPL runs every input as sloppy code.
+        if (exports_kind == js_ast::ExportsKind::Cjs && !self.options.bundle)
+            || self.options.repl_mode
+        {
+            return;
+        }
+        let redeclarations = core::mem::replace(
+            &mut self.sloppy_block_fn_redeclarations,
+            BumpVec::new_in(self.arena),
+        );
+        for mut redeclaration in redeclarations {
+            // A lowered declaration has no name.
+            let Some(name) = redeclaration.func.func.name else {
+                continue;
+            };
+            let ref_ = self.generate_temp_ref_with_scope(None, redeclaration.scope);
+            redeclaration.func.func = G::Fn {
+                name: Some(js_ast::LocRef {
+                    loc: name.loc,
+                    ref_,
+                }),
+                open_parens_loc: redeclaration.func.func.open_parens_loc,
+                body: G::FnBody {
+                    loc: redeclaration.func.func.body.loc,
+                    stmts: StmtNodeList::EMPTY,
+                },
+                ..Default::default()
+            };
+        }
     }
 
     fn s_class(

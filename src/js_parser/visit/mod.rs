@@ -31,7 +31,6 @@ use bun_collections::VecExt;
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::StrictModeKind;
-use bun_collections::HashMap;
 use core::ptr::NonNull;
 
 // In the AST crate, ListManaged is arena-backed.
@@ -1605,7 +1604,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut var_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
                 let mut non_fn_stmts: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
-                let mut fn_stmts: HashMap<Ref, u32> = HashMap::default();
 
                 for stmt in before.iter().copied() {
                     match stmt.data {
@@ -1635,44 +1633,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 continue;
                             }
 
-                            let gpe = fn_stmts.get_or_put(name_ref).expect("oom");
-                            let mut index = *gpe.value_ptr;
-                            if !gpe.found_existing {
-                                index = u32::try_from(let_decls.len()).expect("int cast");
-                                *gpe.value_ptr = index;
-                                let_decls.push(G::Decl {
-                                    binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
-                                    value: None,
-                                });
-
-                                // Also write the function to the hoisted sibling symbol if applicable
-                                if let Some(&hoisted_ref) =
-                                    p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
-                                {
-                                    p.record_usage(name_ref);
-                                    let value = p.new_expr(
-                                        E::Identifier {
-                                            ref_: name_ref,
-                                            ..Default::default()
-                                        },
-                                        name.loc,
-                                    );
-                                    var_decls.push(G::Decl {
-                                        binding: p
-                                            .b(B::Identifier { r#ref: hoisted_ref }, name.loc),
-                                        value: Some(value),
-                                    });
-                                }
-                            }
-
                             // The last function statement for a given symbol wins
                             data.func.name = None;
+                            if p.is_overwritten_block_fn(name) {
+                                continue;
+                            }
                             // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags)
                             // with no `Drop`, so a bitwise read is a plain copy; the type just
                             // lacks `derive(Copy)`.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
-                            let_decls[index as usize].value =
-                                Some(p.new_expr(E::Function { func }, stmt.loc));
+                            let_decls.push(G::Decl {
+                                binding: p.b(B::Identifier { r#ref: name_ref }, name.loc),
+                                value: Some(p.new_expr(E::Function { func }, stmt.loc)),
+                            });
+
+                            // Also write the function to the hoisted sibling symbol if applicable
+                            if let Some(&hoisted_ref) =
+                                p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
+                            {
+                                p.record_usage(name_ref);
+                                let value = p.new_expr(
+                                    E::Identifier {
+                                        ref_: name_ref,
+                                        ..Default::default()
+                                    },
+                                    name.loc,
+                                );
+                                var_decls.push(G::Decl {
+                                    binding: p.b(B::Identifier { r#ref: hoisted_ref }, name.loc),
+                                    value: Some(value),
+                                });
+                            }
                         }
                         _ => {
                             non_fn_stmts.push(stmt);

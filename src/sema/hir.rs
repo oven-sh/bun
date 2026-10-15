@@ -2014,6 +2014,43 @@ impl Default for JsxPragmas {
     }
 }
 
+/// A `//` or `/* */` comment. Its index in [`File::comments`] is its id.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Comment {
+    pub pos: u32,
+    pub end: u32,
+    /// End of the previous token, or 0 if the comment comes before the first token.
+    pub prev_token_end: u32,
+    /// Start of the next token, or the length of the text if the comment comes after the last token.
+    pub next_token_start: u32,
+    /// `/* */` instead of `//`.
+    pub is_block: bool,
+    /// A block comment that spans more than one line.
+    pub is_multiline: bool,
+    /// There is a line break between the comment and the token or comment before it, or nothing but whitespace before it in
+    /// the file.
+    pub has_newline_before: bool,
+    /// There is a line break between the comment and the token or comment after it. Always true for a `//` comment.
+    pub has_newline_after: bool,
+    /// The smallest node that contains the comment. `None` at the top level of the file. This and the next two fields are
+    /// only filled in if the parser was asked to attach comments.
+    pub enclosing_node: NodeOrName,
+    /// The closest child of `enclosing_node` that ends before the comment.
+    pub preceding_node: NodeOrName,
+    /// The closest child of `enclosing_node` that starts after the comment.
+    pub following_node: NodeOrName,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum NodeOrName {
+    #[default]
+    None,
+    Node(NodeData),
+    /// An identifier or a literal key, given by its start offset. The HIR stores names as fields of nodes. In ESTree they are
+    /// nodes themselves.
+    Name(u32),
+}
+
 /// A node with `NodeFlagsHasJSDoc`.
 #[derive(Copy, Clone, Debug)]
 pub struct JsDocHost {
@@ -2097,13 +2134,16 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
-    /// The start and the end of every `//` and `/* */` comment, in order. Not a `#!` line, nor a
-    /// comment of HTML.
-    pub comments: S::Nodes<(u32, u32)>,
+    /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`) are only
+    /// included if the parser was asked to attach comments.
+    pub comments: S::Nodes<Comment>,
     /// See `may_mention`. `MENTIONED_BITS` bits, or empty if the parser does not record them.
     pub mentioned: S::Nodes<u64>,
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
+    /// The `;` terminators that do not directly follow the previous token, as in `a() /* comment */ ;`. Each entry is the
+    /// offset of the `;` and the end of the previous token. Sorted. Only with `Options::attach_comments`.
+    pub detached_semicolons: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
     /// where it is the `anchor`. Sorted.
     pub body_starts: S::Nodes<(FnId, u32)>,
@@ -2622,6 +2662,7 @@ macro_rules! file_in_arena {
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
             with_bodies: $few!($this.with_bodies),
+            detached_semicolons: $few!($this.detached_semicolons),
             body_starts: $long!($this.body_starts),
             after_skipped: $few!($this.after_skipped),
             modifiers_of_params: $long!($this.modifiers_of_params),

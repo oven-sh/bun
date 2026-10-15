@@ -3,8 +3,7 @@
 use super::object_pattern_like::ObjectPatternLike;
 use crate::js::format::format_node;
 use crate::js::utils::array::write_array_node;
-use crate::js::utils::assignment_like::{AssignmentLike, comments_stay_around_operator};
-use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::assignment_like::AssignmentLike;
 use crate::prelude::*;
 use crate::write;
 
@@ -23,9 +22,15 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
     if elements.is_empty() {
         write!(
             f,
-            format_dangling_comments(pat.span()).with_soft_block_indent()
+            dangling_comments(pat.as_ast_nodes()).with_soft_block_indent()
         );
     } else {
+        // `[, /* comment */]`: a hole is no node, so the comment dangles. Prettier's `printArray` writes it after the elements.
+        let dangling_comments = match f.is_quiet() {
+            true => CommentList::empty(),
+            false => f.comments().of_node(pat.as_ast_nodes()).dangling,
+        };
+        let has_dangling_line_comment = dangling_comments.iter().any(|comment| comment.is_line());
         let rest = elements.last().filter(|it| is_rest_element(*it));
         let count = elements.len() - usize::from(rest.is_some());
         write!(
@@ -41,8 +46,19 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
                         f,
                     );
                 }
-                write!(f, rest);
+                // Prettier's `printArrayItems`: each element is a group.
+                if let Some(rest) = rest {
+                    write!(f, group(&rest));
+                }
+                write!(
+                    f,
+                    FormatDanglingComments::Comments {
+                        comments: dangling_comments,
+                        indent: DanglingIndentMode::None,
+                    }
+                );
             })))
+            .should_expand(has_dangling_line_comment)
         );
     }
     write!(f, "]");
@@ -50,21 +66,7 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
 
 /// `left = right`, ESTree's `AssignmentPattern`.
 fn write_assignment_pattern<'a>(left: Pat<'a>, right: Expr<'a>, f: &mut Formatter<'a>) {
-    let left = left.memoized();
-    // So that the comments in it are not taken for comments before the `=`.
-    left.inspect(f);
-    let comments = f.comments().own_line_comments_before(right.span().start);
-    write!(
-        f,
-        [
-            FormatLeadingComments::Comments(comments),
-            group(&left),
-            space(),
-            "=",
-            space(),
-            right
-        ]
-    );
+    write!(f, [group(&left), space(), "=", space(), right]);
 }
 
 /// `[...a = 1]` is an error, and `a = 1` in typescript-estree's tree.
@@ -77,13 +79,12 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
     let Some(pat) = element.pat() else {
         return;
     };
-    let parent = || crate::js::ast_nodes::node_as_ast_nodes(element.parent());
     if is_rest_element(element) {
-        format_node(element.span(), parent, f, |f| write!(f, ["...", pat]));
+        let node = AstNodes::BindingRestElement(Node::PatElem(element));
+        format_node(node, f, |f| write!(f, ["...", pat]));
     } else if let Some(default) = element.default() {
-        format_node(element.span(), parent, f, |f| {
-            write_assignment_pattern(pat, default, f)
-        });
+        let node = AstNodes::AssignmentPattern(Node::PatElem(element));
+        format_node(node, f, |f| write_assignment_pattern(pat, default, f));
     } else {
         pat.fmt(f);
     }
@@ -93,25 +94,6 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
 pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatter<'a>) {
     if property.is_rest() {
         return write!(f, ["...", property.value()]);
-    }
-    // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads the
-    // property.
-    if !f.is_quiet()
-        && !comments_stay_around_operator(f)
-        && !property.is_shorthand()
-        && let Some(key) = property.key()
-        && !f.comments().has_comment_in_span(key.span(f.file()))
-    {
-        let comments = f
-            .comments()
-            .comments_leading_property(key.span(f.file()).end, property.value().span().start);
-        if comments
-            .iter()
-            .any(|comment| f.comments().is_suppression_comment(comment))
-        {
-            return write!(f, FormatSuppressedNode(property.span()));
-        }
-        write!(f, FormatLeadingComments::Comments(comments));
     }
     AssignmentLike::BindingProperty(property).fmt(f);
 }
@@ -124,9 +106,9 @@ impl<'a> Format<'a> for FormatBindingPropertyValue<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (property, value) = (self.0, self.0.value());
         match property.default() {
+            // With the parentheses of the default, as in ESTree.
             Some(default) => format_node(
-                value.span().to(default.span()),
-                || AstNodes::BindingProperty(property),
+                AstNodes::AssignmentPattern(Node::PatProp(property)),
                 f,
                 |f| write_assignment_pattern(value, default, f),
             ),

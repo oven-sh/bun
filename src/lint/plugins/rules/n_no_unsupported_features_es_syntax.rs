@@ -8,9 +8,9 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, Handler, Mode as RegexMode};
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{ReferenceKind, ReferenceTracker, TraceMap, get_property_name, get_string_if_constant};
-use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
@@ -57,7 +57,7 @@ pub struct State<'a> {
     methods: smallvec::SmallVec<[Name<'a>; 8]>,
     types: RefCell<ExpressionTypes<'a>>,
     /// The `var` declarators of the variables that have the name of a parameter of a `catch` clause, in the order of the source.
-    var_declarators: FxHashMap<Symbol<'a>, Vec<VarDecl<'a>>>,
+    var_declarators: IdMap<Symbol<'a>, Vec<VarDecl<'a>>>,
     /// The function around something, and the one that is not an arrow function.
     function_around: AncestorMemo<'a, ()>,
     function_with_this_around: AncestorMemo<'a, Func<'a>>,
@@ -1016,7 +1016,7 @@ impl EsSyntax {
         let Some(shadowing) = Node::Pat(param.pat()).scope().variable_scope().get_name(name) else {
             return;
         };
-        let declarators = cx.state.var_declarators.entry(shadowing).or_insert_with(|| {
+        let declarators = cx.state.var_declarators.get_or_insert_with(shadowing, || {
             let declarators = shadowing.declarations().filter_map(|declaration| match declaration.node() {
                 Some(Node::VarDecl(declarator)) if declaration.kind() == Some(DeclarationKind::Variable) => Some(declarator),
                 _ => None,
@@ -1245,13 +1245,13 @@ impl EsSyntax {
         }
         utils::sort::sort_by_key(&mut subclasses, |it| it.1.span().start);
         // The first for what a class extends, and for whether that is `AggregateError`.
-        let mut first_of_subclass: FxHashMap<(Expr<'a>, bool), Expr<'a>> = FxHashMap::default();
+        let mut first_of_subclass: [IdMap<Expr<'a>, Expr<'a>>; 2] = [IdMap::new(), IdMap::new()];
         for (class, super_call, found) in subclasses {
             for is_aggregate_error in [false, true] {
                 if found[usize::from(is_aggregate_error)]
                     && let Some(extended) = class.extends()
                 {
-                    first_of_subclass.entry((extended, is_aggregate_error)).or_insert(super_call);
+                    first_of_subclass[usize::from(is_aggregate_error)].get_or_insert_with(extended, || super_call);
                 }
             }
         }
@@ -1260,7 +1260,7 @@ impl EsSyntax {
                 continue;
             };
             let is_aggregate_error = reference.path[..] == ["AggregateError"];
-            let reported = match first_of_subclass.get(&(node, is_aggregate_error)) {
+            let reported = match first_of_subclass[usize::from(is_aggregate_error)].get(node) {
                 Some(super_call) => Some(*super_call),
                 None => (reference.kind == ReferenceKind::Construct || node.tag() == ExprTag::New)
                     .then(|| reference.call().filter(|call| has_cause_option(*call, is_aggregate_error)).map(|_| node))

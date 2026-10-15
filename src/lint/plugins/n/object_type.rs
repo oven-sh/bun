@@ -1,6 +1,7 @@
 //! `object-type-checker.js` of eslint-plugin-es-x: what kind of object an expression is, as far as the syntax tells.
 
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use rustc_hash::FxHashMap;
 
 /// `WELLKNOWN_GLOBALS`: what a call of the global function `name` returns.
@@ -64,7 +65,7 @@ pub(crate) struct ExpressionTypes<'a> {
     /// What was found about an expression at a position in `tracked`, if it does not depend on what else was in there.
     known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
     /// Whether a variable only has the value that it is declared with.
-    is_never_written: FxHashMap<Symbol<'a>, bool>,
+    is_never_written: IdMap<Symbol<'a>, bool>,
 }
 
 impl<'a> ExpressionTypes<'a> {
@@ -175,7 +176,7 @@ impl<'a> ExpressionTypes<'a> {
                 };
                 let init = declarator.init()?;
                 let is_never_written = declarator.var_kind() == VarKind::Const
-                    || *self.is_never_written.entry(variable).or_insert_with(|| {
+                    || *self.is_never_written.get_or_insert_with(variable, || {
                         variable.references().all(|it| {
                             it.is_read_only() || Some(it.span()) == declaration.name_span()
                         })

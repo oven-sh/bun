@@ -23,10 +23,11 @@ fn flags_of_type_member_name(name_token: T, name_kind: NameKind, key: PropKey) -
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
         let id = TypeNodeId(self.f.types.len() as u32);
+        self.finish_node(NodeData::Type(id), pos, end);
         self.f.types.push(TypeNode { kind, pos, end });
         id
     }
@@ -436,7 +437,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         pos,
                         ..
                     }) if pos == operand_start && operand.idx() + 1 == self.f.types.len() => {
-                        self.f.types.pop();
+                        self.pop_type();
                         self.finish_type(TypeNodeKind::UniqueSymbol, start)
                     }
                     // `checkGrammarTypeOperatorNode` reports it.
@@ -479,6 +480,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }),
             _ => None,
         };
+        let id = TypeParamId(self.f.type_params.len() as u32);
+        self.finish_node(NodeData::TypeParam(id), pos, self.prev_end());
         let param = self.f.add_type_param(TypeParam {
             name,
             pos,
@@ -683,7 +686,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let this = self.token_type(TypeNodeKind::Keyword(Keyword::This));
                 if self.token() == T::Is && !self.newline_before() {
                     // `parseThisTypePredicate`
-                    self.f.types.pop();
+                    self.pop_type();
                     self.next();
                     let ty = self.ty();
                     self.f.rare_syntax |= rare::TYPE_PREDICATE;
@@ -1326,7 +1329,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }) = self.f.exprs.last()
             && self.f.parens.last().is_none_or(|last| last.0 != expr)
         {
-            self.f.exprs.pop();
+            self.pop_expr();
             (expr, args) = (instantiated, type_args);
         } else if self.token() == T::LessThan {
             args = self.type_arguments_checked_if(is_checked);
@@ -1543,12 +1546,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let is_typeof = self.eat(T::TypeOf);
         self.expect(T::Import);
         self.expect(T::OpenParen);
-        let (mut spec, spec_pos) = (self.lx.atom, self.pos());
+        let (mut spec, spec_pos, spec_end) = (self.lx.atom, self.pos(), self.lx.end);
         let before = self.lx.mark();
         // `IsLiteralImportTypeNode`
         let argument = match self.eat(T::String) && matches!(self.token(), T::Comma | T::CloseParen)
         {
-            true => TypeNodeId::NONE,
+            true => {
+                self.finish_name(spec_pos, spec_end);
+                TypeNodeId::NONE
+            }
             false => self.argument_of_import_type(before),
         };
         let (mut mode, mut attributes) = (ResolutionMode::None, ImportAttributesToken::None);
@@ -1617,11 +1623,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && let Some(&TypeNode {
                 kind: TypeNodeKind::StringLit(_),
                 pos,
-                ..
+                end,
             }) = self.f.types.last()
             && pos == start
         {
-            self.f.types.pop();
+            self.pop_type();
+            self.finish_name(pos, end);
             return TypeNodeId::NONE;
         }
         let at = (start, self.prev_end());
@@ -1825,7 +1832,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         else {
             return None;
         };
-        self.f.types.pop();
+        self.pop_type();
         Some(operand)
     }
 

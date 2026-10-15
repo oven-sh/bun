@@ -141,7 +141,14 @@ fn includes_void(ty: Type) -> bool {
     union_constituents(ty).iter().any(is_intrinsic_void_type)
 }
 
-fn is_function_return_type_includes_void(function_type: Type) -> bool {
+fn is_function_return_type_includes_void(function_type: Type, is_oxlint: bool) -> bool {
+    // tsgolint asks the checker, which has the signatures of every constituent of an intersection.
+    if is_oxlint {
+        return function_type
+            .get_call_signatures()
+            .iter()
+            .any(|signature| includes_void(signature.get_return_type()));
+    }
     get_call_signatures_of_type(function_type)
         .iter()
         .any(|signature| includes_void(signature.get_return_type()))
@@ -154,8 +161,11 @@ fn is_void_returning_function_node(function_node: Func) -> bool {
     // A declaration and a method have no contextual type.
     match (function_node.kind(), function_node.owner()) {
         (FnKind::Arrow | FnKind::Expr, Node::Expr(expression)) => {
+            let is_oxlint = expression.file().language().is_oxlint;
             expression.contextual_type().is_some_and(|function_type| {
-                union_constituents(function_type).iter().any(is_function_return_type_includes_void)
+                union_constituents(function_type)
+                    .iter()
+                    .any(|part| is_function_return_type_includes_void(part, is_oxlint))
             })
         }
         _ => false,
@@ -171,8 +181,10 @@ impl NoConfusingVoidExpression {
             match node.parent() {
                 Node::Expr(parent) => match parent.kind() {
                     ExprKind::Binary { op: BinOp::Comma, right, .. } => {
-                        let is_last = right == node && utils::is_sequence_root(parent);
-                        return is_last.then_some(InvalidAncestor::Other);
+                        // For tsgolint the right operand of every comma is invalid, in the middle of a sequence too.
+                        let is_invalid = right == node
+                            && (node.file().language().is_oxlint || utils::is_sequence_root(parent));
+                        return is_invalid.then_some(InvalidAncestor::Other);
                     }
                     ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, right, .. }
                         if right == node =>

@@ -53,11 +53,9 @@ struct H3App {
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
-    /* GOAWAY + drain. The UDP socket closes with the last connection; the
-     * engine itself is torn down in the destructor. */
+    /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
-    /* cb(user) runs once the UDP socket is closed and the last connection has
-     * gone (us_quic_socket_context_on_released). */
+    /* See us_quic_socket_context_on_released. */
     void onReleased(void (*cb)(void *), void *user) {
         http3Context->getContextData()->onReleased = cb;
         http3Context->getContextData()->onReleasedUser = user;

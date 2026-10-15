@@ -22,8 +22,7 @@ impl ListenSocket {
     pub fn close(&mut self) {
         c::uws_h3_listen_socket_close(self)
     }
-    /// True once the listener's UDP socket is closed and the last QUIC connection of its
-    /// app has gone. The handle itself stays valid until the app is destroyed.
+    /// The app has no open UDP socket and no QUIC connection left. Valid on a closed listener until the app is destroyed.
     pub fn is_released(&mut self) -> bool {
         c::uws_h3_listen_socket_is_released(self)
     }
@@ -423,9 +422,7 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
-    /// `cb(user)` runs once the app's UDP socket is closed and its last QUIC connection has
-    /// gone, after the `close(2)`. It can run inside the QUIC engine, so it must not enter
-    /// the engine or destroy the app.
+    /// `cb(user)` runs when [`ListenSocket::is_released`] becomes true; it must not enter the QUIC engine or destroy the app.
     pub fn on_released(&mut self, cb: unsafe extern "C" fn(user: *mut c_void), user: *mut c_void) {
         // SAFETY: live handle; cb/user are stored and invoked on this thread.
         unsafe { c::uws_h3_app_on_released(self, cb, user) }

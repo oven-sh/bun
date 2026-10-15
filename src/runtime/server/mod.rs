@@ -233,10 +233,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// negotiate "h2" (ALPN) or open with the cleartext preface.
     pub(crate) h2_app: Option<*mut uws_sys::h2::App>,
     pub(crate) h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
-    /// The HTTP/3 listener once a stop has taken it from [`Self::h3_listener`]. quic.c keeps its
-    /// UDP socket for the connections that still drain, so [`Self::is_closed`] asks through it
-    /// whether the socket and the last connection are gone, and a later abrupt stop closes it.
-    /// The handle outlives its fd: quic.c frees it with the context, in `h3::App::destroy`.
+    /// `h3_listener` after a stop took it; stays valid after its fd closes, until `h3::App::destroy` frees it.
     pub(crate) h3_stopped_listener: Option<core::ptr::NonNull<uws_sys::h3::ListenSocket>>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
@@ -270,8 +267,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// the uWS filter in [`NewServer::listen`]. Any of them can still dispatch
     /// a handler, so the wrapper stays `Strong` until this drains
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
-    /// graceful-stop promise open ([`NewServer::is_closed`]). QUIC connections
-    /// are counted in quic.c, see [`NewServer::has_open_h3_transport`].
+    /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
     /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
     pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
@@ -551,17 +547,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// quic.c: the HTTP/3 app has closed its UDP socket and its last QUIC connection has gone.
-    /// This is what [`Self::has_open_h3_transport`] waits for. It can run inside lsquic's
-    /// `process_conns`: `deinit_if_we_can` reads cells and queues tasks, it never enters the engine.
+    /// quic.c has closed the HTTP/3 UDP socket and its last QUIC connection is gone ([`Self::has_open_h3_transport`]).
     extern "C" fn on_h3_released(user_data: *mut c_void) {
         // SAFETY: `user_data` is the `*mut Self` registered in `listen()`; quic.c drops the hook
-        // before it frees the app's context, so the server is alive. Only `&Self` is formed: an
-        // idle connection is released inside the close calls of `stop_listening`, under its `&mut`.
+        // before it frees the app's context, so the server is alive. Only `&Self` is formed: the
+        // H3 close calls of `stop_listening` can reach this under its `&mut self`.
         if unsafe { &*user_data.cast::<Self>() }.deinit_running.get() {
             return;
         }
-        // SAFETY: `deinit_running` rules out an outer `&mut self`, as in `on_connection_filter`.
+        // SAFETY: `stop_listening` holds `deinit_running` across those calls, and a nested stop
+        // restores it, so no `&mut self` is live. This can run inside lsquic's `process_conns`:
+        // `deinit_if_we_can` reads cells and queues tasks, it does not enter the engine.
         unsafe { &mut *user_data.cast::<Self>() }.deinit_if_we_can();
     }
 
@@ -1677,9 +1673,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self.has_open_h3_transport()
     }
 
-    /// A stopped HTTP/3 listener still has its UDP socket or a QUIC connection. All QUIC
-    /// connections share that socket; quic.c closes it when the last one of a graceful stop has
-    /// gone, and [`Self::on_h3_released`] runs once neither is left.
+    /// A stopped HTTP/3 listener still has its UDP socket or a QUIC connection; [`Self::on_h3_released`] runs when both are gone.
     fn has_open_h3_transport(&self) -> bool {
         Self::HAS_H3
             && self
@@ -1759,26 +1753,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if listening.is_some() {
                 self.h3_stopped_listener = listening;
             }
-            // An abrupt stop also reaches the connections that an earlier graceful stop left
-            // to drain; a second graceful stop has nothing to do.
+            // An abrupt stop also closes what an earlier graceful stop left to drain.
             let to_close = if abrupt {
                 self.h3_stopped_listener
             } else {
                 listening
             };
             if let Some(h3l) = to_close {
-                // Either close releases the app at once when no connection is left, and
-                // `on_h3_released` must not form a second `&mut self` under this frame.
+                // Graceful: GOAWAY + drain via the still-open UDP socket; the
+                // engine rejects new conns and the timer keeps in-flight streams
+                // progressing until the last connection is gone. Abrupt: close the fd now.
                 let was_running = self.deinit_running.replace(true);
-                if abrupt {
-                    // CONNECTION_CLOSE on every connection, then close the fd.
+                if !abrupt {
+                    if let Some(h3a) = self.h3_app {
+                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                        bun_opaque::opaque_deref_mut(h3a).close();
+                    }
+                } else {
                     // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(h3l.as_ptr()).close();
-                } else if let Some(h3a) = self.h3_app {
-                    // GOAWAY + drain via the still-open UDP socket: the engine rejects new
-                    // conns, and quic.c closes the socket when the last connection has gone.
-                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(h3a).close();
                 }
                 self.deinit_running.set(was_running);
             }
@@ -1807,10 +1800,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 self.flags.insert(ServerFlags::TERMINATED);
                 if let Some(app) = self.app {
-                    self.deinit_running.set(true);
+                    let was_running = self.deinit_running.replace(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).close();
-                    self.deinit_running.set(false);
+                    self.deinit_running.set(was_running);
                 }
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.server = None;
@@ -1864,10 +1857,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // reaps it — verified against Node v26.
             if !self.config.is_node_http_server {
                 if let Some(app) = self.app {
-                    self.deinit_running.set(true);
+                    let was_running = self.deinit_running.replace(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     let _closed = bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
-                    self.deinit_running.set(false);
+                    self.deinit_running.set(was_running);
                 }
             }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
@@ -1881,10 +1874,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // while this frame still holds `&mut self`. Hold the re-entrance
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
-            self.deinit_running.set(true);
+            let was_running = self.deinit_running.replace(true);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
-            self.deinit_running.set(false);
+            self.deinit_running.set(was_running);
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
             // earlier would strand the live-socket count and the idle pass
@@ -2193,8 +2186,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         server.abort_handle.leave();
 
         if Self::HAS_H3 {
-            // The app frees the listen socket; `is_closed()` must not read it from a close
-            // callback of the apps destroyed below.
+            // The app frees this listen socket, and a close callback of the apps below can run `is_closed()`.
             server.h3_stopped_listener = None;
             if let Some(h3a) = server.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
@@ -4434,8 +4426,8 @@ impl ServerAllConnectionsClosedTask {
         vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(this)));
     }
 
-    /// Resolve the `server.stop()` promise once uws reports all sockets
-    /// closed and quic.c reports the HTTP/3 socket and connections gone.
+    /// Resolve the `server.stop()` promise
+    /// once uws reports all sockets closed.
     ///
     /// # Safety
     /// `this` must be the unique owning pointer heap-allocated in

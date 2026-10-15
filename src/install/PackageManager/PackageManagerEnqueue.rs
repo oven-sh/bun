@@ -3328,33 +3328,28 @@ impl PackageManager {
         };
         let log = self.log_mut();
         for (about, msgs) in held {
-            // `Some(true)`: a row in the tree cannot do without it. `None`: dedupe dropped all that asked.
             let is_needed = match about {
-                HeldAbout::Row(row) => is_in_tree(row).then_some(true),
+                HeldAbout::Row(row) => is_in_tree(row),
                 HeldAbout::Task(id) => match self.task_queue.get(&id) {
-                    Some(waiters) if !waiters.is_empty() => waiters
-                        .iter()
-                        .filter_map(|waiter| match *waiter {
+                    Some(waiters) if !waiters.is_empty() => {
+                        waiters.iter().any(|waiter| match *waiter {
                             TaskCallbackContext::Dependency(row)
                             | TaskCallbackContext::RootDependency(row) => {
-                                is_in_tree(row).then(|| {
-                                    lockfile.buffers.dependencies[row as usize]
+                                is_in_tree(row)
+                                    && lockfile.buffers.dependencies[row as usize]
                                         .behavior
                                         .is_required()
-                                })
                             }
-                            _ => Some(true),
+                            _ => true,
                         })
-                        .max(),
-                    _ => Some(true),
+                    }
+                    _ => true,
                 },
             };
             for mut msg in msgs {
-                match (msg.kind, is_needed) {
-                    // The install does not fail on it, but the answer may have shaped the tree.
-                    (Kind::Err, None | Some(false)) => msg.kind = Kind::Warn,
-                    (_, None) => continue,
-                    _ => {}
+                // It is still printed: the answer may have shaped the tree.
+                if msg.kind == Kind::Err && !is_needed {
+                    msg.kind = Kind::Warn;
                 }
                 match msg.kind {
                     Kind::Err => log.errors += 1,

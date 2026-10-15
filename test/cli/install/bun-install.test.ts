@@ -5453,6 +5453,18 @@ describe.concurrent("bun-install", () => {
       warnings: [/^warn: GET .*\/gone - 404$/, /^warn: No version matching "\^2\.0\.0" found for specifier "short"/],
     },
     {
+      name: "a version that nothing needs in the end and that has an optional dependency the registry does not have",
+      files: { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        wide: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "2.1.0": { optionalDependencies: { gone: "^3.0.0" } } },
+      },
+      holds: [{ wide: "kept" }, { narrow: "gone" }],
+      packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+      warnings: [/^warn: GET .*\/gone - 404$/],
+    },
+    {
       // The alias is for `holder`'s own row.
       name: "a dependency with the name of another package's npm: alias",
       files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", wide: "1.0.0" } } },

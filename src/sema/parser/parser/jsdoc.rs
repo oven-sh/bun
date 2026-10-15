@@ -14,7 +14,6 @@ use super::{Checkpoint, ListKind, Parser, ctx, take_span};
 use crate::lexer::Mark;
 use crate::token::T;
 use crate::{Options, Refusal};
-use bun_core::lexer::{end_of_run, is_white_space_like, last_char};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::check::jsdoc::syntax::{
@@ -165,30 +164,20 @@ impl Lens {
 }
 
 /// `TokenFullStart` of the token at `token`, if comments are before it. Otherwise `token`.
-fn full_start_before(src: &[u8], comments: &[(u32, u32)], token: u32) -> u32 {
-    let before = comments.partition_point(|comment| comment.0 < token);
-    let mut first = token as usize;
-    for &(start, end) in comments.get(..before).unwrap_or_default().iter().rev() {
-        if end_of_run(src, end as usize, is_white_space_like) < first {
-            break;
-        }
-        first = start as usize;
-    }
-    if first == token as usize {
-        return token;
-    }
-    loop {
-        let (c, start) = last_char(src.get(..first).unwrap_or_default());
-        if !is_white_space_like(c) {
-            return first as u32;
-        }
-        first = start;
+fn full_start_before(comments: &[Comment], token: u32) -> u32 {
+    let before = comments.partition_point(|comment| comment.pos < token);
+    match before.checked_sub(1).and_then(|last| comments.get(last)) {
+        Some(comment) if comment.next_token_start == token => comment.prev_token_end,
+        _ => token,
     }
 }
 
 /// `finish_jsdoc`, of the file with the text `src` and the comments `comments`.
-fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[(u32, u32)]) {
-    for &(start, end) in comments {
+fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[Comment]) {
+    for &Comment {
+        pos: start, end, ..
+    } in comments
+    {
         let comment = src.get(start as usize..end as usize).unwrap_or_default();
         if is_jsdoc_like(comment) && can_have_tags(comment) {
             file.jsdoc_comments.push((start, end));
@@ -220,7 +209,7 @@ fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[(u32, u
 struct Outer<'a> {
     mark: Mark,
     src: &'a [u8],
-    comments: Vec<(u32, u32)>,
+    comments: Vec<Comment>,
     comment_directives: usize,
     context: u32,
     lists: u32,
@@ -287,13 +276,12 @@ fn scan_jsdoc_comment_for_tags(mut comment: &[u8]) -> u8 {
 
 /// The JSDoc comments of a TypeScript file that have to be read are those with one of the returned
 /// `flags`. Only the checker reads their tags, in two functions. `comments`: all of `text`.
-pub(crate) fn read_by_checker(
-    text: &[u8],
-    comments: &[(u32, u32)],
-    is_declaration_file: bool,
-) -> u8 {
+pub(crate) fn read_by_checker(text: &[u8], comments: &[Comment], is_declaration_file: bool) -> u8 {
     let mut found = 0;
-    for &(start, end) in comments {
+    for &Comment {
+        pos: start, end, ..
+    } in comments
+    {
         let comment = text.get(start as usize..end as usize).unwrap_or_default();
         if is_jsdoc_like(comment) {
             found |= scan_jsdoc_comment_for_tags(comment);
@@ -352,7 +340,7 @@ fn is_only_of_jsdoc(at: JSDocScannerState) -> bool {
 
 // ───────────────────────────── what jsdoc.go asks of parser.go ─────────────────────────────
 
-impl<const GENERAL: bool> Syntax for Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, COMMENTS> {
     fn next_token(&mut self, from: usize) -> JSDocScannerState {
         if self.has_failed() {
             return self.given_up();
@@ -481,7 +469,7 @@ impl<const GENERAL: bool> Syntax for Parser<'_, GENERAL> {
     }
 }
 
-impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     /// `ScannerState`, of the lexer.
     fn state(&self) -> JSDocScannerState {
         if self.has_failed() {
@@ -885,10 +873,12 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             return None;
         }
         let comments = &self.lx.comments;
-        let behind = comments.partition_point(|comment| comment.0 as usize <= pos);
+        let behind = comments.partition_point(|comment| comment.pos as usize <= pos);
         let around = behind.checked_sub(1).and_then(|index| comments.get(index));
         match around {
-            Some(&(_, end)) if pos + 2 <= end as usize => Some(self.enter_comment(end - 2)),
+            Some(&Comment { end, .. }) if pos + 2 <= end as usize => {
+                Some(self.enter_comment(end - 2))
+            }
             _ => {
                 self.refuse(Refusal::Unsupported);
                 None
@@ -1014,11 +1004,13 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         // `GetLeadingCommentRanges`: the comments after the first line break, or after the start of
         // the file.
         let mut is_collecting = with_trailing || full_start == 0;
-        let is_before = |comment: &(u32, u32)| comment.0 < full_start;
+        let is_before = |comment: &Comment| comment.pos < full_start;
         let mut index = self.lx.comments.partition_point(is_before);
         // The end of the comment before, or of the token before.
         let mut before = full_start as usize;
-        while let Some(&(start, end)) = self.lx.comments.get(index)
+        while let Some(&Comment {
+            pos: start, end, ..
+        }) = self.lx.comments.get(index)
             && start < token
             && !self.has_failed()
         {
@@ -1131,7 +1123,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn clause_jsdoc(&mut self, pos: u32) {
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, pos);
+        let full_start = full_start_before(&self.lx.comments, pos);
         self.with_jsdoc(pos, full_start, false, &mut Host::Other);
     }
 
@@ -1234,7 +1226,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[inline(never)]
     pub(crate) fn semicolon_jsdoc(&mut self) {
         let semicolon = self.prev_end().saturating_sub(1);
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, semicolon);
+        let full_start = full_start_before(&self.lx.comments, semicolon);
         self.with_jsdoc(semicolon, full_start, false, &mut Host::Other);
     }
 
@@ -1246,7 +1238,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if !self.f.is_js {
             return expression;
         }
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, open);
+        let full_start = full_start_before(&self.lx.comments, open);
         let mut host = Host::Parenthesized(expression);
         self.with_jsdoc(open, full_start, true, &mut host);
         match host {
@@ -1259,7 +1251,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn function_jsdoc(&mut self, func: FnId, start: u32) {
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, start);
+        let full_start = full_start_before(&self.lx.comments, start);
         self.with_jsdoc(start, full_start, true, &mut Host::Function(func));
     }
 
@@ -1267,7 +1259,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn class_jsdoc(&mut self, class: ClassId, start: u32) {
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, start);
+        let full_start = full_start_before(&self.lx.comments, start);
         self.with_jsdoc(start, full_start, false, &mut Host::Class(class));
     }
 
@@ -1275,7 +1267,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn property_jsdoc(&mut self, prop: Prop) -> Prop {
-        let full_start = full_start_before(self.lx.src, &self.lx.comments, prop.start);
+        let full_start = full_start_before(&self.lx.comments, prop.start);
         let mut host = Host::Property(prop, TypeNodeId::NONE);
         self.with_jsdoc(prop.start, full_start, false, &mut host);
         let Host::Property(documented, ty) = host else {

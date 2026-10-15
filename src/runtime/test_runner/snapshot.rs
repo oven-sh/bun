@@ -434,7 +434,7 @@ impl Snapshots {
             if is_to_be_renamed {
                 self.values.swap_remove(&key_in_file);
             }
-        } else if crate::cli::ci_info::is_ci() && !self.update_snapshots {
+        } else if bun_core::ci_info::is_ci() && !self.update_snapshots {
             self.last_error_snapshot_name = Some(key.into_boxed_slice());
             return Err(Error::SnapshotCreationNotAllowedInCI);
         }
@@ -646,7 +646,7 @@ impl Snapshots {
                     return FileOutcome::Mismatch { saved: saved.into_boxed_slice() };
                 }
             }
-            None if crate::cli::ci_info::is_ci() && !self.update_snapshots => return FileOutcome::NotAllowedInCI,
+            None if bun_core::ci_info::is_ci() && !self.update_snapshots => return FileOutcome::NotAllowedInCI,
             None => {}
         }
 

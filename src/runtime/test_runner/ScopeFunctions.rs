@@ -771,7 +771,7 @@ fn mode_precedence(mode: SelfMode) -> u8 {
 }
 
 fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
-    if crate::cli::ci_info::is_ci() {
+    if bun_core::ci_info::is_ci() {
         return Err(global.throw(format_args!(
             "{} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
             bstr::BStr::new(signature)

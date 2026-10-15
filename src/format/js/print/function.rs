@@ -1,18 +1,17 @@
 use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCacheMode};
 use super::block_statement::is_empty_block;
-use super::parameters::{FormatFormalParameters, follows_name_or_type_parameters};
+use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
 use crate::js::format::{
-    ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression,
+    ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
-use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::js::utils::typescript::end_of_line_comments;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct FormatFunctionOptions {
@@ -20,7 +19,14 @@ pub(crate) struct FormatFunctionOptions {
     pub(crate) cache_mode: FunctionCacheMode,
 }
 
+/// `a = function /* comment */⏎<T>() {}`: for Prettier the line break after the comment breaks with what the function is in. For
+/// oxfmt it goes if the type parameters fit behind the comment.
+fn comments_of_type_parameters_are_in_a_group_with_them(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// A function declaration or expression. Not a method: see `class.rs`.
+#[inline(never)]
 pub(crate) fn write_function<'a>(
     func: Func<'a>,
     options: FormatFunctionOptions,
@@ -47,11 +53,14 @@ pub(crate) fn write_function<'a>(
                 (!is_only_head).then_some(keyword),
                 func.is_generator().then_some("*"),
                 (!is_only_head).then_some(space()),
-                func.name().map(|name| identifier(name, node)),
-                group(&type_parameters(func.type_params(), Node::Func(func))),
-                FormatCommentsBehindParenthesis(func),
+                func.name().map(|name| identifier(name)),
             ]
         );
+        let type_parameters = type_parameters(func.type_params(), Node::Func(func));
+        match comments_of_type_parameters_are_in_a_group_with_them(f) {
+            true => write!(f, group(&type_parameters)),
+            false => write!(f, type_parameters),
+        }
     });
     FormatContentWithCacheMode::new(|| node.span(), head, options.cache_mode).fmt(f);
 
@@ -63,21 +72,7 @@ pub(crate) fn write_function<'a>(
 
     let format_return_type = func.return_type().map(|return_type| {
         let return_type = FormatTypeAnnotation(return_type);
-        let content = format_with(move |f: &mut Formatter<'a>| {
-            let needs_space = f.comments().has_comment_before(return_type.span().start);
-            // The comments before the `{` are written with the body.
-            match func.has_body() {
-                true => write!(
-                    f,
-                    [
-                        maybe_space(needs_space),
-                        FormatNodeWithoutTrailingComments(&return_type)
-                    ]
-                ),
-                false => write!(f, [maybe_space(needs_space), return_type]),
-            }
-        });
-        FormatContentWithCacheMode::new(|| return_type.span(), content, options.cache_mode)
+        FormatContentWithCacheMode::new(|| return_type.span(), return_type, options.cache_mode)
     });
 
     write!(
@@ -121,29 +116,6 @@ pub(crate) fn write_function<'a>(
     }
 }
 
-/// The comments behind the `(` of the parameters on its line, if nothing else follows on that line.
-/// They trail what is before the `(`, a name or type parameters, if there is such a node:
-///
-/// ```js
-/// function f( // comment
-///   a) {}
-/// ```
-pub(crate) struct FormatCommentsBehindParenthesis<'a>(pub(crate) Func<'a>);
-
-impl<'a> Format<'a> for FormatCommentsBehindParenthesis<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        // For oxfmt the parentheses are a node, and the comments in it lead the first parameter.
-        if !f.is_quiet()
-            && !f.options().flavor.is_oxfmt()
-            && let Some(first) = self.0.params_with_this().next()
-            && follows_name_or_type_parameters(self.0)
-        {
-            let comments = end_of_line_comments(f.comments().comments_before(first.span().start));
-            write!(f, FormatTrailingComments::Comments(comments));
-        }
-    }
-}
-
 /// Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`.
 fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
     match e.ast_parent() {
@@ -175,56 +147,31 @@ pub(crate) fn write_called_function_with_comments<'a>(
     options: ExprOptions,
     f: &mut Formatter<'a>,
 ) -> bool {
+    // In the parentheses of a type cast it is not what is called.
     if e.as_fn().is_none()
         || !is_iife_callee_or_tagged_template_tag(e)
         || comments_of_called_function_are_outside_of_its_parentheses(f)
+        || is_cast_target(e, f)
     {
         return false;
     }
-    let (span, end) = (e.span(), e.outer_span().end);
-    // Whoever writes the callee may have hidden the comments after it.
-    let view_limit = f.comments_mut().limit_comments_up_to(0);
-    f.comments_mut().restore_view_limit(None);
-    f.comments_mut().limit_comments_up_to(end);
-
-    // On a line of its own, a comment leads what follows: the first argument or the template.
-    let is_followed = match e.ast_parent() {
-        AstNodes::CallExpression(call) => {
-            call.as_call_like().is_some_and(|it| !it.args().is_empty())
-        }
-        _ => true,
-    };
-    let count_trailing = |f: &Formatter<'a>| {
-        let comments = f.comments().comments_in(Span::after(span, end));
-        comments
-            .iter()
-            .take_while(|it| !(is_followed && it.preceded_by_newline()))
-            .count()
-    };
-    let has_comments = f.comments().has_comment_before(span.start) || count_trailing(f) > 0;
-    if has_comments {
-        let is_suppressed = f.comments().is_suppressed(span.start);
-        let content = format_with(|f| {
-            write!(f, format_leading_comments(span));
-            match is_suppressed {
-                true => write!(f, FormatSuppressedNode(span)),
-                false => write_expression(e, options, f),
-            }
-            let count = count_trailing(f);
-            write!(
-                f,
-                FormatTrailingComments::Comments(
-                    f.comments()
-                        .comments_before(end)
-                        .get(..count)
-                        .unwrap_or_default()
-                )
-            );
-        });
-        write!(f, ["(", soft_block_indent(&content), ")"]);
+    let owned = f.comments().of_node(e.as_chain_element());
+    if owned.leading.is_empty() && owned.trailing.is_empty() {
+        return false;
     }
-    f.comments_mut().restore_view_limit(view_limit);
-    has_comments
+    let skip_trailing = f.context_mut().take_skip_trailing_comments();
+    let content = format_with(|f| {
+        write!(f, FormatLeadingComments::Comments(owned.leading));
+        match owned.is_ignored {
+            true => write!(f, FormatSuppressedNode(e.span())),
+            false => write_expression(e, options, f),
+        }
+        if !skip_trailing {
+            write!(f, FormatTrailingComments::Comments(owned.trailing));
+        }
+    });
+    write!(f, ["(", soft_block_indent(&content), ")"]);
+    true
 }
 
 /// The `{ .. }` of a function.
@@ -251,78 +198,37 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
                 ),
             };
         }
-        let write = |f: &mut Formatter<'a>| {
-            match comments_stay_between_head_and_body(f) && !func.is_arrow() {
-                true => write_head_body_separator(self.span().start, f),
-                false => write!(f, [FormatCommentsBeforeBody(func), space()]),
+        let node = AstNodes::FunctionBody(func);
+        let owned = f.comments().of_node(node);
+        if !(owned.is_ignored && space_is_part_of_the_body(f)) {
+            write_space_before_body(node, f);
+        }
+        format_node(node, f, |f| match is_empty_block(statements) {
+            true => write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]),
+            false if owned.dangling.is_empty() => {
+                write!(f, ["{", block_indent(&FormatStatements(statements)), "}"])
             }
-            if is_empty_block(statements) {
-                write!(
-                    f,
-                    [
-                        "{",
-                        format_dangling_comments(self.span()).with_block_indent(),
-                        "}"
-                    ]
+            // `function a() // comment⏎{ "use strict" }`: Babel has no statement in the body that the comment could lead.
+            // Prettier's `printBlockBody` writes it after the directives.
+            false => {
+                let is_next_line_empty = (statements.last())
+                    .is_some_and(|last| f.source_text().lines_after(last.span().end) > 1);
+                let content = format_args!(
+                    FormatStatements(statements),
+                    is_next_line_empty.then_some(empty_line()),
+                    (!is_next_line_empty).then_some(hard_line_break()),
+                    dangling_comments(node)
                 );
-            } else {
-                write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]);
+                write!(f, ["{", block_indent(&content), "}"]);
             }
-        };
-        format_node_without_comments(self.span(), || func.as_ast_nodes(), f, write);
+        });
     }
 }
 
-/// The comments before the `{` of a function that stay there. A line comment right before the `{`
-/// does not: it is moved into the block. Prettier's `handleLastFunctionParameterComments`.
-struct FormatCommentsBeforeBody<'a>(Func<'a>);
-
-impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() {
-            return;
-        }
-        let comments = f
-            .comments()
-            .comments_before(FormatFunctionBody(self.0).span().start);
-        if comments.is_empty() {
-            return;
-        }
-        // Those from before the `(` lead the block, whatever they are.
-        let parameters_start = FormatFormalParameters(self.0).span().start;
-        // After a `=>`, a comment at the end of the line is moved into the block as well:
-        // `handleArrowExpressionComments`.
-        let is_arrow = self.0.is_arrow();
-        let count = (comments.iter())
-            .take_while(|it| {
-                (it.is_block() && !(is_arrow && it.followed_by_newline()))
-                    || it.end() <= parameters_start
-            })
-            .count();
-        let comments = comments.get(..count).unwrap_or_default();
-        let (moved, comments) = comments.split_at(
-            comments
-                .iter()
-                .take_while(|it| it.end() <= parameters_start)
-                .count(),
-        );
-        let (trailing, leading) = comments.split_at(
-            comments
-                .iter()
-                .take_while(|it| !it.preceded_by_newline())
-                .count(),
-        );
-        write!(
-            f,
-            [
-                space(),
-                FormatLeadingComments::Comments(moved),
-                FormatTrailingComments::Comments(trailing),
-                space(),
-                FormatLeadingComments::Comments(leading)
-            ]
-        );
-    }
+/// `class A { b() /* prettier-ignore */ { } }` is `b()/* prettier-ignore */ { }` for oxfmt: what is copied is written
+/// without the space before it. A function and a method of an object have a space of their own there.
+fn space_is_part_of_the_body(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 impl Spanned for FormatFunctionBody<'_> {

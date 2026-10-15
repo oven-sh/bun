@@ -1,4 +1,4 @@
-use crate::js::format::identifier;
+use crate::js::format::{identifier, name_without_comments};
 use crate::js::utils::call_expression::strip_chain_element_wrappers;
 use crate::js::utils::member_chain::chain_member::FormatComputedMemberExpressionWithoutObject;
 use crate::js::utils::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
@@ -32,48 +32,90 @@ fn boundary_behind_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
 fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
     write!(f, [object, boundary_behind_object(f)]);
+    write_property_after_object(e, object, start, f);
+}
 
-    if f.is_quiet() {
-        let lookup = format_with(|f| write_lookup_without_comments(e, f));
-        return match should_inline(e, object, start, f) {
-            true => write!(f, lookup),
-            false => write!(f, group(&indent(&format_args!(soft_line_break(), lookup)))),
-        };
-    }
-
-    let Some(property) = e.member_name() else {
-        return;
-    };
-    let operator = if e.is_optional() { "?." } else { "." };
-    let property_start = property.start();
-    let has_own_line_comment = f.comments().has_leading_own_line_comment(property_start);
-    let is_inline = !has_own_line_comment && should_inline(e, object, start, f);
-    let property = identifier(property, e.as_chain_element());
-
-    if is_inline {
-        return write!(f, [operator, property]);
+/// Not inlined: `a.b.c.d` is nested as deep as it is long, and what this needs of the stack would be taken at each level.
+#[inline(never)]
+fn write_property_after_object<'a>(
+    e: Expr<'a>,
+    object: Expr<'a>,
+    start: usize,
+    f: &mut Formatter<'a>,
+) {
+    let comments = comments_on_lines_before_property(e, f);
+    let lookup = format_with(|f| match comments.is_empty() {
+        true => write_lookup(e, f),
+        false => write_lookup_after_its_comments(e, f),
+    });
+    if comments.is_empty() && should_inline(e, object, start, f) {
+        return write!(f, lookup);
     }
     write!(
         f,
         group(&indent(&format_args!(
             soft_line_break(),
-            format_with(|f| {
-                if has_own_line_comment {
-                    let comments = f.comments().comments_before(property_start);
-                    write!(
-                        f,
-                        [FormatLeadingComments::Comments(comments), soft_line_break()]
-                    );
-                }
-            }),
-            operator,
-            property,
+            FormatLeadingComments::Comments(comments),
+            (!comments.is_empty()).then_some(soft_line_break()),
+            lookup
         )))
     );
 }
 
+/// Prettier attaches a comment on its own line in `a.b` or `a[b]` to the member access, so it is printed before `a`. oxfmt
+/// leaves it where it is.
+///
+/// ```js
+/// a                // comment
+///   // comment     a.b;
+///   .b;
+/// ```
+pub(crate) fn comments_in_member_access_stay(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// See [`comments_in_member_access_stay`]: the comments of the property of `member`, if one of them ends its line. They are
+/// printed before the `.`. Not for `a.#b`, which oxfmt never breaks.
+fn comments_on_lines_before_property<'a>(member: Expr<'a>, f: &Formatter<'a>) -> CommentList<'a> {
+    if f.is_quiet() || !comments_in_member_access_stay(f) || member.is_private_member() {
+        return CommentList::empty();
+    }
+    (member.member_name_start())
+        .map(|start| f.comments().of_name(start).leading)
+        .filter(|comments| comments.iter().any(|comment| comment.has_newline_after()))
+        .unwrap_or_default()
+}
+
+/// The `.b` or `?.b` of `member`. Prettier's `printMemberLookup`.
+pub(crate) fn write_lookup<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return write_lookup_without_comments(member, f);
+    }
+    let Some(property) = member.member_name() else {
+        return;
+    };
+    let operator = if member.is_optional() { "?." } else { "." };
+    write!(f, [operator, identifier(property)]);
+}
+
+/// [`write_lookup`] after the leading comments of the name have been written before the `.`, as oxfmt does. There a
+/// `prettier-ignore` comment among them is not about the name any more.
+pub(crate) fn write_lookup_after_its_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return write_lookup_without_comments(member, f);
+    }
+    let Some(start) = member.member_name_start() else {
+        return;
+    };
+    let operator = if member.is_optional() { "?." } else { "." };
+    // The member access ends with the name.
+    let name = name_without_comments(Span::new(start, member.span().end));
+    let trailing_comments = FormatTrailingComments::Comments(f.comments().of_name(start).trailing);
+    write!(f, [operator, name, trailing_comments]);
+}
+
 /// The `.b` or `?.b` of `member`, where there are no comments.
-pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+fn write_lookup_without_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     let Some(start) = member.member_name_start() else {
         return;
     };

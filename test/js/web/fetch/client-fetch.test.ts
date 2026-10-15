@@ -564,7 +564,9 @@ test("fetching with Request object - issue #1527", async () => {
       body,
     });
 
-    expect(await fetch(request)).resolves.pass();
+    const res = await fetch(request);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
   } finally {
     server.closeAllConnections();
     server.close();

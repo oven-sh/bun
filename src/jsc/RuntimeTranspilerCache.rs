@@ -70,7 +70,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 38: `inject_jest_globals` participates in the features hash, but only for files that use the `bun test` API.
 /// Version 39: Looking up any `bun test` global, or having a statement hoisted, counts as using that API.
 /// Version 40: Vitest globals leave out `jest`, `xit`, `xtest`, `xdescribe`. Files importing "vitest" get their own features hash.
-const EXPECTED_VERSION: u32 = 40;
+/// Version 41: Long hexadecimal, octal and binary literals are rounded to the nearest double.
+const EXPECTED_VERSION: u32 = 41;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

@@ -937,6 +937,44 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });
+
+  // Where "too deep" starts depends on the stack frames of the build, so this walks the depths around it.
+  test("--define with a value nested deeper than the stack has room for is an error", async () => {
+    using dir = tempDir("build-define-deep", { "in.js": "console.log(typeof FOO)" });
+    // A Windows command line holds 32,767 characters.
+    const depths = [250, 1000, 2000, 4000, 8000, 11_000, 12_000, 15_000, ...(isWindows ? [] : [30_000, 60_000])];
+    const outcomes: string[] = [];
+    for (const depth of depths) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--define",
+          `FOO=${Buffer.alloc(depth, "[")}1${Buffer.alloc(depth, "]")}`,
+          "in.js",
+          "--outfile=out.js",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      outcomes.push(
+        exitCode === 0
+          ? "built"
+          : exitCode === 1 && stderr.includes("error: Maximum call stack size exceeded while generating code")
+            ? "too deep to print"
+            : exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")
+              ? "too deep to define"
+              : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
+      );
+    }
+
+    const inOrder = ["built", "too deep to print", "too deep to define"];
+    expect(outcomes.filter(outcome => !inOrder.includes(outcome))).toEqual([]);
+    expect(outcomes).toEqual(outcomes.toSorted((a, b) => inOrder.indexOf(a) - inOrder.indexOf(b)));
+  });
 });
 
 describe.concurrent("modules that fail to print", () => {

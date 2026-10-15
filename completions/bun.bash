@@ -89,28 +89,28 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build check lint fmt";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated publish link unlink build check lint fmt";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --save-prod --catalog --filter";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
     PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
     PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
-    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
     PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
-    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --check --os --cpu --libc --linker --silent --cwd --help";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
@@ -138,6 +138,9 @@ _bun_completions() {
             ;;
         --linker)
             COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
+            return;;
+        --libc)
+            COMPREPLY=( $(compgen -W "glibc musl" -- "${cur_word}") );
             return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
@@ -190,6 +193,12 @@ _bun_completions() {
             return;;
         audit)
             COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
+            return;;
+        publish)
+            COMPREPLY=( $(compgen -f -W "--recursive --filter --access --tag --otp --auth-type --gzip-level --tolerate-republish --dry-run --ignore-scripts --registry --config --silent --verbose --cwd --help -r -F -c -h" -- "${cur_word}") );
+            return;;
+        x)
+            COMPREPLY=( $(compgen -W "--bun --package --no-install --cwd --env-file --minimum-release-age --trust --verbose --silent --help -p -h" -- "${cur_word}") );
             return;;
         check)
             COMPREPLY=( $(compgen -f -W "--project --pretty --no-pretty --all --threads --timing --cwd --help -p -h" -- "${cur_word}") );

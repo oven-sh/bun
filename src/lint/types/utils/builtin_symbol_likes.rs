@@ -1,8 +1,7 @@
 //! `builtinSymbolLikes.ts`
 
 use super::{Names, has_room_on_the_stack, is_symbol_from_default_library};
-use crate::types::{SymbolFlags, Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use crate::types::{IdMap, SymbolFlags, Type, TypeFlags};
 use smallvec::SmallVec;
 
 /// `isPromiseLike(program, type)`: `Promise`, or a class that extends it.
@@ -13,6 +12,15 @@ pub fn is_promise_like(ty: Type) -> bool {
 /// `isPromiseConstructorLike(program, type)`: the type of the value `Promise`.
 pub fn is_promise_constructor_like(ty: Type) -> bool {
     is_builtin_symbol_like(ty, "PromiseConstructor")
+}
+
+/// tsgolint's `t == checker.globalRegExpType`: the declared type of the `RegExp` of the default library.
+pub fn is_global_reg_exp_type(ty: Type) -> bool {
+    ty.get_symbol().is_some_and(|symbol| {
+        symbol.name() == b"RegExp"
+            && is_symbol_from_default_library(symbol)
+            && symbol.get_declared_type() == ty
+    })
 }
 
 /// `isErrorLike(program, type)`: `Error`, or a class that extends it.
@@ -88,7 +96,7 @@ pub fn is_builtin_symbol_like_recurser<'a>(
 /// number.
 #[derive(Default)]
 pub(crate) struct BaseTypeAnswers<'a> {
-    known: FxHashMap<Type<'a>, bool>,
+    known: IdMap<Type<'a>, bool>,
     /// The types that are being asked about, from the outermost.
     open: SmallVec<[Type<'a>; 4]>,
     /// The first of `open` that has been come across again since the last of them was begun with.
@@ -98,7 +106,7 @@ pub(crate) struct BaseTypeAnswers<'a> {
 impl<'a> BaseTypeAnswers<'a> {
     /// The answer for `ty`. `ask` finds it out if it is not known.
     pub(crate) fn get_or_ask(&mut self, ty: Type<'a>, ask: impl FnOnce(&mut Self) -> bool) -> bool {
-        if let Some(&answer) = self.known.get(&ty) {
+        if let Some(&answer) = self.known.get(ty) {
             return answer;
         }
         // It extends itself. What it extends besides is still to come where it was begun with.

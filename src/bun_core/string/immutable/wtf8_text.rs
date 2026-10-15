@@ -138,7 +138,8 @@ pub fn wtf8_offset_of_utf16_index(text: &[u8], index: u32) -> usize {
     text.len()
 }
 
-/// `text.slice(start, end)` for indices that are not negative.
+/// `text.slice(start, end)` for indices that are not negative. An index in the middle of a surrogate pair is taken as the start
+/// of the pair, where `slice` has half of it: of `"a😀"`, `(0, 2)` is `"a"` and `(2, 3)` is `"😀"`.
 pub fn wtf8_slice_by_utf16(text: &[u8], start: u32, end: u32) -> &[u8] {
     let from = wtf8_offset_of_utf16_index(text, start);
     let to = wtf8_offset_of_utf16_index(text, end).max(from);

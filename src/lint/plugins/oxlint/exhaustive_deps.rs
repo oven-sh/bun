@@ -4,6 +4,7 @@
 //! oxlint walks the callback. Here the references in it are looked at, each with what is around it.
 
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::codegen::{Codegen, print_expression};
 use bun_lint_oxlint::hash_order::HashOrder;
@@ -665,9 +666,9 @@ fn is_inside_effect_cleanup<'a>(
 #[derive(Default)]
 pub(crate) struct Memo<'a> {
     /// Whether the value of a variable of a component is the same on every render.
-    is_stable: FxHashMap<Symbol<'a>, bool>,
+    is_stable: IdMap<Symbol<'a>, bool>,
     /// Whether `variable.current` is on either side of an assignment.
-    is_current_written: FxHashMap<Symbol<'a>, bool>,
+    is_current_written: IdMap<Symbol<'a>, bool>,
     /// [`places_of_symbols`]
     places_of_symbols: Option<Vec<(u32, u32)>>,
     /// The `a.current` of the file, in the order of the source.
@@ -789,13 +790,13 @@ impl<'a> Component<'a> {
             /// The least number of the functions in `open` that can be reached from it.
             lowest: usize,
         }
-        if let Some(&known) = memo.is_stable.get(&symbol) {
+        if let Some(&known) = memo.is_stable.get(symbol) {
             return known;
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
         // The functions that have been entered, and from which one in `stack` can be reached.
         let mut open: Vec<Symbol<'a>> = Vec::new();
-        let mut numbers: FxHashMap<Symbol<'a>, usize> = FxHashMap::default();
+        let mut numbers: IdMap<Symbol<'a>, usize> = IdMap::default();
         let mut entering = Some((symbol, declared));
         loop {
             if let Some((symbol, declared)) = entering.take() {
@@ -832,7 +833,7 @@ impl<'a> Component<'a> {
             };
             if let Some(&read) = top.reads.get(top.next) {
                 top.next += 1;
-                match (memo.is_stable.get(&read.0), numbers.get(&read.0)) {
+                match (memo.is_stable.get(read.0), numbers.get(read.0)) {
                     (Some(true), _) => {}
                     (Some(false), _) => break,
                     (None, Some(&number)) => top.lowest = top.lowest.min(number),
@@ -1438,7 +1439,7 @@ fn report_refs_in_cleanups<'a, R: Rule>(
             && let Some(symbol) = symbol_of(obj)
         {
             // `ref.current` on either side of an assignment.
-            let is_written = *memo.is_current_written.entry(symbol).or_insert_with(|| {
+            let is_written = *memo.is_current_written.get_or_insert_with(symbol, || {
                 symbol.references().filter_map(Reference::expr).any(|it| {
                     matches!(it.parent(), Node::Expr(parent) if !it.is_parenthesized()
                         && !parent.is_parenthesized()

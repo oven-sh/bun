@@ -376,6 +376,11 @@ impl<'a> SourceFile<'a> {
         self.info().is_default_library
     }
 
+    /// `sourceFile.isDeclarationFile`
+    pub fn is_declaration_file(self) -> bool {
+        self.info().is_declaration_file
+    }
+
     /// `program.isSourceFileFromExternalLibrary(sourceFile)`: it was found in `node_modules`.
     pub fn is_from_external_library(self) -> bool {
         self.info().is_from_external_library

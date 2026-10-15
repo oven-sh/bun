@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::AmbientAncestors;
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::cell::RefCell;
 
@@ -107,7 +107,7 @@ fn has_self_reference_in_tdz(declarator: VarDecl<'_>) -> bool {
 #[derive(Default)]
 pub struct State<'a> {
     /// Where a function is called first.
-    first_calls: RefCell<FxHashMap<Symbol<'a>, u32>>,
+    first_calls: RefCell<IdMap<Symbol<'a>, u32>>,
     /// ESLint's `isInLoop`
     loops: RefCell<AncestorMemo<'a, bool>>,
     ambient: AmbientAncestors<'a>,
@@ -119,8 +119,7 @@ impl<'a> State<'a> {
         *self
             .first_calls
             .borrow_mut()
-            .entry(function)
-            .or_insert_with(|| {
+            .get_or_insert_with(function, || {
                 let calls = function
                     .references()
                     .filter(|it| it.expr().is_some_and(ast_utils::is_callee));

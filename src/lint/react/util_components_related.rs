@@ -4,6 +4,7 @@
 use crate::util_ast::name_of_key;
 use crate::util_variable::variable_from_context;
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::{estree_parent, estree_span};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -15,7 +16,7 @@ struct ComponentPaths<'a> {
     /// The names in each row of member accesses, from the innermost on.
     rows: Vec<Vec<Name<'a>>>,
     /// In which row a member access is, and how many of the names of that row are its path.
-    places: FxHashMap<Expr<'a>, (usize, usize)>,
+    places: IdMap<Expr<'a>, (usize, usize)>,
 }
 
 impl<'a> ComponentPaths<'a> {
@@ -25,7 +26,7 @@ impl<'a> ComponentPaths<'a> {
         let mut known = None;
         let mut node_temp = Some(node);
         while let Some(member) = node_temp {
-            known = self.places.get(&member).copied();
+            known = self.places.get(member).copied();
             if known.is_some() {
                 break;
             }
@@ -131,7 +132,7 @@ pub(crate) struct Related<'a> {
     paths: ComponentPaths<'a>,
     references: FxHashMap<Variable<'a>, ReferencesByText<'a>>,
     /// Of an object literal that is looked into: the first property of each name.
-    properties: FxHashMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
+    properties: IdMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
 }
 
 impl<'a> Related<'a> {
@@ -182,7 +183,7 @@ impl<'a> Related<'a> {
             let ExprKind::Object(properties) = component_node.kind() else {
                 break;
             };
-            let by_name = self.properties.entry(component_node).or_insert_with(|| {
+            let by_name = self.properties.get_or_insert_with(component_node, || {
                 let mut by_name = FxHashMap::default();
                 for property in properties {
                     if let Some(name) = property.key().and_then(name_of_key) {

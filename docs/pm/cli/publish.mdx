@@ -5,7 +5,7 @@ description: Use `bun publish` to publish a package to the npm registry
 
 import Publish from "/snippets/cli/publish.mdx";
 
-`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
+`bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files or in the package's `publishConfig`. Both `bunfig.toml` and `.npmrc` files are supported.
 
 ```sh terminal icon="terminal"
 ## Publishing the package from the current working directory
@@ -45,6 +45,22 @@ bun publish ./package.tgz
   provide a tarball path. Scripts run only when `bun publish` packs the package itself.
 </Note>
 
+<Note>
+  `bun publish` cannot generate provenance statements yet. `--provenance`, `"provenance": true` in `publishConfig` and
+  `NPM_CONFIG_PROVENANCE=true` are errors.
+</Note>
+
+### `--recursive` and `--filter`
+
+In a monorepo, `--recursive` (`-r`) publishes the root package and every workspace package, dependencies before their dependents. `--filter` (`-F`) does the same for the matching workspace packages only.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+bun publish --filter "@acme/*"
+```
+
+Packages that are `"private"` or whose version is already on the registry are skipped. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
+
 ### `--access`
 
 `--access` sets the access level of the package being published, either `public` or `restricted`. Unscoped packages are always public, and publishing an unscoped package with `--access restricted` is an error.
@@ -80,6 +96,32 @@ You can also set `--tag` in the `publishConfig` field of your `package.json`.
   }
 }
 ```
+
+### `publishConfig.registry`
+
+A package can pin the registry it is published to in the `publishConfig` field of its `package.json`, regardless of the registry configured for installs. `--registry` on the command line still overrides it.
+
+```json package.json icon="file-json"
+{
+  "name": "internal-package",
+  "publishConfig": {
+    "registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+As in npm, `publishConfig.registry` replaces the default registry only. A registry configured for the package's scope (`@myorg:registry` in `.npmrc`, or `[install.scopes]` in `bunfig.toml`) still takes precedence over it; to replace that one, set the scope's key in `publishConfig` instead:
+
+```json package.json icon="file-json"
+{
+  "name": "@myorg/package",
+  "publishConfig": {
+    "@myorg:registry": "https://registry.myorg.example/"
+  }
+}
+```
+
+Credentials are the ones configured for that registry, the same as when it is the default registry: a `//registry.myorg.example/:_authToken=...` line in `.npmrc`, or a registry with the same URL in `bunfig.toml` or `.npmrc`. When there are none, the credentials of the registry the package would otherwise have been published to are used only if the pinned registry has the same origin; otherwise `bun publish` fails with a missing authentication error instead of sending them to a different registry.
 
 ### `--dry-run`
 
@@ -125,6 +167,10 @@ bun publish --otp 123456
   `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable, useful when publishing from GitHub Actions or
   other automated workflows.
 </Note>
+
+### `--provenance`
+
+`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, a `publishConfig.provenance` other than `false` in `package.json`, and an `NPM_CONFIG_PROVENANCE` environment variable other than `false` are errors, so that a package is never published without the statement it asked for.
 
 ---
 

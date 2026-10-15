@@ -450,6 +450,7 @@ pub(crate) fn lint(
 
     let ignored = loader.passed_over().map(|it| &it.0[..]);
 
+    let bunfig = (options.has_section_of_bunfig).then_some(&options.bunfig[..]);
     let mut out = Vec::new();
     if how.as_json {
         let javascript = javascript.iter().map(|it| (it.0.clone(), texts(&it.1)));
@@ -465,6 +466,7 @@ pub(crate) fn lint(
                     (b"kind", text(kind_of(own.flavor).0)),
                     (b"nested", texts(&nested)),
                     (b"ignored", ignored.map_or(Json::Null, text)),
+                    (b"bunfig", bunfig.map_or(Json::Null, text)),
                 ]),
             ),
             (
@@ -503,6 +505,7 @@ pub(crate) fn lint(
                 kind_of(flavor).1
             );
         }
+        (None, Flavor::BuiltIn) if bunfig.is_some() => {}
         (None, Flavor::BuiltIn) => {
             out.extend_from_slice(b"No ESLint or oxlint config found. Using Bun's defaults.\n");
         }
@@ -512,6 +515,19 @@ pub(crate) fn lint(
         (None, Flavor::Eslint | Flavor::EslintRc) => {
             out.extend_from_slice(b"No config file is used. Only the command line sets rules.\n");
         }
+    }
+    if let Some(bunfig) = bunfig {
+        let what = match is_native {
+            true => "[lint], on top of Bun's defaults",
+            false => "[lint]",
+        };
+        pretty!(
+            &mut out,
+            colors,
+            "Using <b>{}<r> <d>({})<r>\n",
+            BStr::new(bunfig),
+            what
+        );
     }
     if let Some(ignored) = ignored {
         pretty!(
@@ -608,7 +624,7 @@ pub(crate) fn lint(
         }
     }
     packages.write(&mut out, colors);
-    if is_native {
+    if is_native && bunfig.is_none() {
         out.extend_from_slice(b"\nRun bun lint --init to add a [lint] section to bunfig.toml\n");
     }
     write_notes(&mut out, colors, &notes);

@@ -343,13 +343,13 @@ pub(crate) trait BlobExt {
     fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
     where
         Self: Sized;
-    fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
-    where
-        Self: Sized;
     fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
     where
         Self: Sized;
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    fn from_js_sequence(global: &JSGlobalObject, parts: JSValue) -> JsResult<Blob>
+    where
+        Self: Sized;
+    fn from_js_without_defer_gc<const MOVE: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob>
@@ -2233,10 +2233,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                if blob.content_type_slice().is_empty() {
-                    blob.content_type.set(BlobContentType::default());
-                    blob.content_type_was_set.set(false);
-                }
+                clear_empty_content_type(&blob);
             }
         }
 
@@ -2997,323 +2994,168 @@ impl BlobExt for Blob {
         match (MOVE, REQUIRE_ARRAY) {
             (true, false) => Self::from_js_move(global, arg),
             (false, false) => Self::from_js_clone_optional_array(global, arg),
-            (_, true) => Self::from_js_clone(global, arg),
+            (_, true) => Self::from_js_sequence(global, arg),
         }
     }
 
     #[inline]
     fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<true, false>(global, arg)
-    }
-
-    #[inline]
-    fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, true>(global, arg)
+        Self::from_js_without_defer_gc::<true>(global, arg)
     }
 
     #[inline]
     fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, false>(global, arg)
+        Self::from_js_without_defer_gc::<false>(global, arg)
     }
 
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    /// `blobParts` of `new Blob()` and `fileBits` of `new File()`: a WebIDL
+    /// `sequence<BlobPart>` (https://webidl.spec.whatwg.org/#es-sequence).
+    fn from_js_sequence(global: &JSGlobalObject, parts: JSValue) -> JsResult<Blob> {
+        if parts.is_undefined() {
+            return Ok(Blob::init_empty(global));
+        }
+        let _keep = jsc::EnsureStillAlive(parts);
+        // Not in the spec: an ArrayBuffer or a view in place of the list is its
+        // bytes (#13049). A typed array is iterable, so this has to come first.
+        if parts.js_type_loose().is_array_buffer_like() {
+            return Blob::try_create(
+                parts.as_array_buffer(global).unwrap().byte_slice(),
+                global,
+                false,
+            )
+            .map_err(Into::into);
+        }
+        if !parts.is_object() {
+            return Err(throw_parts_not_a_sequence(global));
+        }
+
+        let mut elements: *const JSValue = core::ptr::null();
+        let mut len: u32 = 0;
+        if Blob__plainPartsArray(parts, &mut elements, &mut len) {
+            // SAFETY: `elements[..len]` is the butterfly of `parts`, which `_keep`
+            // roots. Only JS can move or shrink it, and `list` is used only while
+            // none runs: below, every part is one that converts without any.
+            let list = unsafe { plain_parts(elements, len) };
+            // A hole needs the prototype chain, which `Blob__forEachPart` reads.
+            if !list
+                .clone()
+                .any(|part| part.is_empty() || part_can_run_js(part))
+            {
+                match len {
+                    0 => return Ok(Blob::init_empty(global)),
+                    1 => {
+                        let part = list.clone().next().unwrap();
+                        if let Some(blob) = from_single_part::<false>(global, part)? {
+                            return Ok(blob);
+                        }
+                    }
+                    _ => {}
+                }
+                let mut sink = PartSink::default();
+                for part in list {
+                    // SAFETY: no part can run user JS, and `parts` holds each of
+                    // them until the join.
+                    unsafe { sink.push(global, part, true)? };
+                }
+                #[cfg(debug_assertions)]
+                {
+                    let (mut now, mut now_len) = (core::ptr::null(), 0);
+                    debug_assert!(
+                        Blob__plainPartsArray(parts, &mut now, &mut now_len)
+                            && now == elements
+                            && now_len == len,
+                        "an inert part changed the array that holds it"
+                    );
+                }
+                return Ok(sink.finish(global));
+            }
+        }
+
+        let mut iterated = IteratedParts::default();
+        let is_iterable = bun_jsc::from_js_host_call_generic(global, || {
+            Blob__forEachPart(
+                global,
+                parts,
+                (&raw mut iterated).cast(),
+                IteratedParts::on_part,
+            )
+        })?;
+        if let Some(err) = iterated.err.take() {
+            return Err(err);
+        }
+        if !is_iterable {
+            return Err(throw_parts_not_a_sequence(global));
+        }
+        Ok(iterated.finish(global))
+    }
+
+    /// `Bun.write` data and the body of a `Response`, a `Request` or a `fetch`.
+    /// An Array here is a Bun extension, not a WebIDL sequence: it is read by
+    /// index, a `null` or `undefined` element adds nothing, and a value that is
+    /// not an Array is one part.
+    fn from_js_without_defer_gc<const MOVE: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob> {
-        let mut current = arg;
-        if current.is_undefined_or_null() {
+        if arg.is_undefined_or_null() {
             return Ok(Blob::init_empty(global));
         }
-
-        let mut top_value = current;
-        let might_only_be_one_thing: bool;
         arg.ensure_still_alive();
         let _keep = jsc::EnsureStillAlive(arg);
-        let mut fail_if_top_value_is_not_typed_array_like = false;
-        match current.js_type_loose() {
-            jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                let mut top_iter = jsc::JSArrayIterator::init(current, global)?;
-                might_only_be_one_thing = top_iter.len == 1;
-                if top_iter.len == 0 {
-                    return Ok(Blob::init_empty(global));
-                }
-                if might_only_be_one_thing {
-                    top_value = top_iter.next()?.unwrap();
-                }
-            }
-            _ => {
-                might_only_be_one_thing = true;
-                if REQUIRE_ARRAY {
-                    fail_if_top_value_is_not_typed_array_like = true;
-                }
-            }
-        }
 
-        if might_only_be_one_thing || !MOVE {
-            // Fast path: one item, we don't need to join
-            match top_value.js_type_loose() {
-                jsc::JSType::Cell
-                | jsc::JSType::NumberObject
-                | jsc::JSType::String
-                | jsc::JSType::StringObject
-                | jsc::JSType::DerivedStringObject => {
-                    if !fail_if_top_value_is_not_typed_array_like {
-                        let str = top_value.to_bun_string(global)?;
-                        let bytes = str.to_owned_slice();
-                        let ascii = strings::is_all_ascii(&bytes);
-                        return Ok(Blob::init_with_all_ascii(bytes, global, ascii));
-                    }
-                }
-
-                t if t.is_array_buffer_like() => {
-                    return Blob::try_create(
-                        top_value.as_array_buffer(global).unwrap().byte_slice(),
-                        global,
-                        false,
-                    )
-                    .map_err(Into::into);
-                }
-
-                jsc::JSType::DOMWrapper => {
-                    if !fail_if_top_value_is_not_typed_array_like {
-                        if let Some(blob_ptr) = top_value.as_::<Blob>() {
-                            // SAFETY: live JS heap pointer; single-threaded JS execution.
-                            // Shared access only — Blob state is Cell/JsCell-based.
-                            let blob = unsafe { &*blob_ptr };
-                            if MOVE {
-                                // Move the store without bumping its refcount, but take
-                                // independent ownership of name/content_type so the
-                                // source's eventual finalize() doesn't double-free them.
-                                // *Take* the RefPtr<Store> out of `blob`
-                                // (no clone, no into_raw leak) and field-copy the
-                                // rest, deep-owning `name`/`content_type` — net 0 on
-                                // the store refcount.
-                                let _blob = Blob {
-                                    reported_estimated_size: Cell::new(
-                                        blob.reported_estimated_size.get(),
-                                    ),
-                                    size: Cell::new(blob.size.get()),
-                                    offset: Cell::new(blob.offset.get()),
-                                    store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: JsCell::new(blob.content_type.get().clone()),
-                                    content_type_was_set: Cell::new(
-                                        blob.content_type_was_set.get(),
-                                    ),
-                                    charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
-                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-                                    global_this: Cell::new(blob.global_this.get()),
-                                    last_modified: Cell::new(blob.last_modified.get()),
-                                    name: blob.name.clone(),
-                                };
-                                return Ok(_blob);
-                            } else {
-                                return Ok(blob.dupe());
-                            }
-                        } else if let Some(artifact) =
-                            top_value.as_class_ref::<crate::api::BuildArtifact>()
-                        {
-                            // The previous "move" path here only nulled the store on a
-                            // local copy and left `build.blob` fully intact, so it was
-                            // never a real move. Share the store and deep-copy owned
-                            // buffers instead — regardless of `MOVE`.
-                            return Ok(artifact.blob.dupe());
-                        } else {
-                            let view = current.to_js_string_view(global)?;
-                            if !view.is_empty() {
-                                return Ok(Blob::init_with_all_ascii(
-                                    view.to_owned_slice(),
-                                    global,
-                                    false,
-                                ));
-                            }
-                        }
-                    }
-                }
-
-                _ => {}
-            }
-
-            // new Blob("ok")
-            // new File("ok", "file.txt")
-            if fail_if_top_value_is_not_typed_array_like {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("new Blob() expects an Array"))
-                );
-            }
-        }
-
-        // Every value pushed here is
-        // reachable from `arg` (rooted by `_keep: EnsureStillAlive` above) via the
-        // JS object graph, so a heap `Vec<JSValue>` is GC-safe with
-        // unbounded capacity (a prior `BoundedArray<_, 128>` panicked on overflow).
-        let mut stack: Vec<JSValue> = Vec::new();
-        let mut joiner = bun_core::string_joiner::StringJoiner::default();
-        let mut could_have_non_ascii = false;
-
-        loop {
-            match current.js_type_loose() {
-                jsc::JSType::NumberObject
-                | jsc::JSType::String
-                | jsc::JSType::StringObject
-                | jsc::JSType::DerivedStringObject => {
-                    let utf8 = current.to_utf8(global)?;
-                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                    joiner.push_cloned(utf8.slice());
-                }
-
-                jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                    let mut iter = jsc::JSArrayIterator::init(current, global)?;
-                    stack.reserve(iter.len as usize);
-
-                    // Decide up front whether processing any part (or any entry
-                    // still pending on `stack`) can re-enter user JS (toString /
-                    // Symbol.toPrimitive / proxy traps / getters) and detach a
-                    // borrowed buffer before `joiner.done()` copies it out. If
-                    // nothing can, typed-array parts are borrowed (`push_static`)
-                    // instead of cloned, which would double peak memory for
-                    // `new Blob(largeChunks)`. Non-fast arrays are conservatively
-                    // treated as able to run user JS.
-                    let mut parts_can_run_js = !iter.is_fast() || !stack.is_empty();
-                    if !parts_can_run_js {
-                        let mut prescan = jsc::JSArrayIterator::init(current, global)?;
-                        while let Some(item) = prescan.next()? {
-                            if item.is_undefined_or_null() {
-                                continue;
-                            }
-                            match item.js_type_loose() {
-                                jsc::JSType::String => {}
-                                t if t.is_array_buffer_like() => {}
-                                jsc::JSType::DOMWrapper
-                                    if item.as_class_ref::<Blob>().is_some() => {}
-                                _ => {
-                                    parts_can_run_js = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    while let Some(item) = iter.next()? {
-                        if item.is_undefined_or_null() {
-                            continue;
-                        }
-
-                        {
-                            match item.js_type_loose() {
-                                jsc::JSType::NumberObject
-                                | jsc::JSType::Cell
-                                | jsc::JSType::String
-                                | jsc::JSType::StringObject
-                                | jsc::JSType::DerivedStringObject => {
-                                    let utf8 = item.to_utf8(global)?;
-                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                                    joiner.push_cloned(utf8.slice());
-                                    continue;
-                                }
-                                t if t.is_array_buffer_like() => {
-                                    could_have_non_ascii = true;
-                                    let buf = item.as_array_buffer(global).unwrap();
-                                    if parts_can_run_js {
-                                        // A later part may run user JS that detaches
-                                        // or resizes this buffer before `done()`.
-                                        joiner.push_cloned(buf.byte_slice());
-                                    } else {
-                                        // SAFETY: the prescan above proved no remaining
-                                        // part can run user JS, so this buffer (rooted
-                                        // via `_keep`/`arg`) stays attached and valid
-                                        // until `joiner.done()` below.
-                                        joiner.push(unsafe {
-                                            bun_ptr::detach_lifetime(buf.byte_slice())
-                                        });
-                                    }
-                                    continue;
-                                }
-                                jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    let utf8 = item.to_utf8(global)?;
-                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                                    joiner.push_cloned(utf8.slice());
-                                    continue;
-                                }
-                                jsc::JSType::DOMWrapper => {
-                                    if let Some(blob) = item.as_class_ref::<Blob>() {
-                                        could_have_non_ascii = could_have_non_ascii
-                                            || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
-                                        if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
-                                        } else {
-                                            // SAFETY: the prescan above proved no
-                                            // remaining part can run user JS, so this
-                                            // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
-                                        }
-                                        continue;
-                                    } else {
-                                        let utf8 = item.to_utf8(global)?;
-                                        could_have_non_ascii =
-                                            could_have_non_ascii || utf8.is_owned();
-                                        joiner.push_cloned(utf8.slice());
-                                        continue;
-                                    }
-                                }
-                                _ => {
-                                    let utf8 = item.to_utf8(global)?;
-                                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                                    joiner.push_cloned(utf8.slice());
-                                }
-                            }
-                        }
-                    }
-                }
-
-                jsc::JSType::DOMWrapper => {
-                    if let Some(blob) = current.as_class_ref::<Blob>() {
-                        could_have_non_ascii = could_have_non_ascii
-                            || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                        // This arm only handles entries deferred onto the walk
-                        // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
-                    } else {
-                        let utf8 = current.to_utf8(global)?;
-                        could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                        joiner.push_cloned(utf8.slice());
-                    }
-                }
-
-                t if t.is_array_buffer_like() => {
-                    let buf = current.as_array_buffer(global).unwrap();
-                    // SAFETY: this arm is only reached when the typed array is the
-                    // top-level value (the walk stack is empty), so no user JS runs
-                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
-                    // the buffer alive for that span.
-                    joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
-                    could_have_non_ascii = true;
-                }
-
-                _ => {
-                    let utf8 = current.to_utf8(global)?;
-                    could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
-                    joiner.push_cloned(utf8.slice());
-                }
-            }
-            current = match stack.pop() {
-                Some(v) => v,
-                None => break,
+        let mut single = Some(arg);
+        let mut array = None;
+        if matches!(
+            arg.js_type_loose(),
+            jsc::JSType::Array | jsc::JSType::DerivedArray
+        ) {
+            let mut iter = jsc::JSArrayIterator::init(arg, global)?;
+            single = match iter.len {
+                0 => return Ok(Blob::init_empty(global)),
+                1 => iter.next()?,
+                _ => None,
             };
+            iter.i = 0;
+            array = Some(iter);
+        }
+        if let Some(part) = single
+            && let Some(blob) = from_single_part::<MOVE>(global, part)?
+        {
+            return Ok(blob);
+        }
+        let mut sink = PartSink::default();
+        let Some(mut iter) = array else {
+            sink.push_part(global, arg)?;
+            return Ok(sink.finish(global));
+        };
+
+        // Decide up front whether any part can re-enter user JS (toString /
+        // Symbol.toPrimitive / proxy traps / getters) and detach a borrowed
+        // buffer before the join copies it out. If none can, buffer and Blob
+        // parts are borrowed instead of cloned, which would double peak memory
+        // for `[largeChunk, ...]`. Non-fast arrays are conservatively treated
+        // as able to run user JS.
+        let mut borrow = iter.is_fast();
+        if borrow {
+            while let Some(part) = iter.next()? {
+                if part_can_run_js(part) {
+                    borrow = false;
+                    break;
+                }
+            }
+            iter.i = 0;
         }
 
-        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
-
-        if !could_have_non_ascii {
-            return Ok(Blob::init_with_all_ascii(joined, global, true));
+        while let Some(part) = iter.next()? {
+            if part.is_undefined_or_null() {
+                continue;
+            }
+            // SAFETY: `borrow` is set only when the prescan above proved no part
+            // can run user JS, and `arg` (rooted via `_keep`) holds each of them
+            // until the join.
+            unsafe { sink.push(global, part, borrow)? };
         }
-        Ok(Blob::init(joined, global))
+        Ok(sink.finish(global))
     }
 
     // is_detached: defined once above; duplicate removed to fix E0034.
@@ -3980,6 +3822,288 @@ impl URLSearchParamsConverter {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Parts: `blobParts`, and the Arrays that Bun.write and a body accept
+// ──────────────────────────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    /// Whether `parts` is an Array that script cannot observe being iterated
+    /// and that holds its elements boxed in its butterfly, so reading
+    /// `elements[..len]` is the same as running the iterator protocol on it,
+    /// except for a hole: that is an empty value here, and the protocol reads
+    /// it through the prototype chain. An empty Array qualifies whatever its
+    /// storage.
+    safe fn Blob__plainPartsArray(
+        parts: JSValue,
+        elements: &mut *const JSValue,
+        len: &mut u32,
+    ) -> bool;
+    /// Converts `parts` as a WebIDL sequence: each value goes to `on_part`
+    /// before the next one is asked for, until `on_part` returns false or
+    /// throws. Returns false, with no exception, if `parts` is not iterable.
+    safe fn Blob__forEachPart(
+        global: &JSGlobalObject,
+        parts: JSValue,
+        ctx: *mut c_void,
+        on_part: extern "C" fn(ctx: *mut c_void, global: &JSGlobalObject, part: JSValue) -> bool,
+    ) -> bool;
+}
+
+#[cold]
+fn throw_parts_not_a_sequence(global: &JSGlobalObject) -> jsc::JsError {
+    global.throw_invalid_arguments(format_args!(
+        "Blob parts must be a sequence: an Array or another iterable object"
+    ))
+}
+
+/// The elements of a plain Array, read from its butterfly. A hole is an empty
+/// value.
+///
+/// # Safety
+/// `elements[..len]` must stay readable for as long as the iterator is used.
+unsafe fn plain_parts(elements: *const JSValue, len: u32) -> impl Iterator<Item = JSValue> + Clone {
+    // SAFETY: `i < len`, and the caller keeps `elements[..len]` readable.
+    (0..len as usize).map(move |i| unsafe { *elements.add(i) })
+}
+
+/// Whether converting `part` can run user JS: a `toString`, a
+/// `Symbol.toPrimitive`, a Proxy trap. A string, a buffer and a Blob are read
+/// as they are, and a number, a boolean, `null` and `undefined` have a fixed
+/// text.
+fn part_can_run_js(part: JSValue) -> bool {
+    if !part.is_cell() {
+        return false;
+    }
+    match part.js_type() {
+        jsc::JSType::String => false,
+        t if t.is_array_buffer_like() => false,
+        jsc::JSType::DOMWrapper => part.as_class_ref::<Blob>().is_none(),
+        _ => true,
+    }
+}
+
+/// A list that holds one part becomes a Blob without a join: a Blob part
+/// shares its store (the only way a file-backed Blob keeps its content), a
+/// buffer is copied once, a string is encoded once. `None` is a part that has
+/// to be joined like any other.
+fn from_single_part<const MOVE: bool>(
+    global: &JSGlobalObject,
+    part: JSValue,
+) -> JsResult<Option<Blob>> {
+    match part.js_type_loose() {
+        jsc::JSType::Cell
+        | jsc::JSType::NumberObject
+        | jsc::JSType::String
+        | jsc::JSType::StringObject
+        | jsc::JSType::DerivedStringObject => {
+            let str = part.to_bun_string(global)?;
+            let bytes = str.to_owned_slice();
+            let ascii = strings::is_all_ascii(&bytes);
+            Ok(Some(Blob::init_with_all_ascii(bytes, global, ascii)))
+        }
+
+        t if t.is_array_buffer_like() => Ok(Some(Blob::try_create(
+            part.as_array_buffer(global).unwrap().byte_slice(),
+            global,
+            false,
+        )?)),
+
+        jsc::JSType::DOMWrapper => {
+            if let Some(blob_ptr) = part.as_::<Blob>() {
+                // SAFETY: live JS heap pointer; single-threaded JS execution.
+                // Shared access only — Blob state is Cell/JsCell-based.
+                let blob = unsafe { &*blob_ptr };
+                if MOVE {
+                    // Move the store without bumping its refcount, but take
+                    // independent ownership of name/content_type so the
+                    // source's eventual finalize() doesn't double-free them.
+                    // *Take* the RefPtr<Store> out of `blob`
+                    // (no clone, no into_raw leak) and field-copy the
+                    // rest, deep-owning `name`/`content_type` — net 0 on
+                    // the store refcount.
+                    let _blob = Blob {
+                        reported_estimated_size: Cell::new(blob.reported_estimated_size.get()),
+                        size: Cell::new(blob.size.get()),
+                        offset: Cell::new(blob.offset.get()),
+                        store: JsCell::new(blob.take_store()), // ← the move
+                        content_type: JsCell::new(blob.content_type.get().clone()),
+                        content_type_was_set: Cell::new(blob.content_type_was_set.get()),
+                        charset: Cell::new(blob.charset.get()),
+                        is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                        ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
+                        global_this: Cell::new(blob.global_this.get()),
+                        last_modified: Cell::new(blob.last_modified.get()),
+                        name: blob.name.clone(),
+                    };
+                    Ok(Some(_blob))
+                } else {
+                    Ok(Some(blob.dupe()))
+                }
+            } else if let Some(artifact) = part.as_class_ref::<crate::api::BuildArtifact>() {
+                // The previous "move" path here only nulled the store on a
+                // local copy and left `build.blob` fully intact, so it was
+                // never a real move. Share the store and deep-copy owned
+                // buffers instead — regardless of `MOVE`.
+                Ok(Some(artifact.blob.dupe()))
+            } else {
+                Ok(None)
+            }
+        }
+
+        _ => Ok(None),
+    }
+}
+
+/// A Blob that was constructed with an empty `type` has no `type` set.
+fn clear_empty_content_type(blob: &Blob) {
+    if blob.content_type_slice().is_empty() {
+        blob.content_type.set(BlobContentType::default());
+        blob.content_type_was_set.set(false);
+    }
+}
+
+/// `part` as a Blob, if it is one.
+fn as_blob_part(part: JSValue) -> Option<&'static Blob> {
+    if part.js_type_loose() == jsc::JSType::DOMWrapper {
+        part.as_class_ref::<Blob>()
+    } else {
+        None
+    }
+}
+
+/// The parts of a list, which `finish` joins into one Blob.
+#[derive(Default)]
+struct PartSink {
+    joiner: bun_core::string_joiner::StringJoiner<'static>,
+    could_have_non_ascii: bool,
+}
+
+impl PartSink {
+    /// Pushes `part`, copying the bytes of a buffer or a Blob.
+    fn push_part(&mut self, global: &JSGlobalObject, part: JSValue) -> JsResult<()> {
+        // SAFETY: nothing is borrowed.
+        unsafe { self.push(global, part, false) }
+    }
+
+    /// Pushes `part`. With `borrow`, the bytes of a buffer or a Blob stay
+    /// where they are until `finish` copies them.
+    ///
+    /// # Safety
+    /// With `borrow`, `part` must stay alive until `finish`, and no user JS
+    /// may run before then: it could detach the buffer or free the Blob's
+    /// store.
+    unsafe fn push(
+        &mut self,
+        global: &JSGlobalObject,
+        part: JSValue,
+        borrow: bool,
+    ) -> JsResult<()> {
+        if part.is_undefined_or_null() {
+            self.joiner.push_static(if part.is_null() {
+                b"null"
+            } else {
+                b"undefined"
+            });
+            return Ok(());
+        }
+        let buffer;
+        let bytes = if part.js_type_loose().is_array_buffer_like() {
+            self.could_have_non_ascii = true;
+            buffer = part.as_array_buffer(global).unwrap();
+            buffer.byte_slice()
+        } else if let Some(blob) = as_blob_part(part) {
+            self.blob_bytes(blob)
+        } else {
+            let utf8 = part.to_utf8(global)?;
+            self.could_have_non_ascii = self.could_have_non_ascii || utf8.is_owned();
+            self.joiner.push_cloned(utf8.slice());
+            return Ok(());
+        };
+        if borrow {
+            // SAFETY: the caller keeps these bytes alive and in place until
+            // `finish`.
+            self.joiner.push(unsafe { bun_ptr::detach_lifetime(bytes) });
+        } else {
+            self.joiner.push_cloned(bytes);
+        }
+        Ok(())
+    }
+
+    fn blob_bytes<'a>(&mut self, blob: &'a Blob) -> &'a [u8] {
+        self.could_have_non_ascii =
+            self.could_have_non_ascii || blob.charset.get() != strings::AsciiStatus::AllAscii;
+        blob.shared_view()
+    }
+
+    fn finish(mut self, global: &JSGlobalObject) -> Blob {
+        let joined: Vec<u8> = self.joiner.done().expect("oom").into_vec();
+        if !self.could_have_non_ascii {
+            return Blob::init_with_all_ascii(joined, global, true);
+        }
+        Blob::init(joined, global)
+    }
+}
+
+/// What `Blob__forEachPart` has handed over so far. User JS runs between two
+/// parts, so each one is copied when it arrives.
+#[derive(Default)]
+struct IteratedParts {
+    seen: PartsSeen,
+    sink: PartSink,
+    /// The error that stopped the walk, when it is not a pending exception.
+    err: Option<jsc::JsError>,
+}
+
+#[derive(Default)]
+enum PartsSeen {
+    #[default]
+    None,
+    /// One part, a Blob. It is held back from the join: a list that holds
+    /// only a Blob is a view of that Blob (`from_single_part`).
+    OneBlob(Blob),
+    Joined,
+}
+
+impl IteratedParts {
+    extern "C" fn on_part(ctx: *mut c_void, global: &JSGlobalObject, part: JSValue) -> bool {
+        // SAFETY: `ctx` is the `IteratedParts` that `from_js_sequence` gave to
+        // `Blob__forEachPart`, which calls this only before it returns.
+        let this = unsafe { &mut *ctx.cast::<IteratedParts>() };
+        match this.push(global, part) {
+            Ok(()) => true,
+            Err(err) => {
+                this.err = Some(err);
+                false
+            }
+        }
+    }
+
+    fn push(&mut self, global: &JSGlobalObject, part: JSValue) -> JsResult<()> {
+        match core::mem::replace(&mut self.seen, PartsSeen::Joined) {
+            PartsSeen::None => {
+                if let Some(blob) = as_blob_part(part) {
+                    self.seen = PartsSeen::OneBlob(blob.dupe());
+                    return Ok(());
+                }
+            }
+            PartsSeen::OneBlob(first) => {
+                let bytes = self.sink.blob_bytes(&first);
+                self.sink.joiner.push_cloned(bytes);
+            }
+            PartsSeen::Joined => {}
+        }
+        self.sink.push_part(global, part)
+    }
+
+    fn finish(self, global: &JSGlobalObject) -> Blob {
+        match self.seen {
+            PartsSeen::None => Blob::init_empty(global),
+            PartsSeen::OneBlob(blob) => blob,
+            PartsSeen::Joined => self.sink.finish(global),
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // C-exported helpers
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -3991,6 +4115,23 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
         NonNull::new(Blob__dupe(unsafe { &*this }))
             .expect("Blob__dupe returns a fresh heap allocation"),
     )
+}
+
+/// The Blob that `Response.blob()`, `ReadableStream.prototype.blob()` and
+/// `Bun.readableStreamToBlob()` make from the chunks they collected. The chunk
+/// array is internal, so it is joined like `Bun.write` data and not converted
+/// as `blobParts`, which would run the iterator protocol on it.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__fromStreamChunks(
+    global: &JSGlobalObject,
+    chunks: JSValue,
+) -> JSValue {
+    bun_jsc::to_js_host_call(global, || {
+        let blob = Blob::get::<false, false>(global, chunks)?;
+        clear_empty_content_type(&blob);
+        blob.calculate_estimated_byte_size();
+        Ok(bun_jsc::JsClass::to_js(blob, global))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -5346,8 +5487,9 @@ pub(crate) fn jsdom_file_construct(
             "new File(bits, name) expects at least 2 arguments"
         )));
     }
-    let name = BunString::from_js(args[1], global_this)?;
+    // WebIDL converts the arguments in order: `fileBits`, then `fileName`.
     let blob = Blob::get::<false, true>(global_this, args[0])?;
+    let name = BunString::from_js(args[1], global_this)?;
     // The store may be shared with the source blob (`dupe()`); never rename it.
     blob.name.set(name);
 
@@ -5394,10 +5536,7 @@ pub(crate) fn jsdom_file_construct(
             .set(bun_core::time::milli_timestamp() as f64);
     }
 
-    if blob.content_type_slice().is_empty() {
-        blob.content_type.set(BlobContentType::default());
-        blob.content_type_was_set.set(false);
-    }
+    clear_empty_content_type(&blob);
 
     let blob_ = Blob::new(blob);
     // SAFETY: ptr was just produced by heap::alloc in Blob::new.

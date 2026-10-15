@@ -1,6 +1,7 @@
 #include "config.h"
 #include "BunStreamConsumers.h"
 
+#include "blob.h"
 #include "BufferEncodingType.h"
 #include "BunClientData.h"
 #include "BunObject.h"
@@ -1505,9 +1506,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBuffer arguments;
-    arguments.append(callFrame->argument(0));
-    JSObject* blob = JSC::construct(globalObject, defaultGlobalObject(globalObject)->JSBlobConstructor(), arguments, "Blob is not constructible"_s);
+    // Not `new Blob(chunks)`: the constructor converts its argument as a sequence,
+    // which runs the iterator protocol that script can patch on this internal array.
+    JSValue blob = JSValue::decode(WebCore::Blob__fromStreamChunks(defaultGlobalObject(globalObject), JSValue::encode(callFrame->argument(0))));
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});

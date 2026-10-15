@@ -11,6 +11,8 @@ extern "C" void* Blob__dupe(void* impl);
 extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
 extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
+// The Blob for the chunks a stream consumer collected. Empty if it threw.
+extern "C" JSC::EncodedJSValue Blob__fromStreamChunks(JSC::JSGlobalObject* globalThis, JSC::EncodedJSValue chunks);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);
 

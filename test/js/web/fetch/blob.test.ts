@@ -3,6 +3,8 @@ import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
+import { blob as consumeBlob } from "node:stream/consumers";
+import vm from "node:vm";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(
@@ -963,4 +965,504 @@ test.each([
 ])("new Blob([], { type: %j }).slice().type", (type, expected) => {
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
+});
+
+// `new Blob(blobParts)` and `new File(fileBits, name)` take a WebIDL
+// `sequence<BlobPart>`: any iterable object, converted one part at a time.
+// Expected values are what node v26 and WPT FileAPI/blob/Blob-constructor.any.js give.
+describe("blobParts is converted as a sequence", () => {
+  class SubBlob extends Blob {}
+  class SubArray extends Array {}
+  class OwnIterator extends Array {}
+  Object.defineProperty(OwnIterator.prototype, Symbol.iterator, {
+    value: function* () {
+      yield "x";
+    },
+  });
+  function* generate(...parts: unknown[]) {
+    yield* parts;
+  }
+  const thrown = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return error;
+    }
+  };
+  const notASequence = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Blob parts must be a sequence: an Array or another iterable object",
+  };
+  const constructors: [string, (parts?: any) => Blob][] = [
+    ["Blob", parts => new Blob(parts)],
+    ["File", parts => new File(parts, "f.txt")],
+    ["a Blob subclass", parts => new SubBlob(parts)],
+    ["Reflect.construct(Blob)", parts => Reflect.construct(Blob, [parts])],
+  ];
+
+  describe.each(constructors)("new %s", (_, create) => {
+    const lists: [string, () => any, string][] = [
+      ["an Array", () => ["a", "b"], "ab"],
+      ["a Set", () => new Set(["a", "b"]), "ab"],
+      ["an empty Set", () => new Set(), ""],
+      ["a Map", () => new Map([["a", "b"]]), "a,b"],
+      ["a generator", () => generate("a", "b"), "ab"],
+      ["array.values()", () => ["a", "b"].values(), "ab"],
+      // prettier-ignore
+      ["arguments", () => (function (..._: string[]) { return arguments; })("a", "b"), "ab"],
+      ["a Proxy of an array", () => new Proxy(["a", "b"], {}), "ab"],
+      ["a String object", () => new String("ab"), "ab"],
+      ["URLSearchParams", () => new URLSearchParams("a=b"), "a,b"],
+      ["an object with @@iterator", () => ({ [Symbol.iterator]: () => ["a", "b"].values() }), "ab"],
+      [
+        "an array-like that borrows Array.prototype[@@iterator]",
+        () => ({ [Symbol.iterator]: Array.prototype[Symbol.iterator], 0: "a", 1: "b", length: 2 }),
+        "ab",
+      ],
+      ["an Array subclass", () => SubArray.of("a", "b"), "ab"],
+      ["an Array subclass with its own @@iterator", () => OwnIterator.of("a", "b"), "x"],
+      [
+        "an array with an own @@iterator",
+        () => Object.assign(["a", "b"], { [Symbol.iterator]: () => ["z"].values() }),
+        "z",
+      ],
+      ["a frozen array", () => Object.freeze(["a", "b"]), "ab"],
+      ["an array of doubles", () => [1.5, 2.5], "1.52.5"],
+      ["an array from another realm", () => vm.runInNewContext("['a', 'b']"), "ab"],
+      ["a Set from another realm", () => vm.runInNewContext("new Set(['a', 'b'])"), "ab"],
+    ];
+    test.each(lists)("%s converts like its spread", async (_, list, expected) => {
+      expect(await create(list()).text()).toBe(expected);
+      expect(await create([...list()]).text()).toBe(expected);
+    });
+
+    test.each<[string, () => unknown]>([
+      ["null", () => null],
+      ["a number", () => 5],
+      ["a boolean", () => true],
+      ["a string", () => "ab"],
+      ["a symbol", () => Symbol()],
+      ["a bigint", () => 1n],
+      ["a plain object", () => ({})],
+      ["an array-like", () => ({ length: 1, 0: "a" })],
+      ["a Date", () => new Date(0)],
+      ["a RegExp", () => /a/],
+      ["a function", () => () => {}],
+      ["a Blob", () => new Blob(["a"])],
+      ["an async generator", () => (async function* () {})()],
+      ["an array whose @@iterator is undefined", () => Object.assign(["a"], { [Symbol.iterator]: undefined })],
+      ["an array whose @@iterator is null", () => Object.assign(["a"], { [Symbol.iterator]: null })],
+    ])("%s is not a sequence", (_, value) => {
+      expect(thrown(() => create(value()))).toMatchObject(notASequence);
+    });
+
+    test.each<[string, () => unknown]>([
+      ["is not callable", () => Object.assign(["a"], { [Symbol.iterator]: 5 })],
+      ["returns a primitive", () => ({ [Symbol.iterator]: () => 5 })],
+    ])("an @@iterator that %s throws a TypeError", (_, value) => {
+      expect(thrown(() => create(value()))).toBeInstanceOf(TypeError);
+    });
+
+    test("a primitive is not iterated through its wrapper's @@iterator", () => {
+      const original = String.prototype[Symbol.iterator];
+      String.prototype[Symbol.iterator] = () => ["FAIL"][Symbol.iterator]();
+      (Boolean.prototype as any)[Symbol.iterator] = () => ["FAIL"][Symbol.iterator]();
+      try {
+        expect(thrown(() => create("ab"))).toMatchObject(notASequence);
+        expect(thrown(() => create(true))).toMatchObject(notASequence);
+      } finally {
+        String.prototype[Symbol.iterator] = original;
+        delete (Boolean.prototype as any)[Symbol.iterator];
+      }
+    });
+
+    test("undefined is an omitted argument", async () => {
+      const blob = create(undefined);
+      expect([blob.size, await blob.text()]).toEqual([0, ""]);
+    });
+
+    // The text of [x, y] is the text of [x] followed by the text of [y].
+    test.each<[string, string, any]>([
+      ["['a', null]", "anull", ["a", null]],
+      ["[null, 'b']", "nullb", [null, "b"]],
+      ["['a', undefined]", "aundefined", ["a", undefined]],
+      ["[null]", "null", [null]],
+      ["[undefined]", "undefined", [undefined]],
+      ["[null, undefined]", "nullundefined", [null, undefined]],
+      ["['a', , 'b']", "aundefinedb", ["a", , "b"]],
+      ["[,]", "undefined", [,]],
+      ["[, ,]", "undefinedundefined", [, ,]],
+      ["a sparse array", "aundefinedb", Object.assign([], { 0: "a", 2: "b" })],
+      ["new Set(['a', null, undefined])", "anullundefined", new Set(["a", null, undefined])],
+      ["[null, Uint8Array, undefined]", "nullAundefined", [null, new Uint8Array([65]), undefined]],
+      ["[undefined, Blob, null]", "undefinedBnull", [undefined, new Blob(["B"]), null]],
+      ["[1, true, 2n, 1.5, -0]", "1true21.50", [1, true, 2n, 1.5, -0]],
+    ])("%s is %j", async (_, expected, parts) => {
+      expect(await create(parts).text()).toBe(expected);
+      let joined = "";
+      for (const part of parts) joined += await create([part]).text();
+      expect(joined).toBe(expected);
+    });
+
+    test("ToString is called on every part that is not a Blob or a buffer", async () => {
+      // WPT "ToString should be called on elements of the blobParts array."
+      const parts: unknown[] = [
+        null,
+        undefined,
+        true,
+        false,
+        0,
+        1,
+        new String("stringobject"),
+        [],
+        ["x", "y"],
+        {},
+        { 0: "FAIL", length: 1 },
+        { toString: () => "stringA" },
+        { toString: undefined, valueOf: () => "stringB" },
+        { valueOf: () => "FAIL" },
+      ];
+      expect(await create(parts).text()).toBe(
+        "nullundefinedtruefalse01stringobjectx,y[object Object][object Object]stringAstringB[object Object]",
+      );
+    });
+
+    test("@@iterator is read once and each part is converted before the next step", async () => {
+      const log: string[] = [];
+      const part = (name: string) => ({ toString: () => (log.push(`toString ${name}`), name) });
+      const list = {
+        get [Symbol.iterator]() {
+          log.push("get @@iterator");
+          return () => {
+            log.push("call @@iterator");
+            const parts = [part("a"), part("b")];
+            return {
+              get next() {
+                log.push("get next");
+                return () => {
+                  log.push("call next");
+                  return parts.length ? { value: parts.shift(), done: false } : { value: undefined, done: true };
+                };
+              },
+              return: () => (log.push("call return"), {}),
+            };
+          };
+        },
+      };
+      expect(await create(list).text()).toBe("ab");
+      expect(log).toEqual([
+        "get @@iterator",
+        "call @@iterator",
+        "get next",
+        "call next",
+        "toString a",
+        "call next",
+        "toString b",
+        "call next",
+      ]);
+    });
+
+    test("an array-like under Array.prototype[@@iterator] is read in order until a getter throws", () => {
+      // WPT "Getters and value conversions should happen in order until an exception is thrown."
+      const log: string[] = [];
+      const error = new Error("test error");
+      const list = {
+        get [Symbol.iterator]() {
+          log.push("Symbol.iterator");
+          return Array.prototype[Symbol.iterator];
+        },
+        get length() {
+          log.push("length getter");
+          return { valueOf: () => (log.push("length valueOf"), 3) };
+        },
+        get 0() {
+          log.push("0 getter");
+          return { toString: () => (log.push("0 toString"), "a") };
+        },
+        get 1() {
+          log.push("1 getter");
+          throw error;
+        },
+        get 2() {
+          log.push("2 getter");
+          return "FAIL";
+        },
+      };
+      expect(thrown(() => create(list))).toBe(error);
+      expect(log).toEqual([
+        "Symbol.iterator",
+        "length getter",
+        "length valueOf",
+        "0 getter",
+        "0 toString",
+        "length getter",
+        "length valueOf",
+        "1 getter",
+      ]);
+    });
+
+    test("a Proxy of an array is read through its traps", async () => {
+      const log: string[] = [];
+      const list = new Proxy(["a", "b"], {
+        get: (target, key, receiver) => (log.push(`get ${String(key)}`), Reflect.get(target, key, receiver)),
+      });
+      expect(await create(list).text()).toBe("ab");
+      expect(log).toEqual(["get Symbol(Symbol.iterator)", "get length", "get 0", "get length", "get 1", "get length"]);
+    });
+
+    test("a part that fails to convert ends the walk and does not close the iterator", () => {
+      const log: string[] = [];
+      const error = new RangeError("boom");
+      const steps: unknown[] = [
+        {
+          toString() {
+            log.push("toString");
+            throw error;
+          },
+        },
+        "FAIL",
+      ];
+      const list = {
+        [Symbol.iterator]: () => ({
+          next: () => (log.push("next"), steps.length ? { value: steps.shift(), done: false } : { done: true }),
+          return: () => (log.push("return"), {}),
+        }),
+      };
+      expect(thrown(() => create(list))).toBe(error);
+      expect(log).toEqual(["next", "toString"]);
+      expect(thrown(() => create(generate("a", Symbol("part"))))).toBeInstanceOf(TypeError);
+    });
+
+    test("an error thrown by the iterator propagates", () => {
+      const error = new RangeError("boom");
+      function* parts() {
+        yield "a";
+        throw error;
+      }
+      expect(thrown(() => create(parts()))).toBe(error);
+      expect(thrown(() => create({ [Symbol.iterator]: () => ({ next: () => 5 }) }))).toBeInstanceOf(TypeError);
+    });
+
+    test("an array that a part's toString changes is followed", async () => {
+      const grown: unknown[] = ["a", { toString: () => (grown.push("LATE"), "b") }];
+      expect(await create(grown).text()).toBe("abLATE");
+
+      const alone: unknown[] = [{ toString: () => (alone.push("LATE"), "y") }];
+      expect(await create(alone).text()).toBe("yLATE");
+
+      const boxed = Object.assign(new String("x"), { toString: () => (aloneBoxed.push("LATE"), "y") });
+      const aloneBoxed: unknown[] = [boxed];
+      expect(await create(aloneBoxed).text()).toBe("yLATE");
+
+      // WPT "Changes to the blobParts array should be reflected in the returned Blob (pop)."
+      const popped: unknown[] = [{ toString: () => (popped.pop(), "PASS") }, { toString: () => "FAIL" }];
+      expect(await create(popped).text()).toBe("PASS");
+
+      // WPT "... (unshift)."
+      const unshifted: unknown[] = [
+        { toString: () => (unshifted.length === 3 ? "A" : (unshifted.unshift({ toString: () => "FAIL" }), "P")) },
+        { toString: () => "SS" },
+      ];
+      expect(await create(unshifted).text()).toBe("PASS");
+    });
+
+    test("a list that holds one Blob is that Blob, whatever kind of list it is", async () => {
+      using dir = tempDir("blob-parts-sequence", { "f.txt": "file-contents" });
+      const file = () => Bun.file(path.join(String(dir), "f.txt"));
+      const typed = new Blob(["x"], { type: "text/x" });
+      for (const list of [
+        (part: Blob) => new Set([part]),
+        (part: Blob) => generate(part),
+        (part: Blob) => Object.freeze([part]),
+      ]) {
+        // A file-backed Blob has its content only when the list shares its store.
+        expect(await create(list(file())).text()).toBe(await create([file()]).text());
+        expect(create(list(typed)).type).toBe(create([typed]).type);
+      }
+      expect(await create([file()]).text()).toBe("file-contents");
+      expect(await create(generate(new Blob(["a"]), "b", new Blob(["c"]))).text()).toBe("abc");
+    });
+  });
+
+  test("new File converts fileBits before fileName", () => {
+    const log: string[] = [];
+    const bits = {
+      *[Symbol.iterator]() {
+        log.push("bits");
+        yield "a";
+      },
+    };
+    const name = { toString: () => (log.push("name"), "n") };
+    expect(new File(bits as any, name as any).name).toBe("n");
+    expect(log).toEqual(["bits", "name"]);
+
+    log.length = 0;
+    expect(thrown(() => new File(null as any, name as any))).toMatchObject(notASequence);
+    expect(log).toEqual([]);
+  });
+
+  test("node:stream/consumers blob() stringifies null and undefined chunks", async () => {
+    async function* chunks() {
+      yield "a";
+      yield null;
+      yield undefined;
+      yield "b";
+    }
+    expect(await (await consumeBlob(chunks() as any)).text()).toBe("anullundefinedb");
+  });
+
+  // An Array as `Bun.write` data or as a `Response`/`Request`/`fetch` body is a Bun
+  // extension, not a sequence: it is read by index, its null and undefined
+  // elements add nothing, and any other object is one part.
+  describe("an Array given as data or as a body is not a sequence", () => {
+    const rows: [string, () => any, string][] = [
+      ["['a', null, 'b']", () => ["a", null, "b"], "ab"],
+      ["['a', undefined, 'b']", () => ["a", undefined, "b"], "ab"],
+      ["['a', , 'b']", () => ["a", , "b"], "ab"],
+      ["[null, null]", () => [null, null], ""],
+      ["[null]", () => [null], "null"],
+      ["[,]", () => [,], "undefined"],
+      ["[1, true]", () => [1, true], "1true"],
+      ["[Uint8Array, 'b']", () => [new Uint8Array([65]), "b"], "Ab"],
+      ["[Blob, 'c']", () => [new Blob(["B"]), "c"], "Bc"],
+      ["[['x', 'y']]", () => [["x", "y"]], "x,y"],
+      ["new Set(['a'])", () => new Set(["a"]), "[object Set]"],
+      ["{}", () => ({}), "[object Object]"],
+    ];
+
+    test.each(rows)("%s", async (_, data, expected) => {
+      using dir = tempDir("blob-parts-extension", {});
+      await using server = Bun.serve({ port: 0, fetch: async request => new Response(await request.text()) });
+      const written = path.join(String(dir), "written.txt");
+      await Bun.write(written, data());
+      const file = Bun.file(path.join(String(dir), "file.txt"));
+      await file.write(data());
+      expect({
+        "Bun.write": await Bun.file(written).text(),
+        "Bun.file().write": await file.text(),
+        "new Response": await new Response(data()).text(),
+        "new Request": await new Request(server.url.href, { method: "POST", body: data() }).text(),
+        "fetch": await (await fetch(server.url, { method: "POST", body: data() })).text(),
+        // @ts-expect-error the types do not declare the init argument of server.fetch()
+        "server.fetch": await (await server.fetch(server.url.href, { method: "POST", body: data() })).text(),
+      }).toEqual({
+        "Bun.write": expected,
+        "Bun.file().write": expected,
+        "new Response": expected,
+        "new Request": expected,
+        "fetch": expected,
+        "server.fetch": expected,
+      });
+    });
+  });
+
+  const run = async (script: string) => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  // Patching the protocol is process-wide and permanent for JSC's fast paths, so it runs in a child.
+  test.concurrent("a patched Array iterator protocol reaches the constructors, not the stream consumers", async () => {
+    const script = `
+      const text = async make => { try { return await (await make()).text(); } catch (error) { return error.name; } };
+      const results = {};
+      let calls = 0;
+      const values = Array.prototype[Symbol.iterator];
+      Array.prototype[Symbol.iterator] = function () { calls++; return values.call(this); };
+      const stream = () => new ReadableStream({
+        start(controller) {
+          controller.enqueue("a");
+          controller.enqueue(null);
+          controller.enqueue(undefined);
+          controller.enqueue("b");
+          controller.close();
+        },
+      });
+      const read = async blob => { calls = 0; return [await text(blob), calls]; };
+      results["Response.blob()"] = await read(() => new Response(stream()).blob());
+      results["ReadableStream.blob()"] = await read(() => stream().blob());
+      results["Bun.readableStreamToBlob()"] = await read(() => Bun.readableStreamToBlob(stream()));
+      results["new Blob()"] = await read(() => new Blob(["a", "b"]));
+
+      Array.prototype[Symbol.iterator] = function* () { yield "patched"; };
+      results.iterator = [await text(() => new Blob(["a", "b"])), await text(() => new File(["a", "b"], "f"))];
+      Array.prototype[Symbol.iterator] = values;
+      const prototype = Object.getPrototypeOf([][Symbol.iterator]());
+      const next = prototype.next;
+      prototype.next = function () {
+        const step = next.call(this);
+        return step.done ? step : { done: false, value: step.value + "!" };
+      };
+      results.next = await text(() => new Blob(["a", "b"]));
+      prototype.next = next;
+      delete Array.prototype[Symbol.iterator];
+      results.deleted = await text(() => new Blob(["a", "b"]));
+      Array.prototype[Symbol.iterator] = values;
+      process.stdout.write(JSON.stringify(results));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: JSON.stringify({
+        "Response.blob()": ["ab", 0],
+        "ReadableStream.blob()": ["ab", 0],
+        "Bun.readableStreamToBlob()": ["ab", 0],
+        "new Blob()": ["ab", 1],
+        iterator: ["patched", "patched"],
+        next: "a!b!",
+        deleted: "TypeError",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // User JS runs between the steps of an iterator, so a buffer or Blob part is
+  // copied when it arrives. Under ASAN a borrowed part is a use-after-poison.
+  test.concurrent("a part keeps its bytes when a later step of the iterator frees it", async () => {
+    const script = `
+      const SIZE = 1 << 16;
+      const results = {};
+      {
+        const buffer = new ArrayBuffer(SIZE, { maxByteLength: SIZE * 2 });
+        const part = new Uint8Array(buffer).fill(0x41);
+        function* parts() {
+          yield part;
+          new Uint8Array(buffer.transfer()).fill(0x42);
+          yield "x";
+        }
+        results["typed array"] = (await new Blob(parts()).text()) === Buffer.alloc(SIZE, "A").toString() + "x";
+      }
+      {
+        function* parts() {
+          yield new Blob([Buffer.alloc(SIZE, "A")]);
+          Bun.gc(true);
+          const clobber = [];
+          for (let i = 0; i < 8; i++) clobber.push(Buffer.alloc(SIZE, "B"));
+          yield "x";
+        }
+        results["Blob"] = (await new Blob(parts()).text()) === Buffer.alloc(SIZE, "A").toString() + "x";
+      }
+      {
+        let expected = "";
+        function* parts() {
+          for (let i = 0; i < 8; i++) {
+            expected += "s" + i + ";b" + i + ";B" + i + ";o" + i + ";";
+            yield "s" + i + ";";
+            yield Buffer.from("b" + i + ";");
+            yield new Blob(["B" + i + ";"]);
+            yield { toString: () => "o" + i + ";" };
+            Bun.gc(true);
+          }
+        }
+        results["parts only the iterator holds"] = (await new Blob(parts()).text()) === expected;
+      }
+      process.stdout.write(JSON.stringify(results));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: JSON.stringify({ "typed array": true, "Blob": true, "parts only the iterator holds": true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

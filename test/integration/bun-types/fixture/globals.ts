@@ -346,3 +346,12 @@ expectType<BunConsumerConvenienceMethods>();
   expectType(a.slice()).is<Blob>();
   expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
+
+{
+  // Blob and File take any iterable object of parts, not only an array.
+  const parts = new Set(["a", new Uint8Array(1), new Blob()]);
+  expectType(new Blob(parts)).is<Blob>();
+  expectType(new File(parts.values(), "f.txt")).is<File>();
+  // @ts-expect-error a string iterates, but a primitive is not a sequence of parts
+  new Blob("abc");
+}

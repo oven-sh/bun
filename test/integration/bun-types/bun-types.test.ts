@@ -966,6 +966,19 @@ describe("@types/bun integration test", () => {
           line: "globals.ts:307:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         },
+        // lib.dom's Blob and File constructors take only an array of parts.
+        {
+          code: 2345,
+          line: "globals.ts:353:23",
+          message:
+            "Argument of type 'Set<string | Uint8Array<ArrayBuffer> | Blob>' is not assignable to parameter of type 'BlobPart[]'.\nType 'Set<string | Uint8Array<ArrayBuffer> | Blob>' is missing the following properties from type 'BlobPart[]': length, pop, push, concat, and 30 more.",
+        },
+        {
+          code: 2345,
+          line: "globals.ts:354:23",
+          message:
+            "Argument of type 'SetIterator<string | Uint8Array<ArrayBuffer> | Blob>' is not assignable to parameter of type 'BlobPart[]'.\nType 'SetIterator<string | Uint8Array<ArrayBuffer> | Blob>' is missing the following properties from type 'BlobPart[]': length, pop, push, concat, and 26 more.",
+        },
         {
           code: 2345,
           line: "http.ts:43:24",

@@ -379,12 +379,12 @@ declare var File: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      *
-     * @param parts An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param parts An array, or any other iterable object, of strings, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
      * @param name The name of the file
      * @param options Properties for the file, such as `type` and `lastModified`
      */
     new (
-      parts: Bun.BlobPart[],
+      parts: Iterable<Bun.BlobPart> & object,
       name: string,
       options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
     ): File;
@@ -1574,7 +1574,13 @@ declare var Blob: Bun.__internal.UseLibDomIfAvailable<
   "Blob",
   {
     prototype: Blob;
-    new (blobParts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
+    /**
+     * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+     *
+     * @param blobParts An array, or any other iterable object, of strings, BufferSource, or Blob objects
+     * @param options Properties for the blob, such as `type`
+     */
+    new (blobParts?: Iterable<Bun.BlobPart> & object, options?: BlobPropertyBag): Blob;
   }
 >;
 

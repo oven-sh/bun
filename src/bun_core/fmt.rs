@@ -1052,36 +1052,6 @@ unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
-/// The digits of a binary, octal or hexadecimal integer, rounded to the nearest `f64` once, in [`Self::to_f64`].
-#[derive(Default, Clone, Copy)]
-pub struct RadixInteger {
-    /// The leading 64 significant bits.
-    leading_bits: u64,
-    dropped_bit_count: u32,
-    any_dropped_bit_is_set: bool,
-}
-
-impl RadixInteger {
-    /// `bits_per_digit` is 1, 3 or 4.
-    #[inline]
-    pub fn push_digit(&mut self, bits_per_digit: u32, digit: u32) {
-        let room = self.leading_bits.leading_zeros().min(bits_per_digit);
-        let dropped = bits_per_digit - room;
-        self.leading_bits = (self.leading_bits << room) | u64::from(digit >> dropped);
-        self.any_dropped_bit_is_set |= digit & ((1 << dropped) - 1) != 0;
-        self.dropped_bit_count = self.dropped_bit_count.saturating_add(dropped);
-    }
-
-    pub fn to_f64(self) -> f64 {
-        if self.dropped_bit_count > 1023 {
-            return f64::INFINITY;
-        }
-        // Bits are dropped only once all 64 are in use, so bit 0 is below the rounding position and can stand for them.
-        let rounded = (self.leading_bits | u64::from(self.any_dropped_bit_is_set)) as f64;
-        rounded * f64::from_bits((1023 + u64::from(self.dropped_bit_count)) << 52)
-    }
-}
-
 /// Full-match parse of `s` as an `f64`.
 /// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
 /// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are
@@ -1138,23 +1108,42 @@ pub fn parse_seconds(s: &[u8]) -> Option<f64> {
     (seconds >= 0.0 && seconds.is_finite()).then_some(seconds)
 }
 
+/// The digits of a binary, octal or hexadecimal integer, rounded to the nearest `f64` once, in [`Self::to_f64`].
+#[derive(Default, Clone, Copy)]
+pub struct RadixInteger {
+    /// As many of the leading digits as fit.
+    leading: u64,
+    dropped_bits: u32,
+    is_inexact: bool,
+}
+
+impl RadixInteger {
+    /// `bits_per_digit` is 1, 3 or 4.
+    #[inline]
+    pub fn push_digit(&mut self, bits_per_digit: u32, digit: u32) {
+        if self.leading >> (64 - bits_per_digit) == 0 {
+            self.leading = self.leading << bits_per_digit | u64::from(digit);
+        } else {
+            self.dropped_bits = self.dropped_bits.saturating_add(bits_per_digit);
+            self.is_inexact |= digit != 0;
+        }
+    }
+
+    pub fn to_f64(self) -> f64 {
+        // The dropped digits only give a power of two and decide a tie: nothing else of them can be seen in 53 bits.
+        let scale = 2f64.powi(i32::try_from(self.dropped_bits).unwrap_or(i32::MAX));
+        (self.leading | u64::from(self.is_inexact)) as f64 * scale
+    }
+}
+
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
 fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
-    // The first 123 bits or more, then how many bits follow and whether one of them is set: that
-    // decides a tie, and nothing else of them can be seen in 53 bits.
-    let (mut value, mut dropped, mut is_inexact) = (0u128, 0u32, false);
+    let mut integer = RadixInteger::default();
     for &c in digits {
-        let digit = char::from(c).to_digit(1 << bits)?;
-        if value >> 123 == 0 {
-            value = value << bits | u128::from(digit);
-        } else {
-            dropped = dropped.saturating_add(bits);
-            is_inexact |= digit != 0;
-        }
+        integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
     }
-    let scale = 2f64.powi(i32::try_from(dropped).unwrap_or(i32::MAX));
-    (!digits.is_empty()).then(|| (value | u128::from(is_inexact)) as f64 * scale)
+    (!digits.is_empty()).then(|| integer.to_f64())
 }
 
 /// `Number(text)` of JavaScript, for UTF-8: ECMAScript's `StringToNumber`. NaN if `text` is no number.

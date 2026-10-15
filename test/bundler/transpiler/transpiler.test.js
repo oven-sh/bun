@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5862,64 +5862,10 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(exitCode).toBe(0);
 });
 
-// Text of integers whose exact value lies between two doubles, with the exact value.
-function integersThatNeedRounding(prefixes) {
-  const cases = [];
-  const add = (prefix, digits) =>
-    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
-  let state = 12345;
-  const random = below => {
-    state = (state + 0x6d2b79f5) | 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
-  };
-  for (let i = 0; i < 600; i++) {
-    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
-    let digits = "";
-    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
-    add(prefix, digits);
-  }
-  const edges = [
-    // halfway between two doubles, and one off either side of halfway
-    2n ** 53n + 1n,
-    2n ** 53n + 3n,
-    2n ** 64n + 2n ** 11n,
-    2n ** 64n + 2n ** 11n + 1n,
-    2n ** 64n + 3n * 2n ** 11n,
-    2n ** 200n + 2n ** 147n - 1n,
-    2n ** 200n + 2n ** 147n,
-    2n ** 200n + 2n ** 147n + 1n,
-    // the largest values that are finite, and the first that are not
-    2n ** 1024n - 2n ** 970n - 1n,
-    2n ** 1024n - 2n ** 970n,
-    2n ** 1024n,
-    2n ** 5000n,
-    0n,
-    2n ** 64n - 1n,
-  ];
-  for (const [prefix, alphabet] of prefixes) {
-    const radix = new Set(alphabet.toLowerCase()).size;
-    for (const edge of edges) add(prefix, edge.toString(radix));
-  }
-  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
-  add("0x", "b3c8_bf81_fdf2_247");
-  return cases;
-}
-const radixPrefixes = [
-  ["0x", "0123456789abcdefABCDEF", 40],
-  ["0X", "0123456789abcdef", 40],
-  ["0o", "01234567", 50],
-  ["0b", "01", 140],
-];
-
 it("hexadecimal, octal and binary literals are rounded to the nearest double", () => {
   const transpiler = new Bun.Transpiler();
   const wrong = [];
-  for (const [text, exact] of [
-    ...integersThatNeedRounding(radixPrefixes),
-    ["0777777777777777777777", 0o777777777777777777777n],
-  ]) {
+  for (const [text, exact] of [...integersThatNeedRounding(), ["0777777777777777777777", 0o777777777777777777777n]]) {
     const printed = transpiler.transformSync(`x = ${text};`).trim();
     const value = printed === "x = 1 / 0;" ? Infinity : Number(printed.slice("x = ".length, -1));
     if (!Object.is(value, Number(exact))) wrong.push({ text, printed, nearest: Number(exact) });

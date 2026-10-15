@@ -76,8 +76,7 @@ const kMincrlfDelay = 100;
  */
 const lineEnding = /\r?\n|\r(?!\n)|\u2028|\u2029/g;
 
-// True when "\n" is the only line ending the string can hold. Such a string
-// splits with indexOf, which allocates nothing, instead of one RegExp match per line.
+// Such a string splits on "\n" with indexOf instead of the RegExp above.
 function hasOnlyLineFeeds(string) {
   return (
     StringPrototypeIndexOf(string, "\r") === -1 &&

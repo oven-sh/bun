@@ -123,6 +123,51 @@ describe("FormData", () => {
       expect((form.get("empty") as File).name).toBe("");
     });
 
+    it("append() and set() both replace a lone surrogate in the File's own name", () => {
+      const file = new File(["x"], "a\uD800.txt");
+      const form = new FormData();
+      form.append("appended", file);
+      form.set("set", file);
+      expect({
+        appended: (form.get("appended") as File).name,
+        set: (form.get("set") as File).name,
+      }).toEqual({ appended: "a\uFFFD.txt", set: "a\uFFFD.txt" });
+    });
+
+    it("a parsed part with an empty filename is a File with an empty name", async () => {
+      const body = ["--X", 'Content-Disposition: form-data; name="empty"; filename=""', "", "abc", "--X--", ""].join(
+        "\r\n",
+      );
+      const form = await new Response(body, {
+        headers: { "content-type": "multipart/form-data; boundary=X" },
+      }).formData();
+      const value = form.get("empty") as File;
+      expect({ isFile: value instanceof File, name: value.name, text: await value.text() }).toEqual({
+        isFile: true,
+        name: "",
+        text: "abc",
+      });
+      // The empty name is a name: the entry does not go out again as "blob".
+      expect((await new Response(form).text()).match(/filename="[^"]*"/g)).toEqual(['filename=""']);
+    });
+
+    it("Bun.serve sends the name of an entry File as the Content-Disposition filename", async () => {
+      const type = "application/octet-stream";
+      const form = new FormData();
+      form.append("unnamed", new Blob(["x"], { type }));
+      form.append("named", new Blob(["y"], { type }), "report.bin");
+      await using server = Bun.serve({
+        port: 0,
+        fetch: req => new Response(form.get(new URL(req.url).pathname.slice(1)) as File),
+      });
+      const disposition = async (key: string) =>
+        (await fetch(new URL(key, server.url))).headers.get("content-disposition");
+      expect({ unnamed: await disposition("unnamed"), named: await disposition("named") }).toEqual({
+        unnamed: 'filename="blob"',
+        named: 'filename="report.bin"',
+      });
+    });
+
     it("serializes the entry name, not the original File name", async () => {
       const form = new FormData();
       form.append("over", new File(["abc"], "orig.txt"), "override.txt");

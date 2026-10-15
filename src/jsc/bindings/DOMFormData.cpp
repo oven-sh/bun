@@ -97,9 +97,16 @@ void DOMFormData::append(const String& name, const String& value)
     m_items.append(createStringEntry(name, value));
 }
 
+// The filename a Blob entry stores is a scalar value string and never null:
+// an empty name is a name.
+static String sanitizedFileName(const String& filename)
+{
+    return filename.isNull() ? emptyString() : replaceUnpairedSurrogatesWithReplacementCharacter(String(filename));
+}
+
 void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename.isNull() ? emptyString() : replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    blob->setFileName(sanitizedFileName(filename));
     m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
@@ -148,7 +155,7 @@ void DOMFormData::set(const String& name, const String& value)
 
 void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
-    blob->setFileName(filename.isNull() ? emptyString() : filename);
+    blob->setFileName(sanitizedFileName(filename));
     set(name, { name, blob });
 }
 

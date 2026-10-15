@@ -650,25 +650,26 @@ describe.concurrent("bun init over an existing package.json", () => {
 
     const decoder = new TextDecoder();
     let output = "";
+    // `bun init` prints this note only when its stdin is a TTY.
     const note = Promise.withResolvers<void>();
-    await using terminal = new Bun.Terminal({
-      cols: 80,
-      rows: 24,
-      data(_, chunk: Uint8Array) {
-        output += decoder.decode(chunk, { stream: true });
-        // `bun init` prints this note only when its stdin is a TTY.
-        if (output.includes("package.json already exists")) note.resolve();
-      },
-    });
-
     await using proc = Bun.spawn({
       cmd: [bunExe(), "init"],
       cwd: temp,
       env: initEnv,
-      terminal,
+      // A terminal that spawn creates reports EOF after the child exits and all of its output arrived.
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("package.json already exists")) note.resolve();
+        },
+        exit() {
+          note.reject(new Error(`bun init did not print its TTY note:\n${output}`));
+        },
+      },
     });
-    const exitCode = await proc.exited;
-    await note.promise;
+    const [exitCode] = await Promise.all([proc.exited, note.promise]);
 
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(commonjsAfterInit);
     expect(exitCode).toBe(0);

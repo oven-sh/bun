@@ -1,5 +1,5 @@
-import { beforeEach, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -233,4 +233,212 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
+});
+
+// A `?` is a legal byte of a POSIX file name (https://github.com/oven-sh/bun/issues/7928). Windows does not allow it.
+describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
+  const dep = {
+    "dep.mjs": `export default "dep.mjs"; export const url = import.meta.url;`,
+    "dep.cjs": `module.exports = __filename;`,
+    "config.json": `{ "json": true }`,
+    // The last two segments of what each way to load a file sees.
+    "main.mjs": `
+      import dep from "./dep.mjs";
+      import config from "./config.json";
+      const tail = path => path.split("/").slice(-2).join("/");
+      console.log(JSON.stringify({
+        main: import.meta.main,
+        path: tail(import.meta.path),
+        dir: tail(import.meta.dir + "/"),
+        file: import.meta.file,
+        url: tail(import.meta.url),
+        dep,
+        json: config.json,
+        require: tail(require("./dep.cjs")),
+        withQuery: tail((await import("./dep.mjs?v=1")).url),
+      }));
+    `,
+  };
+  const files = {
+    ...Object.fromEntries(Object.entries(dep).map(([name, source]) => ["end?/" + name, source])),
+    ...Object.fromEntries(Object.entries(dep).map(([name, source]) => ["mi?d/" + name, source])),
+    "we?ird.mjs": `export default "we?ird.mjs"; console.log(import.meta.file);`,
+    "we?ird.cjs": `module.exports = "we?ird.cjs";`,
+    // Beside each of these is what the part before the "?" names.
+    "app?/main.mjs": `console.log("app?/main.mjs");`,
+    "app/index.mjs": `console.log("app/index.mjs");`,
+    "q?/x.cjs": `module.exports = require("./dep.cjs");`,
+    "q?/dep.cjs": `module.exports = "q?/dep.cjs";`,
+    "q": `module.exports = "the file q";`,
+    "a.cjs?/b.cjs": `module.exports = "a.cjs?/b.cjs";`,
+    "a.cjs": `module.exports = "a.cjs";`,
+    "a.mjs?/b.mjs": `export default "the file b.mjs";`,
+    "a.mjs": `export default "a.mjs with " + new URL(import.meta.url).search;`,
+    "c.mjs?/d.mjs": `export default "the file d.mjs";`,
+    "c.mjs": `export default "c.mjs";`,
+    "x.mjs": `export default "x.mjs";`,
+    "end?/addon.node": "",
+  };
+  async function run(name: string, source: string | undefined, ...args: string[]) {
+    using dir = tempDir("import-query-question-mark", source === undefined ? files : { ...files, [name]: source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, name],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test.each(["end?", "mi?d"])("bun runs a file in the folder %s, with its imports", async folder => {
+    const { stdout, stderr, exitCode } = await run(`./${folder}/main.mjs`, undefined);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        main: true,
+        path: `${folder}/main.mjs`,
+        dir: `${folder}/`,
+        file: "main.mjs",
+        url: `${folder.replace("?", "%3F")}/main.mjs`,
+        dep: "dep.mjs",
+        json: true,
+        require: `${folder}/dep.cjs`,
+        withQuery: `${folder.replace("?", "%3F")}/dep.mjs?v=1`,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["./we?ird.mjs", [], "we?ird.mjs"],
+    ["./app?/main.mjs", [], "app?/main.mjs"],
+    ["./app?/main.mjs", ["run"], "app?/main.mjs"],
+    ["./x.mjs", ["--preload", "./we?ird.mjs"], "we?ird.mjs"],
+  ])("bun runs %s (%j)", async (name, args, stdout) => {
+    expect(await run(name, undefined, ...args)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  // As in node: require() takes a path. A query is bun's addition to it, for a name that is not there.
+  test("require() reads a `?` as part of a name that exists", async () => {
+    const source = `
+      const { createRequire } = require("node:module");
+      const { relative, resolve } = require("node:path");
+      const here = path => relative(__dirname, path);
+      const load = id => {
+        try {
+          return [here(require.resolve(id)), here(String(require(id)))];
+        } catch (error) {
+          return error.code;
+        }
+      };
+      const query = load("./a.cjs?v=1");
+      delete require.cache[require.resolve("./a.cjs?v=1")];
+      console.log(JSON.stringify({
+        "./end?/dep.cjs": load("./end?/dep.cjs"),
+        "./mi?d/dep.cjs": load("./mi?d/dep.cjs"),
+        "./we?ird.cjs": load("./we?ird.cjs"),
+        "./we?ird.cjs?v=1": load("./we?ird.cjs?v=1"),
+        "absolute": load(resolve("mi?d/dep.cjs")),
+        "./a.cjs?v=1": query,
+        "./a.cjs?v=1 again": load("./a.cjs?v=1"),
+        "./a.cjs?a=/b/c": load("./a.cjs?a=/b/c"),
+        "./a.cjs?/b.cjs": load("./a.cjs?/b.cjs"),
+        "./q?/x.cjs": load("./q?/x.cjs"),
+        "createRequire": createRequire(resolve("q?/x.cjs"))("./dep.cjs"),
+        "./end%3F/dep.cjs": load("./end%3F/dep.cjs"),
+      }));
+    `;
+    const { stdout, stderr, exitCode } = await run("entry.cjs", source);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        "./end?/dep.cjs": ["end?/dep.cjs", "end?/dep.cjs"],
+        "./mi?d/dep.cjs": ["mi?d/dep.cjs", "mi?d/dep.cjs"],
+        "./we?ird.cjs": ["we?ird.cjs", "we?ird.cjs"],
+        "./we?ird.cjs?v=1": ["we?ird.cjs?v=1", "we?ird.cjs"],
+        "absolute": ["mi?d/dep.cjs", "mi?d/dep.cjs"],
+        "./a.cjs?v=1": ["a.cjs?v=1", "a.cjs"],
+        "./a.cjs?v=1 again": ["a.cjs?v=1", "a.cjs"],
+        "./a.cjs?a=/b/c": ["a.cjs?a=/b/c", "a.cjs"],
+        "./a.cjs?/b.cjs": ["a.cjs?/b.cjs", "a.cjs?/b.cjs"],
+        "./q?/x.cjs": ["q?/x.cjs", "q?/dep.cjs"],
+        "createRequire": "q?/dep.cjs",
+        "./end%3F/dep.cjs": "MODULE_NOT_FOUND",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // As in node: a specifier is a URL, and the path of a file URL spells a "?" as "%3F".
+  test("an ES module specifier has a query from its first `?`", async () => {
+    const source = `
+      import { resolve } from "node:path";
+      const load = async specifier => {
+        try {
+          return (await import(specifier)).default;
+        } catch (error) {
+          return error.code;
+        }
+      };
+      const url = path => Bun.pathToFileURL(resolve(path)).href;
+      console.log(JSON.stringify({
+        "./end?/dep.mjs": await load("./end?/dep.mjs"),
+        "./we?ird.mjs": await load("./we?ird.mjs"),
+        "./a.mjs?/b.mjs": await load("./a.mjs?/b.mjs"),
+        "./a.mjs?v=1": await load("./a.mjs?v=1"),
+        "./a.mjs?a=/b/c": await load("./a.mjs?a=/b/c"),
+        "file URL of end?/dep.mjs": await load(url("end?/dep.mjs")),
+        "file URL of mi?d/dep.mjs": await load(url("mi?d/dep.mjs")),
+        "file URL of c.mjs?/d.mjs": await load(url("c.mjs?/d.mjs")),
+        "Bun.resolveSync of a file URL": Bun.resolveSync(url("mi?d/dep.mjs"), import.meta.dir).slice(import.meta.dir.length),
+      }));
+    `;
+    const { stdout, stderr, exitCode } = await run("entry.mjs", source);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        "./end?/dep.mjs": "ERR_MODULE_NOT_FOUND",
+        "./we?ird.mjs": "ERR_MODULE_NOT_FOUND",
+        "./a.mjs?/b.mjs": "a.mjs with ?/b.mjs",
+        "./a.mjs?v=1": "a.mjs with ?v=1",
+        "./a.mjs?a=/b/c": "a.mjs with ?a=/b/c",
+        "file URL of end?/dep.mjs": "dep.mjs",
+        "file URL of mi?d/dep.mjs": "dep.mjs",
+        "file URL of c.mjs?/d.mjs": "the file d.mjs",
+        "Bun.resolveSync of a file URL": "/mi?d/dep.mjs",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a .node addon is told by the end of the path, not of the query", async () => {
+    const source = `
+      const load = id => {
+        try {
+          return require(id);
+        } catch (error) {
+          return [error.code, error.message.includes("end?/addon.node")];
+        }
+      };
+      import("./x.mjs?from=addon.node").then(esm => {
+        console.log(JSON.stringify({
+          "./end?/addon.node": load("./end?/addon.node"),
+          "./end?/addon.node?v=1": load("./end?/addon.node?v=1"),
+          "./x.mjs?from=addon.node": esm.default,
+        }));
+      });
+    `;
+    const { stdout, stderr, exitCode } = await run("entry.cjs", source);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: {
+        "./end?/addon.node": ["ERR_DLOPEN_FAILED", true],
+        "./end?/addon.node?v=1": ["ERR_DLOPEN_FAILED", true],
+        "./x.mjs?from=addon.node": "x.mjs",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

@@ -21,20 +21,18 @@ public:
     {
     }
 
-    // Resolving a rope and converting can throw. Every path returns `result`, so it is built in the caller's slot.
-    static JSStringUTF8View create(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
+    // Of a view that is null. It is large, so it is filled in where it lives. Resolving a rope and converting can throw.
+    void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSStringUTF8View result;
-        result.m_view = string->view(&globalObject);
-        RETURN_IF_EXCEPTION(scope, result);
-        result.m_isNull = false;
-        if (result.m_view->is8Bit() && WTF::charactersAreAllASCII(result.m_view->span8())) [[likely]]
-            return result;
-        if (!result.convert()) [[unlikely]]
+        m_view = string->view(&globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        m_isNull = false;
+        if (m_view->is8Bit() && WTF::charactersAreAllASCII(m_view->span8())) [[likely]]
+            return;
+        if (!convert()) [[unlikely]]
             JSC::throwOutOfMemoryError(&globalObject, scope);
-        return result;
     }
 
     bool isNull() const { return m_isNull; }

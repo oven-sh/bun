@@ -45,7 +45,9 @@ export const any = new AnyType();
 export const bufferSource = new BufferSourceType();
 
 /** The native `Blob` behind a JS `Blob`. */
-export const blob = new RefType("::Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h");
+export const blob = new RefType("::Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h", [
+  { cpp: "::WebCore::JSBlob" },
+]);
 
 const null_ = new UnitType("null");
 
@@ -59,7 +61,7 @@ export const enumeration = (values: readonly (string | readonly string[])[]) => 
 export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
   new DictionaryType(members, options);
 
-/** Alternatives are tried in order. */
+/** A value goes to the first alternative, in written order, that takes its kind. */
 export const union = (alternatives: Record<string, Type>) => new UnionType(alternatives);
 
 /** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
@@ -71,7 +73,7 @@ export { selfType as self } from "./bindgen-lib-internal.ts";
 
 export const fn = (signature: SignatureOptions) => new FunctionDefinition([signature]);
 
-/** One JS function, several signatures, told apart by how many arguments were passed. */
+/** One JS function, several signatures, told apart by how many arguments were passed and by their kinds. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */

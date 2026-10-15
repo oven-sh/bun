@@ -23,6 +23,17 @@ inline bool isStringObject(JSC::JSValue value)
     return value.isCell() && (value.asCell()->type() == JSC::StringObjectType || value.asCell()->type() == JSC::DerivedStringObjectType);
 }
 
+// A BigInt that is not a cell.
+inline bool isBigInt32(JSC::JSValue value)
+{
+#if USE(BIGINT32)
+    return value.isBigInt32();
+#else
+    UNUSED_PARAM(value);
+    return false;
+#endif
+}
+
 // std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.
 inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSValue value)
 {
@@ -42,34 +53,21 @@ inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSV
 }
 }
 
-template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictUTF8String> {
-    // Not through tryConvert's std::optional: the view is large, and this way it is never moved.
+template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::DefaultContextConverter<Bun::Bindgen::IDLStrictUTF8String> {
     template<Bun::IDLConversionContext Ctx>
-    static Bun::Bindgen::JSStringUTF8View convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringUTF8View& result)
     {
         if (value.isString()) [[likely]]
-            return Bun::Bindgen::JSStringUTF8View::create(globalObject, JSC::asString(value));
-        return Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictUTF8String>::convert(globalObject, value, ctx);
-    }
-
-    template<Bun::IDLConversionContext Ctx>
-    static std::optional<Bun::Bindgen::JSStringUTF8View> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
-    {
-        if (value.isString()) [[likely]]
-            return Bun::Bindgen::JSStringUTF8View::create(globalObject, JSC::asString(value));
-        if (!Bun::Bindgen::isStringObject(value))
-            return std::nullopt;
+            return result.initialize(globalObject, JSC::asString(value));
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!Bun::Bindgen::isStringObject(value)) {
+            ctx.throwNotString(globalObject, scope);
+            return;
+        }
         JSC::JSString* string = value.toString(&globalObject);
-        RETURN_IF_EXCEPTION(scope, Bun::Bindgen::JSStringUTF8View {});
-        RELEASE_AND_RETURN(scope, Bun::Bindgen::JSStringUTF8View::create(globalObject, string));
-    }
-
-    template<Bun::IDLConversionContext Ctx>
-    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
-    {
-        ctx.throwNotString(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, void());
+        RELEASE_AND_RETURN(scope, result.initialize(globalObject, string));
     }
 };
 
@@ -89,14 +87,15 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
     }
 };
 
-template<> struct WebCore::Converter<Bun::Bindgen::IDLLooseUTF8String> : WebCore::DefaultConverter<Bun::Bindgen::IDLLooseUTF8String> {
-    static Bun::Bindgen::JSStringUTF8View convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+template<> struct WebCore::Converter<Bun::Bindgen::IDLLooseUTF8String> : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseUTF8String> {
+    template<Bun::IDLConversionContext Ctx>
+    static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&, Bun::Bindgen::JSStringUTF8View& result)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::JSString* string = value.toString(&globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, Bun::Bindgen::JSStringUTF8View::create(globalObject, string));
+        RETURN_IF_EXCEPTION(scope, void());
+        RELEASE_AND_RETURN(scope, result.initialize(globalObject, string));
     }
 };
 

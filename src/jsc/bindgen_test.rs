@@ -8,8 +8,8 @@ use crate::bindgen::{
     WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure, TestHolderClass,
-    TestOptions, TestOptionsEcho, TestTokenClass, TestValue,
+    TestAnything, TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure,
+    TestHolderClass, TestOptions, TestOptionsEcho, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -83,6 +83,61 @@ pub fn describe_value(value: TestValue<'_>) -> Vec<u8> {
         TestValue::Text(text) => [b"text ", text].concat(),
         TestValue::List(list) => format!("list {list:?}").into_bytes(),
     }
+}
+
+pub fn describe_anything<'a>(cx: &mut JsCall<'a>, value: TestAnything<'a>) -> Vec<u8> {
+    match value {
+        TestAnything::Nothing => b"nothing".to_vec(),
+        TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
+        TestAnything::Integer(integer) => format!("integer {integer}").into_bytes(),
+        TestAnything::Text(text) => format!("text {text}").into_bytes(),
+        TestAnything::Bytes(buffer) => {
+            // SAFETY: `buffer` holds a ref on it, and nothing else borrows it here.
+            let buffer: ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
+            format!("bytes {}", buffer.byte_slice().len()).into_bytes()
+        }
+        TestAnything::Blob(_) => b"blob".to_vec(),
+        TestAnything::Counter(counter) => {
+            let count = counter.with(&cx.payloads, |counter| counter.count);
+            format!("counter {count}").into_bytes()
+        }
+        TestAnything::Token(token) => {
+            let id = token.with(&cx.payloads, |token| token.id);
+            format!("token {id}").into_bytes()
+        }
+        TestAnything::List(list) => format!("list {list:?}").into_bytes(),
+        TestAnything::Options(options) => format!("options {}", options.count).into_bytes(),
+    }
+}
+
+pub fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {
+    [b"text times ", text.repeat(times as usize).as_slice()].concat()
+}
+
+pub fn overloaded_text_upper(text: &[u8], upper: bool) -> Vec<u8> {
+    let text = if upper {
+        text.to_ascii_uppercase()
+    } else {
+        text.to_vec()
+    };
+    [b"text upper ", text.as_slice()].concat()
+}
+
+pub fn overloaded_two_numbers(a: f64, b: f64) -> Vec<u8> {
+    format!("two numbers {a} {b}").into_bytes()
+}
+
+pub fn overloaded_number(number: f64) -> Vec<u8> {
+    format!("number {number}").into_bytes()
+}
+
+pub fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
+    format!("list {:?}", list.into_boxed_slice()).into_bytes()
+}
+
+pub fn overloaded_counter<'a>(cx: &mut JsCall<'a>, counter: JsWrapper<'a, TestCounter>) -> Vec<u8> {
+    let count = counter.with(&cx.payloads, |counter| counter.count);
+    format!("counter {count}").into_bytes()
 }
 
 pub fn sum_array(numbers: Vec<i32>) -> f64 {

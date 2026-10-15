@@ -96,9 +96,26 @@ implements `bindgen::IntoError` (`bun_sys::Error` and `JsError` do), which lets 
 
 ### Overloads
 
-`b.overloads(a, b, ..)` is one JS function with several signatures, told apart by
-how many arguments were passed: the one with the most required arguments that
-the call satisfies. Each names its own Rust function.
+`b.overloads(a, b, ..)` is one JS function with several signatures. Each names its
+own Rust function, which gets exactly the types of that signature:
+
+```ts
+export const read = b.overloads(
+  { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
+  { args: { fd: b.i32, buffer: b.bufferSource, offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
+);
+```
+
+Use it when the type of one argument says what the others are. A union for each
+argument would accept combinations that mean nothing, and leave the body to sort them out.
+
+The candidates are the signatures that do not require more arguments than were
+passed. Then, argument by argument, those that take a value of its
+[kind](#unions-and-kinds) stay; a signature that has no such argument ignores it.
+If several are left when the arguments run out, or none takes the kind, the call goes
+to the one that requires the most arguments, then to the one written first, and its
+conversion reports what is wrong. Choosing converts nothing and runs no JavaScript. A
+signature that no call can reach is an error when the schema is loaded.
 
 ## Types
 
@@ -125,7 +142,7 @@ what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
 | `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
-| `b.union(alternatives)`                          | a generated `enum`               | the first alternative that fits                               |
+| `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
 | `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
@@ -209,6 +226,34 @@ export const Formatter = b.enumeration(["highlight-javascript", "highlight-javas
 generates `enum Formatter { HighlightJavascript, .. }`. An entry can be a list of
 spellings; the first is the one returned to JavaScript. Returning an enumeration
 allocates nothing after the first time.
+
+### Unions and kinds
+
+Where there is a choice, between the alternatives of a union or between overloads,
+it is made on the _kind_ of the value, with the cheapest test that tells the kinds
+in play apart:
+
+| Looking at                         | Kinds                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| the bits of the value              | `undefined`, `null`, boolean, number                                             |
+| the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
+| the cell's `ClassInfo`             | an instance of a class                                                           |
+
+A strict type takes the kinds in its row of the table above. A type that coerces or
+reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
+`.validateInteger`, `b.any`, an enumeration, a dictionary.
+
+**A value goes to the first alternative, in written order, that takes its kind.** That
+alternative then converts it, and reports what is wrong with it: `1.5` given to
+`b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
+The buffer types and `b.blob` refuse some values of their kinds (a shared buffer, a
+detached `Blob`); those go on to the next alternative that takes the kind. A value no
+alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
+
+So the order only matters between alternatives that overlap, and one that takes every
+kind goes last. An alternative that can never be chosen is an error when the schema is
+loaded. The generated C++ tests whether the value is a cell once, loads the type byte
+once, makes no test twice, and converts into the place the result ends up in.
 
 ### Buffers
 

@@ -4,10 +4,27 @@
 #include "Bindgen/ExternTraits.h"
 #include "Bindgen/IDLConvert.h"
 #include "ErrorCode.h"
+#include "JSDOMWrapper.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/Lookup.h>
+
+namespace Bun::Bindgen {
+template<typename Traits> class JSBindgenObject;
+}
+
+// Reads the cell and nothing else: one of JSDOMWrapperType is a JSDestructibleObject, which holds its ClassInfo.
+template<typename Traits>
+struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSBindgenObject<Traits>> {
+    static constexpr std::optional<JSTypeRange> typeRange { std::nullopt };
+    template<typename From>
+    static inline bool inherits(From* from)
+    {
+        return from->type() == static_cast<JSType>(WebCore::JSDOMWrapperType)
+            && static_cast<const JSDestructibleObject*>(static_cast<const JSCell*>(from))->classInfo() == Bun::Bindgen::JSBindgenObject<Traits>::info();
+    }
+};
 
 namespace Bun::Bindgen {
 
@@ -57,7 +74,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
     }
 
     // The payload is uninitialized: the caller writes it before anything else can run.

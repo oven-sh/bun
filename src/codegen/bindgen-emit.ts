@@ -9,14 +9,16 @@ import {
   EnumType,
   type FunctionDefinition,
   type Getter,
+  type Kind,
   type Method,
   type ModuleDefinition,
   NamedType,
   OptionalType,
   type Origin,
+  type OverloadChoice,
   rustIdent,
   type RustScope,
-  type Signature,
+  Signature,
   snakeCase,
   type Type,
   UnionType,
@@ -141,6 +143,73 @@ const externType = (type: Type): string =>
     ? `::Bun::Bindgen::ExternWithValue<${externType(type.inner)}>`
     : `::Bun::Bindgen::ExternTraits<${implementationType(type)}>::ExternType`;
 
+/** True of a value that is not a cell. */
+const valueTests: Partial<Record<string, (value: string) => string>> = {
+  undefined: value => `${value}.isUndefined()`,
+  null: value => `${value}.isNull()`,
+  boolean: value => `${value}.isBoolean()`,
+  number: value => `${value}.isNumber()`,
+  bigint: value => `::Bun::Bindgen::isBigInt32(${value})`,
+};
+/** True of `cell`, whose type byte is `type`. */
+const cellTests: Partial<Record<string, string>> = {
+  bigint: "type == JSC::HeapBigIntType",
+  string: "type == JSC::StringType",
+  stringObject: "type == JSC::StringObjectType || type == JSC::DerivedStringObjectType",
+  array: "type == JSC::ArrayType || type == JSC::DerivedArrayType",
+  arrayBuffer: "type == JSC::ArrayBufferType",
+  arrayBufferView: "JSC::isTypedArrayTypeIncludingDataView(type)",
+};
+
+/**
+ * C++ that declares `choice`, an index into the `choices` it returns: the distinct values of `byKind`. One test of whether
+ * `value` is a cell, then the cheaper tests first, none twice, none that can run JavaScript, and none for a kind that is
+ * treated as "other" is.
+ */
+function cppChooseByKind<T>(value: string, byKind: ReadonlyMap<Kind | "other", T>, key: (choice: T) => string) {
+  const choices: T[] = [];
+  const indexOf = (choice: T) => {
+    const index = choices.findIndex(other => key(other) === key(choice));
+    return index >= 0 ? index : choices.push(choice) - 1;
+  };
+  const other = indexOf(byKind.get("other")!);
+  const ofValue = new Map<number, string[]>();
+  const ofType = new Map<number, string[]>();
+  const ofClass = new Map<number, string[]>();
+  const add = (tests: Map<number, string[]>, index: number, test: string | undefined) => {
+    if (test !== undefined && index !== other) tests.set(index, [...(tests.get(index) ?? []), test]);
+  };
+  for (const [kind, choice] of byKind) {
+    if (kind === "other") continue;
+    const index = indexOf(choice);
+    if (typeof kind === "object") {
+      add(ofClass, index, `JSC::JSCastingHelpers::inherits<${kind.cpp}>(cell)`);
+    } else {
+      add(ofValue, index, valueTests[kind]?.(value));
+      add(ofType, index, cellTests[kind]);
+    }
+  }
+  const chain = (...tests: Map<number, string[]>[]) =>
+    tests
+      .flatMap(map => [...map])
+      .map(([index, conditions]) => {
+        const nullish = [`${value}.isUndefined()`, `${value}.isNull()`];
+        const merged = nullish.every(test => conditions.includes(test))
+          ? [`${value}.isUndefinedOrNull()`, ...conditions.filter(test => !nullish.includes(test))]
+          : conditions;
+        return `if (${merged.join(" || ")})\n    choice = ${index};`;
+      })
+      .join("\nelse ");
+  const cell = `${ofClass.size > 0 ? "auto* cell" : "JSC::JSType type"} = ${value}.asCell()${ofClass.size > 0 ? "" : "->type()"};
+${ofClass.size > 0 && ofType.size > 0 ? "JSC::JSType type = cell->type();\n" : ""}${chain(ofType, ofClass)}`;
+  const hasCellTests = ofType.size + ofClass.size > 0;
+  let tree = "";
+  if (hasCellTests && ofValue.size > 0) tree = `if (${value}.isCell()) {\n${indent(cell, 4)}\n} else ${chain(ofValue)}`;
+  else if (hasCellTests) tree = `if (${value}.isCell()) {\n${indent(cell, 4)}\n}`;
+  else if (ofValue.size > 0) tree = chain(ofValue);
+  return { choices, code: `unsigned choice = ${other};${tree && "\n"}${tree}` };
+}
+
 function layoutAssert(cppType: string, type: Type): string {
   const { size, align } = type.layout();
   return `static_assert(sizeof(${cppType}) == ${size} && alignof(${cppType}) == ${align});`;
@@ -150,6 +219,62 @@ function humanReadableEnum(type: EnumType): string {
   const quoted = type.spellings.map(([canonical]) => `\\"${canonical}\\"`);
   if (quoted.length <= 2) return quoted.join(" or ");
   return `${quoted.slice(0, -1).join(", ")}, or ${quoted.at(-1)}`;
+}
+
+function cppHeaderForUnion(type: UnionType): string {
+  const { name, alternatives } = type;
+  const idlTypes = alternatives.map(a => a.type.idlType).join(", ");
+  const { choices, code } = cppChooseByKind("value", type.alternativesByKind, choice => choice.join());
+  const cases = choices.map((choice, index) => {
+    if (choice.length === 0) return "";
+    const attempts = choice.map(i => {
+      const alternative = alternatives[i].type;
+      const slot = `result.template emplace<${i}>`;
+      if (alternative.kinds !== "any" && alternative.refusesSomeOfItsKinds)
+        return `if (auto converted = ::Bun::tryConvertIDL<${alternative.idlType}>(lexicalGlobalObject, value, ctx)) {
+    ${slot}(::std::move(*converted));
+    return;
+}`;
+      const convert = alternative.convertsInPlace
+        ? alternative.cppConvertInto(`${slot}()`, "value", "ctx", "")
+        : `${slot}(::Bun::convertIDL<${alternative.idlType}>(lexicalGlobalObject, value, ctx));`;
+      return `scope.release();\n${convert}\nreturn;`;
+    });
+    const refused = attempts.at(-1)!.endsWith("return;") ? "" : "\n    break;";
+    return `case ${index}: {\n${indent(attempts.join("\n"), 4)}${refused}\n}`;
+  });
+  const canMatchNothing = cases.some(text => text.length === 0 || text.endsWith("break;\n}"));
+  return `
+namespace Bun {
+namespace Bindgen::Generated {
+struct IDL${name} : ::Bun::IDLOrderedUnion<${idlTypes}> {};
+using ${name} = IDL${name}::ImplementationType;
+${layoutAssert(`ExternTraits<${name}>::ExternType`, type)}
+}
+template<> struct IDLHumanReadableName<Bindgen::Generated::IDL${name}> : IDLHumanReadableName<::Bun::IDLOrderedUnion<${idlTypes}>> {};
+}
+template<> struct WebCore::Converter<${type.idlType}> : ::Bun::DefaultContextConverter<${type.idlType}> {
+    template<::Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        ReturnType result;
+        convertInto(globalObject, value, ctx, result);
+        return result;
+    }
+
+    template<::Bun::IDLConversionContext Ctx>
+    static void convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
+    {
+        [[maybe_unused]] auto* globalObject = &lexicalGlobalObject;
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+${indent(code, 8)}
+        switch (choice) {
+${indent(cases.filter(text => text.length > 0).join("\n"), 8)}
+        }${canMatchNothing ? `\n        ctx.template throwNoMatchInUnion<${idlTypes}>(lexicalGlobalObject, scope);` : ""}
+    }
+};
+`;
 }
 
 function cppHeaderForType(type: NamedType): string {
@@ -174,14 +299,7 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumerationFromString<${type
 template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue);
 `;
   }
-  if (type instanceof UnionType) {
-    return `
-namespace Bun::Bindgen::Generated {
-using ${name} = ${implementationType(type)};
-${layoutAssert(`ExternTraits<${name}>::ExternType`, type)}
-}
-`;
-  }
+  if (type instanceof UnionType) return cppHeaderForUnion(type);
   assert(type instanceof DictionaryType);
   if (!type.accepted) return "";
   return `
@@ -195,6 +313,7 @@ struct Extern${name} {
 ${type.members.map(member => `    ${externType(member.type)} ${member.internalName};`).join("\n")}
 };
 ${layoutAssert(`Extern${name}`, type)}
+void convert${name}(JSC::JSGlobalObject&, JSC::JSValue, ${name}& result);
 }
 template<> struct ExternTraits<Generated::${name}> {
     using ExternType = Generated::Extern${name};
@@ -276,27 +395,27 @@ function cppSourceForDictionary(type: DictionaryType): string {
   let nameIndex = 0;
   const members = type.members.map((member, i) => {
     const reads = member.names.map((_, alt) => {
-      const read = `value${i} = members.get(${nameIndex++});\n        RETURN_IF_EXCEPTION(scope, {});`;
+      const read = `value${i} = members.get(${nameIndex++});\n        RETURN_IF_EXCEPTION(scope, void());`;
       return alt === 0
         ? read
         : `if (value${i}.isUndefined()) {\n            ${read.replace("\n", "\n    ")}\n        }`;
     });
     const qualified = `${type.userFacingName}.${member.name}`;
-    const convert = `result.${member.internalName} = ${member.type.cppConvert(`value${i}`, `ctx${i}`, qualified)};\n        RETURN_IF_EXCEPTION(scope, {});`;
+    const convert = `${indent(member.type.cppConvertInto(`result.${member.internalName}`, `value${i}`, `ctx${i}`, qualified), 8).trimStart()}\n        RETURN_IF_EXCEPTION(scope, void());`;
     let body: string;
     if (member.type instanceof DefaultType) {
       const absent = member.type.onNull ? "isUndefinedOrNull" : "isUndefined";
       body = `if (value${i}.${absent}()) {
             result.${member.internalName} = ${member.type.toCpp(member.type.value)};
         } else {
-            ${convert.replace("\n", "\n    ")}
+            ${convert.replaceAll("\n", "\n    ")}
         }`;
     } else if (member.type.permitsUndefined) {
       body = convert;
     } else {
       body = `if (value${i}.isUndefined()) [[unlikely]] {
             ctx${i}.throwRequired(lexicalGlobalObject, scope);
-            return {};
+            return;
         }
         ${convert}`;
     }
@@ -309,7 +428,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
   });
   const count = type.names.length;
   return `
-template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+void Bun::Bindgen::Generated::convert${type.name}(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ${type.cpp}& result)
 {
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
@@ -318,26 +437,33 @@ template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObje
     auto* object = value.getObject();
 ${
   type.allowNonObject
-    ? `    if (!object || object->isCallable())
-        return ${type.toCpp({})};`
+    ? `    if (!object || object->isCallable()) {
+        result = ${type.toCpp({})};
+        return;
+    }`
     : `    if (!object) [[unlikely]] {
         ctx.throwNotObject(lexicalGlobalObject, scope);
-        return {};
+        return;
     }`
 }
 ${
   type.allowArray
     ? ""
     : `    bool isArray = JSC::isArray(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, void());
     if (isArray) [[unlikely]] {
         ctx.throwNotObject(lexicalGlobalObject, scope);
-        return {};
+        return;
     }
 `
 }    ::Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
-    ${type.cpp} result;
 ${members.join("\n")}
+}
+
+template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    ${type.cpp} result;
+    ::Bun::Bindgen::Generated::convert${type.name}(globalObject, value, result);
     return result;
 }
 ${
@@ -347,7 +473,8 @@ extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto converted = WebCore::convertDictionary<${type.cpp}>(*globalObject, JSC::JSValue::decode(value));
+    ${type.cpp} converted;
+    ::Bun::Bindgen::Generated::convert${type.name}(*globalObject, JSC::JSValue::decode(value), converted);
     RETURN_IF_EXCEPTION(scope, false);
     *result = ::Bun::Bindgen::ExternTraits<${type.cpp}>::convertToExtern(::std::move(converted));
     return true;
@@ -357,12 +484,31 @@ extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalOb
 }`;
 }
 
-/** Told apart by argument count, so named by it. */
 const overloadSuffix = (fn: FunctionDefinition, signature: Signature) =>
-  fn.signatures.length > 1 ? `With${signature.args.length}Arguments` : "";
+  fn.signatures.length > 1 ? `${fn.signatures.indexOf(signature) + 1}` : "";
 
 const thunkSymbol = (fn: FunctionDefinition, signature: Signature) =>
   `Bun__Bindgen__${fn.origin!.namespace}__${fn.name.replace(/^_+/, "")}${overloadSuffix(fn, signature)}`;
+
+/** Lines that declare `variable` as what `value` converts to. */
+function cppDeclareConverted(type: Type, variable: string, value: string, ctx: string, name: string): string[] {
+  const declaration = `${implementationType(type)} ${variable}`;
+  const absent = type instanceof DefaultType && `${value}.${type.onNull ? "isUndefinedOrNull" : "isUndefined"}()`;
+  if (!type.convertsInPlace) {
+    const convert = type.cppConvert(value, ctx, name);
+    return [`${declaration} = ${absent ? `${absent} ? ${type.toCpp(type.value)} : ${convert}` : convert};`];
+  }
+  const into = type.cppConvertInto(variable, value, ctx, name).split("\n");
+  if (!absent) return [`${declaration};`, ...into];
+  return [
+    `${declaration};`,
+    `if (${absent})`,
+    `    ${variable} = ${type.toCpp(type.value)};`,
+    "else {",
+    ...into.map(line => `    ${line}`),
+    "}",
+  ];
+}
 
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
 function cppCallBody(signature: Signature, symbol: string, leading: readonly string[] = []): string {
@@ -380,14 +526,7 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
     // Converting a later argument can run JavaScript that detaches or resizes the buffer.
     if (type.borrowsHeap && i < signature.args.length - 1)
       rereads.push(`value${i} = ${convert};`, `scope.assertNoException();`);
-    if (type instanceof DefaultType) {
-      const absent = type.onNull ? "isUndefinedOrNull" : "isUndefined";
-      lines.push(
-        `${implementationType(type)} value${i} = argument${i}.value().${absent}() ? ${type.toCpp(type.value)} : ${convert};`,
-      );
-    } else {
-      lines.push(`${implementationType(type)} value${i} = ${convert};`);
-    }
+    lines.push(...cppDeclareConverted(type, `value${i}`, `argument${i}.value()`, `ctx${i}`, name));
     lines.push(`RETURN_IF_EXCEPTION(scope, {});`);
   });
   lines.push(...rereads);
@@ -517,7 +656,7 @@ ${cppPrologue}
     ::JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
     ::JSC::EnsureStillAliveScope ensureValueStillAlive { JSC::JSValue::decode(encodedValue) };
     [[maybe_unused]] auto ctx = ::Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(`${type.name}.${getter.name}`)} };
-    ${implementationType(getter.type)} value = ${getter.type.cppConvert("ensureValueStillAlive.value()", "ctx", getter.name)};
+    ${cppDeclareConverted(getter.type, "value", "ensureValueStillAlive.value()", "ctx", getter.name).join("\n    ")}
     RETURN_IF_EXCEPTION(scope, false);
     RELEASE_AND_RETURN(scope, ${setSymbol}(globalObject, thisObject, ::Bun::Bindgen::ExternTraits<${implementationType(getter.type)}>::convertToExtern(::std::move(value))));
 }
@@ -646,11 +785,23 @@ ${cppPrologue}
 ${cppCallBody(signature, thunkSymbol(fn, signature))}
 }`,
     );
-    const dispatch = fn.signatures.map((signature, index) =>
-      index === fn.signatures.length - 1
-        ? `    RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, signature)}(globalObject, callFrame));`
-        : `    if (callFrame->argumentCount() >= ${signature.requiredCount})
-        RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, signature)}(globalObject, callFrame));`,
+    const ids = new Map<OverloadChoice, number>();
+    const choose = (choice: OverloadChoice): string => {
+      if (choice instanceof Signature)
+        return `RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, choice)}(globalObject, callFrame));`;
+      const { choices, code } = cppChooseByKind(`argument${choice.argument}`, choice.byKind, next =>
+        String(ids.get(next) ?? ids.set(next, ids.size).size - 1),
+      );
+      return `JSC::JSValue argument${choice.argument} = callFrame->argument(${choice.argument});
+${code}
+switch (choice) {
+${choices.map((next, index) => `${index === choices.length - 1 ? "default" : `case ${index}`}: {\n${indent(choose(next), 4)}\n}`).join("\n")}
+}`;
+    };
+    const dispatch = fn.choices.map(({ atLeast, choice }, index) =>
+      index === fn.choices.length - 1
+        ? indent(choose(choice), 4)
+        : `    if (callFrame->argumentCount() >= ${atLeast}) {\n${indent(choose(choice), 8)}\n    }`,
     );
     definition = `${overloads.join("\n")}
 JSC_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

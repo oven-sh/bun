@@ -128,3 +128,45 @@ export const TestToken = b.class({
   },
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
+
+/** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
+export const TestAnything = b.union({
+  nothing: b.null,
+  flag: b.bool,
+  integer: b.i32,
+  text: b.string,
+  bytes: b.bufferSource.arrayBuffer,
+  blob: b.blob,
+  counter: TestCounter,
+  token: TestToken,
+  list: b.array(b.f64),
+  options: TestOptions,
+});
+export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8, capability: "js" });
+
+/** Told apart by the number of arguments, by the first and by the second. */
+export const overloaded = b.overloads(
+  {
+    args: { text: b.string.utf8, times: b.u32.default(1) },
+    returns: b.string.utf8,
+    rustPath: "crate::bindgen_test::overloaded_text_times",
+  },
+  {
+    args: { text: b.string.utf8, upper: b.bool },
+    returns: b.string.utf8,
+    rustPath: "crate::bindgen_test::overloaded_text_upper",
+  },
+  {
+    args: { a: b.f64, b: b.f64 },
+    returns: b.string.utf8,
+    rustPath: "crate::bindgen_test::overloaded_two_numbers",
+  },
+  { args: { number: b.f64 }, returns: b.string.utf8, rustPath: "crate::bindgen_test::overloaded_number" },
+  { args: { list: b.array(b.f64) }, returns: b.string.utf8, rustPath: "crate::bindgen_test::overloaded_list" },
+  {
+    args: { counter: TestCounter },
+    returns: b.string.utf8,
+    capability: "js",
+    rustPath: "crate::bindgen_test::overloaded_counter",
+  },
+);

@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import * as b from "../../src/codegen/bindgen-lib.ts";
 
 // bindgen_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
 const bindgen = bindings ?? ({} as NonNullable<typeof bindings>);
@@ -478,6 +479,138 @@ describe("unions", () => {
     }
     expect(() => bindgen.describeValue(["not a number"])).toThrow(TypeError);
   });
+
+  it("sends each kind of value to the alternative that takes it", () => {
+    const { TestCounter } = bindgen as any;
+    class SubCounter extends TestCounter {}
+    class SubArray extends Array {}
+    const cases: [unknown, string][] = [
+      [undefined, "nothing"],
+      [null, "nothing"],
+      [false, "flag false"],
+      [5, "integer 5"],
+      [-0, "integer 0"],
+      [7n, "integer 7"],
+      ["", "text "],
+      ["téxt", "text téxt"],
+      [new ArrayBuffer(3), "bytes 3"],
+      [new Uint8Array(4), "bytes 4"],
+      [new Float64Array(2), "bytes 16"],
+      [new DataView(new ArrayBuffer(5)), "bytes 5"],
+      [Buffer.alloc(6).buffer.slice(0, 6), "bytes 6"],
+      [new Blob(["x"]), "blob"],
+      [Bun.file("/nonexistent"), "blob"],
+      [new TestCounter(3), "counter 3"],
+      [new SubCounter(4), "counter 4"],
+      [bindgen.makeToken(9), "token 9"],
+      [[], "list []"],
+      [[1, 2.5], "list [1.0, 2.5]"],
+      [SubArray.of(1), "list [1.0]"],
+      [{ count: 8 }, "options 8"],
+    ];
+    for (const [value, expected] of cases) expect(bindgen.describeAnything(value)).toBe(expected);
+  });
+
+  it("the last alternative gets what no other takes, and what another refuses", () => {
+    const shared = new SharedArrayBuffer(2);
+    for (const value of [
+      shared,
+      new Uint8Array(shared),
+      new String("boxed"),
+      new Number(1),
+      function () {},
+      new Date(0),
+      new Map(),
+      new Bun.Glob("x"),
+      new URL("http://localhost/"),
+      new Proxy({}, {}),
+    ]) {
+      expect(bindgen.describeAnything(value)).toBe("options 1");
+    }
+    for (const value of [Symbol("s"), new Proxy([], {})]) {
+      expect(() => bindgen.describeAnything(value)).toThrow("TestOptions must be an object");
+    }
+  });
+
+  it("the alternative that was chosen reports what is wrong with the value", () => {
+    expect(() => bindgen.describeAnything(1.5)).toThrow("value must be an integer (received 1.5)");
+    expect(() => bindgen.describeAnything(2n ** 40n)).toThrow(RangeError);
+    expect(() => bindgen.describeAnything([1, "x"])).toThrow("element of value must be a number");
+    expect(() => bindgen.describeAnything({ count: "x" })).toThrow("TestOptions.count must be a number");
+  });
+
+  it("choosing runs no JavaScript", () => {
+    const calls: string[] = [];
+    const trap =
+      (name: string) =>
+      (...args: unknown[]) => (calls.push(name), (Reflect as any)[name](...args));
+    const handler = Object.fromEntries(Reflect.ownKeys(Reflect).map(name => [name, trap(name as string)]));
+    expect(() => bindgen.describeValue(new Proxy({}, handler))).toThrow("value must be of type");
+    expect(() =>
+      bindgen.describeValue({ toString: () => calls.push("toString"), valueOf: () => calls.push("valueOf") }),
+    ).toThrow("value must be of type");
+    expect(calls).toEqual([]);
+  });
+
+  itAlways("an alternative that cannot be chosen is an error in the schema", () => {
+    expect(() => b.union({ anything: b.any, text: b.string })).toThrow("text is never chosen");
+    expect(() => b.union({ text: b.string.loose, flag: b.bool })).toThrow("flag is never chosen");
+    expect(() => b.union({ text: b.string.utf8, other: b.string })).toThrow("other is never chosen");
+    expect(() => b.union({ integer: b.i32, number: b.f64 })).toThrow("number is never chosen");
+    expect(() => b.union({ none: b.null, inner: b.union({ text: b.string }) })).toThrow("list the alternatives");
+    expect(() => b.union({ text: b.string.nullable, flag: b.bool })).toThrow("add b.null as an alternative");
+    // What one refuses, the next can take.
+    b.union({ bytes: b.bufferSource, reference: b.bufferSource.arrayBuffer });
+    b.union({ text: b.string, boxed: b.string.utf8 });
+  });
+});
+
+describe("overloads", () => {
+  it("are told apart by the number of arguments and by their kinds", () => {
+    const { TestCounter } = bindgen as any;
+    const cases: [unknown[], string][] = [
+      [["ab"], "text times ab"],
+      [["ab", 2], "text times abab"],
+      [["ab", 2n], "text times abab"],
+      [["ab", undefined], "text times ab"],
+      [["ab", true], "text upper AB"],
+      [[new String("ab"), false], "text upper ab"],
+      [[1], "number 1"],
+      [[1, 2], "two numbers 1 2"],
+      [[1, 2, 3], "two numbers 1 2"],
+      [[[1]], "list [1.0]"],
+      [[new TestCounter(6)], "counter 6"],
+    ];
+    for (const [args, expected] of cases) expect(bindgen.overloaded(...args)).toBe(expected);
+    expect(bindgen.overloaded.length).toBe(1);
+  });
+
+  it("a signature ignores the arguments it does not have", () => {
+    expect(bindgen.overloaded(1, "x")).toBe("number 1");
+    expect(bindgen.overloaded([1], 5)).toBe("list [1.0]");
+  });
+
+  it("what fits none is reported by the one that requires the most arguments", () => {
+    expect(() => bindgen.overloaded()).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+    expect(() => bindgen.overloaded({})).toThrow("text must be a string");
+    expect(() => bindgen.overloaded(null, 1)).toThrow("text must be a string");
+    expect(() => bindgen.overloaded("ab", "x")).toThrow("upper must be a boolean");
+  });
+
+  itAlways("a signature that cannot be chosen is an error in the schema", () => {
+    expect(() => b.overloads({ args: { a: b.string } }, { args: { b: b.string } })).toThrow(
+      "overload 2 is never chosen",
+    );
+    expect(() => b.overloads({ args: { a: b.string.loose } }, { args: { b: b.bool } })).toThrow(
+      "overload 2 is never chosen",
+    );
+    expect(() => b.overloads({ args: { a: b.i32, b: b.bool } }, { args: { a: b.f64, b: b.bool } })).toThrow(
+      "overload 2 is never chosen",
+    );
+    b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } });
+    b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
+    b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });
+  });
 });
 
 describe("arrays", () => {
@@ -696,6 +829,11 @@ describe("classes", () => {
       TestCounter.prototype,
       Object.create(new TestCounter()),
       new Bun.Glob("*"),
+      bindgen.makeToken(1),
+      new Blob([]),
+      new URL("http://localhost/"),
+      new Headers(),
+      10n ** 30n,
     ]) {
       expect(() => increment.call(receiver)).toThrow(TypeError);
       expect(() => count.call(receiver)).toThrow(TypeError);

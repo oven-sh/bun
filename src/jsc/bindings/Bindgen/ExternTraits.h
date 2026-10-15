@@ -68,12 +68,7 @@ struct ExternVariant {
 
     static_assert(sizeof...(Args) > 0);
     static_assert(sizeof...(Args) - 1 <= std::numeric_limits<std::uint8_t>::max());
-
-    explicit ExternVariant(std::variant<Args...>&& variant)
-        : data(std::move(variant))
-        , tag(static_cast<std::uint8_t>(variant.index()))
-    {
-    }
+    static_assert(std::is_trivially_copyable_v<ExternUnion<Args...>>);
 };
 
 template<typename... Args>
@@ -82,12 +77,12 @@ struct ExternTraits<std::variant<Args...>> {
 
     static ExternType convertToExtern(std::variant<Args...>&& cppValue)
     {
-        using VariantOfExtern = std::variant<typename ExternTraits<Args>::ExternType...>;
-        return ExternType { std::visit([](auto&& arg) -> VariantOfExtern {
-            using ArgType = std::decay_t<decltype(arg)>;
-            return { ExternTraits<ArgType>::convertToExtern(std::move(arg)) };
-        },
-            std::move(cppValue)) };
+        ExternType result;
+        result.tag = static_cast<std::uint8_t>(cppValue.index());
+        [&]<std::size_t... indices>(std::index_sequence<indices...>) {
+            static_cast<void>(((cppValue.index() == indices && (result.data.template set<indices>(ExternTraits<Args>::convertToExtern(std::move(*std::get_if<indices>(&cppValue)))), true)) || ...));
+        }(std::index_sequence_for<Args...> {});
+        return result;
     }
 };
 
@@ -97,11 +92,13 @@ struct ExternTraits<std::optional<T>> {
 
     static ExternType convertToExtern(std::optional<T>&& cppValue)
     {
-        using StdVariant = std::variant<ExternNullPtr, typename ExternTraits<T>::ExternType>;
-        if (!cppValue) {
-            return ExternType { StdVariant { ExternNullPtr {} } };
-        }
-        return ExternType { StdVariant { ExternTraits<T>::convertToExtern(std::move(*cppValue)) } };
+        ExternType result;
+        result.tag = cppValue.has_value();
+        if (cppValue)
+            result.data.template set<1>(ExternTraits<T>::convertToExtern(std::move(*cppValue)));
+        else
+            result.data.template set<0>(ExternNullPtr {});
+        return result;
     }
 };
 

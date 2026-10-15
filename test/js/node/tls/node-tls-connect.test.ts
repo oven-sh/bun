@@ -8,6 +8,7 @@ import {
   bunRun,
   tls as COMMON_CERT_,
   isASAN,
+  isLinux,
   isWindows,
   nodeExe,
   rejectUnauthorizedScope,
@@ -4336,6 +4337,95 @@ describe.each([
   it.skipIf(!exe)("closes the wrapped accepted socket when destroyed in the same tick", async () => {
     expect(await run("server-sync")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
   });
+});
+
+// A net.Socket has a write in flight, and one queued behind it, when a TLS socket wraps
+// it. The peer resets. The TLS socket reports the reset, and the socket it wraps closes
+// with nothing to report, but each of its two write callbacks still runs once.
+// The fixture runs on both runtimes so the expected report is pinned to node.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("a peer reset with a write in flight on the socket that a TLS socket wraps (%s)", (_runtime, exe) => {
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const { SIDE, TLS_KEY, TLS_CERT } = process.env;
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    const calls = { write: 0, queued: 0 };
+    let client, accepted, ready = 0, closed = 0;
+    // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path.
+    const onReady = () => ++ready === 2 && setImmediate(run);
+    // The report follows the 'close' of both sockets, at the check phase.
+    const onClose = () => {
+      if (++closed < 2) return;
+      setImmediate(() => {
+        events.push("calls " + JSON.stringify(calls));
+        console.log(JSON.stringify(events));
+        server.close();
+      });
+    };
+    const server = net.createServer(socket => {
+      accepted = socket;
+      onReady();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1", onReady);
+    });
+    function run() {
+      const [raw, peer] = SIDE === "client" ? [client, accepted] : [accepted, client];
+      peer.on("error", () => {});
+      peer.pause();
+      // Write until the kernel stops taking the bytes, so one write is in flight.
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && raw.writableLength === 0) {
+        const nth = ++writes;
+        raw.write(chunk, () => {
+          if (nth === writes) calls.write++;
+        });
+      }
+      if (raw.writableLength === 0) {
+        console.error("no write stayed in flight");
+        process.exit(1);
+      }
+      raw.write("b", () => calls.queued++);
+      const secure =
+        SIDE === "client"
+          ? tls.connect({ socket: raw, rejectUnauthorized: false })
+          : new tls.TLSSocket(raw, { isServer: true, key: TLS_KEY, cert: TLS_CERT });
+      secure.on("error", err => events.push("tls error " + shape(err)));
+      secure.on("close", hadError => {
+        events.push("tls close " + hadError);
+        onClose();
+      });
+      raw.on("close", hadError => {
+        events.push("raw close " + hadError);
+        onClose();
+      });
+      peer.resetAndDestroy();
+    }
+  `;
+
+  // Linux only: there a loopback RST reaches the socket as a read error (see the teardown tests in node-net.test.ts).
+  it.concurrent.skipIf(!exe || !isLinux).each(["client", "server"])(
+    "calls both write callbacks of the wrapped %s socket once",
+    async SIDE => {
+      await using proc = Bun.spawn({
+        cmd: [exe!, "-e", fixture],
+        env: { ...bunEnv, SIDE, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+        events: ["tls error ECONNRESET read", "raw close false", "tls close true", 'calls {"write":1,"queued":1}'],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // The peer accepts the TCP connection and never answers the ClientHello (a dead

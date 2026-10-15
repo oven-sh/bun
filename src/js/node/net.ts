@@ -1060,7 +1060,11 @@ function SocketEmitEndNT(self, _err?) {
   const writeInFlight = self[kwriteCallback] != null && self[kRejectedWrite] === undefined;
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && (hasErrorListener || writeInFlight)) {
     // Its TLS socket reports the error. The handle is gone, so this socket closes with nothing to report.
-    if (self.emit(kReadError, _err)) return void self.destroy();
+    if (self.emit(kReadError, _err)) {
+      self.destroy();
+      cancelPendingWriteAfterClose(self);
+      return;
+    }
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -1779,7 +1783,11 @@ const SocketHandlers2 = {
       (hasErrorListener || self[kwriteCallback])
     ) {
       // See SocketEmitEndNT.
-      if (self.emit(kReadError, err)) return void self.destroy();
+      if (self.emit(kReadError, err)) {
+        self.destroy();
+        cancelPendingWriteAfterClose(self);
+        return;
+      }
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       if (hasErrorListener) self.once("error", () => {});

@@ -58,11 +58,9 @@ void EventListenerAbortAlgorithm::run()
     RefPtr target = m_target.get();
     if (!target)
         return;
-    // Copies: removeEventListener() still uses its arguments after it has freed m_listener.
+    // A copy: removeEventListener() reads its eventType after it has freed the listener, and this with it.
     auto eventType = m_eventType;
-    Ref callback = m_listener.callback();
-    bool capture = m_listener.useCapture();
-    target->removeEventListener(eventType, callback, capture);
+    target->removeEventListener(eventType, m_listener.callback(), m_listener.useCapture());
 }
 
 RegisteredEventListener::~RegisteredEventListener() = default;

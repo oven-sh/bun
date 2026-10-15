@@ -25,39 +25,59 @@
 #include "RegisteredEventListener.h"
 
 #include "AbortSignal.h"
+#include "EventTarget.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventListenerAbortAlgorithm);
+
+EventListenerAbortAlgorithm::EventListenerAbortAlgorithm(AbortSignal& signal, EventTarget& target, const AtomString& eventType, RegisteredEventListener& listener)
+    : m_signal(signal)
+    , m_target(target)
+    , m_eventType(eventType)
+    , m_listener(listener)
+{
+    signal.addAlgorithm(*this);
+}
+
+EventListenerAbortAlgorithm::~EventListenerAbortAlgorithm()
+{
+    unlink();
+}
+
+void EventListenerAbortAlgorithm::unlink()
+{
+    if (isOnList())
+        m_signal.removeAlgorithm(*this);
+}
+
+void EventListenerAbortAlgorithm::run()
+{
+    ASSERT(!isOnList());
+    RefPtr target = m_target.get();
+    if (!target)
+        return;
+    // Copies: removeEventListener() still uses its arguments after it has freed m_listener.
+    auto eventType = m_eventType;
+    Ref callback = m_listener.callback();
+    bool capture = m_listener.useCapture();
+    target->removeEventListener(eventType, callback, capture);
+}
+
 RegisteredEventListener::~RegisteredEventListener() = default;
 
-void RegisteredEventListener::setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&& signal, uint32_t algorithmIdentifier)
+void RegisteredEventListener::removeOnAbort(AbortSignal& signal, EventTarget& target, const AtomString& eventType)
 {
-    m_abortSignal = WTF::move(signal);
-    m_abortAlgorithmIdentifier = algorithmIdentifier;
+    ASSERT(!m_abortAlgorithm);
+    m_abortAlgorithm = makeUnique<EventListenerAbortAlgorithm>(signal, target, eventType, *this);
 }
 
 void RegisteredEventListener::markAsRemoved()
 {
     m_wasRemoved = true;
-
-    // If this listener was registered with an AbortSignal, drop the
-    // corresponding abort algorithm so the signal's m_algorithms vector
-    // doesn't grow unboundedly when the same long-lived signal is reused
-    // across many addEventListener/removeEventListener cycles.
-    //
-    // Safe when reached via AbortSignal::runAbortSteps(): that path swaps
-    // out m_algorithms before iterating, so removeAlgorithm() is a no-op
-    // on the (now empty) vector.
-    //
-    // Safe when reached via ~EventTarget() for the self-signal case
-    // (signal.addEventListener(type, fn, { signal })): ~AbortSignal()
-    // invalidates WeakPtrs to itself before member destruction, so
-    // m_abortSignal.get() is null here and we never touch the signal
-    // mid-destruction.
-    if (RefPtr signal = m_abortSignal.get()) {
-        m_abortSignal = nullptr;
-        signal->removeAlgorithm(m_abortAlgorithmIdentifier);
-    }
+    if (m_abortAlgorithm)
+        m_abortAlgorithm->unlink();
 }
 
 } // namespace WebCore

@@ -4162,6 +4162,32 @@ test.concurrent("hoisted: bun update removes no copy while a workspace node_modu
   expect(exitCode).toBe(0);
 });
 
+// lerna and `npm link` put such a link there, and somebody who tries `a` against a packed `b` such a folder.
+test.concurrent.each(["a link to it", "a link to another checkout", "a folder"])(
+  "hoisted: bun update keeps what bun.lock never placed in a workspace under the name of another workspace: %s",
+  async kind => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "1.0.0" } },
+      packages: { a: { dependencies: { b: "workspace:*" } }, b: {} },
+    });
+    const mine = join(dir, "packages", "a", "node_modules", "b");
+    expect(existsSync(mine)).toBeFalse();
+    const target =
+      kind === "a folder" ? mine : kind === "a link to it" ? join(dir, "packages", "b") : join(dir, "other");
+    await write(join(target, "mine.txt"), "mine");
+    if (target !== mine) {
+      mkdirSync(join(mine, ".."), { recursive: true });
+      symlinkSync(target, mine, "junction");
+    }
+
+    const { stderr, exitCode } = await update(dir);
+    expect(stderr).not.toContain("error:");
+    expect(lstatSync(mine).isSymbolicLink()).toBe(target !== mine);
+    expect(await file(join(mine, "mine.txt")).text()).toBe("mine");
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("hoisted: bun install says so when a copy left a workspace node_modules that is a link", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "2.0.0" } },

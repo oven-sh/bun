@@ -828,6 +828,33 @@ test.concurrent("a workspace that the root no longer depends on is unlinked from
   expect(await readdirSorted(join(nodeModules, ".bin"))).toEqual([]);
 });
 
+test.concurrent.each(["isolated", "hoisted"] as const)(
+  "%s: the command of a workspace that is not built stays when another dependency leaves package.json",
+  async linker => {
+    const root = { name: "not-built", workspaces: ["packages/*"] };
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": JSON.stringify({ ...root, dependencies: { lib: "workspace:*", "what-bin": "1.0.0" } }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          bin: { "lib-cli": "dist/cli.js" },
+        }),
+        "packages/lib/dist/cli.js": "#!/usr/bin/env node\n",
+      },
+    });
+    const bins = join(packageDir, "node_modules", ".bin");
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(await readdirSorted(bins)).toHaveBins(["lib-cli", "what-bin"]);
+
+    await rm(join(packageDir, "packages", "lib", "dist"), { recursive: true });
+    await write(packageJson, JSON.stringify({ ...root, dependencies: { lib: "workspace:*" } }));
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect((await readdirSorted(bins)).filter(name => name.startsWith("lib-cli"))).toHaveBins(["lib-cli"]);
+  },
+);
+
 test.concurrent("the last dependency that left package.json is unlinked from node_modules", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },

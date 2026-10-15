@@ -1029,11 +1029,15 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
-    // `skipped`: something of an earlier install is still there.
+    let runs_root_scripts =
+        manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
+    // `skipped`: something of an earlier install is still there. The root's scripts lay what they
+    // like, and lay it again if they run after this.
     if install_summary.older_layout_can_differ
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
+        && (runs_root_scripts || manager.root_lifecycle_scripts.is_none())
     {
         crate::prune::remove_copies_of_the_older_layout(
             manager,
@@ -1053,7 +1057,7 @@ pub fn install_with_manager(
         write_yarn_lock_with_progress(manager, log_level)?;
     }
 
-    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
+    if runs_root_scripts {
         run_root_lifecycle_scripts(manager, ctx, log_level)?;
     }
 

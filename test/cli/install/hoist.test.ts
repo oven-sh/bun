@@ -1968,6 +1968,32 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
+  test("below a package, from the script of the project, where an older bun nested a copy", async () => {
+    const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the project" });
+    using server = await serveGraph({
+      m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+      n: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
+      b: { "1.0.0": {}, "2.0.0": {} },
+      other: { "1.0.0": {} },
+    });
+    using tmp = tempDir("hoist-project-script-older-place", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "root",
+        scripts: { postinstall: `${bunExe()} build.js` },
+        dependencies: { m: "1.0.0", n: "1.0.0" },
+        devDependencies: { b: "^2.0.0" },
+      }),
+      "build.js": `require("fs").rmSync("node_modules/n/node_modules/b", { recursive: true, force: true });
+        require("fs").mkdirSync("node_modules/n/node_modules/b", { recursive: true });
+        require("fs").writeFileSync("node_modules/n/node_modules/b/package.json", ${JSON.stringify(own)});`,
+    });
+    const dir = String(tmp);
+    await run(dir, "install", "--omit=dev");
+    await run(dir, "add", "other", "--omit=dev", "--ignore-scripts");
+    expect(await file(join(dir, "node_modules", "n", "node_modules", "b", "package.json")).text()).toBe(own);
+  });
+
   test("in a member's node_modules and below a package, by hand", async () => {
     using server = await serveGraph({
       d: { "1.0.0": {}, "2.0.0": {} },

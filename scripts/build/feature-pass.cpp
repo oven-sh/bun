@@ -32,7 +32,8 @@ cl::opt<std::string> islandOption("bun-island", cl::desc("The number of the isla
 // What goes with the island. Not all of it is in it.
 using Owned = SmallPtrSet<const GlobalObject*, 32>;
 
-// What the linker may replace by the copy of another unit is not this unit's alone: a C++ template, an inline function.
+// What the linker may replace by the copy of another unit is not this unit's alone: an inline variable, a table of virtual
+// functions and what is in it.
 bool isThisUnitsAlone(const GlobalObject& global)
 {
     return !global.isDeclaration() && !global.hasAvailableExternallyLinkage() && !global.isWeakForLinker()
@@ -128,9 +129,29 @@ struct IslandPass : PassInfoMixin<IslandPass> {
                 runBeforeMain.insert(cast<ConstantStruct>(entry)->getOperand(1)->stripPointerCasts());
         }
 
+        // An inline function or a template is in every unit that uses it, and the linker keeps one copy for all of them, by name.
+        // Which copy is called makes no difference, only which one an address is of. So one that is only called gets a
+        // name that it has in this island alone, and the island a copy of its own.
+        DenseMap<const Comdat*, unsigned> membersOf;
+        for (const GlobalObject& global : module.global_objects())
+            membersOf[global.getComdat()]++;
+        SmallPtrSet<const Function*, 32> ofTheIsland;
+        for (Function& function : module) {
+            const Comdat* comdat = function.getComdat();
+            bool isAlone = !comdat || membersOf[comdat] == 1;
+            if (!function.hasLinkOnceODRLinkage() || function.isDeclaration() || function.hasAddressTaken() || !isAlone)
+                continue;
+            function.setName(function.getName() + ".bun" + island);
+            if (comdat) {
+                function.setComdat(module.getOrInsertComdat(function.getName()));
+                function.getComdat()->setSelectionKind(comdat->getSelectionKind());
+            }
+            ofTheIsland.insert(&function);
+        }
+
         Owned owned;
         for (GlobalObject& global : module.global_objects()) {
-            if (isThisUnitsAlone(global) && !runBeforeMain.count(&global))
+            if ((isThisUnitsAlone(global) || ofTheIsland.count(dyn_cast<Function>(&global))) && !runBeforeMain.count(&global))
                 owned.insert(&global);
         }
         // What stays can use what only this unit can name: an inline function of a header calls a static one, and it may be

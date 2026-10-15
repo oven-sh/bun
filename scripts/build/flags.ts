@@ -1076,6 +1076,13 @@ export const linkerFlags: Flag[] = [
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
   },
   {
+    // feature-pass.cpp has a function be in an island by its section prefix, `.text$bun7.m`. LLVM gives one that is cold a
+    // prefix of its own when it generates code, `.text$unlikely`, whatever it had. With LTO that is in the linker.
+    flag: "/mllvm:-profile-guided-section-prefix=false",
+    when: c => c.windows,
+    desc: "Leave the section prefix of a cold function as it is",
+  },
+  {
     // lld-link's spelling of the symbol ordering file (the Linux entry below
     // explains it): one COMDAT leader name per line, laid out first in .text.
     // Every function is its own COMDAT here — /Gy for bun's C++ and for the

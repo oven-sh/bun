@@ -3,7 +3,7 @@
  *
  * That the islands of what was linked are islands (src/bun_core/feature.rs), so that one can be left out and the rest works:
  *
- * 1. Every function that an input of an island defines is in that island.
+ * 1. Every function that only inputs of an island define is in that island.
  * 2. Everything in an island was defined by an input of it. What the linker folds keeps its names, so a function of Bun's that
  *    was folded into one of an island shows here.
  * 3. Nothing names what can be gone while it stays. rustc sees to that between crates. Nothing does for a symbol that is
@@ -14,7 +14,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { parseSymbolMap, symbolMapFor } from "../orderfile/windows-symbols.ts";
 
 const [nm, readobj, manifest, executable, stamp] = process.argv.slice(2);
 if (
@@ -51,8 +52,6 @@ const islandOf = new Map(
 const line = /^(.*): +(?:[0-9a-f-]+ +)?([A-Za-z]) +(\S+)\s*$/;
 /** The islands whose inputs define a name, in whatever way. */
 const definers = new Map<string, Set<number>>();
-/** Those names that are functions and that the linker cannot replace by another's copy, which stay where they are (feature-pass.cpp). */
-const functions = new Set<string>();
 /** The input of an island that has the one definition of a name that others can use. */
 const definedBy = new Map<string, string>();
 const uses: [symbol: string, by: string][] = [];
@@ -72,19 +71,17 @@ for (let start = 0; start < paths.length; start += 100) {
     if (islands === undefined) definers.set(symbol, new Set([island]));
     else islands.add(island);
     if (island === 0) continue;
-    if (type === "T" || type === "t") functions.add(symbol);
     if ("TDRBS".includes(type)) definedBy.set(symbol, path);
   }
 }
 // Else the output is not what is parsed above, and nothing would be checked.
-if (uses.length === 0 || definedBy.size === 0 || functions.size === 0)
-  throw new Error(`nothing parsed from the output of ${nm}`);
+if (uses.length === 0 || definedBy.size === 0) throw new Error(`nothing parsed from the output of ${nm}`);
 
 /** LLVM makes `f.cold.1` and `f.llvm.123` of `f`. */
-function definersOf(symbol: string): [name: string, Set<number> | undefined] {
+function definersOf(symbol: string): Set<number> | undefined {
   for (let name = symbol; ; name = name.slice(0, name.lastIndexOf("."))) {
     const islands = definers.get(name);
-    if (islands !== undefined || !name.includes(".")) return [name, islands];
+    if (islands !== undefined || !name.includes(".")) return islands;
   }
 }
 
@@ -114,55 +111,71 @@ interface Stretch {
   end: number;
 }
 const stretches: Stretch[] = [];
+/** What is in `executable`. For Mach-O, nm says "t" only of what is in `__text`. */
+const symbols: [address: number, isCode: boolean, name: string][] = [];
 const sections = run(readobj, ["--sections", executable]);
-// A PE has no symbols, and its islands are not sections.
-const hasSymbols = !sections.some(text => text.startsWith("Format: COFF"));
-for (const [index, text] of sections.entries()) {
-  const match = /^ +Name: (?:\.bun_island_|__bun_)([xr])\.?(\d+) /.exec(text);
-  if (match === null) continue;
-  const field = (name: string) =>
-    Number(
-      sections
-        .slice(index, index + 12)
-        .find(it => it.trimStart().startsWith(`${name}: `))!
-        .split(": ")[1],
-    );
-  const start = field("Address");
-  stretches.push({ island: Number(match[2]), isCode: match[1] === "x", start, end: start + field("Size") });
+if (!sections.some(text => text.startsWith("Format: COFF"))) {
+  for (const [index, text] of sections.entries()) {
+    const match = /^ +Name: (?:\.bun_island_|__bun_)([xr])\.?(\d+) /.exec(text);
+    if (match === null) continue;
+    const field = (name: string) =>
+      Number(
+        sections
+          .slice(index, index + 12)
+          .find(it => it.trimStart().startsWith(`${name}: `))!
+          .split(": ")[1],
+      );
+    const start = field("Address");
+    stretches.push({ island: Number(match[2]), isCode: match[1] === "x", start, end: start + field("Size") });
+  }
+  for (const text of run(nm, [executable])) {
+    const match = /^([0-9a-f]+) +([A-Za-z]) +(\S+)$/.exec(text);
+    if (match !== null && !"aAU".includes(match[2]!)) {
+      symbols.push([parseInt(match[1]!, 16), "tT".includes(match[2]!), match[3]!]);
+    }
+  }
+} else if (existsSync(symbolMapFor(executable))) {
+  // A PE has no symbols, and its islands are not sections. The link lists what is in its code, where it writes maps at all.
+  const edges = new Map<string, number>();
+  for (const [address, name] of parseSymbolMap(readFileSync(symbolMapFor(executable), "utf8")).symbols) {
+    if (/^bun_island_\d+_code_/.test(name)) edges.set(name, address);
+    else symbols.push([address, true, name]);
+  }
+  for (const island of neededBy.keys()) {
+    const [start, end] = [edges.get(`bun_island_${island}_code_start`), edges.get(`bun_island_${island}_code_end`)];
+    if (start !== undefined && end !== undefined) stretches.push({ island, isCode: true, start, end });
+  }
 }
 
 let [functionsSeen, symbolsSeen] = [0, 0];
-if (hasSymbols) {
-  const [outside, foreign] = [new Set<string>(), new Set<string>()];
-  for (const text of run(nm, [executable])) {
-    const match = /^([0-9a-f]+) +([A-Za-z]) +(\S+)$/.exec(text);
-    if (match === null || "aAU".includes(match[2]!)) continue;
-    const [address, symbol] = [parseInt(match[1]!, 16), match[3]!];
-    const [name, islands] = definersOf(symbol);
-    const stretch = stretches.find(it => it.start <= address && address < it.end);
+const [outside, foreign] = [new Set<string>(), new Set<string>()];
+for (const [address, isCode, symbol] of symbols) {
+  const islands = definersOf(symbol);
+  const stretch = stretches.find(it => it.start <= address && address < it.end);
 
-    if (functions.has(name) && islands!.size === 1) {
-      functionsSeen++;
-      const [island] = islands!;
-      if (stretch === undefined || stretch.island !== island || !stretch.isCode) {
-        outside.add(`  ${symbol}\n    of island ${island}, is in ${stretch ? `island ${stretch.island}` : "none"}`);
-      }
-    }
-    if (stretch !== undefined) {
-      symbolsSeen++;
-      if (!islands?.has(stretch.island)) {
-        foreign.add(
-          `  ${symbol}\n    in island ${stretch.island}, is of ${islands ? [...islands] : "nothing that was linked"}`,
-        );
-      }
+  // What several define, an inline variable of a header for one, is where the linker put the copy it kept.
+  const [island] = islands?.size === 1 ? islands : [0];
+  if (island !== 0 && (isCode || stretch?.isCode)) {
+    functionsSeen++;
+    if (stretch === undefined || stretch.island !== island || !stretch.isCode) {
+      outside.add(`  ${symbol}\n    of island ${island}, is in ${stretch ? `island ${stretch.island}` : "none"}`);
     }
   }
-  if (functionsSeen === 0 || symbolsSeen === 0) throw new Error(`${executable} has no islands, or nothing in them`);
-  if (outside.size > 0)
-    fail(outside.size, "functions of an island are not in it, and would stay without the features.", outside);
-  if (foreign.size > 0)
-    fail(foreign.size, "symbols in an island are not of it, and would go with the features.", foreign);
+  if (stretch !== undefined) {
+    symbolsSeen++;
+    if (!islands?.has(stretch.island)) {
+      foreign.add(
+        `  ${symbol}\n    in island ${stretch.island}, is of ${islands ? [...islands] : "nothing that was linked"}`,
+      );
+    }
+  }
 }
+if (symbols.length > 0 && (functionsSeen === 0 || symbolsSeen === 0))
+  throw new Error(`${executable} has no islands, or nothing in them`);
+if (outside.size > 0)
+  fail(outside.size, "functions of an island are not in it, and would stay without the features.", outside);
+if (foreign.size > 0)
+  fail(foreign.size, "symbols in an island are not of it, and would go with the features.", foreign);
 
 writeFileSync(
   stamp,

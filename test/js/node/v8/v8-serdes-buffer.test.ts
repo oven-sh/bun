@@ -63,6 +63,14 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     expect(() => v8.deserialize(Buffer.concat([magic, payload]))).toThrow("failed to parse serialized buffer envelope");
   });
 
+  test("rejects an envelope that is only the magic bytes", () => {
+    // Nothing follows the magic, so there is no payload to decode. The decoder
+    // rejects it before the envelope check runs.
+    const magic = Buffer.from([0xff, 0x42, 0x55, 0x4e, 0x01]);
+    expect(() => v8.deserialize(magic)).toThrow(TypeError);
+    expect(() => v8.deserialize(magic)).toThrow("Unable to deserialize data.");
+  });
+
   test("circular structures with Buffers", () => {
     const obj: any = { buf: Buffer.from("c") };
     obj.self = obj;

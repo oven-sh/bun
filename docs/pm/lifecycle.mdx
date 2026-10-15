@@ -100,6 +100,14 @@ Bun reads the value like `ignore-scripts=<value>` in `.npmrc`, and ignores an em
 
 ---
 
+## An install that does not finish
+
+A dependency's lifecycle scripts run after the package is in `node_modules`. If a script fails, Bun removes the package, and the next `bun install` installs it again and runs its scripts.
+
+If `bun install` itself ends first (Ctrl-C, a crash, a cancelled CI job), it can remove nothing. While scripts are still to run, Bun keeps the list of their packages in `node_modules/.bun-pending-scripts`. The next `bun install` reads the list, installs those packages again and runs their scripts, so `--force` is not needed. `bun install --ignore-scripts` leaves the list for the next install that runs scripts.
+
+---
+
 ## Environment variables
 
 Like npm, Bun sets these variables for each lifecycle script:

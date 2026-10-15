@@ -53,17 +53,15 @@ impl PendingScripts {
         self.stale.clear();
         self.all_stale = false;
         self.writes = writes;
-        if writes && may_exist {
-            match sys::openat(Fd::cwd(), PATH, open_flags(false), 0) {
-                Err(err) if err.get_errno() == sys::E::ENOENT => {}
-                opened => self.load_found(opened),
-            }
+        // Not an `open`: its error for a file that is not there copies the path.
+        if writes && may_exist && sys::exists_z(PATH) {
+            self.load_found();
         }
     }
 
     #[cold]
-    fn load_found(&mut self, opened: sys::Maybe<Fd>) {
-        match lock(opened, false) {
+    fn load_found(&mut self) {
+        match lock(sys::openat(Fd::cwd(), PATH, open_flags(false), 0), false) {
             Opened::Missing => {}
             Opened::Busy => self.writes = false,
             Opened::Locked(file) => {

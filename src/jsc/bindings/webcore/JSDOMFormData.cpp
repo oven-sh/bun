@@ -286,8 +286,6 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
 extern "C" BunString Blob__getFileNameString(void* impl);
 
 // https://xhr.spec.whatwg.org/#create-an-entry
-// A Blob that is not a File becomes a File named "blob". A File keeps its
-// own name, including an empty one.
 static String entryFileName(JSC::JSGlobalObject* lexicalGlobalObject, Blob& blob, JSC::JSValue filenameArg)
 {
     if (!filenameArg.isUndefined())

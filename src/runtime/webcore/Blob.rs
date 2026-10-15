@@ -1956,19 +1956,17 @@ impl BlobExt for Blob {
 
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader> {
         use bun_resolver::fs::PathResolverExt as _;
-        if let Some(filename) = self.get_file_name() {
-            let current_path = bun_resolver::fs::Path::init(&filename);
-            return Some(
-                current_path
-                    .loader(&jsc_vm.transpiler.options.loaders)
-                    .unwrap_or(bun_ast::Loader::Tsx),
-            );
-        } else if let Some(mime_type) = self.get_mime_type_or_content_type() {
-            return Some(bun_ast::Loader::from_mime_type(mime_type));
-        } else {
-            // Be maximally permissive.
-            return Some(bun_ast::Loader::Tsx);
+        let from_extension = self.get_file_name().and_then(|filename| {
+            bun_resolver::fs::Path::init(&filename).loader(&jsc_vm.transpiler.options.loaders)
+        });
+        if let Some(loader) = from_extension {
+            return Some(loader);
         }
+        if let Some(mime_type) = self.get_mime_type_or_content_type() {
+            return Some(bun_ast::Loader::from_mime_type(mime_type));
+        }
+        // Be maximally permissive.
+        Some(bun_ast::Loader::Tsx)
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -3993,10 +3991,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-/// Turns a FormData entry's blob into a `File` named `path_str`. The entry
-/// owns the name (the `filename` argument of `append`/`set`, or the blob's
-/// own name at insert time), so it replaces the name the blob carried.
-/// `path_str` is Dead for a Blob that is not an entry; that one keeps its name.
+/// `path_str` is the FormData entry's filename, or Dead for a Blob that is not an entry.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);
@@ -4010,8 +4005,6 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_content_type(true))
 }
 
-/// Returns `BunString::DEAD` when the blob has no name at all (a plain
-/// `Blob`), which is distinct from a `File` whose name is `""`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     this.get_name_string().map_or(BunString::DEAD, Clone::clone)

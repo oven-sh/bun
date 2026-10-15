@@ -6,8 +6,7 @@ extern "C" void Blob__setAsFile(void* impl, const BunString* filename);
 
 namespace WebCore {
 
-// A FormData entry owns its filename, which is never null. A Blob that is
-// not an entry (a WebSocket message) has no name to give.
+// A null fileName means the Blob is not a FormData entry: it has no name to give.
 static BunString fileNameOrDead(const String& fileName)
 {
     return fileName.isNull() ? BunString { BunStringTag::Dead } : Bun::toString(fileName);

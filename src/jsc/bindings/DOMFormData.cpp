@@ -97,8 +97,7 @@ void DOMFormData::append(const String& name, const String& value)
     m_items.append(createStringEntry(name, value));
 }
 
-// The filename a Blob entry stores is a scalar value string and never null:
-// an empty name is a name.
+// Null means "not a FormData entry" to toJS(Blob&), so an entry's filename is never null.
 static String sanitizedFileName(const String& filename)
 {
     return filename.isNull() ? emptyString() : replaceUnpairedSurrogatesWithReplacementCharacter(String(filename));

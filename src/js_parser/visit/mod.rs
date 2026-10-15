@@ -1502,13 +1502,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Consume before recursing so a nested function body's `visit_stmts`
         // doesn't compile the wrong target.
-        let (rc_pending, rc_first_require) = if kind == StmtsKind::FnBody {
-            (
-                p.react_compiler_pending.take(),
-                p.imports_to_convert_from_require.len(),
-            )
+        let rc_pending = if kind == StmtsKind::FnBody {
+            p.react_compiler_pending.take()
         } else {
-            (None, 0)
+            None
         };
 
         #[cfg(debug_assertions)]
@@ -1794,7 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
             // The compiler declares the locals again and cannot name a namespace `transpose_require` minted.
-            && !p.holds_unwrapped_require_namespace(rc_first_require)
+            && !p.holds_unwrapped_require_namespace(p.react_compiler_first_require)
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

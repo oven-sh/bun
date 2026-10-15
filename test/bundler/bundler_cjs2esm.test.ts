@@ -1310,7 +1310,11 @@ describe("bundler", () => {
           };
           return props.on ? read() : "off";
         }
-        module.exports = { Direct, InBlock, Rebound, InArray };
+        function DefaultParameter(props, lib = require("react")) {
+          useEffect(() => {});
+          return props.on ? lib.version : typeof lib.useEffect;
+        }
+        module.exports = { Direct, InBlock, Rebound, InArray, DefaultParameter };
       `,
       "/node_modules/react/package.json": /* json */ `
         { "name": "react", "version": "19.0.0", "main": "index.js" }
@@ -1327,7 +1331,13 @@ describe("bundler", () => {
     },
     reactCompiler: true,
     run: {
-      stdout: "Direct 19.0.0 function\nInBlock 19.0.0 off\nRebound rebound/outer 19.0.0/outer\nInArray 19.0.0 off",
+      stdout: [
+        "Direct 19.0.0 function",
+        "InBlock 19.0.0 off",
+        "Rebound rebound/outer 19.0.0/outer",
+        "InArray 19.0.0 off",
+        "DefaultParameter 19.0.0 function",
+      ].join("\n"),
     },
   });
   // The files of a package on the unwrap list unwrap every require(). React

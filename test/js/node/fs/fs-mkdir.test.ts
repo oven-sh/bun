@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -397,5 +397,50 @@ describe("fs.promises.mkdir", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/45059
+describe("fs.mkdir - recursive with a relative path that names the cwd", () => {
+  const script = `
+    const fs = require("node:fs");
+    fs.mkdirSync("sub");
+    const inputs = [".", "./", "sub/..", "sub/.", "sub/../."];
+    if (process.platform === "win32") inputs.push(".\\\\", "sub\\\\..");
+    const out = {};
+    for (const p of inputs) {
+      const row = {};
+      try { row.sync = fs.mkdirSync(p, { recursive: true }); } catch (e) { row.sync = e.code; }
+      try { row.promises = await fs.promises.mkdir(p, { recursive: true }); } catch (e) { row.promises = e.code; }
+      row.callback = await new Promise(resolve => fs.mkdir(p, { recursive: true }, (err, result) => resolve(err ? err.code : result)));
+      row.exists = fs.existsSync(p);
+      out[p] = row;
+    }
+    try { fs.mkdirSync("", { recursive: true }); out.empty = "ok"; } catch (e) { out.empty = e.code; }
+    console.log(JSON.stringify(out));
+  `;
+
+  it("returns undefined for every spelling of the cwd", async () => {
+    using dir = tempDir("mkdir-cwd", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const row = { sync: undefined, promises: undefined, callback: undefined, exists: true };
+    const expected: Record<string, unknown> = {
+      ".": row,
+      "./": row,
+      "sub/..": row,
+      "sub/.": row,
+      "sub/../.": row,
+      empty: "ENOENT",
+    };
+    if (isWindows) Object.assign(expected, { ".\\": row, "sub\\..": row });
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
   });
 });

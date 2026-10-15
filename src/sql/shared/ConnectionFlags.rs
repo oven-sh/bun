@@ -11,10 +11,6 @@ bitflags! {
         const KEEP_ALIVE_REQUESTED            = 1 << 5;
         /// The handshake finished during this read; `onconnect` runs at the end of it.
         const ON_CONNECT_PENDING              = 1 << 6;
-        /// `maxLifetime` ran out while busy; the connection closes when it stops being busy.
-        const LIFETIME_EXCEEDED               = 1 << 7;
-        /// The pool handed it to a reservation or a transaction: busy even when nothing is on the wire.
-        const CHECKED_OUT                     = 1 << 8;
         /// PostgreSQL: a CancelRequest can still arrive, so nothing it could stop is written.
         const CANCEL_IN_FLIGHT                = 1 << 9;
         /// PostgreSQL: the socket is not read until the consumer of a COPY TO STDOUT wants more.

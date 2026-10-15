@@ -8,12 +8,13 @@ use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
     self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, Strong,
-    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
+    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::OffsetByteList;
 use bun_collections::smallvec::SmallVec;
+use bun_core::fmt::ConnTimeoutKind;
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
@@ -40,6 +41,7 @@ use crate::postgres::postgres_sql_statement::{
 use crate::postgres::sasl::{self, ChannelBinding, Gs2Flag, Refusal, SASL, SASLStatus};
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
@@ -187,13 +189,7 @@ pub struct PostgresSQLConnection {
     // is `#[repr(transparent)]` so the byte offset of the inner
     // `EventLoopTimer` equals `offset_of!(Self, timer)`.
     timer: JsCell<EventLoopTimer>,
-
-    /// This timer controls the maximum lifetime of a connection.
-    /// It starts when the connection successfully starts (i.e. after handshake is complete).
-    /// It stops when the connection is closed.
-    pub(crate) max_lifetime_interval_ms: u32,
-    // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
-    max_lifetime_timer: JsCell<EventLoopTimer>,
+    timers: ConnectionTimers,
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
 
     /// Interned notification channel names; see `channel_name_js`.
@@ -230,7 +226,7 @@ impl Drop for RowCells {
 
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timer,
-    from_max_lifetime_timer_ptr => max_lifetime_timer,
+    from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
 
 impl Drop for PostgresSQLConnection {
@@ -343,6 +339,43 @@ impl PostgresSQLConnection {
 
     fn refuse_authentication(&self, refusal: Refusal) {
         self.fail_fmt(refusal.code, format_args!("{}", refusal.message));
+    }
+}
+
+impl TimedConnection for PostgresSQLConnection {
+    fn timers(&self) -> &ConnectionTimers {
+        &self.timers
+    }
+
+    fn phase(&self) -> Phase {
+        match self.status.get() {
+            Status::Connected => Phase::Connected,
+            Status::Failed => Phase::Failed,
+            _ => Phase::Connecting,
+        }
+    }
+
+    fn has_requests(&self) -> bool {
+        self.has_query_running()
+    }
+
+    fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
+        let code: &[u8] = match kind {
+            ConnTimeoutKind::Idle => b"ERR_POSTGRES_IDLE_TIMEOUT",
+            ConnTimeoutKind::Connection => b"ERR_POSTGRES_CONNECTION_TIMEOUT",
+            ConnTimeoutKind::MaxLifetime => b"ERR_POSTGRES_LIFETIME_TIMEOUT",
+        };
+        self.fail_fmt(code, message);
+    }
+
+    fn notify_retiring(&self) {
+        let Some(js_value) = self.js_value.get().try_get() else {
+            return;
+        };
+        if let Some(on_retire) = js::onretire_get_cached(js_value) {
+            let _guard = self.ref_guard();
+            run_callback(self.global(), on_retire, &[]);
+        }
     }
 }
 
@@ -561,26 +594,6 @@ impl PostgresSQLConnection {
         sock.start_tls_handshake();
     }
 
-    fn setup_max_lifetime_timer_if_necessary(&self) {
-        if self.max_lifetime_interval_ms == 0 {
-            return;
-        }
-        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
-            return;
-        }
-        self.max_lifetime_timer.with_mut(|t| {
-            t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::ForceRealTime,
-                i64::from(self.max_lifetime_interval_ms),
-            );
-        });
-        // whole-struct provenance: the fire path recovers the container from this pointer.
-        let t = core::ptr::addr_of!(self.max_lifetime_timer)
-            .cast::<EventLoopTimer>()
-            .cast_mut();
-        self.vm_mut().timer().insert(t);
-    }
-
     pub fn on_connection_timeout(&self) {
         debug!("onConnectionTimeout");
 
@@ -623,68 +636,8 @@ impl PostgresSQLConnection {
         self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
     }
 
-    pub fn on_max_lifetime_timeout(&self) {
-        debug!("onMaxLifetimeTimeout");
-        self.max_lifetime_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        if self.status.get() == Status::Failed {
-            return;
-        }
-        if self.status.get() == Status::Connected && self.is_busy() {
-            self.update_flags(|f| f.insert(ConnectionFlags::LIFETIME_EXCEEDED));
-            self.notify_retiring();
-            return;
-        }
-        self.fail_lifetime_timeout();
-    }
-
-    /// Tells the pool to hand this connection no more work.
-    fn notify_retiring(&self) {
-        let Some(js_value) = self.js_value.get().try_get() else {
-            return;
-        };
-        let Some(on_retire) = js::onretire_get_cached(js_value) else {
-            return;
-        };
-        let _guard = self.ref_guard();
-        self.event_loop().run_callback(
-            bun_event_loop::ContextId::NONE,
-            on_retire,
-            self.global(),
-            JSValue::UNDEFINED,
-            &[],
-        );
-    }
-
-    fn retire_if_idle(&self) {
-        if self.status.get() == Status::Connected
-            && self
-                .flags
-                .get()
-                .contains(ConnectionFlags::LIFETIME_EXCEEDED)
-            && !self.is_busy()
-        {
-            self.fail_lifetime_timeout();
-        }
-    }
-
-    fn fail_lifetime_timeout(&self) {
-        use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
-        self.fail_fmt(
-            b"ERR_POSTGRES_LIFETIME_TIMEOUT",
-            format_args!(
-                "{}",
-                fmt_conn_timeout(
-                    ConnTimeoutKind::MaxLifetime,
-                    self.max_lifetime_interval_ms,
-                    ""
-                )
-            ),
-        );
-    }
-
     pub(crate) fn start(&self) {
-        self.setup_max_lifetime_timer_if_necessary();
+        self.start_max_lifetime_timer();
         // A CancelRequest has one time budget, from dial to hang-up.
         if self.cancel_target.get().is_none() {
             self.reset_connection_timeout();
@@ -760,13 +713,7 @@ impl PostgresSQLConnection {
         };
         let js_value = self.js_value.get().get();
         js_value.ensure_still_alive();
-        self.event_loop().run_callback(
-            bun_event_loop::ContextId::NONE,
-            on_connect,
-            self.global(),
-            JSValue::UNDEFINED,
-            &[JSValue::NULL, js_value],
-        );
+        run_callback(self.global(), on_connect, &[JSValue::NULL, js_value]);
     }
 
     pub fn finalize(&self) {
@@ -854,13 +801,7 @@ impl PostgresSQLConnection {
             js_error.ensure_still_alive();
             // Reported here rather than returned: the pending queries are still
             // rejected below whatever `onclose` did.
-            self.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                on_close,
-                self.global(),
-                JSValue::UNDEFINED,
-                &[js_error],
-            );
+            run_callback(self.global(), on_close, &[js_error]);
         }
         self.clean_up_requests(Some(value));
         self.update_has_pending_activity();
@@ -1490,10 +1431,10 @@ fn open(
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionTimeout,
             )),
-            max_lifetime_interval_ms: params.max_lifetime_ms,
-            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
+            timers: ConnectionTimers::new(
+                params.max_lifetime_ms,
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            )),
+            ),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             channel_names: JsCell::new(Vec::new()),
             copy_out: JsCell::new(Vec::new()),
@@ -1649,7 +1590,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn do_hold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.update_flags(|f| f.insert(ConnectionFlags::CHECKED_OUT));
+        this.timers.set_checked_out(true);
         if this.status.get() == Status::Connected {
             this.reset_connection_timeout();
         }
@@ -1657,7 +1598,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn do_unhold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.update_flags(|f| f.remove(ConnectionFlags::CHECKED_OUT));
+        this.timers.set_checked_out(false);
         if this.status.get() == Status::Connected {
             this.reset_connection_timeout();
         }
@@ -1702,11 +1643,7 @@ impl PostgresSQLConnection {
                 self.vm_mut().timer().remove(t);
             }
         });
-        self.max_lifetime_timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                self.vm_mut().timer().remove(t);
-            }
-        });
+        self.timers.stop();
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
@@ -1978,10 +1915,6 @@ impl PostgresSQLConnection {
         self.reset_connection_timeout();
         self.update_poll_ref();
         self.retire_if_idle();
-    }
-
-    fn is_busy(&self) -> bool {
-        self.flags.get().contains(ConnectionFlags::CHECKED_OUT) || self.has_query_running()
     }
 
     #[inline]
@@ -3341,13 +3274,7 @@ impl PostgresSQLConnection {
         let channel_js = self.channel_name_js(global, channel)?;
         let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
             .map_err(crate::jsc::js_error_to_postgres)?;
-        self.event_loop().run_callback(
-            bun_event_loop::ContextId::NONE,
-            callback,
-            global,
-            JSValue::UNDEFINED,
-            &[channel_js, payload_js],
-        );
+        run_callback(global, callback, &[channel_js, payload_js]);
         Ok(())
     }
 

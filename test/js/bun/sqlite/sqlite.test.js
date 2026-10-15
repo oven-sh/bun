@@ -1701,10 +1701,11 @@ it("binds a detached TypedArray as a zero-length blob, not NULL", () => {
   db.close();
 });
 
-it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
+it("rejects a 2 GiB blob, as a parameter and as the result of a function, instead of truncating it", async () => {
   // A 2^31 byte length overflowed sqlite3_bind_blob()'s int length and bound
   // an empty TEXT value. The subprocess keeps the 2 GiB reservation out of the
   // test runner. The buffer is never written, so RSS stays small.
+  // Every build of SQLite refuses a length over INT_MAX, whatever its SQLITE_MAX_LENGTH is.
   const script = `
     import { Database } from "bun:sqlite";
     let big;
@@ -1715,13 +1716,18 @@ it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
       process.exit(0);
     }
     const db = new Database(":memory:");
-    let result;
-    try {
-      result = db.query("SELECT typeof(?1) AS type, length(?1) AS length").get(big);
-    } catch (e) {
-      result = [e.name, e.code, e.message].join(": ");
-    }
-    console.log(JSON.stringify(result));
+    db.function("big", () => big);
+    const attempt = (sql, ...values) => {
+      try {
+        return db.query(sql).get(...values);
+      } catch (e) {
+        return [e.name, e.code, e.message].join(": ");
+      }
+    };
+    console.log(JSON.stringify([
+      attempt("SELECT typeof(?1) AS type, length(?1) AS length", big),
+      attempt("SELECT length(big()) AS length"),
+    ]));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -1733,9 +1739,8 @@ it("rejects a 2 GiB blob parameter instead of truncating it", async () => {
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(["SKIP", "SQLiteError: SQLITE_TOOBIG: string or blob too big"]).toContainEqual(
-    JSON.parse(stdout.trim() || '"NO_OUTPUT"'),
-  );
+  const tooBig = "SQLiteError: SQLITE_TOOBIG: string or blob too big";
+  expect(["SKIP", [tooBig, tooBig]]).toContainEqual(JSON.parse(stdout.trim() || '"NO_OUTPUT"'));
   expect(exitCode).toBe(0);
 });
 
@@ -3859,6 +3864,8 @@ describe.concurrent("the connection of a Database is released with the Database"
 
 it("db.handle is a number that stays the same after close() and differs between Databases", () => {
   const first = new Database(":memory:");
+  // The SQLite of macOS serializes a database without a table to no bytes at all.
+  first.run("CREATE TABLE t (a)");
   const second = Database.deserialize(first.serialize());
   const open = [first.handle, second.handle];
   expect(open).toEqual([expect.any(Number), expect.any(Number)]);
@@ -5238,14 +5245,6 @@ describe("db.function()", () => {
     db.function("f", () => 2n ** 63n);
     expect(() => db.query("SELECT f()").get()).toThrow(
       new RangeError("BigInt value '9223372036854775808' is out of range"),
-    );
-  });
-
-  it("a result over SQLite's length limit is SQLite's error", () => {
-    using db = new Database(":memory:");
-    db.function("f", () => new Uint8Array(1_000_000_001));
-    expect(() => db.query("SELECT length(f())").get()).toThrow(
-      expect.objectContaining({ name: "SQLiteError", code: "SQLITE_TOOBIG", message: "string or blob too big" }),
     );
   });
 

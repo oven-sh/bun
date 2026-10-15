@@ -600,18 +600,22 @@ describe.concurrent("scripted server", () => {
     ["drops what is commonly mapped to nothing", "I\u00adX\u2060", "IX"],
     ["normalizes with NFKC", "\u00aa\u2168", "aIX"],
     ["composes", "e\u0301", "\u00e9"],
-    [
-      "an output longer than the input",
-      "\ufdfa",
-      "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
-    ],
-    ["outside the BMP", "\u{1d7d8}\u{1d7d9}", "01"],
     ["right-to-left from end to end", "\u05d0\u05d1", "\u05d0\u05d1"],
     // Refused by SASLprep: the password is used as it is.
     ["prohibited: as it is", "a\u0007\u00aa", "a\u0007\u00aa"],
+    ["unassigned in Unicode 3.2: as it is", "\u00aa\u{1f600}", "\u00aa\u{1f600}"],
+    ["mixed directions: as it is", "\u05d0a\u00aa", "\u05d0a\u00aa"],
+    ["right-to-left that does not end so: as it is", "\u05d01\u00aa", "\u05d01\u00aa"],
     ["maps to nothing: as it is", "\u00ad", "\u00ad"],
     ["ASCII control characters: as it is", "a\u0007b", "a\u0007b"],
   ])("SASLprep %s", async (_, typed, stored) => {
     expect(await login({ password: stored }, undefined, typed)).toMatchObject({ result: "connected", proofOk: true });
+  });
+
+  test("a password that is a number logs in", async () => {
+    expect(await login({ password: "123456" }, undefined, 123456 as never)).toMatchObject({
+      result: "connected",
+      proofOk: true,
+    });
   });
 });

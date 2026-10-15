@@ -1375,7 +1375,7 @@ globalThis.subscription = await sql.listen("orders", handleOrder);
 | `maxLifetime`       | Replaces a connection this many seconds after it opened                                             |
 | `connectionTimeout` | Fails a connection attempt that takes longer than this many seconds. Does not limit a running query |
 
-`idleTimeout` and `maxLifetime` never interrupt work. A running query, an open transaction and a reserved connection keep their connection. A connection past `maxLifetime` finishes what it has, takes no new queries, and then closes.
+`idleTimeout` and `maxLifetime` never interrupt work. A running query, a `begin()` transaction and a reserved connection keep their connection. A connection past `maxLifetime` finishes what it has, takes no new queries, and then closes.
 
 Bun turns on TCP keepalive (60 seconds) for PostgreSQL and MySQL connections, so a query fails instead of waiting forever when the server disappears without closing the connection.
 

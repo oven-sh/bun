@@ -234,12 +234,16 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this;
   }
 
-  async run() {
+  /// then() rejects what these throw.
+  #runTagged() {
     if (this[_flags] & SQLQueryFlags.notTagged) {
       throw this[_adapter].notTaggedCallError();
     }
-
     this.#run();
+  }
+
+  async run() {
+    this.#runTagged();
     return this;
   }
 
@@ -291,22 +295,12 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   catch() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw this[_adapter].notTaggedCallError();
-    }
-
-    this.#run();
-
+    this.#runTagged();
     return super.catch.$apply(this, arguments);
   }
 
   finally(_onfinally?: (() => void) | undefined | null) {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw this[_adapter].notTaggedCallError();
-    }
-
-    this.#run();
-
+    this.#runTagged();
     return super.finally.$apply(this, arguments);
   }
 }

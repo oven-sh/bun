@@ -367,6 +367,17 @@ impl EventLoopSqlExt for EventLoop {
     }
 }
 
+/// What `callback` throws is reported, not returned.
+pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
+    VirtualMachine::get_mut().event_loop_mut().run_callback(
+        bun_event_loop::ContextId::NONE,
+        callback,
+        global,
+        JSValue::UNDEFINED,
+        arguments,
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Timer heap / EventLoopTimer.
 //

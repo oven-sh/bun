@@ -37,7 +37,6 @@
 #include "sqlite3_local.h"
 static_assert(BUN_SQLITE_BUNDLED_VERSION_NUMBER == SQLITE_VERSION_NUMBER,
     "update BUN_SQLITE_BUNDLED_VERSION to match sqlite3_local.h");
-static inline int lazyLoadSQLite() { return 0; }
 static constexpr bool lazy_sqlite3_has_session = true;
 #define LAZY_SQLITE_HAS_LOAD_EXTENSION() true
 #endif
@@ -96,11 +95,7 @@ static constexpr bool lazy_sqlite3_has_session = true;
 #define SQLITE_CHANGESET_FOREIGN_KEY 5
 #endif
 
-// One-time process-global sqlite3_config() and the exit-time WAL checkpoint
-// helper are defined in JSSQLStatement.cpp so bun:sqlite (which does not
-// depend on this file) owns them. Forward-declared here rather than in
-// lazy_sqlite3.h because that header is only included on the dlopen path.
-extern "C" void Bun__initializeSQLite();
+// Defined in JSSQLStatement.cpp so bun:sqlite (which does not depend on this file) owns it.
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3*);
 
 // process.versions.sqlite — the loaded library's version if a library has
@@ -142,20 +137,6 @@ namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
-
-// SQLite TEXT / column names / errmsg can carry non-UTF-8 bytes (a Latin-1
-// blob CAST to TEXT, a column aliased with such a string). WTF::String::
-// fromUTF8 returns a NULL string on any invalid byte and jsString(null) then
-// yields "" — the drift #31514 fixed for bun:sqlite. Decode with U+FFFD
-// replacement everywhere we surface SQLite-owned bytes to JS.
-static ALWAYS_INLINE WTF::String sqliteText(const char* p, size_t len)
-{
-    return WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const uint8_t*>(p), len });
-}
-static ALWAYS_INLINE WTF::String sqliteText(const char* p)
-{
-    return p ? sqliteText(p, strlen(p)) : WTF::String();
-}
 
 // Adopt a sqlite3_malloc'd buffer (serialize/changeset/patchset output) as a
 // Uint8Array without a copy; the ArrayBuffer destructor runs sqlite3_free.
@@ -360,11 +341,7 @@ static inline JSValue sqliteToJS(JSGlobalObject* globalObject, Source source, bo
     }
     case SQLITE_BLOB: {
         size_t len = source.bytes();
-        const void* blob = source.blob();
-        auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (len > 0) memcpy(array->typedVector(), blob, len);
-        return array;
+        RELEASE_AND_RETURN(scope, sqliteBytes(globalObject, source.blob(), len));
     }
     default:
         return jsNull();
@@ -735,17 +712,8 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
         return false;
     }
 
-#if LAZY_LOAD_SQLITE
-    WTF::String msg;
-    if (lazyLoadSQLite(&msg) < 0) [[unlikely]] {
-        scope.throwException(globalObject, createError(globalObject, msg));
+    if (!loadSQLite(globalObject, scope)) [[unlikely]]
         return false;
-    }
-#endif
-
-    // Must run before the first sqlite3_open_v2 in the process, from either
-    // module; see the definition in JSSQLStatement.cpp.
-    Bun__initializeSQLite();
 
     // SQLITE_OPEN_URI mirrors Node's `default_flags = SQLITE_OPEN_URI`
     // (node_sqlite.cc). Strings, Uint8Arrays, and URL objects all reach

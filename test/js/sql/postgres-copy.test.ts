@@ -35,17 +35,6 @@ const withoutStream = {
   message: "COPY ... FROM STDIN needs query.writable() and COPY ... TO STDOUT needs query.readable()",
 };
 
-/** Samples until ten samples in a row are equal. A sample is a round trip, so the event loop runs in between. */
-async function untilItStalls<T>(sample: () => Promise<T>) {
-  let last = await sample();
-  for (let same = 0; same < 10;) {
-    const next = await sample();
-    same = next === last ? same + 1 : 0;
-    last = next;
-  }
-  return last;
-}
-
 async function byteLength(stream: ReadableStream<Uint8Array>) {
   let length = 0;
   for await (const chunk of stream) length += chunk.byteLength;
@@ -68,12 +57,18 @@ async function aConsumerThatStopped(sql: SQL, monitor: SQL) {
   const reader = stream.getReader();
   const received = (await reader.read()).value!.byteLength;
 
-  // The row of the view is gone when the COPY is over.
-  const rowsSent = await untilItStalls(async () => {
-    const [progress] =
-      await monitor`select tuples_processed::int as rows from pg_stat_progress_copy where pid = ${pid}`;
-    return progress?.rows as number | undefined;
-  });
+  // The backend says that it waits for room in its socket, at the same row, ten times in a row. Each question is a
+  // round trip, so the event loop runs in between: a client that still read would let the backend go on, to the end
+  // of the COPY, where the row of the progress view is gone.
+  let rowsSent = -1;
+  for (let times = 0; times < 10;) {
+    const [backend] = await monitor`
+      select tuples_processed::int as rows, wait_event
+      from pg_stat_progress_copy join pg_stat_activity using (pid) where pid = ${pid}`;
+    expect(backend).toBeDefined();
+    times = backend.wait_event === "ClientWrite" && backend.rows === rowsSent ? times + 1 : 0;
+    rowsSent = backend.rows;
+  }
   expect(rowsSent).toBeLessThan(moreThanTheSocketsHold);
 
   reader.releaseLock();
@@ -687,6 +682,7 @@ describeWithContainer("postgres, megabytes", { image: "postgres_plain" }, contai
   ])("a write() that waits for a server that stopped reading %s", async (_, afterwards) => {
     await using sql = await connect();
     await using other = await connect();
+    const pid = await pidOf(sql);
     const key = Math.floor(Math.random() * 2 ** 31);
     await sql.unsafe(`
       create temporary table slow (a text);
@@ -705,12 +701,11 @@ describeWithContainer("postgres, megabytes", { image: "postgres_plain" }, contai
         await writer.close();
       })(),
     );
-    const acceptedWhileLocked = await untilItStalls(async () => {
-      await other`select 1`;
-      return accepted;
-    });
-    expect(acceptedWhileLocked).toBeGreaterThan(0);
-    expect(acceptedWhileLocked).toBeLessThan(moreThanTheSocketsHold);
+    // The backend has the whole first row, so its write() was accepted. From here to the unlock it reads nothing:
+    // what is accepted fills the sockets. Writes that did not wait for room would all be accepted by now.
+    while ((await other`select wait_event from pg_stat_activity where pid = ${pid}`)[0].wait_event !== "advisory");
+    expect(accepted).toBeGreaterThan(0);
+    expect(accepted).toBeLessThan(moreThanTheSocketsHold);
 
     await other`select pg_advisory_unlock(${key})`;
     if (afterwards === "return new") {
@@ -788,6 +783,8 @@ describeWithContainer("postgres, megabytes", { image: "postgres_plain" }, contai
         const before = process.memoryUsage.rss();
         let bytes = 0;
         for await (const chunk of sql.unsafe(process.env.COPY_TEXT).readable()) bytes += chunk.byteLength;
+        // The chunks that no collection has freed yet are not what is measured.
+        Bun.gc(true);
         console.log(JSON.stringify({ bytes, grew: process.memoryUsage.rss() - before }));
         await sql.close();
       `,

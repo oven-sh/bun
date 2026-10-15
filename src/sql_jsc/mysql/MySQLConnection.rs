@@ -194,32 +194,10 @@ impl MySQLConnection {
         self.queue.current().is_none() && self.write_buffer.len() == 0
     }
 
-    #[inline]
-    pub(crate) fn is_busy(&self) -> bool {
-        self.flags.contains(ConnectionFlags::CHECKED_OUT) || !self.is_idle()
-    }
-
     /// As of the last reply that said so: an ERR packet has no status.
     #[inline]
     pub(crate) fn is_in_transaction(&self) -> bool {
         self.status_flags.has(StatusFlag::SERVER_STATUS_IN_TRANS)
-    }
-
-    #[inline]
-    pub(crate) fn set_checked_out(&mut self, checked_out: bool) {
-        self.flags.set(ConnectionFlags::CHECKED_OUT, checked_out);
-    }
-
-    #[inline]
-    pub(crate) fn set_lifetime_exceeded(&mut self) {
-        self.flags.insert(ConnectionFlags::LIFETIME_EXCEEDED);
-    }
-
-    #[inline]
-    pub(crate) fn is_due_to_retire(&self) -> bool {
-        self.flags.contains(ConnectionFlags::LIFETIME_EXCEEDED)
-            && self.status == ConnectionState::Connected
-            && !self.is_busy()
     }
 
     #[inline]

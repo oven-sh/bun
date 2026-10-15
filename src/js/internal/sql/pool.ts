@@ -1,8 +1,15 @@
-import type { QueryStrings, Query as QueryType } from "./query";
+import type { SSLMode } from "./options";
+import type { Query as QueryType } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, TransactionCommands } from "./shared";
 
-const { SQLQueryFlags, onQuerySettled } = require("internal/sql/query");
-const { isUnsafeTransactionStart, normalizeQuery } = require("internal/sql/shared");
+type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
+
+const {
+  SQLQueryFlags,
+  onQuerySettled,
+  symbols: { _results },
+} = require("internal/sql/query");
+const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
 const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
@@ -21,7 +28,7 @@ const enum PooledConnectionFlags {
   /// It has a prepared distributed transaction. MariaDB reports a transaction until that is committed or rolled back.
   prepared = 1 << 2,
 }
-export type { BasePooledConnection };
+export type { PooledConnection };
 
 interface NativeConnection {
   close(): void;
@@ -31,6 +38,39 @@ interface NativeConnection {
   /// a boolean: the server's word after its last complete reply
   readonly inTransaction: unknown;
 }
+
+/// A driver ignores the trailing arguments it does not take.
+export type NativeCreateConnection<ConnectionHandle> = (
+  hostname: string | undefined,
+  port: number,
+  username: string,
+  password: string,
+  database: string,
+  sslmode: SSLMode,
+  tls: Bun.TLSOptions | true | null, // true: an empty TLSOptions
+  query: string,
+  path: string,
+  onConnected: (err: Error | null, connection: ConnectionHandle) => void,
+  onDisconnected: (err: Error | null) => void,
+  idleTimeout: number,
+  connectionTimeout: number,
+  maxLifetime: number,
+  useUnnamedPreparedStatements: boolean,
+  allowPublicKeyRetrieval: boolean,
+  onRetire: (() => void) | undefined,
+  foundRows: boolean,
+  channelBinding: 0 | 1 | 2,
+  columnTransform: ((name: string) => string) | undefined,
+  scramPassword: string,
+) => ConnectionHandle;
+
+export type NativeCreateQuery<QueryHandle> = (
+  sql: string,
+  values: unknown[],
+  pendingValue: SQLResultArray<unknown>,
+  bigint: boolean,
+  simple: boolean,
+) => QueryHandle;
 
 type OnConnected = (err: Error | null, connection: any) => void;
 
@@ -43,8 +83,8 @@ class Reservation {
 }
 
 /// connecting -> open -> closed, never back: whatever still holds a closed one cannot reach the one that replaced it.
-abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = any> {
-  adapter: BaseSQLAdapter<any, any, any>;
+class PooledConnection<ConnectionHandle extends NativeConnection = any> {
+  adapter: BaseSQLAdapter<ConnectionHandle, any>;
   connection: ConnectionHandle | null = null;
   state: PooledConnectionState = PooledConnectionState.connecting;
   closeHandlers: Set<(err: Error) => void> = new Set();
@@ -56,30 +96,41 @@ abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = 
   retryTimer: ReturnType<typeof setTimeout> | null = null;
   #releaseQuery: () => void;
 
-  constructor(adapter: BaseSQLAdapter<any, any, any>) {
+  constructor(adapter: BaseSQLAdapter<ConnectionHandle, any>) {
     this.adapter = adapter;
     this.#releaseQuery = adapter.release.bind(adapter, this);
   }
 
-  protected abstract startConnection(): Promise<void>;
-  /**
-   * Whether the error is a connect failure (the server accepted the
-   * connection but closed it before the handshake completed) that a backoff
-   * retry can fix.
-   */
-  protected abstract isConnectFailureError(err: Error | null): boolean;
+  async #startConnection() {
+    const adapter = this.adapter;
+    this.connection = await createPooledConnectionHandle(
+      adapter.createNativeConnection,
+      adapter.connectionInfo,
+      adapter.ownerCallback(this.#handleConnected.bind(this)),
+      adapter.ownerCallback(this.#handleClose.bind(this)),
+      adapter.ownerCallback(this.#handleRetire.bind(this)),
+      this,
+    );
+  }
 
-  protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
-    return this.adapter.ownerCallback(method.bind(this));
+  /// Connect failures (ERR_*_CONNECTION_FAILED) mean the server accepted the TCP connection but closed it before
+  /// the handshake completed, typically because it is still starting up or an intermediary (like a container port
+  /// proxy) is up before the database is. Those are retried until connectionTimeout elapses, as long as queries
+  /// are waiting on the pool. Refused connections (ERR_*_CONNECTION_REFUSED) fail fast: nothing is listening, and
+  /// probes/healthchecks rely on the immediate error. Real server errors (authentication, errors during the
+  /// handshake) and closes of established connections are not retried here.
+  #isConnectFailure(err: Error | null): boolean {
+    const adapter = this.adapter;
+    return err instanceof adapter.ErrorClass && (err as any).code === adapter.codePrefix + "CONNECTION_FAILED";
   }
 
   /// The pool calls it once the connection is in `connections`: a function-valued password is user code.
   async dial() {
     try {
-      await this.adapter.runAsOwner(this.startConnection, this);
+      await this.adapter.runAsOwner(this.#startConnection, this);
     } catch (err) {
       // nothing was dialed: the password function threw, or an option is refused
-      this.handleClose(err as Error);
+      this.#handleClose(err as Error);
     }
     if (this.state === PooledConnectionState.closed) {
       this.connection?.close();
@@ -87,7 +138,7 @@ abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = 
     }
   }
 
-  protected handleConnected(_err: null, connection: ConnectionHandle) {
+  #handleConnected(_err: Error | null, connection: ConnectionHandle) {
     if (this.state !== PooledConnectionState.connecting) {
       return;
     }
@@ -96,21 +147,21 @@ abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = 
     this.adapter.connectionOpened(this);
   }
 
-  protected handleClose(err: Error) {
+  #handleClose(err: Error | null) {
     if (this.state === PooledConnectionState.closed) {
       return;
     }
     this.connection = null;
-    if (this.state === PooledConnectionState.connecting && this.isConnectFailureError(err) && this.#canKeepRetrying()) {
+    if (this.state === PooledConnectionState.connecting && this.#isConnectFailure(err) && this.#canKeepRetrying()) {
       const delay = Math.min(20 * 2 ** ++this.connectAttempts, 1000);
-      this.retryTimer = setTimeout(BasePooledConnection.#retryTimerFired, delay, this, err);
+      this.retryTimer = setTimeout(PooledConnection.#retryTimerFired, delay, this, err);
       return;
     }
     this.#finishClose(err);
   }
 
   /// maxLifetime ran out while it was busy. The native connection closes itself when it is idle.
-  protected handleRetire() {
+  #handleRetire() {
     if (this.state !== PooledConnectionState.open) {
       return;
     }
@@ -119,19 +170,19 @@ abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = 
   }
 
   retire() {
-    this.handleRetire();
+    this.#handleRetire();
     if (this.queryCount === 0) {
       this.close();
     }
   }
 
   /// bun --hot: `adapter` replaced the pool that dialed it.
-  moveTo(adapter: BaseSQLAdapter<any, any, any>) {
+  moveTo(adapter: BaseSQLAdapter<ConnectionHandle, any>) {
     this.adapter = adapter;
     this.#releaseQuery = adapter.release.bind(adapter, this);
   }
 
-  static #retryTimerFired(self: BasePooledConnection, err: Error) {
+  static #retryTimerFired(self: PooledConnection, err: Error | null) {
     self.retryTimer = null;
     if (self.#canKeepRetrying()) {
       self.dial();
@@ -150,7 +201,7 @@ abstract class BasePooledConnection<ConnectionHandle extends NativeConnection = 
     return connectionTimeout > 0 && monotonicNowMs() - this.connectStartedAt < connectionTimeout;
   }
 
-  #finishClose(err: Error) {
+  #finishClose(err: Error | null) {
     const established = this.state === PooledConnectionState.open;
     this.state = PooledConnectionState.closed;
     this.flags = 0;
@@ -198,7 +249,7 @@ function closeTimeoutMs(options?: { timeout?: number }): number | undefined {
   return Math.min(seconds * 1000, 2 ** 31 - 1);
 }
 
-function idleFirst(a: BasePooledConnection, b: BasePooledConnection) {
+function idleFirst(a: PooledConnection, b: PooledConnection) {
   return a.queryCount - b.queryCount;
 }
 
@@ -263,7 +314,7 @@ const connectionSettings = [
   "channelBinding",
 ] as const;
 
-function sameSettings(a: BaseSQLAdapter<any, any, any>, b: BaseSQLAdapter<any, any, any>): boolean {
+function sameSettings(a: BaseSQLAdapter<any, any>, b: BaseSQLAdapter<any, any>): boolean {
   const x = a.connectionInfo;
   const y = b.connectionInfo;
   // A password that is made for each dial has no value to compare. A Bun.ModuleGraph's connections go with it.
@@ -279,9 +330,9 @@ function sameSettings(a: BaseSQLAdapter<any, any, any>, b: BaseSQLAdapter<any, a
 }
 
 /// bun --hot only. This module and the open connections outlive a reload, the `new SQL()` of the program does not.
-const hotPools = new Set<BaseSQLAdapter<any, any, any>>();
+const hotPools = new Set<BaseSQLAdapter<any, any>>();
 
-function rememberHotPool(pool: BaseSQLAdapter<any, any, any>) {
+function rememberHotPool(pool: BaseSQLAdapter<any, any>) {
   for (const other of hotPools) {
     if (other.generation < pool.generation - 1 && other.connections.length === 0) {
       hotPools.delete(other);
@@ -310,25 +361,28 @@ function retireReplacedPools(generation: number) {
 }
 
 /// SCRAM hashes SASLprep(password) (RFC 4013). A password that SASLprep refuses is used as it is, like in libpq.
+/// The server refuses by the tables of Unicode 3.2 and by text direction. Here anything right-to-left or outside
+/// the BMP counts as refused: that only gives up the normalization, which is what happened before there was one.
 function saslprep(password: string): string {
   const mapped = password
     .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
     .replace(/\u034f|\u200d|[\ufe00-\ufe0f]|[\u00ad\u1806\u180b-\u180d\u200c\u2060\ufeff]/g, "");
-  return mapped === "" || /\p{C}/u.test(mapped) ? password : mapped.normalize("NFKC");
+  return mapped === "" || /[\p{C}\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc\u{10000}-\u{10ffff}]/u.test(mapped)
+    ? password
+    : mapped.normalize("NFKC");
 }
 
 /**
  * Resolves the password (which may be a function and/or a promise) and calls
  * the driver's native createConnection with the normalized pool options.
- * A driver ignores the trailing arguments it does not take.
  */
 async function createPooledConnectionHandle<ConnectionHandle>(
-  nativeCreateConnection: (...args: any[]) => ConnectionHandle,
+  nativeCreateConnection: NativeCreateConnection<ConnectionHandle>,
   options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
   onRetire: (() => void) | undefined,
-  pooled?: BasePooledConnection,
+  pooled?: PooledConnection,
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -366,14 +420,16 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   // the pool was torn down while the password was made
   if (pooled?.state === PooledConnectionState.closed) return null;
 
+  password = String(password || "");
+
   return nativeCreateConnection(
     hostname,
     Number(port),
     username || "",
-    password || "",
+    password,
     database || "",
     sslMode,
-    tls || null,
+    (tls || null) as Bun.TLSOptions | true | null,
     query || "",
     path || "",
     onConnected,
@@ -387,16 +443,41 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     foundRows,
     channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
     transform?.column.from,
-    saslprep(password || ""),
+    saslprep(password),
   );
 }
 
-abstract class BaseSQLAdapter<
-  PooledConnection extends BasePooledConnection,
-  ConnectionHandle,
-  QueryHandle,
-> implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle> {
+/// A result of several: CALL <proc>() and a text of several statements.
+function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) {
+  const results = query[_results];
+  if (!results) {
+    query[_results] = result;
+  } else if (results instanceof SQLResultArray) {
+    query[_results] = [results, result];
+  } else {
+    results.push(result);
+  }
+}
+
+function onRejectQuery(query: QueryType<any, any>, err: Error) {
+  try {
+    query.reject(err);
+  } catch {}
+}
+
+abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHandle>
+  extends SQLDialect
+  implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
+
+  abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
+  protected abstract readonly createNativeQuery: NativeCreateQuery<QueryHandle>;
+  abstract readonly ErrorClass: new (message: string, options: { code: string }) => Error;
+  /// ERR_POSTGRES_ or ERR_MYSQL_
+  abstract readonly codePrefix: string;
+  protected abstract readonly commitPrepared: string;
+  protected abstract readonly rollbackPrepared: string;
 
   /// Every connection that is connecting or open. One enters before it dials and leaves when it closes.
   public readonly connections: PooledConnection[] = [];
@@ -449,6 +530,7 @@ abstract class BaseSQLAdapter<
   }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
+    super();
     this.connectionInfo = connectionInfo;
     this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
@@ -462,36 +544,28 @@ abstract class BaseSQLAdapter<
     return this.#closing !== null;
   }
 
-  protected abstract createPooledConnection(): PooledConnection;
-  abstract createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   abstract array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter;
-  abstract getTransactionCommands(options?: string): TransactionCommands;
   abstract getDistributedTransactionCommands(name: string): TransactionCommands | null;
-  abstract getCommitDistributedSQL(name: string): string;
-  abstract getRollbackDistributedSQL(name: string): string;
-  abstract escapeIdentifier(name: string): string;
-  abstract connectionClosedError(): Error;
-  abstract notTaggedCallError(): Error;
-  abstract queryCancelledError(): Error;
-  abstract invalidTransactionStateError(message: string): Error;
-  abstract unsafeTransactionError(): Error;
 
-  placeholder(_index: number): string {
-    return "?";
+  error(code: string, message: string) {
+    return new this.ErrorClass(message, { code: this.codePrefix + code });
   }
 
-  normalizeQuery(strings: QueryStrings, values: unknown[]): [string, unknown[]] {
-    return normalizeQuery(this, strings, values);
-  }
-
-  protected checkUnsafeTransaction(sql: string, flags: number) {
+  createQueryHandle(sql: string, values: unknown[], flags: number) {
     if (
       !(flags & SQLQueryFlags.allowUnsafeTransaction) &&
       this.connectionInfo.max !== 1 &&
       isUnsafeTransactionStart(sql)
     ) {
-      throw this.unsafeTransactionError();
+      throw this.error("UNSAFE_TRANSACTION", "Only use sql.begin, sql.reserved or max: 1");
     }
+    return this.createNativeQuery(
+      sql,
+      values,
+      new SQLResultArray(),
+      !!(flags & SQLQueryFlags.bigint),
+      !!(flags & SQLQueryFlags.simple),
+    );
   }
 
   supportsReservedConnections() {
@@ -528,32 +602,22 @@ abstract class BaseSQLAdapter<
     connection.closeHandlers.delete(handler);
   }
 
-  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
-    // The string is interpolated into the BEGIN/START TRANSACTION statement, so refuse
-    // anything that could terminate the statement or start a new one.
-    if (!/^[A-Za-z ,]*$/.test(options)) {
-      return {
-        valid: false,
-        error: "Transaction options can only contain letters, spaces, and commas.",
-      };
+  /// The name goes between single quotes.
+  protected distributedNameError(name: string): string | undefined {
+    if (typeof name !== "string") {
+      return "Distributed transaction name must be a string.";
     }
-    return { valid: true };
+    if (name.includes("'")) {
+      return "Distributed transaction name cannot contain single quotes.";
+    }
   }
 
-  validateDistributedTransactionName(name: string): { valid: boolean; error?: string } {
-    if (typeof name !== "string") {
-      return {
-        valid: false,
-        error: "Distributed transaction name must be a string.",
-      };
+  getFinishDistributedSQL(commit: boolean, name: string): string {
+    const error = this.distributedNameError(name);
+    if (error) {
+      throw new Error(error);
     }
-    if (name.indexOf("'") !== -1) {
-      return {
-        valid: false,
-        error: "Distributed transaction name cannot contain single quotes.",
-      };
-    }
-    return { valid: true };
+    return `${commit ? this.commitPrepared : this.rollbackPrepared} '${name}'`;
   }
 
   #connecting(): number {
@@ -579,7 +643,7 @@ abstract class BaseSQLAdapter<
         // it has served the queue and dialed for the rest
         return;
       }
-      const connection = this.createPooledConnection();
+      const connection = new PooledConnection(this);
       connections.push(connection);
       connecting++;
       connection.dial();
@@ -701,7 +765,7 @@ abstract class BaseSQLAdapter<
     if (prepared) {
       connection.flags |= PooledConnectionFlags.prepared;
     }
-    // On a pool of one connection a transaction by hand is in order, see checkUnsafeTransaction().
+    // On a pool of one connection a transaction by hand is in order, see createQueryHandle().
     if (reserved || this.connectionInfo.max !== 1) {
       if (connection.connection.inTransaction !== true) {
         connection.flags &= ~PooledConnectionFlags.prepared;
@@ -818,7 +882,7 @@ abstract class BaseSQLAdapter<
     this.#closing!.resolve();
   }
 
-  static #closeTimerFired(self: BaseSQLAdapter<any, any, any>) {
+  static #closeTimerFired(self: BaseSQLAdapter<any, any>) {
     self.#teardown();
   }
 
@@ -857,8 +921,9 @@ abstract class BaseSQLAdapter<
 }
 
 export default {
-  BasePooledConnection,
   BaseSQLAdapter,
+  addResult,
+  onRejectQuery,
   closeTimeoutMs,
   createPooledConnectionHandle,
   sameSettings,

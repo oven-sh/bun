@@ -7,11 +7,55 @@
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
+#include <JavaScriptCore/TypedArrayInlines.h>
 #include <span>
 
+// JSSQLStatement.cpp: the one-time sqlite3_config() calls of the process.
+extern "C" void Bun__initializeSQLite();
+
 namespace Bun {
+
+// Before the first sqlite3_open_v2() of a call. False with an exception pending.
+inline bool loadSQLite(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
+{
+#if LAZY_LOAD_SQLITE
+    WTF::String message;
+    if (lazyLoadSQLite(&message) < 0) [[unlikely]] {
+        scope.throwException(globalObject, JSC::createError(globalObject, message));
+        return false;
+    }
+#endif
+    Bun__initializeSQLite();
+    return true;
+}
+
+// SQLite TEXT / column names / errmsg can carry non-UTF-8 bytes (a Latin-1
+// blob CAST to TEXT, a column aliased with such a string). WTF::String::
+// fromUTF8 returns a NULL string on any invalid byte and jsString(null) then
+// yields "" — the drift #31514 fixed for bun:sqlite. Decode with U+FFFD
+// replacement everywhere we surface SQLite-owned bytes to JS.
+ALWAYS_INLINE WTF::String sqliteText(const char* p, size_t len)
+{
+    return WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const uint8_t*>(p), len });
+}
+ALWAYS_INLINE WTF::String sqliteText(const char* p)
+{
+    return p ? sqliteText(p, strlen(p)) : WTF::String();
+}
+
+// A copy of the bytes. Null with an exception pending.
+inline JSC::JSUint8Array* sqliteBytes(JSC::JSGlobalObject* globalObject, const void* bytes, size_t length)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), length);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (length)
+        memcpy(array->typedVector(), bytes, length);
+    return array;
+}
 
 // Throws `RangeError: Out of memory` for a string too long to convert, where utf8() aborts.
 inline WTF::UTF8CString tryUTF8(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& string)

@@ -1,19 +1,19 @@
-import type { SSLMode } from "./options";
+import type { NativeCreateConnection, NativeCreateQuery } from "./pool";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLStatementDescription } from "./shared";
+import type { ArrayType, SQLStatementDescription, TransactionCommands } from "./shared";
 
 type SQLArrayParameter = import("./shared").SQLArrayParameter;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
 const {
-  BasePooledConnection,
   BaseSQLAdapter,
+  addResult,
+  onRejectQuery,
   createPooledConnectionHandle,
   sameSettings,
 } = require("internal/sql/pool");
 const {
-  SQLQueryFlags,
   symbols: { _results, _handle, _copy },
 } = require("internal/sql/query");
 
@@ -198,31 +198,13 @@ initPostgres(
 
     result.count = count;
     result.statement = statement;
-    const last_result = query[_results];
-
-    if (!last_result) {
-      query[_results] = result;
-    } else {
-      if (last_result instanceof SQLResultArray) {
-        // multiple results
-        query[_results] = [last_result, result];
-      } else {
-        // 3 or more results
-        last_result.push(result);
-      }
-    }
+    addResult(query, result);
   },
-
-  function onRejectPostgresQuery(query: Query<any, any>, reject: Error) {
-    try {
-      query.reject(reject);
-    } catch {}
-  },
-
+  onRejectQuery,
   arrayLiteral,
 );
 
-export interface PostgresDotZig {
+interface PostgresDotZig {
   init: (
     onResolveQuery: (
       query: Query<any, any>,
@@ -235,114 +217,20 @@ export interface PostgresDotZig {
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
     arrayLiteral: (values: ArrayLike<unknown>, kind: ArrayKind) => string,
   ) => void;
-  createConnection: (
-    hostname: string | undefined,
-    port: number,
-    username: string,
-    password: string,
-    databae: string,
-    sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
-    query: string,
-    path: string,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
-    onDisconnected: (err: Error | null) => void,
-    idleTimeout: number,
-    connectionTimeout: number,
-    maxLifetime: number,
-    useUnnamedPreparedStatements: boolean,
-    allowPublicKeyRetrieval: boolean,
-    onRetire: (() => void) | undefined,
-    foundRows: boolean,
-    channelBinding: 0 | 1 | 2,
-    columnTransform: ((name: string) => string) | undefined,
-    scramPassword: string,
-  ) => $ZigGeneratedClasses.PostgresSQLConnection;
-  createQuery: (
-    sql: string,
-    values: unknown[],
-    pendingValue: SQLResultArray<unknown>,
-    bigint: boolean,
-    simple: boolean,
-  ) => $ZigGeneratedClasses.PostgresSQLQuery;
+  createConnection: NativeCreateConnection<$ZigGeneratedClasses.PostgresSQLConnection>;
+  createQuery: NativeCreateQuery<$ZigGeneratedClasses.PostgresSQLQuery>;
 }
 
-class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses.PostgresSQLConnection> {
-  protected async startConnection() {
-    this.connection = await createPooledConnectionHandle(
-      createPostgresConnection,
-      this.adapter.connectionInfo,
-      this.nativeCallback(this.handleConnected),
-      this.nativeCallback(this.handleClose),
-      this.nativeCallback(this.handleRetire),
-      this,
-    );
-  }
-
-  /// Connect failures (ERR_POSTGRES_CONNECTION_FAILED) mean the server
-  /// accepted the TCP connection but closed it before the handshake
-  /// completed, typically because it is still starting up or an intermediary
-  /// (like a container port proxy) is up before the database is. Those are
-  /// retried until connectionTimeout elapses, as long as queries are waiting
-  /// on the pool. Refused connections (ERR_POSTGRES_CONNECTION_REFUSED) fail
-  /// fast: nothing is listening, and probes/healthchecks rely on the
-  /// immediate error. Real server errors (authentication, ErrorResponse
-  /// during startup) and closes of established connections are not retried
-  /// here.
-  protected isConnectFailureError(err: Error | null): boolean {
-    return err instanceof PostgresError && (err as any).code === "ERR_POSTGRES_CONNECTION_FAILED";
-  }
-}
-
-class PostgresAdapter
-  extends BaseSQLAdapter<
-    PooledPostgresConnection,
-    $ZigGeneratedClasses.PostgresSQLConnection,
-    $ZigGeneratedClasses.PostgresSQLQuery
-  >
-  implements
-    DatabaseAdapter<
-      PooledPostgresConnection,
-      $ZigGeneratedClasses.PostgresSQLConnection,
-      $ZigGeneratedClasses.PostgresSQLQuery
-    >
-{
-  protected createPooledConnection(): PooledPostgresConnection {
-    return new PooledPostgresConnection(this);
-  }
-
-  escapeIdentifier(str: string) {
-    if (str.includes("\0")) {
-      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
-    }
-    return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
-  }
-
-  connectionClosedError() {
-    return new PostgresError("Connection closed", {
-      code: "ERR_POSTGRES_CONNECTION_CLOSED",
-    });
-  }
-  notTaggedCallError() {
-    return new PostgresError("Query not called as a tagged template literal", {
-      code: "ERR_POSTGRES_NOT_TAGGED_CALL",
-    });
-  }
-  queryCancelledError(): Error {
-    return new PostgresError("Query cancelled", {
-      code: "ERR_POSTGRES_QUERY_CANCELLED",
-    });
-  }
-  invalidTransactionStateError(message: string) {
-    return new PostgresError(message, {
-      code: "ERR_POSTGRES_INVALID_TRANSACTION_STATE",
-    });
-  }
-  unsafeTransactionError() {
-    return new PostgresError("Only use sql.begin, sql.reserved or max: 1", {
-      code: "ERR_POSTGRES_UNSAFE_TRANSACTION",
-    });
-  }
+class PostgresAdapter extends BaseSQLAdapter<
+  $ZigGeneratedClasses.PostgresSQLConnection,
+  $ZigGeneratedClasses.PostgresSQLQuery
+> {
+  readonly createNativeConnection = createPostgresConnection;
+  protected readonly createNativeQuery = createPostgresQuery;
+  readonly ErrorClass = PostgresError;
+  readonly codePrefix = "ERR_POSTGRES_";
+  protected readonly commitPrepared = "COMMIT PREPARED";
+  protected readonly rollbackPrepared = "ROLLBACK PREPARED";
 
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);
@@ -352,64 +240,11 @@ class PostgresAdapter
     );
   }
 
-  getTransactionCommands(options?: string): import("./shared").TransactionCommands {
-    let BEGIN = "BEGIN";
-    if (options) {
-      BEGIN = `BEGIN ${options}`;
-    }
-
-    return {
-      BEGIN,
-      COMMIT: "COMMIT",
-      ROLLBACK: "ROLLBACK",
-      SAVEPOINT: "SAVEPOINT",
-      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
-      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
-    };
-  }
-
-  getDistributedTransactionCommands(name: string): import("./shared").TransactionCommands | null {
-    if (!this.validateDistributedTransactionName(name).valid) {
+  getDistributedTransactionCommands(name: string): TransactionCommands | null {
+    if (this.distributedNameError(name)) {
       return null;
     }
-
-    return {
-      BEGIN: "BEGIN",
-      COMMIT: `PREPARE TRANSACTION '${name}'`,
-      ROLLBACK: "ROLLBACK",
-      SAVEPOINT: "SAVEPOINT",
-      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
-      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
-      BEFORE_COMMIT_OR_ROLLBACK: null,
-    };
-  }
-
-  getCommitDistributedSQL(name: string): string {
-    const validation = this.validateDistributedTransactionName(name);
-    if (!validation.valid) {
-      throw new Error(validation.error);
-    }
-    return `COMMIT PREPARED '${name}'`;
-  }
-
-  getRollbackDistributedSQL(name: string): string {
-    const validation = this.validateDistributedTransactionName(name);
-    if (!validation.valid) {
-      throw new Error(validation.error);
-    }
-    return `ROLLBACK PREPARED '${name}'`;
-  }
-
-  createQueryHandle(sql: string, values: unknown[], flags: number) {
-    this.checkUnsafeTransaction(sql, flags);
-
-    return createPostgresQuery(
-      sql,
-      values,
-      new SQLResultArray(),
-      !!(flags & SQLQueryFlags.bigint),
-      !!(flags & SQLQueryFlags.simple),
-    );
+    return { BEGIN: "BEGIN", COMMIT: `PREPARE TRANSACTION '${name}'`, ROLLBACK: "ROLLBACK" };
   }
 
   placeholder(index: number): string {
@@ -531,7 +366,7 @@ function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   }
 }
 
-// The members onResolvePostgresQuery/onRejectPostgresQuery read off a query.
+// The members onResolvePostgresQuery and onRejectQuery read off a query.
 class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;

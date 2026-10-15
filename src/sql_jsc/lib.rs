@@ -25,6 +25,9 @@ pub mod shared {
     #[path = "ConnectionCtorArgs.rs"]
     pub mod connection_ctor_args;
 
+    #[path = "ConnectionTimers.rs"]
+    pub mod connection_timers;
+
     pub mod datetime_text;
 
     #[path = "QueryCtorArgs.rs"]

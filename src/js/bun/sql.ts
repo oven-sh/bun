@@ -1,4 +1,4 @@
-import type { BasePooledConnection } from "internal/sql/pool";
+import type { PooledConnection as ServerConnection } from "internal/sql/pool";
 import type { BaseQueryHandle } from "internal/sql/query";
 import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
 
@@ -12,8 +12,8 @@ type CloseOptions = { timeout?: number };
 
 /// SQLite's is the Database itself.
 interface PooledConnection {
-  bindQuery?: BasePooledConnection["bindQuery"];
-  flush?: BasePooledConnection["flush"];
+  bindQuery?: ServerConnection["bindQuery"];
+  flush?: ServerConnection["flush"];
   close(): void;
 }
 
@@ -87,14 +87,6 @@ const enum Kind {
   savepoint,
 }
 
-interface Statements {
-  BEGIN: string;
-  /// XA END
-  BEFORE_COMMIT_OR_ROLLBACK?: string | null;
-  COMMIT: string;
-  ROLLBACK: string;
-}
-
 /// Never references its handle: a FinalizationRegistry releases a reservation whose handle was dropped.
 class Scope implements Target {
   client: Client;
@@ -115,7 +107,7 @@ class Scope implements Target {
   whenIdle: (() => void) | null = null;
   onConnectionClosed: ((err: Error) => void) | null = null;
 
-  statements: Statements | null = null;
+  statements: TransactionCommands | null = null;
   distributed = false;
   savepoints = 0;
   /// of a transaction that waits for the one before it on the reservation
@@ -593,20 +585,14 @@ async function run(scope: Scope, callback: TransactionCallback) {
 }
 
 function transactionCommands(pool: Pool, options: string | undefined, distributed: boolean): TransactionCommands {
-  if (distributed) {
-    const commands = pool.getDistributedTransactionCommands(options!);
-    if (!commands) {
-      throw new Error(`This adapter doesn't support distributed transactions.`);
-    }
-    return commands;
+  if (!distributed) {
+    return pool.getTransactionCommands(options);
   }
-  if (options) {
-    const validation = pool.validateTransactionOptions(options);
-    if (!validation.valid) {
-      throw new Error(validation.error);
-    }
+  const commands = pool.getDistributedTransactionCommands(options!);
+  if (!commands) {
+    throw new Error(`This adapter doesn't support distributed transactions.`);
   }
-  return pool.getTransactionCommands(options);
+  return commands;
 }
 
 function onTransactionConnected(
@@ -724,15 +710,14 @@ function savepoint(this: Scope, nameOrFn: unknown, fnOrName?: unknown) {
     return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
   }
 
-  const { SAVEPOINT, RELEASE_SAVEPOINT, ROLLBACK_TO_SAVEPOINT } = transaction.statements as TransactionCommands;
   // the format of the postgres package
   const id = `s${transaction.savepoints++}${name ? `_${name}` : ""}`;
   const { promise, resolve, reject } = Promise.withResolvers();
   const scope = new Scope(this.client, Kind.savepoint, this, this.connection);
   scope.statements = {
-    BEGIN: `${SAVEPOINT} ${id}`,
-    COMMIT: `${RELEASE_SAVEPOINT} ${id}`,
-    ROLLBACK: `${ROLLBACK_TO_SAVEPOINT} ${id}`,
+    BEGIN: `SAVEPOINT ${id}`,
+    COMMIT: `RELEASE SAVEPOINT ${id}`,
+    ROLLBACK: `ROLLBACK TO SAVEPOINT ${id}`,
   };
   scope.resolve = resolve;
   scope.reject = reject;
@@ -926,8 +911,7 @@ function notify(this: Target, channel: unknown, payload: unknown) {
 }
 
 async function finishDistributed(this: Target, commit: boolean, name: string) {
-  const pool = this.pool;
-  const text = commit ? pool.getCommitDistributedSQL(name) : pool.getRollbackDistributedSQL(name);
+  const text = this.pool.getFinishDistributedSQL(commit, name);
   return await unsafeQuery(this, text, undefined, SQLQueryFlags.none, this.handler).execute();
 }
 

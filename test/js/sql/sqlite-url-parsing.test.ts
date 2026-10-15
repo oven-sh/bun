@@ -415,8 +415,13 @@ describe("which string names the database", () => {
   test("a URL object", async () => {
     await using sqlite = parse(new URL("sqlite://url.db?mode=ro"));
     expect(sqlite.options).toMatchObject({ adapter: "sqlite", filename: "url.db", readonly: true });
-    await using file = parse(undefined, { filename: new URL("file:///abs/a%20b.db") });
-    expect(file.options).toMatchObject({ adapter: "sqlite", filename: Bun.fileURLToPath("file:///abs/a%20b.db") });
+
+    // from a real path: on Windows a file: URL without a drive letter names no file
+    const path = join(import.meta.dir, "a b.db");
+    const url = Bun.pathToFileURL(path);
+    expect(url.href).toEndWith("/a%20b.db");
+    await using file = parse(undefined, { filename: url });
+    expect(file.options).toMatchObject({ adapter: "sqlite", filename: path });
   });
 
   test.each(["what?.db", "data.db?mode=ro", "data.db?mode=bogus", "a?b#c.db"])(

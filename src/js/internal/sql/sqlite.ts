@@ -1,22 +1,14 @@
 import type * as BunSQLiteModule from "bun:sqlite";
-import type { BaseQueryHandle, Query, QueryStrings } from "./query";
-import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter } from "./shared";
+import type { BaseQueryHandle, Query } from "./query";
+import type { DatabaseAdapter, OnConnected } from "./shared";
 
 type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const { SQLResultArray, normalizeQuery, firstKeyword } = require("internal/sql/shared");
+const { SQLDialect, SQLResultArray, firstKeyword } = require("internal/sql/shared");
 const { SQLQueryResultMode } = require("internal/sql/query");
 const { closeTimeoutMs } = require("internal/sql/pool");
 const { SQLiteError } = require("internal/sql/errors");
-
-let lazySQLiteModule: typeof BunSQLiteModule;
-function getSQLiteModule() {
-  if (!lazySQLiteModule) {
-    lazySQLiteModule = require("../../bun/sqlite.ts");
-  }
-  return lazySQLiteModule;
-}
 
 function toSQLiteError(err: unknown) {
   if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
@@ -121,85 +113,47 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   }
 }
 
-class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle> {
+class SQLiteAdapter
+  extends SQLDialect
+  implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLiteModule.Database, SQLiteQueryHandle>
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions;
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
-  private _closed: boolean = false;
+  public closed: boolean = false;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
   private inBegin: boolean = false;
   private waitingBegins: OnConnected<BunSQLiteModule.Database>[] = [];
   private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
+    super();
     this.connectionInfo = connectionInfo;
 
+    const { filename, readonly, create, readwrite, safeIntegers, strict, onconnect } = connectionInfo;
     try {
-      const SQLiteModule = getSQLiteModule();
-      const { filename, readonly, create, readwrite, safeIntegers, strict } = connectionInfo;
-
-      this.db = new SQLiteModule.Database(filename, { readonly, create, readwrite, safeIntegers, strict });
-
-      try {
-        const onconnect = this.connectionInfo.onconnect;
-        if (onconnect) onconnect(null);
-      } catch {}
+      // not before an SQLite client is made
+      const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
+      this.db = new Database(filename, { readonly, create, readwrite, safeIntegers, strict });
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
       if (err instanceof TypeError) throw err;
       this.storedError = toSQLiteError(err) as Error;
-      this.db = null;
-      try {
-        const onconnect = this.connectionInfo.onconnect;
-        if (onconnect) onconnect(this.storedError);
-      } catch {}
     }
+    try {
+      if (onconnect) onconnect(this.storedError);
+    } catch {}
   }
 
   createQueryHandle(sql: string, values: unknown[] | Record<string, unknown>): SQLiteQueryHandle {
     return new SQLiteQueryHandle(sql, values, this);
   }
-  escapeIdentifier(str: string) {
-    if (str.includes("\0")) {
-      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
-    }
-    return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
-  }
-  connectionClosedError() {
-    return new SQLiteError("Connection closed", {
-      code: "ERR_SQLITE_CONNECTION_CLOSED",
-      errno: 0,
-    });
-  }
-  notTaggedCallError() {
-    return new SQLiteError("Query not called as a tagged template literal", {
-      code: "ERR_SQLITE_NOT_TAGGED_CALL",
-      errno: 0,
-    });
-  }
-  queryCancelledError() {
-    return new SQLiteError("Query cancelled", {
-      code: "ERR_SQLITE_QUERY_CANCELLED",
-      errno: 0,
-    });
-  }
-  invalidTransactionStateError(message: string) {
-    return new SQLiteError(message, {
-      code: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
-      errno: 0,
-    });
-  }
-  normalizeQuery(strings: QueryStrings, values: unknown[]): [string, unknown[]] {
-    return normalizeQuery(this, strings, values);
-  }
-
-  // SQLite uses ? for placeholders, not $1, $2, etc.
-  placeholder(_index: number): string {
-    return "?";
+  error(code: string, message: string) {
+    return new SQLiteError(message, { code: "ERR_SQLITE_" + code, errno: 0 });
   }
 
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
-    if (this._closed) {
+    if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
     }
 
@@ -241,11 +195,11 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
   async close(options?: { timeout?: number }) {
     closeTimeoutMs(options);
-    if (this._closed) {
+    if (this.closed) {
       return;
     }
 
-    this._closed = true;
+    this.closed = true;
 
     this.storedError = new Error("Connection closed");
 
@@ -281,10 +235,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return this.db !== null;
   }
 
-  get closed(): boolean {
-    return this._closed;
-  }
-
   supportsReservedConnections(): boolean {
     // There is one connection and plain queries always run on it, so reserve() has nothing to give.
     return false;
@@ -308,64 +258,21 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   isInTransaction(connection: BunSQLiteModule.Database): boolean {
     return connection === this.db && connection.inTransaction;
   }
-  array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
+  array(): never {
     throw new Error("SQLite doesn't support arrays");
   }
-  getTransactionCommands(options?: string): import("./shared").TransactionCommands {
-    let BEGIN = "BEGIN";
-
-    if (options) {
-      // SQLite supports DEFERRED, IMMEDIATE, EXCLUSIVE
-      const upperOptions = options.toUpperCase();
-      if (upperOptions === "DEFERRED" || upperOptions === "IMMEDIATE" || upperOptions === "EXCLUSIVE") {
-        BEGIN = `BEGIN ${upperOptions}`;
-      } else {
-        BEGIN = `BEGIN ${options}`;
-      }
+  getTransactionCommands(options?: string) {
+    const upperOptions = options?.toUpperCase();
+    if (upperOptions === "READONLY" || upperOptions === "READ") {
+      throw new Error(`SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`);
     }
-
-    return {
-      BEGIN,
-      COMMIT: "COMMIT",
-      ROLLBACK: "ROLLBACK",
-      SAVEPOINT: "SAVEPOINT",
-      RELEASE_SAVEPOINT: "RELEASE SAVEPOINT",
-      ROLLBACK_TO_SAVEPOINT: "ROLLBACK TO SAVEPOINT",
-    };
+    return super.getTransactionCommands(options);
   }
 
-  getDistributedTransactionCommands(_name: string): import("./shared").TransactionCommands | null {
-    // SQLite doesn't support distributed transactions
+  getDistributedTransactionCommands() {
     return null;
   }
-
-  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
-    const upperOptions = options.toUpperCase();
-    if (upperOptions === "READONLY" || upperOptions === "READ") {
-      return {
-        valid: false,
-        error: `SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`,
-      };
-    }
-
-    // The string is interpolated into `BEGIN ${options}`, so refuse anything that
-    // could terminate the statement or start a new one.
-    if (!/^[A-Za-z ,]*$/.test(options)) {
-      return {
-        valid: false,
-        error: "Transaction options can only contain letters, spaces, and commas.",
-      };
-    }
-
-    // SQLite will handle validation of other options
-    return { valid: true };
-  }
-
-  getCommitDistributedSQL(): string {
-    throw new Error("SQLite doesn't support distributed transactions.");
-  }
-
-  getRollbackDistributedSQL(): string {
+  getFinishDistributedSQL(): never {
     throw new Error("SQLite doesn't support distributed transactions.");
   }
 }

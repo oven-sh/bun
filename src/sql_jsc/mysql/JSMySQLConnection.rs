@@ -4,13 +4,15 @@ use core::ffi::c_void;
 use crate::jsc::{
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
+    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js, run_callback,
     webcore::AutoFlusher,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
+use bun_core::fmt::ConnTimeoutKind;
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
@@ -76,18 +78,12 @@ pub struct JSMySQLConnection {
     // Private — intrusive heap node; cross-crate `container_of` goes through
     // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
     timer: JsCell<EventLoopTimer>,
-
-    /// This timer controls the maximum lifetime of a connection.
-    /// It starts when the connection successfully starts (i.e. after handshake is complete).
-    /// It stops when the connection is closed.
-    pub(crate) max_lifetime_interval_ms: u32,
-    // Private — see `timer`; recovered via [`Self::from_max_lifetime_timer_ptr`].
-    max_lifetime_timer: JsCell<EventLoopTimer>,
+    timers: ConnectionTimers,
 }
 
 bun_event_loop::impl_timer_owner!(JSMySQLConnection;
     from_timer_ptr => timer,
-    from_max_lifetime_timer_ptr => max_lifetime_timer,
+    from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
 
 bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
@@ -145,6 +141,42 @@ impl JSMySQLConnection {
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
         bun_io::js_vm_ctx()
+    }
+}
+
+impl TimedConnection for JSMySQLConnection {
+    fn timers(&self) -> &ConnectionTimers {
+        &self.timers
+    }
+
+    fn phase(&self) -> Phase {
+        match self.connection.get().status {
+            my_sql_connection::Status::Connected => Phase::Connected,
+            my_sql_connection::Status::Failed => Phase::Failed,
+            _ => Phase::Connecting,
+        }
+    }
+
+    fn has_requests(&self) -> bool {
+        !self.connection.get().is_idle()
+    }
+
+    fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
+        let code = match kind {
+            ConnTimeoutKind::Idle => AnyMySQLErrorT::IdleTimeout,
+            ConnTimeoutKind::Connection => AnyMySQLErrorT::ConnectionTimedOut,
+            ConnTimeoutKind::MaxLifetime => AnyMySQLErrorT::LifetimeTimeout,
+        };
+        self.fail_fmt(code, message);
+    }
+
+    fn notify_retiring(&self) {
+        let Some(js_value) = self.js_value.get().try_get() else {
+            return;
+        };
+        if let Some(on_retire) = js::onretire_take_cached(js_value, &self.global_object) {
+            run_callback(&self.global_object, on_retire, &[]);
+        }
     }
 }
 
@@ -223,16 +255,13 @@ impl JSMySQLConnection {
         if self.timer.get().state == EventLoopTimerState::ACTIVE {
             self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
-        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
-            self.max_lifetime_timer
-                .with_mut(|t| self.vm_mut().timer().remove(t));
-        }
+        self.timers.stop();
     }
 
     fn get_timeout_interval(&self) -> u32 {
         match self.connection.get().status {
             my_sql_connection::Status::Connected => {
-                if self.connection.get().is_busy() {
+                if self.is_busy() {
                     return 0;
                 }
                 self.idle_timeout_interval_ms
@@ -314,75 +343,6 @@ impl JSMySQLConnection {
         self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
     }
 
-    pub fn on_max_lifetime_timeout(&self) {
-        self.max_lifetime_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        if self.connection.get().status == my_sql_connection::Status::Failed {
-            return;
-        }
-        if self.connection.get().is_busy() {
-            self.connection_mut().set_lifetime_exceeded();
-            self.notify_retiring();
-            return;
-        }
-        self.fail_lifetime_timeout();
-    }
-
-    /// Tells the pool to give this connection no more work.
-    fn notify_retiring(&self) {
-        let Some(on_retire) = self
-            .js_value
-            .get()
-            .try_get()
-            .and_then(|value| js::onretire_take_cached(value, &self.global_object))
-        else {
-            return;
-        };
-        self.event_loop().run_callback(
-            bun_event_loop::ContextId::NONE,
-            on_retire,
-            &self.global_object,
-            JSValue::UNDEFINED,
-            &[],
-        );
-    }
-
-    fn fail_lifetime_timeout(&self) {
-        use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
-        self.fail_fmt(
-            AnyMySQLErrorT::LifetimeTimeout,
-            format_args!(
-                "{}",
-                fmt_conn_timeout(
-                    ConnTimeoutKind::MaxLifetime,
-                    self.max_lifetime_interval_ms,
-                    ""
-                )
-            ),
-        );
-    }
-
-    fn setup_max_lifetime_timer_if_necessary(&self) {
-        if self.max_lifetime_interval_ms == 0 {
-            return;
-        }
-        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
-            return;
-        }
-
-        self.max_lifetime_timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(
-                TimespecMockMode::ForceRealTime,
-                self.max_lifetime_interval_ms.into(),
-            );
-        });
-        // whole-struct provenance: the fire path recovers the container from this pointer.
-        let t = core::ptr::addr_of!(self.max_lifetime_timer)
-            .cast::<EventLoopTimer>()
-            .cast_mut();
-        self.vm_mut().timer().insert(t);
-    }
-
     // Exported via the `.classes.ts` codegen (`MySQLConnectionClass__construct`).
     pub fn constructor(
         global_object: &JSGlobalObject,
@@ -406,17 +366,8 @@ impl JSMySQLConnection {
         self.vm().enter_event_loop_scope_without_checkpoint()
     }
 
-    /// Called wherever the connection can stop being busy. Returns whether it closed.
-    fn retire_if_due(&self) -> bool {
-        let is_due = self.connection.get().is_due_to_retire();
-        if is_due {
-            self.fail_lifetime_timeout();
-        }
-        is_due
-    }
-
     fn on_queue_changed(&self) {
-        if self.retire_if_due() {
+        if self.retire_if_idle() {
             return;
         }
         if self.connection.get().status == my_sql_connection::Status::Connected {
@@ -440,7 +391,7 @@ impl JSMySQLConnection {
                     AnyMySQLErrorT::AuthenticationFailed,
                 );
             }
-            self.retire_if_due();
+            self.retire_if_idle();
         }
         self.on_queue_changed();
     }
@@ -544,13 +495,13 @@ impl JSMySQLConnection {
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: args.idle_timeout_ms,
             connection_timeout_ms: args.connection_timeout_ms,
-            max_lifetime_interval_ms: args.max_lifetime_ms,
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::MySQLConnectionTimeout,
             )),
-            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
+            timers: ConnectionTimers::new(
+                args.max_lifetime_ms,
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
-            )),
+            ),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. `ParentRef` wraps
         // the freshly-boxed allocation as a lifetime-erased `&Self` (R-2: every
@@ -648,14 +599,14 @@ impl JSMySQLConnection {
     }
 
     pub fn do_hold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        this.connection_mut().set_checked_out(true);
+        this.timers.set_checked_out(true);
         this.reset_connection_timeout();
         Ok(JSValue::UNDEFINED)
     }
 
     pub fn do_unhold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _entered = this.entered_from_js();
-        this.connection_mut().set_checked_out(false);
+        this.timers.set_checked_out(false);
         this.on_queue_changed();
         Ok(JSValue::UNDEFINED)
     }
@@ -753,13 +704,7 @@ impl JSMySQLConnection {
             }
             js_error.ensure_still_alive();
 
-            self.event_loop().run_callback(
-                bun_event_loop::ContextId::NONE,
-                on_close,
-                &self.global_object,
-                JSValue::UNDEFINED,
-                &[js_error],
-            );
+            run_callback(&self.global_object, on_close, &[js_error]);
         }
 
         self.connection.get().queue.clean(value);
@@ -778,20 +723,14 @@ impl JSMySQLConnection {
         {
             return;
         }
-        self.setup_max_lifetime_timer_if_necessary();
+        self.start_max_lifetime_timer();
         let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
             return;
         };
         on_connect.ensure_still_alive();
         let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
-        self.event_loop().run_callback(
-            bun_event_loop::ContextId::NONE,
-            on_connect,
-            &self.global_object,
-            JSValue::UNDEFINED,
-            &[JSValue::NULL, js_value],
-        );
+        run_callback(&self.global_object, on_connect, &[JSValue::NULL, js_value]);
     }
 
     /// The client cannot turn one of `request`'s rows into a JS value. The
@@ -1095,7 +1034,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 this.on_error(None, e);
             }
             this.notify_connected();
-            this.retire_if_due();
+            this.retire_if_idle();
         }
         this.on_queue_changed();
     }

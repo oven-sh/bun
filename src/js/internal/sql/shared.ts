@@ -292,19 +292,53 @@ fromCamel.column = { to: fromCamel };
 fromPascal.column = { to: fromPascal };
 fromKebab.column = { to: fromKebab };
 
-interface QueryNormalizationAdapter {
-  readonly connectionInfo: { transform?: Transform };
-  escapeIdentifier(name: string): string;
-  /** Returns the placeholder for the given 1-based binding index ("?" or "$N"). */
-  placeholder(index: number): string;
+/// What the three adapters say in the same words.
+abstract class SQLDialect {
+  abstract readonly connectionInfo: { transform?: Transform };
+  /// around an identifier
+  readonly quote: string = '"';
+  readonly begin: string = "BEGIN";
+
+  /// `code`: what follows ERR_POSTGRES_, ERR_MYSQL_ or ERR_SQLITE_
+  abstract error(code: string, message: string): Error;
+
+  connectionClosedError() {
+    return this.error("CONNECTION_CLOSED", "Connection closed");
+  }
+  notTaggedCallError() {
+    return this.error("NOT_TAGGED_CALL", "Query not called as a tagged template literal");
+  }
+  queryCancelledError() {
+    return this.error("QUERY_CANCELLED", "Query cancelled");
+  }
+  invalidTransactionStateError(message: string) {
+    return this.error("INVALID_TRANSACTION_STATE", message);
+  }
+
+  /** For the 1-based `index`. */
+  placeholder(_index: number): string {
+    return "?";
+  }
+
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [string, unknown[]] {
+    return normalizeQuery(this, strings, values);
+  }
+
+  getTransactionCommands(options?: string): TransactionCommands {
+    // They become a part of the statement, so nothing that could end it or start another.
+    if (options && !/^[A-Za-z ,]*$/.test(options)) {
+      throw new Error("Transaction options can only contain letters, spaces, and commas.");
+    }
+    return { BEGIN: options ? `${this.begin} ${options}` : this.begin, COMMIT: "COMMIT", ROLLBACK: "ROLLBACK" };
+  }
 }
 
 class QueryBuilder {
   text = "";
   values: unknown[] = [];
-  readonly adapter: QueryNormalizationAdapter;
+  readonly adapter: SQLDialect;
 
-  constructor(adapter: QueryNormalizationAdapter) {
+  constructor(adapter: SQLDialect) {
     this.adapter = adapter;
   }
 
@@ -351,8 +385,13 @@ class QueryBuilder {
   }
 
   identifier(name: string | number): string {
-    const to = this.adapter.connectionInfo.transform?.column.to;
-    return this.adapter.escapeIdentifier(String(to === undefined ? name : to(String(name))));
+    const { quote, connectionInfo } = this.adapter;
+    const to = connectionInfo.transform?.column.to;
+    name = String(to === undefined ? name : to(String(name)));
+    if (name.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", name, "must not contain null bytes");
+    }
+    return quote + name.replaceAll(quote, quote + quote).replaceAll(".", quote + "." + quote) + quote;
   }
 
   fragment(query: QueryType<any, any>) {
@@ -492,11 +531,7 @@ class QueryBuilder {
   }
 }
 
-function normalizeQuery(
-  adapter: QueryNormalizationAdapter,
-  strings: QueryStrings,
-  values: unknown[],
-): [string, unknown[]] {
+function normalizeQuery(adapter: SQLDialect, strings: QueryStrings, values: unknown[]): [string, unknown[]] {
   if (typeof strings === "string") {
     return [strings, values ?? []];
   }
@@ -514,16 +549,13 @@ export type OnConnected<Connection> = (
 
 export interface TransactionCommands {
   BEGIN: string;
+  /// XA END
+  BEFORE_COMMIT_OR_ROLLBACK?: string;
   COMMIT: string;
   ROLLBACK: string;
-  SAVEPOINT: string;
-  RELEASE_SAVEPOINT: string;
-  ROLLBACK_TO_SAVEPOINT: string;
-  BEFORE_COMMIT_OR_ROLLBACK?: string | null;
 }
 
-export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
-  normalizeQuery(strings: QueryStrings, values: unknown[]): [sql: string, values: unknown[]];
+export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> extends SQLDialect {
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, prepared?: boolean): void;
@@ -544,26 +576,18 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   isInTransaction?(connection: Connection): boolean;
   copyStream?(query: QueryType<any, any>, writable: boolean): ReadableStream<Uint8Array> | WritableStream<unknown>;
 
-  getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
   getDistributedTransactionCommands(name: string): TransactionCommands | null;
-
-  validateTransactionOptions(options: string): { valid: boolean; error?: string };
-
-  getCommitDistributedSQL(name: string): string;
-  getRollbackDistributedSQL(name: string): string;
-  notTaggedCallError(): Error;
-  connectionClosedError(): Error;
-  queryCancelledError(): Error;
-  invalidTransactionStateError(message: string): Error;
+  /** COMMIT PREPARED or ROLLBACK PREPARED */
+  getFinishDistributedSQL(commit: boolean, name: string): string;
 }
 export default {
   SQLHelper,
   SQLResultArray,
   SQLArrayParameter,
+  SQLDialect,
   isUnsafeTransactionStart,
   firstKeyword,
-  normalizeQuery,
   transforms: {
     camel: { column: { from: toCamel, to: fromCamel } },
     pascal: { column: { from: toPascal, to: fromPascal } },

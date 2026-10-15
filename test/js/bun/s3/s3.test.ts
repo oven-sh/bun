@@ -1,4 +1,4 @@
-import type { S3File, S3Options } from "bun";
+import type { S3File, S3FilePresignOptions, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
@@ -1262,21 +1262,20 @@ for (let credentials of allCredentials) {
             }),
           );
         });
-        it("should error when presign with invalid token", async () => {
-          await Promise.all(
-            [s3, (path, ...args) => S3(...args).file(path)].map(async fn => {
-              let options = { ...s3Options, bucket: S3Bucket };
-              options.sessionToken = Buffer.alloc(4096, "a").toString();
-
-              try {
-                const s3file = fn(randomUUID(), options);
-                await s3file.presign();
-                expect.unreachable();
-              } catch (e: any) {
-                expect(e?.code).toBe("ERR_S3_INVALID_SESSION_TOKEN");
-              }
-            }),
-          );
+        it("should presign with a session token of 4096 characters", () => {
+          for (const fn of [s3, (path, ...args) => S3(...args).file(path)]) {
+            const options = { ...s3Options, bucket: S3Bucket, sessionToken: Buffer.alloc(4096, "a").toString() };
+            const presigned: string = fn(randomUUID(), options).presign();
+            const query = new URL(presigned).searchParams;
+            expect(query.get("X-Amz-Security-Token")).toBe(options.sessionToken);
+            // The credential scope is `<access key>/<day>/<region>/s3/aws4_request`.
+            const region = query.get("X-Amz-Credential")!.split("/")[2];
+            const { signature, expected } = verifyPresignedUrl(presigned, {
+              secretAccessKey: options.secretAccessKey!,
+              region,
+            });
+            expect(signature).toBe(expected);
+          }
         });
       });
 
@@ -2123,36 +2122,183 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+// The signature that AWS Signature Version 4 gives a presigned URL, made from the rules
+// of the specification and not by Bun. It reads the path and the host as text and puts
+// the query in canonical order itself, so it does not rely on how Bun orders or encodes them.
+function verifyPresignedUrl(
+  presigned: string,
+  credentials: { secretAccessKey: string; region: string },
+  method = "GET",
+) {
+  const hostStart = presigned.indexOf("://") + "://".length;
+  const pathStart = presigned.indexOf("/", hostStart);
+  const queryStart = presigned.indexOf("?");
+  const params = presigned
+    .slice(queryStart + 1)
+    .split("&")
+    .map(param => {
+      const equals = param.indexOf("=");
+      return { name: param.slice(0, equals), value: param.slice(equals + 1) };
+    });
+  const find = (name: string) => params.find(param => param.name === name)!.value;
+  const canonicalQuery = params
+    .filter(param => param.name !== "X-Amz-Signature")
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+    .map(param => `${param.name}=${param.value}`)
+    .join("&");
+  const amzDate = find("X-Amz-Date");
+  const day = amzDate.slice(0, 8);
+  const canonicalRequest = [
+    method,
+    presigned.slice(pathStart, queryStart),
+    canonicalQuery,
+    `host:${presigned.slice(hostStart, pathStart)}\n`,
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    `${day}/${credentials.region}/s3/aws4_request`,
+    createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+  const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+  const signingKey = hmac(
+    hmac(hmac(hmac("AWS4" + credentials.secretAccessKey, day), credentials.region), "s3"),
+    "aws4_request",
+  );
+  const expected = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  return { signature: find("X-Amz-Signature"), expected, names: params.map(param => param.name) };
+}
+
 describe("presigned url signature", () => {
-  function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
+  const signing = {
+    accessKeyId: "AKIAIOSFODNN7EXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+  };
+  const fill = (length: number, text: string) => Buffer.alloc(length, text).toString();
+  // The alphabet of a real session token. Percent-encoding makes `+`, `/` and `=` three bytes each.
+  const base64Token = (length: number) => fill(length, "FwoGZXIvYXdzEBEaD+Token/Pad=");
+  // A download name in the RFC 5987 form. The query of the URL encodes its `%` signs once more.
+  const cjkFilename = `attachment; filename*=UTF-8''${encodeURIComponent(fill(32 * 3, "文"))}.pdf`;
+
+  type Row = {
+    name: string;
+    client?: S3Options;
+    key?: string;
+    presign?: S3FilePresignOptions;
+    /** Query parameters of the URL and what each one decodes to. */
+    query?: Record<string, string>;
+  };
+
+  // Inputs of a valid size for S3 and the largest ones that the signer took while it
+  // kept its text in arrays of a fixed size. The signer refused the next row of each pair.
+  const sizes: Row[] = [
+    { name: "a session token of 2048 characters", client: { sessionToken: fill(2048, "a") } },
+    { name: "a session token of 2049 characters", client: { sessionToken: fill(2049, "a") } },
+    { name: "a session token of 4096 characters", client: { sessionToken: fill(4096, "a") } },
+    { name: "a session token of 16384 characters", client: { sessionToken: fill(16384, "a") } },
+    { name: "a base64 session token of 680 characters", client: { sessionToken: base64Token(680) } },
+    { name: "a base64 session token of 1700 characters", client: { sessionToken: base64Token(1700) } },
+    { name: "a key of 113 CJK characters", key: fill(113 * 3, "文") },
+    { name: "a key of 114 CJK characters", key: fill(114 * 3, "文") },
+    { name: "a key of 1023 spaces", key: fill(1023, " ") },
+    { name: "a contentDisposition of 512 characters", presign: { contentDisposition: fill(512, "a") } },
+    { name: "a contentDisposition of 513 characters", presign: { contentDisposition: fill(513, "a") } },
+    { name: "a contentDisposition of 4200 characters", presign: { contentDisposition: fill(4200, "a") } },
+    {
+      name: "a contentDisposition with a file name of 32 CJK characters",
+      presign: { contentDisposition: cjkFilename },
+    },
+    { name: "a type of 256 characters", presign: { type: fill(256, "a") } },
+    { name: "a type of 257 characters", presign: { type: fill(257, "a") } },
+    { name: "a bucket of 63 characters", client: { bucket: fill(63, "b") } },
+    { name: "a bucket of 64 characters", client: { bucket: fill(64, "b") } },
+    {
+      name: "an endpoint path, a bucket and a key of 1200 bytes together",
+      client: { endpoint: `https://s3.example.com/${fill(600, "p")}` },
+      key: fill(600, "k"),
+    },
+    { name: "a secretAccessKey of 4092 characters", client: { secretAccessKey: fill(4092, "s") } },
+    { name: "a secretAccessKey of 4093 characters", client: { secretAccessKey: fill(4093, "t") } },
+    { name: "a region of 3000 characters", client: { region: fill(3000, "r") } },
+    { name: "a region of 4000 characters", client: { region: fill(4000, "r") } },
+  ];
+
+  // One row for each optional parameter of the query, and one row with all of them.
+  const parameters: Row[] = [
+    { name: "acl", presign: { acl: "public-read" }, query: { "X-Amz-Acl": "public-read" } },
+    { name: "storageClass", presign: { storageClass: "GLACIER" }, query: { "x-amz-storage-class": "GLACIER" } },
+    { name: "requestPayer", presign: { requestPayer: true }, query: { "x-amz-request-payer": "requester" } },
+    {
+      name: "contentDisposition",
+      presign: { contentDisposition: 'attachment; filename="report 1.pdf"' },
+      query: { "response-content-disposition": 'attachment; filename="report 1.pdf"' },
+    },
+    {
+      name: "type",
+      presign: { type: "application/json; charset=utf-8" },
+      query: { "response-content-type": "application/json; charset=utf-8" },
+    },
+    {
+      name: "sessionToken",
+      client: { sessionToken: base64Token(64) },
+      query: { "X-Amz-Security-Token": base64Token(64) },
+    },
+    {
+      name: "all of the parameters and the method PUT",
+      client: { sessionToken: base64Token(64) },
+      key: "folder/some key.txt",
+      presign: {
+        method: "PUT",
+        expiresIn: 60,
+        acl: "public-read",
+        storageClass: "STANDARD_IA",
+        requestPayer: true,
+        contentDisposition: "inline",
+        type: "text/plain",
+      },
+      query: {
+        "X-Amz-Acl": "public-read",
+        "X-Amz-Expires": "60",
+        "X-Amz-Security-Token": base64Token(64),
+        "response-content-disposition": "inline",
+        "response-content-type": "text/plain",
+        "x-amz-request-payer": "requester",
+        "x-amz-storage-class": "STANDARD_IA",
+      },
+    },
+  ];
+
+  it.each([...sizes, ...parameters].map(row => [row.name, row] as [string, Row]))("signs %s", (_, row) => {
+    const credentials = { ...signing, ...row.client };
+    const key = row.key ?? "key.txt";
+    const presigned = new S3Client(credentials).presign(key, row.presign);
+
+    const { signature, expected, names } = verifyPresignedUrl(presigned, credentials, row.presign?.method);
+    expect(signature).toBe(expected);
+    // The canonical request has the parameters in the order of their bytes. The URL has the same order.
+    expect(names).toEqual(names.toSorted((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+    // Each input makes the round trip through the URL.
     const url = new URL(presigned);
-    const params = presigned.split("?")[1].split("&");
-    const signature = params.find(p => p.startsWith("X-Amz-Signature="))!.slice("X-Amz-Signature=".length);
-    const canonicalQuery = params.filter(p => !p.startsWith("X-Amz-Signature=")).join("&");
-    const amzDate = params.find(p => p.startsWith("X-Amz-Date="))!.slice("X-Amz-Date=".length);
-    const day = amzDate.slice(0, 8);
-    const canonicalRequest = [
-      "GET",
-      url.pathname,
-      canonicalQuery,
-      `host:${url.host}\n`,
-      "host",
-      "UNSIGNED-PAYLOAD",
-    ].join("\n");
-    const stringToSign = [
-      "AWS4-HMAC-SHA256",
-      amzDate,
-      `${day}/${credentials.region}/s3/aws4_request`,
-      createHash("sha256").update(canonicalRequest).digest("hex"),
-    ].join("\n");
-    const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
-    const signingKey = hmac(
-      hmac(hmac(hmac("AWS4" + credentials.secretAccessKey, day), credentials.region), "s3"),
-      "aws4_request",
-    );
-    const expected = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
-    return { signature, expected };
-  }
+    const query: Record<string, string | undefined> = {
+      "X-Amz-Security-Token": credentials.sessionToken,
+      "response-content-disposition": row.presign?.contentDisposition,
+      "response-content-type": row.presign?.type,
+      ...row.query,
+    };
+    for (const [name, value] of Object.entries(query)) {
+      expect(url.searchParams.get(name)).toBe(value ?? null);
+    }
+    const endpointPath = new URL(credentials.endpoint).pathname.replace(/\/$/, "");
+    expect(decodeURIComponent(url.pathname)).toBe(`${endpointPath}/${credentials.bucket}/${key}`);
+    expect(url.searchParams.get("X-Amz-Credential")).toStartWith(`${credentials.accessKeyId}/`);
+    expect(url.searchParams.get("X-Amz-Credential")).toEndWith(`/${credentials.region}/s3/aws4_request`);
+  });
 
   it("derives the signing key from each credential's own region and secret", () => {
     const commonOptions = {

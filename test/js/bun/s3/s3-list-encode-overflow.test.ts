@@ -1,6 +1,9 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { serve } from "s3-server";
+
+const fill = (length: number, text: string) => Buffer.alloc(length, text).toString();
 
 describe("S3Client.list() option encoding", () => {
   it.each(["prefix", "delimiter", "continuationToken", "startAfter"])(
@@ -10,6 +13,102 @@ describe("S3Client.list() option encoding", () => {
       // Previously a fixed 1024-byte stack buffer caused `std.debug.panic` on overflow.
       const value = Buffer.alloc(1024, " ").toString();
       await expect(new S3Client().list({ [key]: value })).rejects.toThrow();
+    },
+  );
+});
+
+// Bun signs each request below, and the server of test/packages/s3-server checks the
+// signature with its own implementation: a request that gets its answer was signed correctly.
+// The first row of each test is a size that the signer always took. It refused the others
+// before it sent a request, because it kept the text that it signs in arrays of a fixed size.
+describe.concurrent("S3 requests with a long signed text", () => {
+  // The alphabet of a real session token. Percent-encoding makes `+`, `/` and `=` three bytes each.
+  const base64Token = (length: number) => fill(length, "FwoGZXIvYXdzEBEaD+Token/Pad=");
+
+  it.each([3800, 4000, 8000])("sends a PUT and a GET with a session token of %i characters", async length => {
+    const sessionToken = base64Token(length);
+    await using server = serve({
+      credentials: { accessKeyId: "AKIAIOSFODNN7EXAMPLE", secretAccessKey: "secret", sessionToken },
+      buckets: ["bucket"],
+    });
+    const client = new S3Client(server.clientOptions("bucket"));
+
+    await client.write("object.txt", "Hello Bun!");
+    expect(await client.file("object.txt").text()).toBe("Hello Bun!");
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("x-amz-security-token")]),
+    ).toEqual([
+      ["PutObject", 200, sessionToken],
+      ["GetObject", 200, sessionToken],
+    ]);
+  });
+
+  // S3 allows a key of 1024 bytes. These keys have 339, 342 and 1023 bytes, and three times as many when encoded.
+  it.each([113, 114, 341])("sends a PUT and a GET for a key of %i CJK characters", async count => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const key = fill(count * 3, "文");
+
+    await client.write(key, "Hello Bun!");
+    expect(await client.file(key).text()).toBe("Hello Bun!");
+    expect(server.requests.map(request => [request.operation, request.status, request.key])).toEqual([
+      ["PutObject", 200, key],
+      ["GetObject", 200, key],
+    ]);
+  });
+
+  it.each([3000, 4200])("sends a PUT with a contentDisposition of %i characters", async length => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const contentDisposition = `attachment; filename="${fill(length, "a")}.txt"`;
+
+    await client.write("object.txt", "Hello Bun!", { contentDisposition });
+    expect(
+      server.requests.map(request => [request.operation, request.status, request.headers.get("content-disposition")]),
+    ).toEqual([["PutObject", 200, contentDisposition]]);
+  });
+
+  it.each([300, 700])("lists with a prefix and a startAfter of %i spaces", async count => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const prefix = `folder${fill(count, " ")}`;
+
+    await client.list({ prefix, startAfter: `${prefix}/after` });
+    expect(
+      server.requests.map(request => {
+        const query = new URL(request.url).searchParams;
+        return [request.operation, request.status, query.get("prefix"), query.get("start-after")];
+      }),
+    ).toEqual([["ListObjectsV2", 200, prefix, `${prefix}/after`]]);
+  });
+});
+
+describe("S3 limits that the signer keeps", () => {
+  const options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "bucket",
+    region: "us-east-1",
+    endpoint: "https://s3.example.com",
+  };
+
+  it("rejects a key of more than 1024 bytes", () => {
+    let code: string | undefined;
+    try {
+      new S3Client(options).presign(fill(1025, "a"));
+    } catch (error) {
+      code = (error as { code?: string }).code;
+    }
+    // macOS refuses a path of this length before the signer sees it.
+    expect(code).toBeOneOf(["ERR_S3_INVALID_PATH", "ENAMETOOLONG"]);
+  });
+
+  // The bucket of a virtual hosted request is a part of the host name.
+  it.each(["evil.example.com/path", "evil.example.com\\path"])(
+    "rejects the virtual hosted bucket %j because a separator in it changes the host",
+    bucket => {
+      const client = new S3Client({ ...options, endpoint: undefined, bucket, virtualHostedStyle: true });
+      expect(() => client.presign("key.txt")).toThrow("Invalid S3 endpoint");
     },
   );
 });

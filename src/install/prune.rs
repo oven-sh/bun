@@ -1099,7 +1099,6 @@ impl<'a> HoistedTree<'a> {
     }
 
     fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
-        let buf = self.lockfile.buffers.string_bytes.as_slice();
         let Some(res) = self
             .lockfile
             .packages
@@ -1135,30 +1134,35 @@ impl<'a> HoistedTree<'a> {
         let Some(package) = package else {
             return Installed::Mismatch;
         };
-        let expected_name = self.lockfile.packages.items_name()[pkg_id as usize].slice(buf);
-        let matches = match res.tag {
-            ResolutionTag::Npm => {
-                let Some((name, Some(version))) = installed_package_json(&package) else {
-                    return Installed::Mismatch;
-                };
-                let expected = res.npm().version.fmt(buf).to_string();
-                name == expected_name
-                    && without_build(&version) == without_build(expected.as_bytes())
-            }
-            ResolutionTag::Git | ResolutionTag::Github => {
-                sys::File::read_from(package.fd(), b".bun-tag")
-                    .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
-            }
-            ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                installed_package_json(&package).is_some_and(|(name, _)| name == expected_name)
-            }
-            _ => false,
-        };
-        if matches {
+        if is_folder_of(self.lockfile, pkg_id, &package) {
             Installed::Matches
         } else {
             Installed::Mismatch
         }
+    }
+}
+
+/// Whether `package` holds `pkg_id` as bun.lock has it.
+pub(crate) fn is_folder_of(lockfile: &Lockfile, pkg_id: PackageID, package: &Dir) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let res = &lockfile.packages.items_resolution()[pkg_id as usize];
+    let expected_name = lockfile.packages.items_name()[pkg_id as usize].slice(buf);
+    match res.tag {
+        ResolutionTag::Npm => {
+            let Some((name, Some(version))) = installed_package_json(package) else {
+                return false;
+            };
+            let expected = res.npm().version.fmt(buf).to_string();
+            name == expected_name && without_build(&version) == without_build(expected.as_bytes())
+        }
+        ResolutionTag::Git | ResolutionTag::Github => {
+            sys::File::read_from(package.fd(), b".bun-tag")
+                .is_ok_and(|tag| tag.as_slice() == res.repository().resolved.slice(buf))
+        }
+        ResolutionTag::Folder | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+            installed_package_json(package).is_some_and(|(name, _)| name == expected_name)
+        }
+        _ => false,
     }
 }
 
@@ -2114,22 +2118,42 @@ impl LinkedNodeModules {
         }
         bun_core::note!("remove the link and run 'bun install'");
     }
+}
 
-    /// Whether `alias` in `node_modules` is a folder with the package.json of `alias` or `name`:
-    /// an install laid it.
-    pub(crate) fn holds_package(node_modules: &Dir, alias: &[u8], name: &[u8]) -> bool {
-        descend(node_modules, alias)
-            .and_then(|package| installed_package_json(&package))
-            .is_some_and(|(found, _)| found == alias || found == name)
-    }
+/// What is in a `node_modules` at the name of a dependency.
+pub(crate) enum Place {
+    Free,
+    /// Also a junction. Only the link itself is ever removed.
+    Link,
+    /// The folder of an earlier install of the package.
+    Laid(Dir),
+    /// Behind a linked `node_modules` it stays whole, and what was to be there fails with `EEXIST`.
+    Foreign,
+}
 
-    /// Behind one: whether what is at `alias` stays, so that what was to be there fails with
-    /// `EEXIST`. A link goes, not what it leads to. An earlier install of the package goes.
-    pub(crate) fn keeps(node_modules: &Dir, alias: &[u8], name: &[u8]) -> bool {
+impl Place {
+    /// `name`: of the package that `alias` is or was resolved to.
+    ///
+    /// An install lays a link (the isolated linker, a workspace, `link:`), a folder with `.bun-tag`
+    /// (git, GitHub, a tarball: it needs no package.json), or a folder whose package.json has the
+    /// name of the package or of the dependency (the registry, `file:`, the copy of `bun patch`).
+    pub(crate) fn of(node_modules: &Dir, alias: &[u8], name: &[u8]) -> Place {
         match entry_kind_of(node_modules, alias) {
-            EntryKind::Unknown | EntryKind::SymLink => false,
-            EntryKind::Directory => !Self::holds_package(node_modules, alias, name),
-            _ => true,
+            EntryKind::Unknown => return Place::Free,
+            EntryKind::SymLink => return Place::Link,
+            EntryKind::Directory => {}
+            _ => return Place::Foreign,
+        }
+        let Some(package) = descend(node_modules, alias) else {
+            return Place::Foreign;
+        };
+        let is_laid = lstat_kind(&package, crate::package_install::BUN_TAG) != EntryKind::Unknown
+            || installed_package_json(&package)
+                .is_some_and(|(found, _)| found == alias || found == name);
+        if is_laid {
+            Place::Laid(package)
+        } else {
+            Place::Foreign
         }
     }
 }

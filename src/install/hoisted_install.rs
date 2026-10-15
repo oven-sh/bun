@@ -20,7 +20,9 @@ use crate::{DependencyID, ExtractData, PackageID};
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::package_install;
-use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
+use crate::package_installer::{
+    DeferredLinks, ImporterFolder, NodeModulesFolder, PackageInstaller, TreeContext,
+};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
@@ -428,7 +430,7 @@ pub(crate) fn install_hoisted_packages(
                 completed_trees,
                 trees: 'trees: {
                     let mut trees: Vec<TreeContext> = Vec::with_capacity(trees_count);
-                    for _i in 0..trees_count {
+                    for tree_id in 0..trees_count {
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
                                 lockfile: lockfile_ref,
@@ -439,7 +441,8 @@ pub(crate) fn install_hoisted_packages(
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
-                            is_behind_link: None,
+                            importer_folder: (tree_id == 0 && new_node_modules)
+                                .then_some(ImporterFolder::New),
                         });
                     }
                     break 'trees trees.into_boxed_slice();

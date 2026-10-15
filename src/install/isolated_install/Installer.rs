@@ -23,7 +23,7 @@ use crate::package_install::{
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
-use crate::prune::LinkedNodeModules;
+use crate::prune::{LinkedNodeModules, Place};
 use crate::resolution;
 use crate::{
     self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
@@ -2019,7 +2019,11 @@ impl<'a> Installer<'a> {
         let mut real_scope: &[u8] = b"";
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
-        let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
+        // `package`: the name of the link in `node_modules`, and what it is to lead to.
+        let link = |mut dest: AutoPath,
+                    mut to: AutoAbsPath,
+                    real_len: usize,
+                    package: Option<(&[u8], PackageID)>| {
             // A store entry's link to another one does not leave what the link leads to.
             let stays_behind_link =
                 is_linked && (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut to));
@@ -2038,9 +2042,29 @@ impl<'a> Installer<'a> {
                 #[cfg(windows)]
                 fallback_junction_target: to.into_sep::<{ PathSeparators::ANY }>(),
             };
-            let written = symlinker
-                .ensure_symlink(strategy)
-                .map_err(TaskError::SymlinkDependencies);
+            let mut written = symlinker.ensure_symlink(strategy);
+            // A folder is in the way. The package as bun.lock has it is the copy of `bun patch`,
+            // which stays. Another version of it is an earlier install.
+            if is_behind_link
+                && (written.as_ref()).is_err_and(|err| err.get_errno() == sys::E::EEXIST)
+                && let Some((alias, pkg_id)) = package
+                && let Ok(node_modules) = sys::Dir::open(&symlinker.dest.slice()[..base_len])
+                && let Place::Laid(folder) = Place::of(
+                    &node_modules,
+                    alias,
+                    lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]),
+                )
+            {
+                let is_wanted = crate::prune::is_folder_of(lockfile, pkg_id, &folder);
+                drop(folder);
+                written = if is_wanted {
+                    Ok(false)
+                } else {
+                    (node_modules.delete_tree(alias))
+                        .and_then(|()| symlinker.ensure_symlink(strategy))
+                };
+            }
+            let written = written.map_err(TaskError::SymlinkDependencies);
             let dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
             (dest, symlinker.real_len, written)
         };
@@ -2092,7 +2116,8 @@ impl<'a> Installer<'a> {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
-            let (linked_dest, looked_len, written) = link(dest, dep_store_path, real_len);
+            let package = Some((dep_name, dep_pkg_id));
+            let (linked_dest, looked_len, written) = link(dest, dep_store_path, real_len, package);
             dest = linked_dest;
             if !all_real && looked_len != real_len {
                 real_len = looked_len;
@@ -2130,7 +2155,7 @@ impl<'a> Installer<'a> {
 
                 dest.set_length(base_len);
                 append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
-                let (linked_dest, _, written) = link(dest, shipped, real_len.min(base_len));
+                let (linked_dest, _, written) = link(dest, shipped, real_len.min(base_len), None);
                 dest = linked_dest;
                 if written? {
                     changed = Relink::Changed;

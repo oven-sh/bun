@@ -8,7 +8,7 @@ use bstr::BStr;
 use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
-use crate::prune::LinkedNodeModules;
+use crate::prune::{LinkedNodeModules, Place};
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -520,11 +520,28 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
                     .any(|(dep, &id)| dep.name_hash == hash && id != crate::invalid_package_id)
             }
         };
-        if !left
-            || (is_behind_link
-                && LinkedNodeModules::keeps(&node_modules, request.name, request.name))
-        {
+        if !left {
             continue;
+        }
+        if is_behind_link {
+            // What the name is resolved to, or was until its row left bun.lock.
+            let hash = bun_semver::semver_string::Builder::string_hash(request.name);
+            let names = manager.lockfile.packages.items_name();
+            let package_name = (buffers.dependencies.iter().zip(buffers.resolutions.iter()))
+                .find(|(dep, id)| dep.name_hash == hash && (**id as usize) < names.len())
+                .map(|(_, &id)| names[id as usize].slice(&buffers.string_bytes))
+                .or_else(|| {
+                    (manager.summary.dropped_rows.iter())
+                        .find(|row| row.name_hash == hash)
+                        .map(|row| &*row.package_name)
+                })
+                .unwrap_or(request.name);
+            if matches!(
+                Place::of(&node_modules, request.name, package_name),
+                Place::Foreign
+            ) {
+                continue;
+            }
         }
         // Not through a link at `@scope`.
         if let Some((scope, _)) = strings::split_once_char(request.name, b'/')

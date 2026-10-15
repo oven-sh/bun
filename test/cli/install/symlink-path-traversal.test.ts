@@ -2331,9 +2331,192 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
       const repo = await projectWith(String(root), "dep", "thesis");
       await symlink("../outside", join(repo, "node_modules"));
 
-      await runBun(repo, ["remove", "dep", "--ignore-scripts", "--linker", linker]);
+      const { stderr, exitCode } = await runBun(repo, ["remove", "dep", "--ignore-scripts", "--linker", linker]);
 
+      expect(stderr).not.toContain("error:");
       expect(await contentsOf(join(outside, "dep"))).toEqual([["chapter.tex", KEEP]]);
+      expect(exitCode).toBe(0);
+    });
+
+    /** `repo/node_modules` is a link to `outside`. Serves each `name@version` with its dependencies. */
+    async function withRegistry(
+      root: string,
+      packages: Record<string, Record<string, string>>,
+      manifest: object,
+      mine: Record<string, string> = {},
+    ) {
+      const [repo, outside] = [join(root, "repo"), await plant(root, mine)];
+      await Promise.all([repo, outside].map(dir => mkdir(dir, { recursive: true })));
+      const server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const { origin, pathname } = new URL(request.url);
+          const name = pathname.split("/")[1];
+          const versions = Object.entries(packages).flatMap(([id, dependencies]) => {
+            const [of, version] = id.split("@");
+            return of === name
+              ? [{ name, version, dependencies, dist: { tarball: `${origin}/${name}/${id}.tgz` } }]
+              : [];
+          });
+          const asked = versions.find(({ version }) => pathname.endsWith(`@${version}.tgz`));
+          if (asked) {
+            const { dist, ...json } = asked;
+            return new Response(
+              createTarball([{ name: "package/package.json", type: "file", content: JSON.stringify(json) }]),
+            );
+          }
+          return Response.json({
+            name,
+            "dist-tags": { latest: versions.at(-1)?.version },
+            versions: Object.fromEntries(versions.map(version => [version.version, version])),
+          });
+        },
+      });
+      await Promise.all([
+        writeFile(join(repo, "bunfig.toml"), Bun.TOML.stringify({ install: { registry: server.url.href } })),
+        writeFile(join(repo, "package.json"), JSON.stringify({ name: "root", ...manifest })),
+        symlink("../outside", join(repo, "node_modules")),
+      ]);
+      const bun = (linker: string, ...args: string[]) =>
+        runBun(repo, [...args, "--ignore-scripts", "--linker", linker], join(root, "cache"));
+      const versionOf = (...path: string[]) =>
+        Bun.file(join(outside, ...path, "package.json"))
+          .json()
+          .then(json => json.version);
+      return { repo, outside, bun, versionOf, [Symbol.dispose]: () => void server.stop(true) };
+    }
+
+    it("bun remove takes what was installed under another name", async () => {
+      using root = tempDir("nm-outside-alias", {});
+      using project = await withRegistry(String(root), { "bar@1.0.0": {} }, { dependencies: { foo: "npm:bar@1.0.0" } });
+      expect((await project.bun("hoisted", "install")).exitCode).toBe(0);
+      expect(await project.versionOf("foo")).toBe("1.0.0");
+
+      const { exitCode } = await project.bun("hoisted", "remove", "foo");
+
+      expect(await readdir(project.outside)).not.toContain("foo");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a tarball without a name is laid again", async () => {
+      using root = tempDir("nm-outside-nameless", {});
+      const outside = await plant(String(root), MINE);
+      const repo = await projectWith(String(root));
+      const json = JSON.stringify({ version: "1.0.0" });
+      await writeFile(
+        join(repo, "dep.tgz"),
+        createTarball([{ name: "package/package.json", type: "file", content: json }]),
+      );
+      await writeFile(join(repo, "package.json"), JSON.stringify({ name: "root", dependencies: { dep: "./dep.tgz" } }));
+      await symlink("../outside", join(repo, "node_modules"));
+
+      for (const args of [["install"], ["install", "--force"]]) {
+        const { stderr, exitCode } = await hoisted(repo, String(root), ...args);
+        expect(stderr).not.toContain("EEXIST");
+        expect(await Bun.file(join(outside, "dep", "package.json")).text()).toBe(json);
+        expect(exitCode).toBe(0);
+      }
+      expect(await read(outside)).toEqual(MINE);
+    });
+
+    it.each([
+      [
+        "an older version is replaced",
+        { name: "dep", version: "0.1.0" },
+        { link: true, version: "1.0.0", exitCode: 0 },
+      ],
+      [
+        "the version that is wanted stays",
+        { name: "dep", version: "1.0.0" },
+        { link: false, version: "1.0.0", exitCode: 0 },
+      ],
+      ["another package stays", { name: "other", version: "1.0.0" }, { link: false, version: "1.0.0", exitCode: 1 }],
+    ])("with the isolated linker, %s", async (_, json, expected) => {
+      using root = tempDir("nm-outside-isolated", {});
+      const mine = { "dep/package.json": JSON.stringify(json), "dep/edited.js": KEEP };
+      using project = await withRegistry(String(root), { "dep@1.0.0": {} }, { dependencies: { dep: "1.0.0" } }, mine);
+
+      const { stderr, exitCode } = await project.bun("isolated", "install");
+
+      if (expected.exitCode) expect(stderr).toContain("EEXIST");
+      if (!expected.link) expect(await read(project.outside, mine)).toEqual(mine);
+      expect({
+        link: (await lstat(join(project.outside, "dep"))).isSymbolicLink(),
+        version: await project.versionOf("dep"),
+        exitCode,
+      }).toEqual(expected);
+    });
+
+    it("what a package that is a link needs is installed", async () => {
+      using root = tempDir("nm-outside-hand-linked", {});
+      const packages = { "dep@1.0.0": {}, "dep@2.0.0": {}, "host@1.0.0": { dep: "1.0.0" } };
+      using project = await withRegistry(String(root), packages, { dependencies: { dep: "2.0.0", host: "1.0.0" } });
+      expect((await project.bun("hoisted", "install")).exitCode).toBe(0);
+      const checkout = join(String(root), "checkout");
+      await rename(join(project.outside, "host"), checkout);
+      await rm(join(checkout, "node_modules"), { recursive: true });
+      await symlink("../checkout", join(project.outside, "host"));
+
+      const { stderr, exitCode } = await project.bun("hoisted", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect(await project.versionOf("host", "node_modules", "dep")).toBe("1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    it("every package that is not installed is named", async () => {
+      using root = tempDir("nm-outside-reason", {});
+      const packages = { "dep@1.0.0": {}, "dep@2.0.0": {}, "host@1.0.0": { dep: "1.0.0" } };
+      const mine = { "host/chapter.tex": KEEP };
+      const manifest = { dependencies: { dep: "2.0.0", host: "1.0.0" } };
+      using project = await withRegistry(String(root), packages, manifest, mine);
+
+      const { stderr, exitCode } = await project.bun("hoisted", "install");
+
+      expect(stderr).toContain(failed("host"));
+      expect(stderr).toContain(failed("dep"));
+      expect(await contentsOf(join(project.outside, "host"))).toEqual([["chapter.tex", KEEP]]);
+      expect(exitCode).toBe(1);
+    });
+
+    it("nothing is laid in a folder that has the name of a workspace", async () => {
+      using root = tempDir("nm-outside-member-name", {});
+      const { outside, repo } = await linked(String(root), "the project's", { "app/chapter.tex": KEEP });
+
+      const { stderr, exitCode } = await hoisted(repo, String(root), "install");
+
+      expect(stderr).toContain(failed("app"));
+      expect(await contentsOf(join(outside, "app"))).toEqual([["chapter.tex", KEEP]]);
+      expect(exitCode).toBe(1);
     });
   });
+});
+
+// The project's `node_modules` can be gone while a workspace still has its own.
+it.skipIf(isWindows)("a package in the older node_modules of a workspace is replaced, not added to", async () => {
+  using root = tempDir("nm-workspace-older", {});
+  const repo = join(String(root), "repo");
+  const place = join(repo, "packages", "app", "node_modules", "dep");
+  await mkdir(join(repo, "packages", "app"), { recursive: true });
+  await Promise.all([
+    writeTarball(join(repo, "dep1.tgz"), "dep", "1.0.0", "module.exports = 1"),
+    writeTarball(join(repo, "dep2.tgz"), "dep", "2.0.0", "module.exports = 2"),
+    writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { dep: "file:./dep1.tgz" } }),
+    ),
+    writeFile(
+      join(repo, "packages", "app", "package.json"),
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:../../dep2.tgz" } }),
+    ),
+  ]);
+  const install = () => runBun(repo, ["install", "--ignore-scripts", "--linker", "hoisted"]);
+  expect((await install()).exitCode).toBe(0);
+  await writeFile(join(place, "of-an-older-version.js"), "");
+  await rm(join(repo, "node_modules"), { recursive: true });
+
+  const { exitCode } = await install();
+
+  expect((await readdir(place)).sort()).toEqual([".bun-tag", "index.js", "package.json"]);
+  expect(exitCode).toBe(0);
 });

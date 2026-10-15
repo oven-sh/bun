@@ -95,6 +95,111 @@ describe("require(specifier)", () => {
     });
   });
 
+  // Node's Module._load deletes Module._cache[filename], the name it resolved before the load.
+  describe("when the module throws after module.filename was assigned", () => {
+    const files = {
+      // Takes the name of another cached module, then throws.
+      "thrower.cjs": `
+        globalThis.runs = (globalThis.runs ?? 0) + 1;
+        if (process.argv.at(-1) !== "assigned-by-requirer") module.filename = require.resolve("./other.cjs");
+        throw new Error("boom " + globalThis.runs);
+      `,
+      "other.cjs": `module.exports = "other";`,
+      "import.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const thrower = require.resolve("./thrower.cjs");
+        const other = require.resolve("./other.cjs");
+        require(other);
+        const report = e => console.log(e.message, thrower in require.cache, other in require.cache);
+        await import("./thrower.cjs").then(() => console.log("no error"), report);
+        try {
+          require(thrower);
+          console.log("no error");
+        } catch (e) {
+          report(e);
+        }
+      `,
+      // require() of an ES module loads all of its imports before it runs the first one,
+      // so thrower.cjs is in require.cache, and has not run, when requirer.cjs runs.
+      "require-esm.cjs": `
+        try {
+          require("./graph.mjs");
+        } catch {}
+      `,
+      "graph.mjs": `
+        import "./requirer.cjs";
+        import "./thrower.cjs";
+      `,
+      "requirer.cjs": `
+        const thrower = require.resolve("./thrower.cjs");
+        const other = require.resolve("./other.cjs");
+        require(other);
+        if (require.cache[thrower]?.loaded !== false) console.log("thrower.cjs must be in require.cache here, not loaded");
+        if (process.argv.at(-1) === "assigned-by-requirer") require.cache[thrower].filename = other;
+        for (let i = 0; i < 2; i++) {
+          try {
+            require(thrower);
+            console.log("no error");
+          } catch (e) {
+            console.log(e.message, thrower in require.cache, other in require.cache);
+          }
+        }
+      `,
+      // module._compile() stores the code before it rejects a filename that is not a string.
+      // require() runs that code after the handler returns.
+      "leftover-code.cjs": `
+        const Module = require("module");
+        const thrower = require.resolve("./thrower.txt");
+        const other = require.resolve("./other.cjs");
+        require(other);
+        Module._extensions[".txt"] = function (module) {
+          const code =
+            "globalThis.runs = (globalThis.runs ?? 0) + 1;" +
+            "module.filename = " + JSON.stringify(other) + ";" +
+            "throw new Error('boom ' + globalThis.runs);";
+          try {
+            module._compile(code, 123);
+          } catch (e) {
+            if (e.code !== "ERR_INVALID_ARG_TYPE") throw e;
+          }
+        };
+        for (let i = 0; i < 2; i++) {
+          try {
+            require(thrower);
+            console.log("no error");
+          } catch (e) {
+            console.log(e.message, thrower in require.cache, other in require.cache);
+          }
+        }
+      `,
+      "thrower.txt": "",
+      "in-graph.mjs": `
+        import path from "node:path";
+        await new Bun.ModuleGraph().import(path.join(import.meta.dirname, process.argv[2]));
+      `,
+    };
+    it.concurrent.each([
+      // require() of a file whose import failed throws the error of the import. Node runs the file again.
+      ["import() ran it", ["import.mjs"], "boom 1"],
+      ["require() ran it before the import that put it in require.cache", ["require-esm.cjs"], "boom 2"],
+      ["require() ran it, its requirer assigned the filename", ["require-esm.cjs", "assigned-by-requirer"], "boom 2"],
+      ["require() ran code that a failed module._compile() call left on it", ["leftover-code.cjs"], "boom 2"],
+      // A Bun.ModuleGraph has its own require.cache.
+      ["import() ran it, inside a Bun.ModuleGraph", ["in-graph.mjs", "import.mjs"], "boom 1"],
+      ["require() ran it, inside a Bun.ModuleGraph", ["in-graph.mjs", "require-esm.cjs"], "boom 2"],
+    ])("%s: only the failed module leaves require.cache, and the next require() throws", async (_, args, next) => {
+      using dir = tempDir("bun-test-require-renamed", files);
+      const [entry, ...rest] = args;
+      expect(await bunRun([path.join(String(dir), entry), ...rest])).toEqual({
+        stdout: `boom 1 false true\n${next} false true`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
   describe("require.main", () => {
     let dir: string;
 

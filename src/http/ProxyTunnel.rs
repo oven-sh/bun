@@ -598,10 +598,7 @@ impl ProxyTunnel {
         };
         let Some(ssl_ctx) = ssl_ctx else {
             // Invalid TLS options; the errors a direct request reports for them.
-            let error = match err {
-                uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
-                _ => crate::Error::FailedToOpenSocket,
-            };
+            let error = this.tls_init_failed(err.into());
             this.close_and_fail::<IS_SSL>(error, socket);
             return;
         };

@@ -56,6 +56,8 @@ pub struct InternalState<'a> {
     pub(crate) fail: Option<Error>,
     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
     pub(crate) connect_errno: i32,
+    /// Why the request's TLS options built no TLS context, when `fail` is that.
+    pub(crate) tls_init_error: Option<crate::InitError>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
     /// 0 otherwise. The JS side turns it into the resolver error
     /// (`ENOTFOUND`, ...) with `syscall`/`hostname`, matching `node:dns`.
@@ -140,6 +142,7 @@ impl Default for InternalState<'_> {
             request_sent_len: 0,
             fail: None,
             connect_errno: 0,
+            tls_init_error: None,
             dns_error: 0,
             dns_hostname: None,
             request_stage: HTTPStage::Pending,

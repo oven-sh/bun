@@ -152,6 +152,17 @@ impl SSLConfig {
         }
     }
 
+    /// Borrow `ca_file_name` as a `&CStr` (None if null).
+    #[inline]
+    pub fn ca_file_name_cstr(&self) -> Option<&CStr> {
+        if self.ca_file_name.is_null() {
+            None
+        } else {
+            // SAFETY: see `cstr_bytes` invariant — heap-owned, NUL-terminated.
+            Some(unsafe { CStr::from_ptr(self.ca_file_name) })
+        }
+    }
+
     /// Borrow `server_name` as bytes (no trailing NUL). None if null.
     #[inline]
     pub fn server_name_bytes(&self) -> Option<&[u8]> {

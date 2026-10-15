@@ -700,7 +700,11 @@ fn run_tasks_erased(
                             manager.log_mut(),
                             manager.is_network_task_required(task.task_id),
                             "{} downloading package manifest <b>{}<r>",
-                            DownloadFailure(err.name(), &task.response),
+                            DownloadFailure(
+                                err.name(),
+                                &task.response,
+                                manager.tls_props_ca_file()
+                            ),
                             bstr::BStr::new(name),
                         );
 
@@ -989,7 +993,7 @@ fn run_tasks_erased(
                         manager.log_mut(),
                         is_required,
                         "{} downloading tarball <b>{}@{}<r>",
-                        DownloadFailure(err.name(), &task.response),
+                        DownloadFailure(err.name(), &task.response, manager.tls_props_ca_file()),
                         bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
                         bun_core::fmt::for_terminal(
                             extract
@@ -1636,17 +1640,29 @@ fn download_outcome(response: &http::HTTPClientResult<'static>) -> (bool, bool) 
         response.fail,
         Some(http::Error::Cert(_) | http::Error::ERR_TLS_CERT_ALTNAME_INVALID)
     );
+    // `ca` / `cafile` that do not load now do not load on the next attempt either.
     let retry = !bad_certificate
+        && response.tls_init_error.is_none()
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
     (failed, retry)
 }
 
 /// `ProxyConnectFailed (407)`: a refused CONNECT is reported with the proxy's status.
-struct DownloadFailure<'a>(&'static str, &'a http::HTTPClientResult<'static>);
+/// `FailedToOpenSocket (could not find CA file: '/ca.pem')`: `ca` / `cafile` that do not load, with
+/// the reason. `.2` is [`PackageManager::tls_props_ca_file`].
+struct DownloadFailure<'a>(
+    &'static str,
+    &'a http::HTTPClientResult<'static>,
+    &'a bun_core::ZStr,
+);
 
 impl core::fmt::Display for DownloadFailure<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use http::InitError::{InvalidCA, InvalidCAFile, LoadCAFile};
         f.write_str(self.0)?;
+        if let Some(err @ (LoadCAFile | InvalidCAFile | InvalidCA)) = self.1.tls_init_error {
+            return write!(f, " ({})", super::TlsInitFailure(err, self.2));
+        }
         match &self.1.proxy_connect_response {
             Some(reply) => write!(f, " ({})", reply.response.status_code),
             None => Ok(()),

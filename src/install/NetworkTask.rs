@@ -733,7 +733,12 @@ impl NetworkTask {
 
         // SAFETY: `self.url_buf` outlives the request, same as `header_buf` above (see `s3/simple_request.rs`).
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
-        let http_proxy = pm.http_proxy(&url);
+        let tls_props = pm.tls_props();
+        let http_options = AsyncHTTPOptions {
+            http_proxy: pm.http_proxy(&url),
+            tls_props,
+            ..Default::default()
+        };
         let completion_callback = self.get_completion_callback();
         let mut request = AsyncHTTP::init(
             http::Method::GET,
@@ -743,10 +748,7 @@ impl NetworkTask {
             b"",
             completion_callback,
             http::FetchRedirect::Follow,
-            AsyncHTTPOptions {
-                http_proxy,
-                ..Default::default()
-            },
+            http_options,
         );
         request.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         request.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
@@ -933,8 +935,10 @@ impl NetworkTask {
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
+        let tls_props = pm.tls_props();
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            tls_props,
             ..Default::default()
         };
 

@@ -496,6 +496,9 @@ pub struct HTTPClientResult<'a> {
     pub certificate_info: Option<CertificateInfo>,
     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`; 0 otherwise.
     pub connect_errno: i32,
+    /// Why the request's TLS options (`ca`, a CA file, ...) built no TLS context, when `fail` is
+    /// `FailedToOpenSocket` or `InvalidCRL` for that reason; `None` otherwise.
+    pub tls_init_error: Option<InitError>,
     /// The proxy's reply to CONNECT when `fail` is `ProxyConnectFailed`. Kept
     /// apart from `metadata`, which is only ever the origin's response head.
     /// Boxed: it is large and rare, and every result is moved and dropped
@@ -589,6 +592,7 @@ impl<'a> HTTPClientResult<'a> {
             body_size: self.body_size,
             certificate_info: self.certificate_info,
             connect_errno: self.connect_errno,
+            tls_init_error: self.tls_init_error,
             proxy_connect_response: self.proxy_connect_response,
         }
     }
@@ -2265,6 +2269,18 @@ impl<'a> HTTPClient<'a> {
         // mid-handshake socket) cannot re-enter this client.
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
         self.fail(crate::Error::Timeout);
+    }
+
+    /// The request's TLS options built no TLS context: keeps why, and returns what the request fails with.
+    pub(crate) fn tls_init_failed(&mut self, err: InitError) -> crate::Error {
+        self.state.tls_init_error = Some(err);
+        match err {
+            InitError::InvalidCRL => crate::Error::InvalidCRL,
+            InitError::FailedToOpenSocket
+            | InitError::InvalidCA
+            | InitError::InvalidCAFile
+            | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
+        }
     }
 
     /// `socket(2)` / `connect(2)` / the poll registration failed synchronously:
@@ -4637,6 +4653,7 @@ impl<'a> HTTPClient<'a> {
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
                     connect_errno: self.state.connect_errno,
+                    tls_init_error: self.state.tls_init_error,
                     proxy_connect_response: None,
                     has_more: self.state.fail.is_none()
                         && (!self.state.is_done() || self.state.has_pending_compressed()),
@@ -4658,6 +4675,7 @@ impl<'a> HTTPClient<'a> {
             dns_error: self.state.dns_error,
             dns_hostname: self.state.dns_hostname.take(),
             connect_errno: self.state.connect_errno,
+            tls_init_error: self.state.tls_init_error,
             proxy_connect_response,
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()

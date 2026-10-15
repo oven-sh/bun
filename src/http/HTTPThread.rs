@@ -461,13 +461,7 @@ impl HttpThread {
                     // `impl Drop for HTTPContext` tolerates an uninitialized
                     // group (skips close_all/destroy when `group.loop_` is
                     // null), so dropping `ctx` here is safe.
-                    return Err(match err {
-                        InitError::InvalidCRL => crate::Error::InvalidCRL,
-                        InitError::FailedToOpenSocket
-                        | InitError::InvalidCA
-                        | InitError::InvalidCAFile
-                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
-                    });
+                    return Err(client.tls_init_failed(err));
                 }
 
                 let now = self.timer_read();

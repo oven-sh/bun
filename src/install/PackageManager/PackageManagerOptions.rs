@@ -73,6 +73,9 @@ pub struct Options {
 
     pub(crate) ca: Box<[Box<[u8]>]>,
     pub(crate) ca_file_name: &'static [u8],
+    /// `ca` / `ca_file_name` as the TLS config of each registry request. Only the runtime's
+    /// auto-install sets it: `bun install` puts them on the HTTP thread, which is its own.
+    pub(crate) tls_props: Option<bun_http::ssl_config::SharedPtr>,
 
     // if set to `false` in bunfig, save a binary lockfile
     pub(crate) save_text_lockfile: Option<bool>,
@@ -170,6 +173,7 @@ impl Default for Options {
             publish_config: PublishConfig::default(),
             ca: Box::default(),
             ca_file_name: b"",
+            tls_props: None,
             save_text_lockfile: None,
             lockfile_only: false,
             runtime_auto_install: false,
@@ -661,7 +665,7 @@ impl Options {
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
         bun_install_ref: Option<&Api::BunInstall>,
-        // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
+        // Runtime auto-install's `.npmrc`: only the registries, their credentials and their CA are read.
         runtime_npmrc: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {
@@ -717,23 +721,24 @@ impl Options {
                     self.url_auth.push(url_auth);
                 }
             }
+
+            // `ca` + `cafile` are one setting: a later layer replaces both or neither.
+            if config.ca.is_some() || config.cafile.is_some() {
+                self.ca = match &config.ca {
+                    Some(Api::Ca::List(ca_list)) => ca_list.clone(),
+                    Some(Api::Ca::Str(ca_str)) => vec![ca_str.clone()].into_boxed_slice(),
+                    None => Box::default(),
+                };
+                self.ca_file_name = match config.cafile.as_deref() {
+                    Some(cafile) => leak_static(&expand_home_tilde(cafile)),
+                    None => b"",
+                };
+            }
         }
 
         if let Some(config) = bun_install_ref {
             if let Some(cache_directory) = config.cache_directory.as_deref() {
                 self.cache_directory = leak_static(&expand_home_tilde(cache_directory));
-            }
-
-            if let Some(ca) = &config.ca {
-                match ca {
-                    Api::Ca::List(ca_list) => {
-                        self.ca.clone_from(ca_list);
-                    }
-                    Api::Ca::Str(ca_str) => {
-                        // Single-element slice; own it (no `Box::leak`).
-                        self.ca = vec![ca_str.clone()].into_boxed_slice();
-                    }
-                }
             }
 
             if let Some(node_linker) = config.node_linker {
@@ -760,10 +765,6 @@ impl Options {
             if let Some(security_scanner) = config.security_scanner.as_deref() {
                 self.security_scanner = Some(leak_static(security_scanner));
                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
-            }
-
-            if let Some(cafile) = config.cafile.as_deref() {
-                self.ca_file_name = leak_static(&expand_home_tilde(cafile));
             }
 
             if config.disable_cache.unwrap_or(false) {

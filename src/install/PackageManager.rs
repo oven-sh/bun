@@ -955,6 +955,17 @@ impl PackageManager {
         self.env().get_tls_reject_unauthorized()
     }
 
+    pub(crate) fn tls_props(&self) -> Option<http::ssl_config::SharedPtr> {
+        self.options.tls_props.clone()
+    }
+
+    /// The absolute `cafile` that [`Self::tls_props`] names, if any.
+    pub(crate) fn tls_props_ca_file(&self) -> &ZStr {
+        let ca_file =
+            (self.options.tls_props.as_deref()).and_then(http::SSLConfig::ca_file_name_cstr);
+        ca_file.map_or(ZStr::EMPTY, ZStr::from_cstr)
+    }
+
     /// A blocking request, with the proxy and the certificate check the environment asks for.
     pub fn registry_request<'a>(
         &self,
@@ -1345,42 +1356,67 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
     } else {
         ZStr::from_slice_with_nul(opts.abs_ca_file_name)
     };
+    let failure = TlsInitFailure(err, abs_ca_z);
     match err {
-        http::InitError::LoadCAFile => {
-            let mut normalizer = PosixToWinNormalizer::default();
-            let normalized = normalizer.resolve_z(FileSystem::instance().top_level_dir(), abs_ca_z);
-            if !bun_sys::exists_z(normalized) {
-                Output::err(
-                    "HTTPThread",
-                    "could not find CA file: '{s}'",
-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
-                );
-            } else {
-                Output::err(
-                    "HTTPThread",
-                    "invalid CA file: '{s}'",
-                    &[&bstr::BStr::new(abs_ca_z.as_bytes())],
-                );
-            }
-        }
-        http::InitError::InvalidCAFile => {
-            Output::err(
-                "HTTPThread",
-                "invalid CA file: '{s}'",
-                &[&bstr::BStr::new(abs_ca_z.as_bytes())],
-            );
-        }
-        http::InitError::InvalidCA => {
-            Output::err("HTTPThread", "the CA is invalid", ());
-        }
-        http::InitError::InvalidCRL => {
-            Output::err("HTTPThread", "the CRL is invalid", ());
-        }
-        http::InitError::FailedToOpenSocket => {
-            Output::err_generic("failed to start HTTP client thread", ());
-        }
+        http::InitError::FailedToOpenSocket => Output::err_generic("{}", (failure,)),
+        _ => Output::err("HTTPThread", "{}", (failure,)),
     }
     Global::crash();
+}
+
+/// Why the HTTP client built no TLS context from `ca` / `cafile`. `.1` is the absolute `cafile`.
+pub(crate) struct TlsInitFailure<'a>(pub(crate) http::InitError, pub(crate) &'a ZStr);
+
+impl core::fmt::Display for TlsInitFailure<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let ca_file = bstr::BStr::new(self.1.as_bytes());
+        match self.0 {
+            http::InitError::LoadCAFile => {
+                let mut normalizer = PosixToWinNormalizer::default();
+                let normalized =
+                    normalizer.resolve_z(FileSystem::instance().top_level_dir(), self.1);
+                if bun_sys::exists_z(normalized) {
+                    write!(f, "invalid CA file: '{ca_file}'")
+                } else {
+                    write!(f, "could not find CA file: '{ca_file}'")
+                }
+            }
+            http::InitError::InvalidCAFile => write!(f, "invalid CA file: '{ca_file}'"),
+            http::InitError::InvalidCA => f.write_str("the CA is invalid"),
+            http::InitError::InvalidCRL => f.write_str("the CRL is invalid"),
+            http::InitError::FailedToOpenSocket => {
+                f.write_str("failed to start HTTP client thread")
+            }
+        }
+    }
+}
+
+/// `ca` / `cafile` of the install options as the TLS config of a single request, for a process
+/// whose HTTP thread serves other requests too. With both set, the TLS layer uses the file.
+/// A relative `cafile` is relative to `start_dir`. The join has no length limit: a path the OS
+/// cannot open fails the request like a CA file that does not exist.
+fn request_tls_props(options: &Options, start_dir: &[u8]) -> Option<http::ssl_config::SharedPtr> {
+    if options.ca.is_empty() && options.ca_file_name.is_empty() {
+        return None;
+    }
+    let mut config = http::SSLConfig::zero();
+    if !options.ca_file_name.is_empty() {
+        let mut spill = Vec::new();
+        config.ca_file_name = bun_core::dupe_z(if bun_paths::is_absolute(options.ca_file_name) {
+            options.ca_file_name
+        } else {
+            resolve_path::join_abs_string_spill::<platform::Auto>(
+                start_dir,
+                &mut spill,
+                &[options.ca_file_name],
+            )
+        });
+    }
+    if !options.ca.is_empty() {
+        config.ca = Some(options.ca.iter().map(|pem| bun_core::dupe_z(pem)).collect());
+    }
+    config.requires_custom_request_ctx = true;
+    Some(http::ssl_config::global_registry::intern(config))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2646,6 +2682,7 @@ fn init_with_runtime_once(
         Some(&npmrc),
         Subcommand::Install,
     )?;
+    manager.options.tls_props = request_tls_props(&manager.options, start_dir);
 
     manager.timestamp_for_manifest_cache_control =
         ((u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast")) as u32)

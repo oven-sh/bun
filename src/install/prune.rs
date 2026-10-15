@@ -3062,12 +3062,12 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         return;
     };
     let mut taken: Vec<Box<[u8]>> = Vec::new();
-    for (name, kind) in read_entries(&hidden) {
-        if kind != EntryKind::Directory || name.first() != Some(&b'@') {
-            taken.push(name);
-        } else if let Ok(scope) = hidden.open_at(&name) {
-            let names = read_entries(&scope);
-            taken.extend(names.iter().map(|(inner, _)| join_alias(&name, inner)));
+    for (entry, kind) in read_entries(&hidden) {
+        if kind != EntryKind::Directory || entry.first() != Some(&b'@') {
+            taken.push(entry);
+        } else if let Ok(scope_dir) = hidden.open_at(&entry) {
+            let names = read_entries(&scope_dir);
+            taken.extend(names.iter().map(|(name, _)| join_alias(&entry, name)));
         }
     }
     sort_names(&mut taken);

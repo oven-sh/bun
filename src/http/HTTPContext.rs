@@ -1419,6 +1419,20 @@ impl<const SSL: bool> Handler<SSL> {
             }
         }
 
+        // uSockets reports a fatal alert on an established session as a failed handshake. A
+        // success is a finished renegotiation, which RFC 9113 §9.2.1 makes a connection error.
+        if let Some(session) = active.session() {
+            HTTPContext::<SSL>::mark_socket_as_dead(socket);
+            h2::ClientSession::on_close(
+                session,
+                if handshake_success {
+                    crate::Error::HTTP2ProtocolError
+                } else {
+                    crate::handshake_failure(handshake_error.error_no)
+                },
+            );
+        }
+
         if socket.is_closed() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
             return;

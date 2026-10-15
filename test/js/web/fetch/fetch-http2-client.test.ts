@@ -2169,6 +2169,33 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     expect(exitCode).toBe(0);
   });
 
+  test("fetch rejects when a TLS 1.3 server sends a fatal alert after the handshake", async () => {
+    // The client finishes its handshake, with h2 selected, before the server's
+    // certificate_required alert arrives.
+    const server = nodetls.createServer({
+      ...tls,
+      requestCert: true,
+      rejectUnauthorized: true,
+      minVersion: "TLSv1.3",
+      ALPNProtocols: ["h2"],
+    });
+    server.on("tlsClientError", () => {});
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const get = () =>
+          fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }).then(() => "unexpected-ok", e => e.code);
+        console.log(await get(), await get());
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "EPROTO EPROTO", stderr: "", exitCode: 0 });
+    } finally {
+      server.close();
+    }
+  });
+
   test("SETTINGS_HEADER_TABLE_SIZE=0: encoder emits a Dynamic Table Size Update so request 2+ decodes", async () => {
     // RFC 9113 §4.3.1 / RFC 7541 §6.3: a server that shrinks the encoder's
     // dynamic table expects the next header block to begin with a 0x20-prefix

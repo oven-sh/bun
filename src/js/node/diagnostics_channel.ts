@@ -110,7 +110,9 @@ class ActiveChannel {
     const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
+    const after = ArrayPrototypeSlice.$call(this._subscribers, index + 1);
+    this._subscribers = ArrayPrototypeSlice.$call(this._subscribers, 0, index);
+    ArrayPrototypePush.$apply(this._subscribers, after);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -142,9 +144,10 @@ class ActiveChannel {
   }
 
   publish(data) {
-    for (let i = 0; i < (this._subscribers?.length || 0); i++) {
+    const subscribers = this._subscribers;
+    for (let i = 0; i < (subscribers?.length || 0); i++) {
       try {
-        const onMessage = this._subscribers[i];
+        const onMessage = subscribers[i];
         onMessage(data, this.name);
       } catch (err) {
         process.nextTick(() => reportError(err));

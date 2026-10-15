@@ -331,6 +331,44 @@ describe("Channel", () => {
   // keeps per channel also go away in FinalizationRegistry callbacks, after the
   // collection. So check what the node test is after directly: once
   // unsubscribed, nothing holds the channels.
+  test("publish() calls the subscribers there were when it started", () => {
+    const dc = channel("changed-during-publish");
+    const calls: string[] = [];
+    const once = () => {
+      calls.push("once");
+      dc.unsubscribe(once);
+    };
+    const second = () => calls.push("second");
+    const adds = () => {
+      calls.push("adds");
+      dc.subscribe(added);
+    };
+    const added = () => calls.push("added");
+    dc.subscribe(once);
+    dc.subscribe(second);
+    dc.subscribe(adds);
+
+    dc.publish(undefined);
+    expect(calls).toEqual(["once", "second", "adds"]);
+    dc.unsubscribe(adds);
+    calls.length = 0;
+    dc.publish(undefined);
+    expect(calls).toEqual(["second", "added"]);
+  });
+
+  test("unsubscribe() does not modify the array in _subscribers", () => {
+    const dc = channel("frozen-subscribers") as Channel & { _subscribers: Function[] };
+    const first = () => {};
+    const second = () => {};
+    dc.subscribe(first);
+    dc.subscribe(second);
+    const frozen = Object.freeze([first, second]) as Function[];
+    dc._subscribers = frozen;
+    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc._subscribers).toEqual([second]);
+    expect(frozen).toEqual([first, second]);
+  });
+
   test("subscribe() after _subscribers was replaced", async () => {
     await using proc = Bun.spawn({
       cmd: [

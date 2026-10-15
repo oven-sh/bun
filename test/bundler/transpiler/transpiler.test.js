@@ -5862,6 +5862,67 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(exitCode).toBe(0);
 });
 
+// Text of integers whose exact value lies between two doubles, with the exact value.
+function integersThatNeedRounding(prefixes) {
+  const cases = [];
+  const add = (prefix, digits) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let seed = 12345;
+  const random = below => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % below;
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", "0".repeat(100) + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
+}
+const radixPrefixes = [
+  ["0x", "0123456789abcdefABCDEF", 40],
+  ["0X", "0123456789abcdef", 40],
+  ["0o", "01234567", 50],
+  ["0b", "01", 140],
+];
+
+it("hexadecimal, octal and binary literals are rounded to the nearest double", () => {
+  const transpiler = new Bun.Transpiler();
+  const wrong = [];
+  for (const [text, exact] of [
+    ...integersThatNeedRounding(radixPrefixes),
+    ["0777777777777777777777", 0o777777777777777777777n],
+  ]) {
+    const printed = transpiler.transformSync(`x = ${text};`).trim();
+    const value = printed === "x = 1 / 0;" ? Infinity : Number(printed.slice("x = ".length, -1));
+    if (!Object.is(value, Number(exact))) wrong.push({ text, printed, nearest: Number(exact) });
+  }
+  expect(wrong).toEqual([]);
+  expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.

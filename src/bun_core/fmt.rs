@@ -1052,6 +1052,36 @@ unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
+/// The digits of a binary, octal or hexadecimal integer, rounded to the nearest `f64` once, in [`Self::to_f64`].
+#[derive(Default, Clone, Copy)]
+pub struct RadixInteger {
+    /// The leading 64 significant bits.
+    leading_bits: u64,
+    dropped_bit_count: u32,
+    any_dropped_bit_is_set: bool,
+}
+
+impl RadixInteger {
+    /// `bits_per_digit` is 1, 3 or 4.
+    #[inline]
+    pub fn push_digit(&mut self, bits_per_digit: u32, digit: u32) {
+        let room = self.leading_bits.leading_zeros().min(bits_per_digit);
+        let dropped = bits_per_digit - room;
+        self.leading_bits = (self.leading_bits << room) | u64::from(digit >> dropped);
+        self.any_dropped_bit_is_set |= digit & ((1 << dropped) - 1) != 0;
+        self.dropped_bit_count = self.dropped_bit_count.saturating_add(dropped);
+    }
+
+    pub fn to_f64(self) -> f64 {
+        if self.dropped_bit_count > 1023 {
+            return f64::INFINITY;
+        }
+        // Bits are dropped only once all 64 are in use, so bit 0 is below the rounding position and can stand for them.
+        let rounded = (self.leading_bits | u64::from(self.any_dropped_bit_is_set)) as f64;
+        rounded * f64::from_bits((1023 + u64::from(self.dropped_bit_count)) << 52)
+    }
+}
+
 /// Full-match parse of `s` as an `f64`.
 /// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
 /// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are

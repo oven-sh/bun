@@ -45,8 +45,8 @@ interface HasA { a: number } interface HasB { b: number }
 function readsA(x: HasA) { return x.a; } function readsB(x: HasB) { return x.b; }
 function siblings(t: T) { return readsA(t) + readsB(t); }
 function siblingsInArm(t: T, flag: boolean) { let x = 0; if (flag) x = readsA(t); return x + readsB(t); }
-// What goes by the type of a value that has passed: truth, comparison with null or undefined, casts, stores, arguments, results. And the same where the variable is assigned again on the way, in an branch or around a loop:
-// then it is another value, which has passed nothing.
+// Everything that relies on the type of a value that has passed a check: truthiness, comparison with null or undefined, casts, stores, arguments, results.
+// And the same where the variable is assigned again on the way, in a branch or around a loop: then it is a different value, which has passed no check.
 const holder: { kept: T | undefined | null } = { kept: undefined };
 function describe(t: T | undefined | null) { return t === undefined ? "U" : t === null ? "N" : "O" + t.b; }
 function usesAfter(t: T) { const x = t.a; holder.kept = t; return [x, t ? "truthy" : "falsy", t == null, t === undefined, t === null, typeof t, (t as U).b, t!.b, describe(t), describe(holder.kept), String(t?.c)].join(); }

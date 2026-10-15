@@ -1,4 +1,4 @@
-// A `{ pet: Dog }` used as a `{ pet: Animal }` is given a Cat.
+// A `{ pet: Dog }` used as a `{ pet: Animal }` receives a Cat.
 interface Animal { species: string; legs: number }
 interface Dog extends Animal { bark(): string; collar?: string }
 interface Cat extends Animal { meow(): string }

@@ -57,7 +57,7 @@ for (const kind of Object.keys(makers)) {
     show(kind + " many, collected", () => { const kept = []; for (let i = 0; i < 3000; i++) { const o = makers[kind](i); if (i % 500 === 0) kept.push(o); if (i % 1000 === 999) collect(); } collect(); return kept.map(o => names[kind].map(n => typeof o[n](1, 2)).join("")).join("|"); });
 }
 
-// Where the store is no plain addition of a property.
+// Where the store does not simply add a property.
 const put = { on(o) { o.m = () => o; return o; } };
 const cases = {
     hasItAlready: () => ({ m: 1, z: 2 }),

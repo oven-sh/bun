@@ -32,7 +32,7 @@ use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
-    target_base_public_path, to_executable,
+    discard_early_template_copy, start_copying_template, target_base_public_path, to_executable,
 };
 use bun_sys::Dir;
 #[cfg(not(windows))]
@@ -149,6 +149,9 @@ impl Drop for JSBundleCompletionTask {
         if let Some(plugin) = self.plugins.take() {
             // The FFI handle stashed at construction.
             Plugin::destroy(plugin.as_ptr());
+        }
+        if self.config.compile.is_some() {
+            discard_early_template_copy();
         }
     }
 }
@@ -477,6 +480,7 @@ impl JSBundleCompletionTask {
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
+                crash_if_interpreter_is_used: compile_options.crash_if_interpreter_is_used,
             },
         ) {
             Ok(r) => r,
@@ -1049,6 +1053,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        if let Some(compile) = &config.compile {
+            let executable_path = &compile.executable_path.list;
+            start_copying_template(&compile.compile_target, (!executable_path.is_empty()).then_some(&executable_path[..]));
+        }
         transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;

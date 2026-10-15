@@ -62,7 +62,7 @@ function numbersIntoValues(n: number, seed: number): string {
   return [sum, text, a + b + c + d + e + f + g + h + i2 + j, xs.length].join(" ");
 }
 
-// The array comes from elsewhere: the site cannot know how it keeps its elements.
+// The array comes from elsewhere: the site cannot know how its elements are stored.
 function intoAGivenArray(xs: number[], n: number, seed: number): number {
   let a = seed + 0.125, b = seed * 1.5, c = seed - 0.75, d = seed / 3, e = seed + 2.25, f = seed * 0.3, g = seed - 9.5, h = seed / 7, i2 = seed + 11.0625, j = seed * 2.75;
   for (let i = 0; i < n; i++) {

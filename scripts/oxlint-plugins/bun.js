@@ -37,6 +37,7 @@ function memberExpressionKey(node) {
  * of a cached local.
  */
 function isWriteTarget(node) {
+  while (node.parent?.type === "TSNonNullExpression") node = node.parent;
   const parent = node.parent;
   if (!parent) return false;
   if (parent.type === "AssignmentExpression" && parent.left === node) return true;

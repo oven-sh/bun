@@ -3,6 +3,7 @@
 #include "NodeModuleModule.h"
 #include "CodeGenerationFromStrings.h"
 #include "ModuleGraph.h"
+#include "ModuleLoader.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -448,6 +449,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
         globalObject->m_moduleResolveFilenameOverride.set(
             lexicalGlobalObject->vm(), globalObject, value);
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;
+        Bun::noteThatRequireCacheIsRead(globalObject);
     }
 
     return true;
@@ -608,11 +610,14 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
         JSC::EncodedJSValue value,
         JSC::PropertyName propertyName))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     globalObject->putDirect(globalObject->vm(),
         WebCore::clientData(globalObject->vm())
             ->builtinNames()
             .overridableRequirePrivateName(),
         JSValue::decode(value), 0);
+    Bun::noteThatRequireCacheIsRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
 
@@ -702,6 +707,8 @@ static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, 
         RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(global, scope);
     }
     global->hasOverriddenModuleWrapper = isOverride;
+    if (isOverride) [[unlikely]]
+        Bun::noteThatRequireCacheIsRead(global);
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }

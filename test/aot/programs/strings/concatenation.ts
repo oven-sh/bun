@@ -69,7 +69,7 @@ print("differences:" + bad + " " + sum);
 print(appended([]) + "|" + appended([5]) + "|" + appended([1, 22, 333, 4444, 55555, 666666, 7777777, 88888888, 999999999, 1.5, -0, NaN]) + "|" + appended(Array.from({ length: 40 }, (_, i) => i * 1000)).length);
 const log: string[] = [];
 print(between({ id: 1, name: "n" }, { id: 2, name: "" }, log) + " " + log.join());
-// As keys: what is made in one piece and what is made otherwise are one key.
+// As keys: a string created flat and the same string created any other way are the same key.
 const map = new Map<string, number>(), set = new Set<string>(), record: Record<string, number> = {};
 for (let i = 0; i < 300; i++) { const a: T = { id: i * 37, name: "" }, b: T = { id: 100000 - i, name: "" }; map.set(pairKey(a, b), i); set.add(templateKey(a, b, i & 1 ? "" : ":1")); record[idAndAlias(a, "@" + i)] = i; }
 let found = 0;

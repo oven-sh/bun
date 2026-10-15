@@ -15,7 +15,7 @@ function calledThenThrown(p: object) { let r = false; try { boom(p); } catch (e1
 rows.push("6 " + calledThenThrown({ a: 1 }));
 function afterBoth(p: number) { let kept: unknown; try { throw "s" + p; } catch (e1) { try { throw e1; } catch { kept = e1; } finally { kept = kept + "!"; } } return kept; }
 rows.push("7 " + afterBoth(4));
-// Nothing looks at what the handler caught.
+// Nothing inspects the caught value.
 function plainRethrow(p: number) { try { try { boom(p); } catch (e) { throw e; } } catch (e2) { return "caught " + e2; } return "not reached"; }
 rows.push("8 " + plainRethrow(4));
 function rethrowTwice(p: number) { try { try { try { boom(p); } catch (a) { throw a; } } catch (b) { throw b; } } catch (c) { return "caught " + c; } return "not reached"; }

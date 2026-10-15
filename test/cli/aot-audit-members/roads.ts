@@ -139,7 +139,7 @@ t(() => { const o: { r: R33; z: R33 } = anyv({ r: json(L), z: K33 }); return typ
 t(() => { const o: { r: R34 } = json('{"r":' + G34 + "}"); return typeof o.r; }); // property read of data: fits
 t(() => { const o: { r: R34 } = json('{"r":' + L + "}"); return typeof o.r; }); // property read of data: LACKS
 t(() => { const { r }: { r: R35 } = json('{"r":' + G35 + "}"); return typeof r; }); // object pattern: fits
-t(() => { const { r }: { r: R35 } = json('{"r":' + L + "}"); return typeof r; }); // object pattern: LACKS
+t(() => { const { r }: { r: R35 } = json('{"r":' + L + "}"); return typeof r; }); // object pattern: LACKS // silent: the type of the pattern takes outside objects as they are, so the member is checked where the pattern binds it, and the audit has no expression there to look at
 t(() => { function pick<T>(x: unknown): T { return x as T; } const v = pick<R36>(json(G36)); return typeof v; }); // call result of a generic: fits
 t(() => { function pick<T>(x: unknown): T { return x as T; } const v = pick<R36>(json(L)); return typeof v; }); // call result of a generic: LACKS
 t(() => { function pick<T>(x: unknown): T { return x as T; } return pick<R37>(json(G37)).id; }); // call result of a generic, then a member: fits

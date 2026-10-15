@@ -51,7 +51,7 @@ class OwnToJSON { x = 1; toJSON: unknown = 5; }
 class OwnCallable { x = 1; toJSON = () => "own"; }
 class WithAccessor { _v = 1; get v() { return this._v; } set v(n: number) { this._v = n; } }
 for (const o of [new Plain(), new WithMethods(), new WithPrivate(), new WithToJSON(), new Inherits(), new Derived(), new WithKey(), new OwnToJSON(), new OwnCallable(), new WithAccessor()]) print(forms(o));
-// What is no JSON value, and what leaves the fast path.
+// Values that are not JSON values, and values that leave the fast path.
 print(forms({ f: () => 1, s: Symbol.iterator, u: undefined, n: 1 }) + " | " + forms({ big: 1n }) + " | " + forms({ d: new Date(0) }) + " | " + forms({ m: new Map([[1, 2]]), s: new Set([1]), r: /x/g, e: new Error("m") }) + " | " + forms({ n: new Number(5), s: new String("s"), b: new Boolean(false) }) + " | " + forms({ a: [undefined, () => 1, Symbol.iterator, null, [], {}] }));
 { const o: any = { a: 1, b: 2 }; o.extra = 3; o[5] = "index"; o[Symbol.iterator] = 1; print(forms(o)); const p: any = new Plain(); p.extra = { deep: [1, { x: 2 }] }; print(forms(p)); Object.defineProperty(p, "hidden", { value: 1, enumerable: false }); Object.defineProperty(p, "got", { get() { return "getter"; }, enumerable: true }); print(forms(p)); }
 { const cycle: any = { a: 1 }; cycle.self = cycle; print(forms(cycle)); const inner: { up?: unknown; v: number } = { v: 1 }; const outer = { inner }; inner.up = outer; print(forms(outer)); }

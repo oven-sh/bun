@@ -29,9 +29,9 @@ deletesMethod: throws TypeError
 deletesMissing: [true,"function"]
 definesNew: throws TypeError
 definesOverMethod: throws TypeError
-reflectDefine: [false,null]
+reflectDefine: throws TypeError
 setsPrototype: throws TypeError
-reflectSetPrototype: [false,null,34]
+reflectSetPrototype: throws TypeError
 samePrototype: [true,35]
 preventsExtensions: [true,36]
 freezes: [true,37]
@@ -56,7 +56,7 @@ classAsValue: 4
 namesOfClass: "length,name,prototype,st"
 reflectConstruct: 5
 extraProperty: [1,"id,v,extra",58]
-storeOverMethodOnObject: throws TypeError
+storeOverMethodOnObject: "number"
 bindsItsMethod: 60
 castOfPrototype: "function"
 prototypeInATypedPlace: "function"

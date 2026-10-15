@@ -1,4 +1,4 @@
-// Calls that are not in tail position keep their stack frame, so deep recursion overflows as under plain Bun; under --aot, which has no tail calls (a documented difference), so do the few here that are in tail position.
+// Calls that are not in tail position keep their stack frame, so deep recursion overflows; the few here that are in tail position finish. Both as in plain Bun.
 declare const console: any;
 function attempt(n: string, f: () => unknown): void { try { console.log(n + ": " + JSON.stringify(f())); } catch (e: any) { console.log(n + ": throws " + e.constructor.name); } }
 const N = 1000000;

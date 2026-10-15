@@ -92,5 +92,5 @@ for (const s of texts) {
 }
 function nil(): any { return texts.length > 1000 ? "" : undefined; }
 print(attempt(() => classify(nil(), 0)) + " " + attempt(() => isLetterAt(nil(), 0)) + " " + attempt(() => joined(nil(), 0, 2)) + " " + attempt(() => joined(nil(), 0, 0)));
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [countLetters, countJoined, countNested, countAround, countFractions, countParsed]; console.log("number");

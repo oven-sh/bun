@@ -1055,7 +1055,7 @@ impl Checker<'_, '_> {
         if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
             if hir[container].kind != FnKind::Constructor
                 && self.p.files.options.no_implicit_returns
-                && !self.is_held_to_the_fixed_set(file)
+                && !self.is_restricted_to_fixed_set(file)
                 && !self.is_unwrapped_return_type_undefined_void_or_any(
                     file,
                     container,

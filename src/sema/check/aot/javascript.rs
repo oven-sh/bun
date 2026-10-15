@@ -23,7 +23,7 @@ use super::OnceLock;
 const FILES_OF_A_CHECKER: usize = 32;
 
 /// Of the calls of a function, this many say what its parameters are.
-const MOST_CALLS: usize = 32;
+const MAX_CALLS: usize = 32;
 /// One prediction asks for another this many times over. Beyond that nothing is found.
 const DEEPEST: usize = 48;
 
@@ -65,10 +65,10 @@ enum Passed {
 }
 
 /// A constructor function inherits from another this many times over.
-const MOST_INHERITED: usize = 8;
+const MAX_INHERITED: usize = 8;
 
 /// A parameter is followed to the calls of its function this many times over.
-const MOST_HANDED_ON: usize = 4;
+const MAX_FORWARDED: usize = 4;
 
 /// What one file does with the functions of the program, each list in the order of the file. It takes the types of the file to find. It
 /// mentions none, nor anything else that is numbered by task.
@@ -77,7 +77,7 @@ struct UsesInFile {
     /// A function, and a call or a `new` expression whose callee the checker takes for it.
     calls: Vec<(Function, ExprId)>,
     /// A function, a call that hands it its arguments, `process.nextTick(f, a, b)`, `f.call(receiver, a, b)`, and the number of the first of them.
-    handed_arguments: Vec<(Function, ExprId, usize)>,
+    passed_arguments: Vec<(Function, ExprId, usize)>,
     /// A parameter, and a call whose callee is its name.
     calls_of_parameters: Vec<((FileId, ParamId), ExprId)>,
     /// A function, the function it is passed to, and as which argument.
@@ -101,7 +101,7 @@ struct Uses {
     /// constructor of a class: the `new` expressions and the `super` calls.
     calls: FxHashMap<Function, Vec<(FileId, ExprId)>>,
     /// By function: the calls that hand it its arguments, and the number of the first of them.
-    handed_arguments: FxHashMap<Function, Vec<(FileId, ExprId, usize)>>,
+    passed_arguments: FxHashMap<Function, Vec<(FileId, ExprId, usize)>>,
     /// By parameter: the calls whose callee is its name.
     calls_of_parameters: FxHashMap<(FileId, ParamId), Vec<(FileId, ExprId)>>,
     /// By function: the functions it is passed to where it is written or named as an argument of a call, and as which argument.
@@ -125,8 +125,8 @@ impl Uses {
             for &(function, e) in &part.calls {
                 uses.calls.entry(function).or_default().push((file, e));
             }
-            for &(function, e, first) in &part.handed_arguments {
-                uses.handed_arguments.entry(function).or_default().push((file, e, first));
+            for &(function, e, first) in &part.passed_arguments {
+                uses.passed_arguments.entry(function).or_default().push((file, e, first));
             }
             for &(parameter, e) in &part.calls_of_parameters {
                 uses.calls_of_parameters.entry(parameter).or_default().push((file, e));
@@ -158,8 +158,12 @@ impl Uses {
 
     /// The calls of the function, and those that hand it its arguments: each with the number of the argument that is the first for the function.
     fn calls_with_arguments_for(&self, function: Function) -> Vec<(FileId, ExprId, usize)> {
+        self.first_calls_with_arguments_for(function, usize::MAX)
+    }
+
+    fn first_calls_with_arguments_for(&self, function: Function, most: usize) -> Vec<(FileId, ExprId, usize)> {
         let calls = self.calls.get(&function).into_iter().flatten().map(|&(file, e)| (file, e, 0));
-        calls.chain(self.handed_arguments.get(&function).into_iter().flatten().copied()).collect()
+        calls.chain(self.passed_arguments.get(&function).into_iter().flatten().copied()).take(most).collect()
     }
 
     /// The function that makes the objects that are `this` in `func`, if `func` is called the way it looks.
@@ -202,6 +206,130 @@ impl std::ops::Deref for KnownUses<'_> {
     }
 }
 
+#[derive(Copy, Clone)]
+enum Predicted {
+    Known(Option<TypeId>),
+    InProgress(usize),
+    /// What has been found with nothing in the place of a prediction that was in progress, and how many were in progress around the
+    /// outermost such. It is good for as long as that one is in progress.
+    Provisional(Option<TypeId>, usize),
+}
+
+#[derive(Default)]
+struct Predictions {
+    file: Option<FileId>,
+    of_expressions: Vec<Option<Predicted>>,
+    of_patterns: Vec<Option<Predicted>>,
+    of_symbols: Vec<Option<Predicted>>,
+    of_results: Vec<Option<Predicted>>,
+    of_instances: Vec<Option<Predicted>>,
+    of_the_rest: FxHashMap<Subject, Predicted>,
+    files_in_the_rest: FxHashSet<FileId>,
+    is_file_in_the_rest: bool,
+}
+
+impl Predictions {
+    fn turn_to(&mut self, file: FileId, expressions: usize, patterns: usize, symbols: usize, functions: usize) {
+        if self.file == Some(file) {
+            return;
+        }
+        if let Some(before) = self.file.replace(file) {
+            let mut is_any_kept = false;
+            for (at, known) in self.of_expressions.drain(..).enumerate() {
+                if let Some(known) = known {
+                    self.of_the_rest.insert(Subject::Expr(before, ExprId(at as u32)), known);
+                    is_any_kept = true;
+                }
+            }
+            for (at, known) in self.of_patterns.drain(..).enumerate() {
+                if let Some(known) = known {
+                    self.of_the_rest.insert(Subject::Pat(before, PatId(at as u32)), known);
+                    is_any_kept = true;
+                }
+            }
+            for (at, known) in self.of_symbols.drain(..).enumerate() {
+                if let Some(known) = known {
+                    self.of_the_rest.insert(Subject::Symbol(Sym { file: before, id: SymbolId(at as u32) }), known);
+                    is_any_kept = true;
+                }
+            }
+            for (at, known) in self.of_results.drain(..).enumerate() {
+                if let Some(known) = known {
+                    self.of_the_rest.insert(Subject::Result(before, FnId(at as u32)), known);
+                    is_any_kept = true;
+                }
+            }
+            for (at, known) in self.of_instances.drain(..).enumerate() {
+                if let Some(known) = known {
+                    self.of_the_rest.insert(Subject::Instance(before, FnId(at as u32)), known);
+                    is_any_kept = true;
+                }
+            }
+            if is_any_kept {
+                self.files_in_the_rest.insert(before);
+            }
+        }
+        self.of_expressions.resize(expressions, None);
+        self.of_patterns.resize(patterns, None);
+        self.of_symbols.resize(symbols, None);
+        self.of_results.resize(functions, None);
+        self.of_instances.resize(functions, None);
+        self.is_file_in_the_rest = self.files_in_the_rest.contains(&file);
+    }
+
+    #[inline]
+    fn place_of(&mut self, subject: &Subject) -> Option<&mut Option<Predicted>> {
+        match *subject {
+            Subject::Expr(file, e) if Some(file) == self.file => self.of_expressions.get_mut(e.idx()),
+            Subject::Pat(file, pat) if Some(file) == self.file => self.of_patterns.get_mut(pat.idx()),
+            Subject::Symbol(sym) if Some(sym.file) == self.file => self.of_symbols.get_mut(sym.id.idx()),
+            Subject::Result(file, func) if Some(file) == self.file => self.of_results.get_mut(func.idx()),
+            Subject::Instance(file, func) if Some(file) == self.file => self.of_instances.get_mut(func.idx()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn get(&self, subject: &Subject) -> Option<&Predicted> {
+        let place = match *subject {
+            Subject::Expr(file, e) if Some(file) == self.file => self.of_expressions.get(e.idx()),
+            Subject::Pat(file, pat) if Some(file) == self.file => self.of_patterns.get(pat.idx()),
+            Subject::Symbol(sym) if Some(sym.file) == self.file => self.of_symbols.get(sym.id.idx()),
+            Subject::Result(file, func) if Some(file) == self.file => self.of_results.get(func.idx()),
+            Subject::Instance(file, func) if Some(file) == self.file => self.of_instances.get(func.idx()),
+            _ => None,
+        };
+        match place {
+            Some(Some(known)) => Some(known),
+            Some(None) if !self.is_file_in_the_rest => None,
+            _ => self.of_the_rest.get(subject),
+        }
+    }
+
+    fn insert(&mut self, subject: Subject, predicted: Predicted) {
+        if let Some(place) = self.place_of(&subject) {
+            *place = Some(predicted);
+            return;
+        }
+        let file = match subject {
+            Subject::Expr(file, _) | Subject::Member(file, _) | Subject::Pat(file, _) | Subject::Result(file, _) | Subject::Instance(file, _) => file,
+            Subject::Symbol(sym) => sym.file,
+        };
+        self.files_in_the_rest.insert(file);
+        self.of_the_rest.insert(subject, predicted);
+    }
+
+    fn remove(&mut self, subject: &Subject) {
+        if let Some(place) = self.place_of(subject)
+            && place.is_some()
+        {
+            *place = None;
+            return;
+        }
+        self.of_the_rest.remove(subject);
+    }
+}
+
 /// What has been predicted so far. It belongs to a checker: the types are its own.
 pub(super) struct State {
     /// The file whose uses have been noted last, and those, once they have been asked for. They count until those of all files are
@@ -210,28 +338,38 @@ pub(super) struct State {
     uses_of_file: Option<Rc<Uses>>,
     /// `uses_of_constructors_in`, by file.
     constructors_in: FxHashMap<FileId, Rc<Uses>>,
-    known: FxHashMap<Subject, Option<TypeId>>,
-    /// Outermost first.
-    in_progress: Vec<Subject>,
-    /// What has been found with nothing in the place of a prediction that was in progress, and the index of the outermost such in
-    /// `in_progress`. It is good for as long as that one is in progress.
-    provisional: FxHashMap<Subject, (Option<TypeId>, usize)>,
-    /// The keys of `provisional`, in the order they were added.
-    added: Vec<Subject>,
+    predictions: Predictions,
+    depth: usize,
+    /// The subjects that are `Predicted::Provisional`, by the index that each has there.
+    added: Vec<Vec<Subject>>,
     /// The index of the outermost prediction in progress that the innermost one has asked for. `usize::MAX`: none.
     outermost_asked: usize,
-    declared: FxHashMap<(FileId, ExprId), bool>,
-    predicted: FxHashMap<(FileId, ExprId), Option<TypeId>>,
+    declared: super::ByExpression<bool>,
+    predicted: super::ByExpression<Option<TypeId>>,
+    calls_passing_arguments: FxHashMap<Function, Rc<[(FileId, ExprId, usize)]>>,
+    are_calls_of_the_program: bool,
+    predicted_by_use: super::ByExpression<Option<TypeId>>,
+    property_types: FxHashMap<(TypeId, Atom, bool), Option<TypeId>>,
+    index_types: FxHashMap<(TypeId, TypeId), Option<TypeId>>,
+    narrowed: FxHashMap<(FileId, ExprId, TypeId), Option<TypeId>>,
 }
 
 impl State {
     pub(super) fn nothing_is_in_progress(&self) -> bool {
-        self.in_progress.is_empty()
+        self.depth == 0
+    }
+
+    pub(super) fn keep_answers_by_expression_of(&mut self, file: FileId, expressions: usize, patterns: usize, symbols: usize, functions: usize) {
+        self.predictions.turn_to(file, expressions, patterns, symbols, functions);
+        self.declared.turn_to(file, expressions, false);
+        self.predicted.turn_to(file, expressions, None);
+        self.predicted_by_use.turn_to(file, expressions, None);
     }
 
     pub(super) fn forget_answers_by_expression(&mut self) {
         self.declared.clear();
         self.predicted.clear();
+        self.predicted_by_use.clear();
     }
 }
 
@@ -241,13 +379,18 @@ impl Default for State {
             noted_last: None,
             uses_of_file: None,
             constructors_in: FxHashMap::default(),
-            known: FxHashMap::default(),
-            in_progress: Vec::new(),
-            provisional: FxHashMap::default(),
+            predictions: Predictions::default(),
+            depth: 0,
             added: Vec::new(),
             outermost_asked: usize::MAX,
-            declared: FxHashMap::default(),
-            predicted: FxHashMap::default(),
+            declared: Default::default(),
+            predicted: Default::default(),
+            calls_passing_arguments: FxHashMap::default(),
+            are_calls_of_the_program: false,
+            predicted_by_use: Default::default(),
+            property_types: FxHashMap::default(),
+            index_types: FxHashMap::default(),
+            narrowed: FxHashMap::default(),
         }
     }
 }
@@ -285,12 +428,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_untyped_file(file) {
             return false;
         }
-        if let Some(&known) = self.aot.javascript.declared.get(&(file, e)) {
+        if let Some(&known) = self.aot.javascript.declared.get((file, e)) {
             return known;
         }
-        let asked = self.nothing_is_assumed();
+        let asked = self.begin_answer();
         let found = self.find_has_declared_type(file, e);
-        if self.may_be_kept(asked) {
+        if self.rests_on_no_assumption(asked) {
             self.aot.javascript.declared.insert((file, e), found);
         }
         found
@@ -322,6 +465,9 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return true,
         };
         let ty = self.type_of_expr(file, source);
+        if self.parts(ty).to_vec().into_iter().all(|part| self.is_nullish(part)) {
+            return false;
+        }
         // `C.prototype` is declared to be a `C`, and `Map.prototype` a `Map<any, any>`. Neither is one.
         if matches!(hir[e].kind, ExprKind::Dot { name: known::prototype, .. }) && self.members(ty).is_some_and(|members| !members.shape().construct.is_empty()) {
             return false;
@@ -333,12 +479,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What the value of the expression probably is. `None`: nothing is known of it.
     pub fn predicted_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        if let Some(&known) = self.aot.javascript.predicted.get(&(file, e)) {
+        if let Some(&known) = self.aot.javascript.predicted.get((file, e)) {
             return known;
         }
-        let asked = self.nothing_is_assumed();
+        let asked = self.nothing_but_predictions_is_assumed();
+        let around = std::mem::replace(&mut self.aot.javascript.outermost_asked, usize::MAX);
         let found = self.find_predicted_type_of_expr(file, e);
-        if self.may_be_kept(asked) {
+        let rests_on = self.aot.javascript.outermost_asked;
+        self.aot.javascript.outermost_asked = around.min(rests_on);
+        if rests_on == usize::MAX && self.may_be_kept(asked) {
             self.aot.javascript.predicted.insert((file, e), found);
         }
         found
@@ -362,12 +511,52 @@ impl<'p, 's> Checker<'p, 's> {
     /// `fiber.flags & 4`, `a.index < 10`, `-x.n`, `x.lanes |= lane`: what is only good for a number where it stands is expected to be one. Not an operand of `+`, which is as likely a
     /// string.
     fn predicted_by_use(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if let Some(&known) = self.aot.javascript.predicted_by_use.get((file, e)) {
+            return known;
+        }
+        let asked = self.nothing_but_predictions_is_assumed();
+        let around = std::mem::replace(&mut self.aot.javascript.outermost_asked, usize::MAX);
+        let found = self.find_predicted_by_use(file, e);
+        let rests_on = self.aot.javascript.outermost_asked;
+        self.aot.javascript.outermost_asked = around.min(rests_on);
+        if rests_on == usize::MAX && self.may_be_kept(asked) {
+            self.aot.javascript.predicted_by_use.insert((file, e), found);
+        }
+        found
+    }
+
+    fn find_predicted_by_use(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // Of an array, a string, a function, a typed array.
         if matches!(hir[e].kind, ExprKind::Dot { name, .. } if name == known::length) {
             return Some(TypeId::NUMBER);
         }
+        if matches!(hir[e].kind, ExprKind::Ident(_))
+            && let Some(id) = bound.expr_symbol[e.idx()].some()
+            && self.is_used_as_string(Sym { file, id })
+        {
+            return Some(TypeId::STRING);
+        }
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
+        match hir[parent].kind {
+            ExprKind::Dot { obj, name, .. } if obj == e && self.is_method_of_strings_alone(name) => return Some(TypeId::STRING),
+            ExprKind::Call(call) => {
+                if let ExprKind::Dot { name, .. } = hir[hir[call].callee].kind
+                    && let Some(index) = hir.ids(hir[call].args).position(|arg| arg == e)
+                {
+                    let takes_number = match self.atoms().bytes(name) {
+                        b"charCodeAt" | b"codePointAt" | b"charAt" | b"at" | b"padStart" | b"padEnd" | b"repeat" => index == 0,
+                        b"slice" | b"substring" | b"substr" => index < 2,
+                        b"indexOf" | b"lastIndexOf" | b"includes" | b"startsWith" | b"endsWith" => index == 1,
+                        _ => false,
+                    };
+                    if takes_number {
+                        return Some(TypeId::NUMBER);
+                    }
+                }
+            }
+            _ => {}
+        }
         if let ExprKind::Index { obj, index, .. } = hir[parent].kind
             && obj == e
             && self.kinds_yielded_by(file, index) == kind::NUMBER
@@ -505,44 +694,44 @@ impl<'p, 's> Checker<'p, 's> {
     /// asked for is found, and is found again when it is asked for by itself.
     fn predict(&mut self, subject: Subject, find: impl FnOnce(&mut Self) -> Option<TypeId>) -> Option<TypeId> {
         let state = &mut self.aot.javascript;
-        if let Some(&known) = state.known.get(&subject) {
-            return known;
+        match state.predictions.get(&subject) {
+            Some(&Predicted::Known(known)) => return known,
+            Some(&Predicted::InProgress(at)) => {
+                state.outermost_asked = state.outermost_asked.min(at);
+                return None;
+            }
+            Some(&Predicted::Provisional(found, outermost)) => {
+                state.outermost_asked = state.outermost_asked.min(outermost);
+                return found;
+            }
+            None => {}
         }
-        if let Some(at) = state.in_progress.iter().position(|&other| other == subject) {
-            state.outermost_asked = state.outermost_asked.min(at);
-            return None;
-        }
-        if let Some(&(found, outermost)) = state.provisional.get(&subject) {
-            state.outermost_asked = state.outermost_asked.min(outermost);
-            return found;
-        }
-        let depth = state.in_progress.len();
+        let depth = state.depth;
         if depth == DEEPEST {
             state.outermost_asked = 0;
             return None;
         }
         let around = std::mem::replace(&mut state.outermost_asked, usize::MAX);
-        let first_added = state.added.len();
-        state.in_progress.push(subject);
+        state.predictions.insert(subject, Predicted::InProgress(depth));
+        state.depth += 1;
         let found = find(self);
         let state = &mut self.aot.javascript;
-        state.in_progress.pop();
+        state.depth -= 1;
         let outermost = state.outermost_asked;
-        if outermost != usize::MAX {
-            for added in state.added.split_off(first_added) {
-                if state.provisional[&added].1 < depth {
-                    state.added.push(added);
-                } else {
-                    state.provisional.remove(&added);
-                }
+        if let Some(good_for_this_one) = state.added.get_mut(depth) {
+            for added in good_for_this_one.drain(..) {
+                state.predictions.remove(&added);
             }
         }
         if outermost < depth {
-            state.provisional.insert(subject, (found, outermost));
-            state.added.push(subject);
+            state.predictions.insert(subject, Predicted::Provisional(found, outermost));
+            if state.added.len() <= outermost {
+                state.added.resize_with(outermost + 1, Vec::new);
+            }
+            state.added[outermost].push(subject);
             state.outermost_asked = around.min(outermost);
         } else {
-            state.known.insert(subject, found);
+            state.predictions.insert(subject, Predicted::Known(found));
             state.outermost_asked = around;
         }
         found
@@ -579,7 +768,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ if self.every_type(key, Self::is_string_like) => TypeId::STRING,
                     _ => return None,
                 };
-                let element = self.index_type_of_type(object, kind)?;
+                let element = self.cached_index_type_of_type(object, kind)?;
                 self.telling(element)
             }
             ExprKind::Call(call) => self.predict_call(file, call, false),
@@ -645,8 +834,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getFlowTypeOfReference` for the reference `e`, were it declared to hold `held`: what the tests and the assignments on the way to
     /// `e` leave of that. The type of what is no reference is left as it is.
     fn narrowed_at(&mut self, file: FileId, e: ExprId, held: TypeId) -> Option<TypeId> {
+        if !self.flow_analysis_disabled.is_empty() {
+            let narrowed = self.flow_type_of_reference(file, e, held);
+            return self.telling(narrowed);
+        }
+        if let Some(&known) = self.aot.javascript.narrowed.get(&(file, e, held)) {
+            return known;
+        }
+        let (scope, mark, careful_before) = (self.begin_scope(), self.non_cacheable_mark(), self.times_half_of_stack_was_in_use());
         let narrowed = self.flow_type_of_reference(file, e, held);
-        self.telling(narrowed)
+        let is_settled = self.non_cacheable_mark() == mark && self.times_half_of_stack_was_in_use() == careful_before && self.flow_analysis_disabled.is_empty();
+        let found = self.telling(narrowed);
+        if self.end_scope(scope).is_ok() && is_settled {
+            self.aot.javascript.narrowed.insert((file, e, held), found);
+        }
+        found
     }
 
     /// Of what a property is read from, which is not nil if that goes well.
@@ -689,8 +891,35 @@ impl<'p, 's> Checker<'p, 's> {
         self.predicted_instance_type(of, func)
     }
 
+    fn cached_type_of_property(&mut self, object: TypeId, name: Atom) -> Option<TypeId> {
+        let key = (object, name, self.may_miss_at_an_index(None));
+        if let Some(&known) = self.aot.javascript.property_types.get(&key) {
+            return known;
+        }
+        let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
+        let found = self.type_of_property(object, name);
+        let is_settled = self.non_cacheable_mark() == mark;
+        if self.end_scope(scope).is_ok() && is_settled {
+            self.aot.javascript.property_types.insert(key, found);
+        }
+        found
+    }
+
+    fn cached_index_type_of_type(&mut self, object: TypeId, key_type: TypeId) -> Option<TypeId> {
+        if let Some(&known) = self.aot.javascript.index_types.get(&(object, key_type)) {
+            return known;
+        }
+        let (scope, mark) = (self.begin_scope(), self.non_cacheable_mark());
+        let found = self.index_type_of_type(object, key_type);
+        let is_settled = self.non_cacheable_mark() == mark;
+        if self.end_scope(scope).is_ok() && is_settled {
+            self.aot.javascript.index_types.insert((object, key_type), found);
+        }
+        found
+    }
+
     fn predicted_type_of_declared_property(&mut self, object: TypeId, name: Atom) -> Option<TypeId> {
-        let checked = self.type_of_property(object, name)?;
+        let checked = self.cached_type_of_property(object, name)?;
         if let Some(checked) = self.telling(checked) {
             return Some(checked);
         }
@@ -886,6 +1115,31 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn calls_passing_arguments_to(&mut self, file: FileId, func: FnId) -> Rc<[(FileId, ExprId, usize)]> {
+        if self.aot.javascript.are_calls_of_the_program != self.knows_uses_of_functions() {
+            self.aot.javascript.are_calls_of_the_program = self.knows_uses_of_functions();
+            self.aot.javascript.calls_passing_arguments.clear();
+        }
+        if let Some(known) = self.aot.javascript.calls_passing_arguments.get(&(file, func)) {
+            return Rc::clone(known);
+        }
+        let uses = self.uses_of_functions();
+        let mut calls: Vec<(FileId, ExprId, usize)> = uses.first_calls_with_arguments_for((file, func), MAX_CALLS);
+        for &((of, taker), position) in uses.passed_to.get(&(file, func)).into_iter().flatten() {
+            if calls.len() >= MAX_CALLS {
+                break;
+            }
+            let params = self.hir(of)[taker].params;
+            if position < params.len() {
+                calls.extend(uses.calls_of_parameters.get(&(of, params.at(position))).into_iter().flatten().take(MAX_CALLS - calls.len()).map(|&(of, e)| (of, e, 0)));
+            }
+        }
+        calls.truncate(MAX_CALLS);
+        let calls: Rc<[(FileId, ExprId, usize)]> = calls.into();
+        self.aot.javascript.calls_passing_arguments.insert((file, func), Rc::clone(&calls));
+        calls
+    }
+
     /// What the calls of the function pass. A call that passes nothing passes `undefined`. Where the function is itself passed to a
     /// function, `each(list, function (item) { .. })`, the calls of that parameter there are calls of it.
     fn predict_param(&mut self, file: FileId, p: ParamId) -> Option<TypeId> {
@@ -895,16 +1149,9 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let index = hir[func].params.iter().position(|other| other == p)?;
-        let uses = self.uses_of_functions();
-        let mut calls: Vec<(FileId, ExprId, usize)> = uses.calls_with_arguments_for((file, func));
-        for &((of, taker), position) in uses.passed_to.get(&(file, func)).into_iter().flatten() {
-            let params = self.hir(of)[taker].params;
-            if position < params.len() {
-                calls.extend(uses.calls_of_parameters.get(&(of, params.at(position))).into_iter().flatten().map(|&(of, e)| (of, e, 0)));
-            }
-        }
+        let calls = self.calls_passing_arguments_to(file, func);
         let mut found = Vec::new();
-        for (of, e, first) in calls.into_iter().take(MOST_CALLS) {
+        for &(of, e, first) in calls.iter() {
             let index = index + first;
             let caller = self.hir(of);
             let (ExprKind::Call(call) | ExprKind::New(call)) = caller[e].kind else { continue };
@@ -932,6 +1179,12 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_used_as_array(Sym { file, id })
         {
             passed = Some(self.array_of(TypeId::ANY));
+        }
+        if passed.is_none()
+            && let Some(id) = bound.pat_symbol[hir[p].pat.idx()].some()
+            && self.is_used_as_string(Sym { file, id })
+        {
+            passed = Some(TypeId::STRING);
         }
         self.or_default(file, passed, hir[p].default)
     }
@@ -963,7 +1216,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.predict(Subject::Instance(file, func), |c| {
             let mut members: Vec<(Atom, Vec<TypeId>)> = Vec::new();
             let mut constructor = (file, func);
-            for _ in 0..MOST_INHERITED {
+            for _ in 0..MAX_INHERITED {
                 let uses = c.uses_of_constructors_in(constructor.0);
                 // What the heir stores under a name hides what it inherits.
                 let hidden = members.len();
@@ -1100,9 +1353,11 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn note_uses_of_functions_in(&mut self, file: FileId) {
         // What is predicted on the way goes by no file that this checker has noted before.
         self.aot.javascript = State::default();
+        self.keep_answers_by_expression_of(file);
         let found = self.find_uses_of_functions_in(file);
         *self.noted_uses_of_functions()[file.idx()].lock() = Some(found);
         self.aot.javascript = State { noted_last: Some(file), ..State::default() };
+        self.keep_answers_by_expression_of(file);
     }
 
     /// Puts together what has been noted of the files, in the order of the program. Once, when no task is running and every file has
@@ -1168,7 +1423,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         match self.function_of_type(ty) {
             Some(function) => Some(function),
-            None => self.function_yielded_by(file, e),
+            None => self.function_produced_by(file, e),
         }
     }
 
@@ -1220,8 +1475,8 @@ impl<'p, 's> Checker<'p, 's> {
                         uses.calls_of_parameters.push(((of, p), e));
                         continue;
                     }
-                    if let Some((handed, first)) = self.function_handed_arguments_by(file, call) {
-                        uses.handed_arguments.push((handed, e, first));
+                    if let Some((handed, first)) = self.function_passed_arguments_by(file, call) {
+                        uses.passed_arguments.push((handed, e, first));
                     }
                     let constructs = matches!(node.kind, ExprKind::New(_)) || matches!(hir[callee].kind, ExprKind::Super);
                     let mut function = None;
@@ -1275,7 +1530,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `process.nextTick(f, a, b)`, `f.call(receiver, a, b)`: `f`, and the number of the argument that is its first.
-    fn function_handed_arguments_by(&mut self, file: FileId, call: CallId) -> Option<(Function, usize)> {
+    fn function_passed_arguments_by(&mut self, file: FileId, call: CallId) -> Option<(Function, usize)> {
         let hir = self.hir(file);
         let args = hir[call].args;
         let (named, receiver) = match hir[hir[call].callee].kind {
@@ -1383,7 +1638,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (Passed::Parameter(taking, _), _) | (_, Passed::Parameter(taking, _)) => taking,
                 _ => continue,
             };
-            if handed_on == MOST_HANDED_ON {
+            if handed_on == MAX_FORWARDED {
                 continue;
             }
             for (of, e, first) in uses.calls_with_arguments_for(taking) {
@@ -1414,7 +1669,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `heir`, `base`: expressions of the file that name two functions.
-    fn add_heir(&mut self, file: FileId, heir: ExprId, base: ExprId, uses: &mut UsesInFile) {
+    fn add_subclass(&mut self, file: FileId, heir: ExprId, base: ExprId, uses: &mut UsesInFile) {
         let functions = [heir, base].map(|named| self.function_that_is_named_by(file, named));
         if let [Some(heir), Some(base)] = functions
             && heir != base
@@ -1446,7 +1701,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => continue,
                 };
                 if let (Some(heir), Some(base)) = (heir, base) {
-                    self.add_heir(file, heir, base, uses);
+                    self.add_subclass(file, heir, base, uses);
                 }
                 continue;
             }
@@ -1478,7 +1733,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if let Some((heir, prototype)) = inherited {
                 if let (Some(heir), Some(base)) = (heir, self.constructor_with_prototype(file, prototype, 0)) {
-                    self.add_heir(file, heir, base, uses);
+                    self.add_subclass(file, heir, base, uses);
                 }
                 continue;
             }

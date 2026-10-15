@@ -1,1 +1,0 @@
-Plain Bun prints "3 0 1 true undefined 3 2 ref true"; under --aot the program ends with: TypeError: expected TransientLinks, got LinksClass

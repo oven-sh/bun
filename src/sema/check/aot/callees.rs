@@ -79,7 +79,7 @@ pub struct OnlyFunction {
     /// and the variable itself if every store to it makes the closure. All closures that get to the variable are made within one
     /// activation of the scope that binds this one, so what the function captures from there or from further out is the same for all.
     pub outermost: Sym,
-    /// One of the stores is only expected to put a closure of the function there: what a call yields. Then nothing is a fact.
+    /// One of the stores is only expected to put a closure of the function there: what a call of something that is not known for certain yields. Then nothing is a fact.
     pub is_predicted: bool,
 }
 
@@ -110,7 +110,7 @@ pub(super) struct State {
     of_variables: FxHashMap<Sym, Option<OnlyFunction>>,
     /// While the stores to a variable are gone through: `OnlyFunction::outermost` of the variables that they name.
     came_by: Option<Vec<Sym>>,
-    /// `parameter_handed_back_by`, as far as it has been asked.
+    /// `parameter_returned_by`, as far as it has been asked.
     handed_back: FxHashMap<(FileId, FnId), Option<u32>>,
 }
 
@@ -205,14 +205,24 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 let first = if hir[d].pat != pat {
-                    // `const { Stream } = legacy`: what the literal has by the name, which may have been replaced since.
+                    // `const { Stream } = legacy`: what the literal has by the name, which may have been replaced since. `const { Stream } = require("./legacy")`: what the variable of that export holds.
                     let PatParent::Prop(outer, prop) = bound.pat_parent[pat.idx()] else { return None };
                     let name = match (hir[prop].key, hir[pat].kind) {
                         _ if outer != hir[d].pat || hir[prop].is_rest || hir[prop].default.is_some() || hir[d].init.is_none() => return None,
                         (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) => name,
                         _ => return None,
                     };
-                    Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_held_by(file, hir[d].init, name, 0), false) }
+                    let exported = self.exports_mentioned_by(file, hir[d].init).filter(|mention| !mention.is_boxed).and_then(|mention| match mention.is_namespace {
+                        true => self.export_variable_imported_as(file, mention.module, name),
+                        false => self.export_variable_of(mention.module, name),
+                    });
+                    match exported {
+                        Some((module, exported)) => {
+                            let (of, func, is_predicted) = self.apart_from_the_variable_asked_about(|this| this.function_in_export_variable(module, exported, 1))?;
+                            Yielded { is_predicted, ..Yielded::of(Callee::One(of, func), true) }
+                        }
+                        None => Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_of(file, hir[d].init, name, 0), false) },
+                    }
                 } else if hir[d].init.is_some() {
                     self.callee_yielded_by(file, hir[d].init, 0)
                 } else {
@@ -271,10 +281,10 @@ impl<'p, 's> Checker<'p, 's> {
                 scope = bound.scopes[scope.idx()].parent;
             }
         }
-        self.is_written_in_what_may_have_a_second_body(file, func, &around_the_variable)
+        self.is_inside_function_that_may_be_duplicated(file, func, &around_the_variable)
     }
 
-    pub(super) fn is_written_in_what_may_have_a_second_body(&self, file: FileId, func: FnId, around_the_variable: &[FnId]) -> bool {
+    pub(super) fn is_inside_function_that_may_be_duplicated(&self, file: FileId, func: FnId, around_the_variable: &[FnId]) -> bool {
         if self.is_untyped_file(file) {
             return false;
         }
@@ -301,18 +311,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// location ? setTextRangePosEnd(range, location.pos, location.end) : range }`. Every `return` yields it, by its name or through a call of
     /// a function that hands it back in turn, or does not return (`never`), and the end of the body is not reached. Nothing is stored to it, and it has no
     /// initializer. A FACT: it goes by the trees and the symbols alone, and every task finds the same.
-    pub fn parameter_handed_back_by(&mut self, file: FileId, func: FnId) -> Option<u32> {
+    pub fn parameter_returned_by(&mut self, file: FileId, func: FnId) -> Option<u32> {
         if let Some(&known) = self.aot.callees.handed_back.get(&(file, func)) {
             return known;
         }
         // One that only hands back what it hands back itself never returns.
         self.aot.callees.handed_back.insert((file, func), None);
-        let found = self.find_parameter_handed_back_by(file, func);
+        let found = self.find_parameter_returned_by(file, func);
         self.aot.callees.handed_back.insert((file, func), found);
         found
     }
 
-    fn find_parameter_handed_back_by(&mut self, file: FileId, func: FnId) -> Option<u32> {
+    fn find_parameter_returned_by(&mut self, file: FileId, func: FnId) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) || !matches!(hir[func].kind, FnKind::Decl | FnKind::Expr | FnKind::Arrow) {
             return None;
@@ -332,7 +342,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut handed_back = None;
         for value in returned {
-            let parameter = if value.is_some() { self.parameter_yielded_by(file, func, value, 0)? } else { return None };
+            let parameter = if value.is_some() { self.parameter_produced_by(file, func, value, 0)? } else { return None };
             if handed_back.replace(parameter).is_some_and(|other| other != parameter) {
                 return None;
             }
@@ -356,18 +366,18 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: an expression in the body of `func`. The parameter of `func` that is its value, whenever it has one.
-    fn parameter_yielded_by(&mut self, file: FileId, func: FnId, e: ExprId, depth: u32) -> Option<u32> {
+    fn parameter_produced_by(&mut self, file: FileId, func: FnId, e: ExprId, depth: u32) -> Option<u32> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if depth > DEEPEST_OPERAND {
             return None;
         }
         match hir[e].kind {
             // `as` may make another object of plain data.
-            ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.parameter_yielded_by(file, func, expr, depth + 1),
-            ExprKind::Binary { op: BinOp::Comma, right, .. } => self.parameter_yielded_by(file, func, right, depth + 1),
+            ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.parameter_produced_by(file, func, expr, depth + 1),
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => self.parameter_produced_by(file, func, right, depth + 1),
             ExprKind::Cond { yes, no, .. } => {
-                let yes = self.parameter_yielded_by(file, func, yes, depth + 1)?;
-                (self.parameter_yielded_by(file, func, no, depth + 1)? == yes).then_some(yes)
+                let yes = self.parameter_produced_by(file, func, yes, depth + 1)?;
+                (self.parameter_produced_by(file, func, no, depth + 1)? == yes).then_some(yes)
             }
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
@@ -391,20 +401,20 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Call(_) => {
                 let argument = self.argument_handed_back_by_function(file, e)?;
-                self.parameter_yielded_by(file, func, argument, depth + 1)
+                self.parameter_produced_by(file, func, argument, depth + 1)
             }
             _ => None,
         }
     }
 
     /// `e`: a call. If it names a function of the program that hands back a parameter: the argument for that.
-    pub fn is_handed_back_by_the_call_it_is_handed_to(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn is_argument_returned_by_its_call(&mut self, file: FileId, e: ExprId) -> bool {
         let Parent::Expr(call) = self.bound(file).expr_parent[e.idx()] else { return false };
         if call.is_none() || self.argument_handed_back_by_function(file, call) != Some(e) {
             return false;
         }
         let Some((of, func, _)) = self.resolved_signature(file, call).sig.and_then(|sig| self.sig_decl(sig)) else { return false };
-        let Some(number) = self.parameter_handed_back_by(of, func) else { return false };
+        let Some(number) = self.parameter_returned_by(of, func) else { return false };
         let Some(parameter) = self.hir(of)[func].params.iter().nth(number as usize) else { return false };
         let declared = self.type_of_param(of, parameter);
         self.base_constraint_of(declared).is_none_or(|bound| self.says_nothing(bound))
@@ -426,7 +436,7 @@ impl<'p, 's> Checker<'p, 's> {
             Some(declared) => declared,
             None => self.only_function_of_variable(sym).filter(|only| !only.may_be_nil && !only.is_predicted).map(|only| (only.file, only.func))?,
         };
-        let number = self.parameter_handed_back_by(of, func)?;
+        let number = self.parameter_returned_by(of, func)?;
         let mut arguments = hir.ids(hir[call].args);
         let is_spread = |argument: &ExprId| matches!(hir[*argument].kind, ExprKind::Spread(_) | ExprKind::Missing);
         for _ in 0..number {
@@ -499,7 +509,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The one function of the program that the value of the expression is a closure of, if it is a function at all, as far as the trees tell. A
     /// prediction.
-    pub fn function_yielded_by(&mut self, file: FileId, e: ExprId) -> Option<(FileId, FnId)> {
+    pub fn function_produced_by(&mut self, file: FileId, e: ExprId) -> Option<(FileId, FnId)> {
         match self.callee_yielded_by(file, e, 0).callee {
             Callee::One(file, func) => Some((file, func)),
             _ => None,
@@ -549,34 +559,41 @@ impl<'p, 's> Checker<'p, 's> {
                 Some((of, func, is_sure)) => Yielded { is_predicted: !is_sure, ..Yielded::of(Callee::One(of, func), false) },
                 None => unknown,
             },
-            // What the one function that is probably called returns. Another may be called, so it is a prediction.
+            // What the one function that is called returns. Where another may be called, it is a prediction.
             ExprKind::Call(call) => {
-                let called = match hir[hir[call].callee].kind {
-                    ExprKind::Dot { obj, name, .. } => self.callee_in_literal_held_by(file, obj, name, depth + 1),
-                    _ => self.callee_yielded_by(file, hir[call].callee, depth + 1).callee,
+                let (called, is_sure) = match hir[hir[call].callee].kind {
+                    ExprKind::Dot { obj, name, .. } => (self.callee_in_literal_of(file, obj, name, depth + 1), false),
+                    _ => {
+                        let callee = self.callee_yielded_by(file, hir[call].callee, depth + 1);
+                        (callee.callee, !callee.is_predicted && hir[call].chain == Chain::No)
+                    }
                 };
                 let Callee::One(of, func) = called else { return unknown };
                 let (declaring, bound) = (self.hir(of), self.bound(of));
                 let returned = match declaring[func].body {
                     FnBody::None => return unknown,
                     FnBody::Expr(body) => self.callee_yielded_by(of, body, depth + 1),
-                    FnBody::Block(_) => bound.ids(bound.fns[func.idx()].returns).fold(Yielded::of(Callee::Nothing, false), |so_far, stmt: StmtId| match declaring[stmt].kind {
-                        _ if so_far.is_not_seen_through() => so_far,
-                        StmtKind::Return(value) if value.is_some() => so_far.join(self.callee_yielded_by(of, value, depth + 1)),
-                        _ => so_far.join(Yielded::of(Callee::Nothing, true)),
-                    }),
+                    FnBody::Block(stmts) => {
+                        let without_return = Yielded::of(Callee::Nothing, !self.ends_by_leaving(of, stmts));
+                        bound.ids(bound.fns[func.idx()].returns).fold(without_return, |so_far, stmt: StmtId| match declaring[stmt].kind {
+                            _ if so_far.is_not_seen_through() => so_far,
+                            StmtKind::Return(value) if value.is_some() => so_far.join(self.callee_yielded_by(of, value, depth + 1)),
+                            _ => so_far.join(Yielded::of(Callee::Nothing, true)),
+                        })
+                    }
                 };
-                Yielded { is_predicted: true, ..returned }
+                let is_plain = !declaring[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR);
+                Yielded { is_predicted: returned.is_predicted || !is_sure || !is_plain, ..returned }
             }
             ExprKind::Dot { .. } | ExprKind::Index { .. } if self.export_variable_named_by(file, e).is_some() => {
-                let held = self.export_variable_named_by(file, e).and_then(|(module, name)| self.apart_from_the_variable_asked_about(|this| this.function_held_by_export_variable(module, name, depth + 1)));
+                let held = self.export_variable_named_by(file, e).and_then(|(module, name)| self.apart_from_the_variable_asked_about(|this| this.function_in_export_variable(module, name, depth + 1)));
                 match held {
                     Some((of, func, is_predicted)) => Yielded { is_predicted, ..Yielded::of(Callee::One(of, func), true) },
                     None => unknown,
                 }
             }
             // What the literal has by the name, which may have been replaced since.
-            ExprKind::Dot { obj, name, .. } => Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_held_by(file, obj, name, depth + 1), false) },
+            ExprKind::Dot { obj, name, .. } => Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_of(file, obj, name, depth + 1), false) },
             ExprKind::Binary { op: BinOp::Comma, right, .. } | ExprKind::Assign { op: None, value: right, .. } => self.callee_yielded_by(file, right, depth + 1),
             // A function is truthy, and nil is neither.
             ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Assign { op: Some(BinOp::Or | BinOp::Nullish), target: left, value: right } => {
@@ -593,19 +610,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The object literal that the value of the expression is made by, as far as the trees tell: the literal itself, under `as`, `!`, `satisfies`; a variable that is initialized with
     /// one; an import of `export default { .. }`.
-    fn literal_yielded_by(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<(FileId, ExprId)> {
+    fn literal_produced_by(&mut self, file: FileId, e: ExprId, depth: u32) -> Option<(FileId, ExprId)> {
         let hir = self.hir(file);
         if depth > DEEPEST_OPERAND {
             return None;
         }
         match hir[e].kind {
             ExprKind::Object(_) => Some((file, e)),
-            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.literal_yielded_by(file, expr, depth + 1),
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.literal_produced_by(file, expr, depth + 1),
             ExprKind::Ident(variable) => {
                 let sym = self.symbol_of_identifier(file, e, variable)?;
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
                 if let Some((of, exported)) = self.expression_exported_as(sym) {
-                    return if self.only_declares(of) { None } else { self.literal_yielded_by(of, exported, depth + 1) };
+                    return if self.only_declares(of) { None } else { self.literal_produced_by(of, exported, depth + 1) };
                 }
                 let (of, Decl::Var(pat)) = self.files().value_declaration(sym)? else { return None };
                 if self.only_declares(of) {
@@ -616,17 +633,17 @@ impl<'p, 's> Checker<'p, 's> {
                 if declaring[d].pat != pat {
                     return None;
                 }
-                self.literal_yielded_by(of, declaring[d].init.some()?, depth + 1)
+                self.literal_produced_by(of, declaring[d].init.some()?, depth + 1)
             }
             _ => None,
         }
     }
 
-    /// `obj.name`, where `obj` stands for an object literal (`literal_yielded_by`): what the literal has by the name. Something else may
+    /// `obj.name`, where `obj` stands for an object literal (`literal_produced_by`): what the literal has by the name. Something else may
     /// have been stored there since, so it is a prediction.
-    fn callee_in_literal_held_by(&mut self, file: FileId, obj: ExprId, name: Atom, depth: u32) -> Callee {
+    fn callee_in_literal_of(&mut self, file: FileId, obj: ExprId, name: Atom, depth: u32) -> Callee {
         let unknown = Callee::Unknown(Place { file, pos: self.hir(file)[obj].pos });
-        let Some((of, init)) = self.literal_yielded_by(file, obj, depth) else { return unknown };
+        let Some((of, init)) = self.literal_produced_by(file, obj, depth) else { return unknown };
         let hir = self.hir(of);
         let ExprKind::Object(props) = hir[init].kind else { return unknown };
         let found = props.iter().filter(|p| matches!(hir[*p].key, PropKey::Name(key) if key == name) && matches!(hir[*p].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method));

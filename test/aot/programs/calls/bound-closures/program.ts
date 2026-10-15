@@ -63,9 +63,9 @@ function names(e: any): string { return String(e.stack).split("\n").map((l: stri
 class T0 { t_fails(x: number): number { if (x) throw new Error("x"); return 0; } }
 function t_calls(f: (x: number) => number): number { return f(1) + 1; }
 say("the stack", () => { const t = new T0(); try { return t_calls(t.t_fails.bind(t)); } catch (e) { return names(e); } });
-// What it captures stays alive.
+// Its captures stay alive.
 say("many", () => { const fs: Array<(x: number) => number> = []; for (let i = 0; i < 20000; i++) { const k = new K7(); k.v = i; fs.push(k.m.bind(k)); } if (typeof gc === "function") gc(); let s = 0; for (const f of fs) s += f(1); return s; });
-// 126: async targets. What is awaited is printed when it has settled: the rows come in the order they are started.
+// Async targets. An awaited value is printed when it has settled: the rows appear in the order in which they are started.
 const AsyncFunction: any = Object.getPrototypeOf(async function () { });
 class Y0 { v = 7; async later(x: number): Promise<number> { return this.v + x; } async two(a: number, b: number): Promise<number> { await null; return this.v + a * 10 + b; } async fails(): Promise<number> { throw new RangeError("from fails " + this.v); } }
 say("async: what can be seen", () => { const a = new Y0(); const f: any = a.later.bind(a); return [typeof f, f.name, f.length, Object.getPrototypeOf(f) === AsyncFunction, Object.getPrototypeOf(f) === Function.prototype, Object.hasOwn(f, "prototype"), Object.prototype.toString.call(f), String(f).replace(/\s+/g, " "), f instanceof Function, Object.getOwnPropertyNames(f).sort()]; });

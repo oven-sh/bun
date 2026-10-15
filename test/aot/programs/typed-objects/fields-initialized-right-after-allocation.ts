@@ -1,7 +1,7 @@
 // Required fields that are stored right after an object's allocation can never be observed as missing; frozen objects, reflection and untyped callers see the same as in plain Bun.
 const show = (what: string, o: object) => console.log(what, JSON.stringify(Object.keys(o)), JSON.stringify(o))
 enum Flags { None = 0, One = 1, All = -1 }
-// Through the run time, by a computed name: a typed read of a number that finds nothing throws, which is another rule.
+// Through the runtime, by a computed name: a typed read of a number that finds nothing throws, which is a different rule.
 const read = (o: any, name: string) => o[name]
 const list = [1]
 
@@ -13,7 +13,7 @@ let sum = 0
 for (let i = 0; i < 3; i++) { const a = new A(list, i, i == 1); sum += a.x + a.y + a.z + (a.w ?? 0) + a.o.length }
 console.log("A sum", sum)
 
-// Two functions for one type, in different orders: the keys follow whoever ran.
+// Two functions for one type, in different orders: the keys follow the function that ran.
 interface B { o: number[]; p: number; q: number; r: number }
 function B1(this: B, o: number[], n: number, m: number) { this.p = n; this.q = m; this.r = 12; this.o = o }
 function B2(this: B, o: number[], n: number, m: number) { this.o = o; this.p = n; this.r = 12; this.q = m }
@@ -30,7 +30,7 @@ function CCtor(this: C, m = (seen.push(JSON.stringify(Object.keys(this)), String
 const C = CCtor as unknown as new (m?: number) => C
 show("C", new C()); console.log(seen.join(" "))
 
-// A value that calls may throw, and nobody holds the object then.
+// A value that contains a call may throw, and nothing references the object then.
 interface D { o: number[]; u: number; v: number }
 let fail = true
 const next = () => { if (fail) throw new Error("no"); return 3 }
@@ -62,7 +62,7 @@ Object.defineProperty(GCtor.prototype, "v", { set(value: number) { taken = value
 const G = GCtor as unknown as new (o: number[], v: number) => G
 const g = new G(list, 9); show("G", g); console.log(g.v, taken, Object.hasOwn(g, "v"))
 
-// Whoever constructs: typed, untyped, `Reflect.construct`, and a call on an object that exists.
+// Every kind of caller: typed, untyped, `Reflect.construct`, and a call on an existing object.
 interface H { o: number[]; k: Flags; n: number; s?: string }
 function HCtor(this: H, o: number[], k: Flags, n: number) { this.k = k; this.n = n; this.o = o }
 const H = HCtor as unknown as new (o: number[], k: Flags, n: number) => H
@@ -100,7 +100,7 @@ let kept = 0
 Object.defineProperty(Object.getPrototypeOf(half), "ma", { set(value: number) { kept = value }, configurable: true })
 const later = new Half(list, 5); show("M half, a setter", later); console.log(kept, read(later, "ma"), Object.hasOwn(later, "ma"))
 
-// A callee that is no constructor function of the type: it declares no `this`, so it is not handed the object that was made, whether or not the compiler knows the callee.
-// what it makes is no `H`, so TypeError. Plain Bun: `Other {"other":1} undefined`.
+// A callee that is not a constructor function of the type: it declares no `this`, so it does not receive the allocated object, whether
+// or not the compiler knows the callee. What it creates is not an `H`, so TypeError. Plain Bun: `Other {"other":1} undefined`.
 const Other = function (this: any) { this.other = 1 } as unknown as new (o: number[], k: Flags, n: number) => H
 try { const o = new Other(list, Flags.One, 1); console.log("Other", JSON.stringify(o), read(o, "k")) } catch (e) { console.log("Other", (e as Error).constructor.name) }

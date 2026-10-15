@@ -31,6 +31,7 @@ fn canonical(name: &[u8]) -> Option<Vec<u8>> {
         b"typescript-eslint" | b"@typescript-eslint" | b"typescript" | b"tseslint" => {
             b"typescript/"
         }
+        b"bun" => b"bun/",
         _ => return None,
     };
     Some([plugin, &kebab_case(&name[slash + 1..])].concat())
@@ -52,8 +53,23 @@ pub(super) fn find(name: &[u8]) -> Option<Vec<Json>> {
     Some(objects)
 }
 
+/// `bun/aot`: what behaves differently in a program that is compiled with `bun build --aot`. `bun/aot-non-null-escapes` is for
+/// whoever asks for it.
+pub(super) const RULES_OF_AOT: [&str; 5] = [
+    "aot-cast-lacks-member",
+    "aot-locked-builtin-write",
+    "aot-no-any-to-typed",
+    "aot-outside-data",
+    "aot-spy-on-builtin",
+];
+
 /// The line of `presets.txt` for `name`. Release builds embed the file compressed and inflate it on first use.
 fn parse(name: &[u8]) -> Option<Vec<Json>> {
+    if name == b"bun/aot" {
+        let warn = |rule: &&str| ([b"bun/", rule.as_bytes()].concat(), Json::String(b"warn".to_vec()));
+        let rules = Json::Object(RULES_OF_AOT.iter().map(warn).collect());
+        return Some(vec![Json::Object(vec![(b"rules".to_vec(), rules)])]);
+    }
     let lines = bun_zstd::embed_compressed!(
         "src/lint/linter/config/presets.txt",
         include_bytes!("presets.txt")

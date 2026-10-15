@@ -44,7 +44,7 @@ console.log([...bag].join(), b0, bRest.join(), Math.max(...bag), Array.from(bag)
 class Even { static [Symbol.hasInstance](x: unknown) { return typeof x === "number" && x % 2 === 0 } }
 console.log((2 as unknown) instanceof Even, (3 as unknown) instanceof Even, ({} as unknown) instanceof Even)
 
-// The well-known symbol arrives later, behind the type.
+// The well-known symbol is added later, through `any`.
 interface Plain { v: number }
 const plain: Plain = { v: 3 }
 console.log(attempt(() => [...(plain as any)]), String(plain), attempt(() => +(plain as any)))

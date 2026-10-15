@@ -490,6 +490,7 @@ pub struct InitializeOptions {
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
     pub use_aot: bool,
+    pub crash_if_interpreter_is_used: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -510,6 +511,7 @@ pub fn initialize(options: InitializeOptions) {
             options.one_shot,
             options.short_lived_globals,
             options.use_aot,
+            options.crash_if_interpreter_is_used,
         )
     };
 }
@@ -846,6 +848,7 @@ pub mod resolved_source_tag {
         pub const ExportDefaultObject: Self = Self(9);
         /// Signal upwards that the matching value in `require.extensions` should be used.
         pub const CommonJsCustomExtension: Self = Self(10);
+        pub const ExportDefaultOnly: Self = Self(11);
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
@@ -1573,6 +1576,7 @@ unsafe extern "C" {
         one_shot_startup: bool,
         short_lived_globals: bool,
         use_aot: bool,
+        crash_if_interpreter_is_used: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

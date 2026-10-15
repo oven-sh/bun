@@ -16,7 +16,10 @@ pub struct Strs {
 }
 
 impl Strs {
-    fn hash_of(bytes: &[u8]) -> u64 {
+    pub fn with_room_for(strings: usize) -> Strs {
+        Strs { bytes: Vec::new(), ends: Vec::with_capacity(strings), hashes: Vec::with_capacity(strings), ids: hashbrown::HashTable::with_capacity(strings) }
+    }
+    pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
     }
     pub fn intern(&mut self, bytes: &[u8]) -> StrId {
@@ -27,6 +30,9 @@ impl Strs {
         if let Some(&id) = self.ids.find(hash, |&id| self.get(id) == bytes) {
             return id;
         }
+        self.add(hash, bytes)
+    }
+    pub fn add(&mut self, hash: u64, bytes: &[u8]) -> StrId {
         let id = StrId::new(self.ends.len());
         self.bytes.extend_from_slice(bytes);
         self.ends.push(u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"));
@@ -34,6 +40,18 @@ impl Strs {
         let hashes = &self.hashes;
         self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
         id
+    }
+    pub fn add_all(&mut self, bytes: &[u8], lengths: &[u32], hashes: &[u64]) {
+        let mut end = self.bytes.len();
+        self.bytes.extend_from_slice(bytes);
+        for (&length, &hash) in lengths.iter().zip(hashes) {
+            end += length as usize;
+            let id = StrId::new(self.ends.len());
+            self.ends.push(u32::try_from(end).expect("the strings of a program are under 4 GB"));
+            self.hashes.push(hash);
+            let hashes = &self.hashes;
+            self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
+        }
     }
     pub fn find(&self, bytes: &[u8]) -> Option<StrId> {
         self.ids.find(Strs::hash_of(bytes), |&id| self.get(id) == bytes).copied()
@@ -145,7 +163,7 @@ pub mod only_function_flags {
     pub const IS_FACT: u8 = 1;
     /// Of a variable, of a module or in an environment: every store to it is seen, and it holds a closure of the function, `undefined` or
     /// `null` whenever it is read. A fact. Not together with `IS_FACT`.
-    pub const OR_NIL: u8 = 1 << 2;
+    pub const OR_NULLISH: u8 = 1 << 2;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -197,6 +215,7 @@ pub mod class_flags {
     pub const MAY_HAVE_OTHER_PROTOTYPE: u32 = 1 << 6;
     /// It declares a static member whose name is computed and may be any string. A field of that kind is in no list of the layout.
     pub const HAS_STATIC_MEMBER_OF_UNKNOWN_NAME: u32 = 1 << 8;
+    pub const CONSTRUCTOR_MAY_BE_REPLACED: u32 = 1 << 9;
     pub const MAY_BE_REUSED: u32 = 1 << 10;
 }
 
@@ -226,6 +245,7 @@ pub struct Layout {
     /// what the host or a package has made.
     pub admits_foreign: bool,
     pub is_opened_for_the_log: bool,
+    pub admits_only_other_layouts: bool,
     /// The layout as a way to look at objects: the allocated layouts whose type is assignable to this type, itself among them if it is
     /// allocated. No other object of the program is in a place of this type. Sorted.
     pub members: Vec<LayoutId>,
@@ -238,9 +258,37 @@ pub struct Layout {
     pub declared_line: u32,
 }
 
+pub struct FieldsByName(Option<rustc_hash::FxHashMap<StrId, u32>>);
+
+impl FieldsByName {
+    pub fn get(&self, layout: &Layout, name: StrId) -> Option<u32> {
+        match &self.0 {
+            Some(by_name) => by_name.get(&name).copied(),
+            None => layout.field(name),
+        }
+    }
+}
+
 impl Layout {
+    pub const MANY_FIELDS: usize = 32;
+
     pub fn field(&self, name: StrId) -> Option<u32> {
         self.fields.iter().position(|f| f.name == name).map(|i| i as u32)
+    }
+
+    pub fn fields_by_name(&self) -> FieldsByName {
+        if self.fields.len() < Layout::MANY_FIELDS {
+            return FieldsByName(None);
+        }
+        let mut by_name = rustc_hash::FxHashMap::with_capacity_and_hasher(self.fields.len(), Default::default());
+        for (index, field) in self.fields.iter().enumerate() {
+            by_name.entry(field.name).or_insert(index as u32);
+        }
+        FieldsByName(Some(by_name))
+    }
+
+    pub fn admits_unchecked_objects(&self) -> bool {
+        self.admits_foreign && !self.admits_only_other_layouts
     }
 }
 
@@ -317,7 +365,7 @@ pub mod func_flags {
     pub const IS_CODE_OF_MODULE: u16 = 1 << 12;
     pub const IS_SLOPPY: u16 = 1 << 13;
     pub const IS_GENERAL_ENTRY: u16 = 1 << 14;
-    pub const KEEPS_FIELD_NAMES_OFF_ITS_PROTOTYPE: u16 = 1 << 15;
+    pub const HAS_NO_FIELD_NAMES_ON_PROTOTYPE: u16 = 1 << 15;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -381,6 +429,7 @@ pub enum Why {
     /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_fresh_graph_by_text`.
     CoerceFreshGraph,
     CastFresh,
+    ArgumentClaim(u8),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -541,6 +590,7 @@ pub struct Value {
     pub ty: TyId,
     pub prediction: Prediction,
     pub finds_initialized: bool,
+    pub is_in_tail_position: bool,
 }
 
 #[derive(Default, Clone)]
@@ -616,13 +666,13 @@ impl Func {
     pub fn add_param(&mut self, block: BlockId, ty: TyId) -> V {
         let index = self.blocks[block.idx()].params.len() as u32;
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Param(block, index), pos: 0, ty, prediction: Prediction::None, finds_initialized: false });
+        self.values.push(Value { def: Def::Param(block, index), pos: 0, ty, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false });
         self.blocks[block.idx()].params.push(v);
         v
     }
     pub fn add_value(&mut self, op: Op, pos: u32, ty: TyId) -> V {
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Op(op), pos, ty, prediction: Prediction::None, finds_initialized: false });
+        self.values.push(Value { def: Def::Op(op), pos, ty, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false });
         v
     }
     pub fn append(&mut self, block: BlockId, op: Op, pos: u32, ty: TyId) -> V {

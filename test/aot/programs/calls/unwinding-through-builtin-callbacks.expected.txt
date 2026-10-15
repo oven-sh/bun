@@ -1,5 +1,5 @@
 a getter that throws on what is handed over: returned; rejected RangeError
-a proxy whose get trap throws: returned; rejected TypeError
+a proxy whose get trap throws: returned; rejected SyntaxError
 a proxy that is revoked: returned; rejected TypeError
 an iterator that throws: returned; rejected TypeError
 an iterator whose next throws: returned; rejected TypeError

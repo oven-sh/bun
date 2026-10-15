@@ -41,6 +41,8 @@
   "exports.closed_literal6.mjs": {
     "errors": "error: Could not resolve: \"sub/\". Maybe you need to \"bun install\"?\n"
   },
+  "exports.sub_feat_one.namespace.mjs": "compiled",
+  "exports.sub_feat_one.namespace.ts": "compiled",
   "imports.app_dyn.mjs": {
     "errors": "error: Could not resolve: \"#none\". Maybe you need to \"bun install\"?\n"
   }

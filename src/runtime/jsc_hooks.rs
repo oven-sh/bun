@@ -2757,6 +2757,24 @@ fn transpile_source_code_inner(
                     });
                 }
 
+                if matches!(loader, L::Text)
+                    && bun_jsc::virtual_machine::standalone_module_graph()
+                        .is_some_and(|graph| !graph.aot_image().is_empty())
+                {
+                    let Ok(jsvalue_for_export) =
+                        bun_core::String::clone_utf8(&parse_result.source.contents)
+                            .into_js(global_object)
+                    else {
+                        return Err(bun_jsc::JsError::Thrown.into());
+                    };
+                    return Ok(ResolvedSource {
+                        source_url: input_specifier.create_if_different(path.text),
+                        jsvalue_for_export,
+                        tag: ResolvedSourceTag::ExportDefaultOnly,
+                        ..Default::default()
+                    });
+                }
+
                 // JSON/TOML/YAML/JSON5/XML: export as a JS object.
                 if matches!(
                     loader,

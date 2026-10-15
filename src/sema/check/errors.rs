@@ -907,7 +907,7 @@ impl Checker<'_, '_> {
         mode: ResolutionMode,
         at: (FileId, u32, u32),
     ) {
-        if self.is_held_to_the_fixed_set(file) {
+        if self.is_restricted_to_fixed_set(file) {
             return;
         }
         let module = self.files().module(file);

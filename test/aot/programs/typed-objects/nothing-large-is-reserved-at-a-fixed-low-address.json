@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it reads /proc/self/maps with node:fs, which the jsc shell does not have"
+}

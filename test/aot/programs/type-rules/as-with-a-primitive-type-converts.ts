@@ -98,8 +98,8 @@ interface Cell { v: number }
 const cell: Cell = { v: 7 }
 attempt("g3", () => { cell.v = hide("8") as number; return cell.v })
 attempt("g4", () => cell.v)
-// What a literal type or an enum names is not validated, so it is no fact: the cast tries for, and yields, the WIDENED primitive: a string, a number, a boolean. `null` and `undefined` pass where that is a
-// string, as for every reference, and are converted where it is a number. A declared place of the literal type tests as for any value.
+// The values of a literal type or an enum are not validated, so they are not facts: the cast converts to the WIDENED primitive: a string, a number, a boolean. `null` and
+// `undefined` pass where that is a string, as for every reference, and are converted where it is a number. A declared slot of the literal type is tested like any other.
 type Colour = "red" | "green"
 enum Small { Zero, One, Two }
 enum Word { A = "a", B = "b" }

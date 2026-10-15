@@ -1489,7 +1489,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_expr(kind, start, at.1)
     }
 
-    fn folded_text(&self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+    fn folded_text(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+        if self.is_too_deep() {
+            return None;
+        }
         if depth > 64 {
             return None;
         }
@@ -1518,6 +1521,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     fn note_folded_specifiers(&mut self, argument: ExprId, depth: u32) {
+        if self.is_too_deep() {
+            return;
+        }
         let Some(&Expr { kind, .. }) = self.f.exprs.get(argument.idx()) else {
             return;
         };

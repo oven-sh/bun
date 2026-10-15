@@ -13,6 +13,7 @@ pub mod fragment;
 pub mod id;
 pub mod ir;
 pub mod link;
+mod names;
 pub mod prelude;
 mod print;
 mod verify;
@@ -44,12 +45,14 @@ pub struct Translated {
     pub builtin_modules_left_out: Vec<(u32, String)>,
     pub builtin_functions_left_out: Vec<(u32, String)>,
     pub times: link::Times,
+    pub tokens: Option<Box<[u8]>>,
 }
 
 pub struct ForEngine {
-    pub written: Result<Vec<u8>, Vec<String>>,
+    pub written: Result<Box<[u8]>, Vec<String>>,
     pub errors_that_stand: Vec<bool>,
     pub explained: Vec<String>,
+    pub tokens: Option<Box<[u8]>>,
 }
 
 /// What the bundler has decided: what it replaces by constants, and which code each import stands for.
@@ -70,6 +73,7 @@ pub struct Constants {
     /// The imports the bundler has left out, by the importing file and the specifier: nothing is evaluated for them.
     pub dropped_imports: rustc_hash::FxHashSet<(Vec<u8>, Vec<u8>)>,
     pub without_side_effects: rustc_hash::FxHashSet<Vec<u8>>,
+    pub lifted_commonjs: rustc_hash::FxHashSet<Vec<u8>>,
     /// By file: where each statement at its top level starts, as the bundler has them, and whether it may be left out if nothing uses what
     /// it declares. A file that is not here: the bundler has said nothing.
     pub statements: rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>>,
@@ -87,7 +91,8 @@ pub struct Constants {
     pub ignores_dce_annotations: bool,
     pub jsx_has_side_effects: bool,
     pub minifies_syntax: bool,
-    pub function_texts: Option<FunctionTexts>,
+    pub shortens_names: bool,
+    pub function_texts: Option<Box<dyn Fn() -> FunctionTexts + Send + Sync>>,
     pub logs_type_errors: bool,
     pub notes_spans: bool,
     pub has_preloads: bool,
@@ -96,6 +101,16 @@ pub struct Constants {
 pub type FunctionTexts = rustc_hash::FxHashMap<Vec<u8>, (Vec<u8>, Vec<(u32, u32, u32)>)>;
 
 impl Constants {
+    pub fn build_constants(&self) -> std::sync::Arc<bun_sema::fold::BuildConstants> {
+        std::sync::Arc::new(bun_sema::fold::BuildConstants {
+            defines: bun_sema::fold::Defines::new(self.defines.iter().map(|(name, value)| (&name[..], &value[..]))),
+            features: self.features.iter().cloned().collect(),
+            locks_builtins: true,
+            exports_may_be_overridden: self.has_test_globals,
+            bundled_files: self.resolved.as_ref().map(|resolved| resolved.values().cloned().collect()),
+        })
+    }
+
     pub fn statements_by_file(statements: impl Iterator<Item = (Vec<u8>, u32, bool)>) -> rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>> {
         let mut by_file: rustc_hash::FxHashMap<Vec<u8>, Vec<(u32, bool)>> = Default::default();
         for (path, start, verdict) in statements {
@@ -122,6 +137,7 @@ struct Begun<'a> {
     /// others.
     translating: Option<(build::Shared<'a>, Fragments)>,
     refused_at: Option<(FileId, u32)>,
+    is_evidence_dropped: std::sync::OnceLock<bool>,
 }
 
 impl<'a> Translation<'a> {
@@ -157,19 +173,23 @@ impl<'a> Translation<'a> {
             program.give_up();
         }
         let translating = translating.filter(|_| refused_at.is_none());
-        *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating, refused_at });
+        *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating, refused_at, is_evidence_dropped: Default::default() });
     }
 
     /// `Request::before_visits`. What JavaScript is expected to do goes by how the whole program uses it. So the files that are
     /// visited are all looked at before the first of them is translated.
     pub fn note_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
         let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
-        if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating
+        let begun = begun.as_ref().expect(IS_BEGUN);
+        if let Some((shared, fragments)) = &begun.translating
             && shared.is_compiled(file)
         {
+            let is_evidence_dropped = *begun.is_evidence_dropped.get_or_init(|| fragments.is_any_of(&|translated| c.are_escapes_noted_of(translated)));
             c.while_translating_behind_the_check(|c| {
                 c.note_uses_of_functions_in(file);
-                c.note_evidence_of_strangers_in(file);
+                if !is_evidence_dropped {
+                    c.note_evidence_of_strangers_in(file);
+                }
             });
             c.forget_answers_by_expression();
         }
@@ -181,7 +201,7 @@ impl<'a> Translation<'a> {
         c.merge_noted_uses_of_functions();
         let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
         if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating {
-            c.merge_noted_evidence_of_strangers(&|file| shared.is_compiled(file));
+            c.merge_noted_evidence_of_foreign_objects(&|file| shared.is_compiled(file));
         }
     }
 
@@ -228,7 +248,6 @@ impl<'a> Translation<'a> {
         let begun = begun.as_ref().expect(IS_BEGUN);
         let mut linked = match &begun.translating {
             Some((shared, fragments)) => {
-                let mut c = program.checker();
                 // Also in a file that is not compiled with the program, whose fragment would have said so.
                 let is_in_dropped_import = |&(file, pos): &(FileId, u32)| {
                     let hir = program.files.hir(file);
@@ -241,8 +260,9 @@ impl<'a> Translation<'a> {
                     specifier.filter(|specifier| specifier.is_some()).is_some_and(|specifier| self.constants.dropped_imports.contains(&(program.files.module(file).file_name().to_vec(), program.files.atoms.bytes(specifier).to_vec())))
                 };
                 let in_dropped_imports: Vec<bool> = errors.iter().map(is_in_dropped_import).collect();
-                let errors = Errors { places: errors, in_dropped_imports: &in_dropped_imports, imported_by: &mut |file| build::files_imported_by(&mut c, shared, file) };
-                link::link(program, fragments.take(), shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, self.constants.own_paths.is_some(), self.constants.function_texts.as_ref(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
+                let errors = Errors { places: errors, in_dropped_imports: &in_dropped_imports, imported_by: &|c, file| build::files_imported_by(c, shared, file) };
+                let mut function_texts = self.constants.function_texts.as_ref().map(|later| later());
+                link::link(program, fragments.take(), &fragments.program_ids, shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, self.constants.own_paths.is_some(), function_texts.as_mut(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
             }
             // A file that is only code is not checked, so that nobody has reported it.
             None => {
@@ -252,6 +272,7 @@ impl<'a> Translation<'a> {
             }
         };
         linked.program.logs_type_errors = self.constants.logs_type_errors;
+        let tokens = self.constants.shortens_names.then(|| names::as_json(&names::shorten(&mut linked.program, in_parallel)).into_boxed_slice());
         for (elsewhere, _) in linked.errors.iter_mut().zip(errors).filter(|(_, place)| program.files.hir(place.0).kind == FileKind::Declaration) {
             *elsewhere = None;
         }
@@ -267,7 +288,7 @@ impl<'a> Translation<'a> {
         }
         let line_of = |file: FileId, pos: u32| {
             let text = &program.files.hir(file).text;
-            text[..(pos as usize).min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1
+            bun_core::strings::count_char(&text[..(pos as usize).min(text.len())], b'\n') + 1
         };
         let why_errors_do_not_stand = (linked.errors.iter().zip(errors))
             .filter_map(|(elsewhere, &(file, _))| {
@@ -280,8 +301,8 @@ impl<'a> Translation<'a> {
                     Elsewhere::PrivateNameInOptionalChain => "a private name in an optional chain of JavaScript, which ECMAScript has".to_owned(),
                     Elsewhere::PrivateNameOfEnclosingClass => "a private name of JavaScript that an enclosing class declares, which ECMAScript looks for when it runs".to_owned(),
                     Elsewhere::StaticMemberNamedConstructor => "a static member of JavaScript named `constructor`, which ECMAScript has".to_owned(),
-                    Elsewhere::CommentOfJavaScript => "in a comment of JavaScript, which is no code".to_owned(),
-                    Elsewhere::DeclarationsOfPackage => "in the declarations of a package, which are no code".to_owned(),
+                    Elsewhere::CommentOfJavaScript => "in a JavaScript comment, which is not code".to_owned(),
+                    Elsewhere::DeclarationsOfPackage => "in a package's type declarations, which are not code".to_owned(),
                 })
             })
             .collect();
@@ -294,22 +315,24 @@ impl<'a> Translation<'a> {
         let builtin_functions_left_out = linked.builtin_functions_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let always_fails = linked.found.iter().any(|found| !matches!(found.code, 100019 | 100020));
         program.found_by_the_compiler.lock().extend(linked.found);
-        Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times }
+        Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times, tokens }
     }
 
     /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an
     /// error stands.
-    pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> ForEngine {
-        let Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, .. } = self.finish(program, in_parallel, errors);
+    pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> ForEngine {
+        let Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, tokens, .. } = self.finish(program, in_parallel, errors);
         let written = if errors_that_stand.contains(&true) || always_fails {
             Err(Vec::new())
         } else if !problems.is_empty() {
             Err(problems)
         } else {
-            Ok(format::write_releasing(&mut linked, in_parallel))
+            let written = format::write_releasing(&mut linked, in_parallel).into_boxed_slice();
+            on_written(&written);
+            Ok(written)
         };
         release(linked, in_parallel);
-        ForEngine { written, errors_that_stand, explained }
+        ForEngine { written, errors_that_stand, explained, tokens }
     }
 }
 

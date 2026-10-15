@@ -67,7 +67,7 @@ print(whole(["a", "b"]) + " " + kept(["a", "b", "c", "d"]) + " " + log.splice(0)
 for (const what of ["push", "pop", "shift", "length", "clear", "store", "far", "delete", "property", "entries", "prototype", "freeze", "sort", "unshift"]) print(what + ": " + attempt(() => changing(["a", "b", "c", "d"], what)));
 for (let at = 0; at < 5; at++) print(leaving(["a", "b", "c", "d", "e"], at));
 print(throwing(["a", "b", "c", "d"]) + " " + nestedLoops(["a", "b"], ["x"]) + " " + [...yielding(["a", "b"])].join() + " " + chosen(["a"], ["b", "c"], true) + chosen(["a"], ["b", "c"], false));
-// Somebody can tell, or it is no array.
+// The difference is observable, or it is not an array.
 { const own: any = ["a", "b"]; own.entries = function () { log.push("own entries"); return [["k", "v"]][Symbol.iterator](); }; print(untyped(own) + log.splice(0).join()); }
 { class List extends Array<any> { entries(): any { log.push("subclass"); return super.entries(); } } const l = List.from(["a", "b"]); print(untyped(l) + log.splice(0).join()); class Plain extends Array<any> { } print(untyped(Plain.from(["p", "q"]))); }
 { const stored = ["s", "t"].entries(); const giving = { entries() { return stored; } }; print(untyped(giving) + JSON.stringify(stored.next()) + " " + untyped({ entries: () => new Map([[1, 2]]).entries() }) + " " + untyped({ entries: () => [[7, 8], "ab"] }) + " " + untyped(new Map([["k", "v"]])) + " " + untyped(new Set(["s"])) + " " + untyped(new Uint8Array([9, 8])) + " " + untyped({ entries: Array.prototype.entries, length: 2, 0: "l", 1: "m" })); }

@@ -3,15 +3,15 @@
 use crate::id::V;
 use crate::ir::{Op, Program};
 
-pub(crate) fn sizes_of_sets_of_strings(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> Vec<Vec<V>> {
+pub(crate) fn sizes_of_sets_of_strings(program: &Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) -> Vec<Vec<V>> {
     use crate::declared::prim;
     const FUNCTIONS_OF_A_TASK: usize = 256;
     let size = program.strs.find(b"size");
     let mut marked_values = vec![Vec::new(); program.funcs.len()];
     let names_of_collections = [b"Set".as_slice(), b"ReadonlySet"].map(|name| program.strs.find(name));
-    let mut tasks: Vec<(&[crate::ir::Func], &mut [Vec<V>])> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).zip(marked_values.chunks_mut(FUNCTIONS_OF_A_TASK)).collect();
-    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(funcs, marked_values)| {
-        for (index, func) in funcs.iter().enumerate() {
+    let mut tasks: Vec<((&[crate::ir::Func], &[u8]), &mut [Vec<V>])> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).zip(contents.chunks(FUNCTIONS_OF_A_TASK)).zip(marked_values.chunks_mut(FUNCTIONS_OF_A_TASK)).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|((funcs, contents), marked_values)| {
+        for (index, func) in funcs.iter().enumerate().filter(|function| contents[function.0] & crate::link::has::CONSTRUCTIONS_OR_SIZES != 0) {
             for block in &func.blocks {
                 for &v in &block.ops {
                     if let Some(&Op::PropGet { obj, name }) = func.op(v)

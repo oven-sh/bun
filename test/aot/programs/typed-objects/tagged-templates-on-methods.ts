@@ -4,7 +4,7 @@ function note<T>(what: string, value: T): T { log.push(what); return value }
 function flush(): string { return log.splice(0).join() }
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 class Runner { n = 1; go(s: TemplateStringsArray, x: number): string { return "orig" + s.length + x + this.n } }
-// `go` is seen to be replaced (patchClass), so it is called by name and an object may have its own. A method that only untyped code replaces, and what is claimed to be an array and is none: type-rules/the-same-refusals-in-a-tagged-template.
+// `go` is visibly replaced (patchClass), so it is called by name and an object may have its own. A method that only untyped code replaces, and a value that is cast to an array but is not one: type-rules/same-errors-in-a-tagged-template.
 function patchOwn(r: Runner): number { (r as any).go = () => "own"; return 5 }
 function patchClass(): number { Runner.prototype.go = function () { return "class" }; return 6 }
 const r1 = new Runner(), r2 = new Runner()

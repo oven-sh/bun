@@ -72,7 +72,8 @@ console.log(
 };
 
 test.each([[["--aot"]], [[]]])("a heap snapshot names the properties that hold objects: bun build --compile %p", async flags => {
-  const dir = String(tempDir("compile-aot-heap-snapshot", files));
+  using folder = tempDir("compile-aot-heap-snapshot", files);
+  const dir = String(folder);
   await using build = spawn({
     cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
     cwd: dir,
@@ -112,7 +113,8 @@ if (Bun.isMainThread) {
 };
 
 test.each([[["--aot"]], [[]]])("a heap snapshot of a program with many shapes, in a Worker too: bun build --compile %p", async flags => {
-  const dir = String(tempDir("compile-aot-heap-snapshot", manyShapes));
+  using folder = tempDir("compile-aot-heap-snapshot", manyShapes);
+  const dir = String(folder);
   await using build = spawn({
     cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
     cwd: dir,

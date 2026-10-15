@@ -1094,6 +1094,8 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
+        JSC::AOT::Typed::reifyClassPrototypeIfNeeded(o1);
+        JSC::AOT::Typed::reifyClassPrototypeIfNeeded(o2);
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
         }
@@ -1226,6 +1228,89 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
+            return true;
+        }
+    }
+
+    if (o1->type() == ObjectType || o2->type() == ObjectType) {
+        static_assert(!checkPrototypes || isStrict);
+        struct OwnProperties {
+            bool isOfCompiledObject { false };
+            Vector<UniquedStringImpl*, 16> names;
+            MarkedArgumentBuffer values;
+        };
+        OwnProperties properties1;
+        OwnProperties properties2;
+        auto collect = [&](JSObject* object, OwnProperties& properties) -> bool {
+            properties.isOfCompiledObject = JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(object, [&](UniquedStringImpl& name, JSValue value) {
+                properties.names.append(&name);
+                properties.values.appendWithCrashOnOverflow(value);
+                return true;
+            });
+            if (properties.isOfCompiledObject)
+                return true;
+            Structure* structure = object->structure();
+            if (structure->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumeration())
+                return false;
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName())
+                    return true;
+                properties.names.append(entry.key());
+                properties.values.appendWithCrashOnOverflow(object->getDirect(entry.offset()));
+                return true;
+            });
+            return true;
+        };
+        auto indexOf = [](const OwnProperties& properties, UniquedStringImpl* name, size_t expected) -> size_t {
+            if (expected < properties.names.size() && properties.names[expected] == name)
+                return expected;
+            return properties.names.find(name);
+        };
+        if (collect(o1, properties1) && collect(o2, properties2) && (properties1.isOfCompiledObject || properties2.isOfCompiledObject)) {
+            MarkedArgumentBuffer pairs;
+            for (size_t i = 0; i < properties1.names.size(); i++) {
+                UniquedStringImpl* name = properties1.names[i];
+                JSValue left = properties1.values.at(i);
+                JSValue right;
+                if (size_t found = indexOf(properties2, name, i); found != notFound)
+                    right = properties2.values.at(found);
+                else if constexpr (!isStrict)
+                    right = o2->getDirect(vm, JSC::PropertyName(name));
+                if constexpr (!isStrict) {
+                    if (left.isUndefined() && right.isEmpty())
+                        continue;
+                }
+                if (!right)
+                    return false;
+                pairs.appendWithCrashOnOverflow(left);
+                pairs.appendWithCrashOnOverflow(right);
+            }
+            size_t remain = properties1.names.size();
+            for (size_t i = 0; i < properties2.names.size(); i++) {
+                if constexpr (!isStrict) {
+                    if (properties2.values.at(i).isUndefined())
+                        continue;
+                }
+                UniquedStringImpl* name = properties2.names[i];
+                bool isInFirst = indexOf(properties1, name, i) != notFound || o1->getDirect(vm, JSC::PropertyName(name));
+                if (!isInFirst || !remain)
+                    return false;
+                remain--;
+            }
+            for (size_t i = 0; i < pairs.size(); i += 2) {
+                JSValue left = pairs.at(i);
+                JSValue right = pairs.at(i + 1);
+                if (left == right)
+                    continue;
+                auto same = JSC::sameValue(globalObject, left, right);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (same)
+                    continue;
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql)
+                    return false;
+            }
             return true;
         }
     }
@@ -1767,6 +1852,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
 
         if (!mode.checkPrototypes && !mode.skipPrototypeIdentity) {
+            JSC::AOT::Typed::reifyClassPrototypeIfNeeded(c1->getObject());
+            JSC::AOT::Typed::reifyClassPrototypeIfNeeded(c2->getObject());
             if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
                 return false;
             }
@@ -5020,8 +5107,8 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         }
     }
 
-    if (isSlimClosureType(obj->type()))
-        return toStringAdopt(JSC::AOT::nameOfSlimClosure(obj));
+    if (WTF::String written = JSC::AOT::writtenNameOfClosure(obj); !written.isNull())
+        return toStringAdopt(WTF::move(written));
 
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
 
@@ -5273,7 +5360,7 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
 
     // Do not call .getObject() on it.
     // https://github.com/oven-sh/bun/issues/13311
-    JSC::Exception* exception = JSC::Exception::create(vm, value);
+    JSC::Exception* exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode);
     scope.throwException(arg1, exception);
 }
 
@@ -6569,6 +6656,11 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
     return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 
+extern "C" bool JSGlobalObject__valueThrownByHostFunctionIsIgnored(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).interpreter.valueThrownByHostFunctionIsIgnored();
+}
+
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
     return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).exception() != 0;
@@ -7118,9 +7210,9 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    if (!value.isCell() || !JSC::isJSArray(value.asCell()))
+    JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(value);
+    if (!array)
         return 1;
-    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
 
     JSC::MarkedArgumentBuffer values;
     values.ensureCapacity(array->length());

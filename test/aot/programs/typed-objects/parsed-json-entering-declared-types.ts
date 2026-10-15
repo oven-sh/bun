@@ -68,7 +68,7 @@ attempt("a5", () => good.child.v + 1)
 attempt("a6", () => (good === source) + " " + (good.child === source.child))
 attempt("a7", () => { source.x = 50; source.child.v = 50; return good.x + " " + good.child.v })
 attempt("a8", () => JSON.stringify(good) === text)
-// The fields keep the order they had in the source. What the type does not name is kept too, and lists after the fields.
+// The fields keep the order they had in the source. Properties that the type does not name are kept too, and are listed after the fields.
 attempt("a9", () => JSON.stringify(JSON.parse('{"zeta":1,"label":"l","x":1,"extra":[1],"ok":false,"child":{"v":2,"w":3}}') as P))
 // A value of another kind than the field, at any depth; a required property that is missing. Nothing is converted: the result of `cast` is written down.
 const cast = (json: string): P => JSON.parse(json) as P
@@ -90,7 +90,7 @@ attempt("b13", () => cast('{"x":1,"label":null,"ok":true,"child":{"v":2}}').labe
 attempt("b14", () => cast('{"x":1,"label":"l","ok":true,"child":null}').child)
 attempt("b15", () => cast('{"x":1,"label":"l","ok":true,"opt":null,"child":{"v":2}}').opt)
 attempt("b16", () => { const bad = JSON.parse('{"x":"1","label":"l","ok":true,"child":{"v":2}}'); try { bad as P } catch {} return JSON.stringify(bad) })
-// What is not plain data is not copied, and no code of the program runs to find that out: `as` lets it through as it is. A read through it is the general read (getter, trap, chain), and is itself a coercion: c1 is ToNumber("proto").
+// An object that is not plain data is not copied, and no code of the program runs to find that out: `as` lets it through unchanged. A read through it is the generic read (getter, trap, chain), and is itself a coercion: c1 is ToNumber("proto").
 let ran = 0
 attempt("c1", () => (Object.create({ x: "proto" }) as P).x)
 attempt("c2", () => { try { return (Object.defineProperty(JSON.parse(text), "x", { get() { ran++; return 1 }, enumerable: true, configurable: true }) as P).x } catch (e) { return (e as Error).constructor.name + " " + ran } })

@@ -31,7 +31,7 @@ attempt("optional field of a class", () => new Late().read())
 function twice(n?: number) { return n! * 2 }
 attempt("optional parameter, left out", () => twice())
 attempt("optional parameter, undefined", () => twice(undefined))
-// It throws before the store, and before what follows it in the expression runs: the field keeps what it held.
+// It throws before the store, and before the rest of the expression runs: the field keeps its old value.
 const target: { v: number; note: string } = { v: 1, note: "kept" }
 attempt("stored to a field", () => { target.v = maybe(false)!; return target.v })
 console.log(target.v)

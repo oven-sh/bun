@@ -24,7 +24,7 @@ say("ISees, 0 to 12", () => { const all = [new ISees(), new ISees(1), new ISees(
 say("JSees, 0 to 12", () => { const all = [new JSees(), new JSees(1), new JSees(1, 2), new JSees(1, 2, 3), new JSees(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)]; log.length = 0; return all.map(o => [o.n, o.list]); });
 say("ForwardsSees, 0 to 12", () => { const all = [new ForwardsSees(), new ForwardsSees(1), new ForwardsSees(1, 2), new ForwardsSees(1, 2, 3), new ForwardsSees(undefined), new ForwardsSees(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)]; log.length = 0; return all.map(o => [o.n, o.list]); });
 say("Sees itself", () => { const all = [new Sees(), new Sees(1), new Sees(1, 2, 3), new Sees(1, 2, 3, 4, 5, 6, 7, 8, 9)]; log.length = 0; return all.map(o => [o.n, o.list, o.b]); });
-// `arguments` in class code is no window on the parameters.
+// `arguments` in class code is not mapped to the parameters.
 class Unmapped extends B { constructor(a) { super(a); a = "changed"; this.first = arguments[0]; arguments[0] = "stored"; this.a = a; this.callee = (() => { try { return typeof arguments.callee; } catch (e) { return e.constructor.name; } })(); } }
 say("arguments and parameters", () => { const o = new Unmapped("given"); log.length = 0; return [o.first, o.a, o.callee]; });
 // The rest: a new true array each time.
@@ -50,7 +50,7 @@ class ChangedByArgument extends Sees { constructor(...args) { super(...args, (ar
 class ChangedBefore extends Sees { constructor(...args) { super((args.push("early"), "start"), ...args); } }
 for (const [n, f] of [["pushes first", () => new PushesFirst(1, 2)], ["stores first", () => new StoresFirst(1, 2, 3)], ["uses it after", () => new UsesAfter(1, 2)], ["lets it out", () => [new Escapes(1, 2), kept]], ["spreads it twice", () => new SpreadsTwice(1, 2)], ["something ahead", () => new Prefix(1, 2)], ["something behind", () => new Suffix(1, 2)], ["passes it whole", () => new PassesWhole(1, 2)], ["changed by a later argument", () => new ChangedByArgument(1)], ["changed by an earlier argument", () => new ChangedBefore(1)]])
     say(n, () => { const r = f(); log.length = 0; return r; });
-// What is spread goes by its iterator.
+// A spread uses the iterator of its operand.
 class Spreads extends Sees { constructor(what) { super(...what); } }
 class SpreadsLiteral extends Sees { constructor(a, b) { super(...[a, b]); } }
 class SpreadsLiteralWithHole extends Sees { constructor(a) { super(...[a, , a]); } }
@@ -59,7 +59,7 @@ function* yields() { note("y1"); yield 1; note("y2"); yield 2; }
 say("a literal", () => { const o = new SpreadsLiteral(1, 2); log.length = 0; return [o.n, o.list]; });
 say("a literal with a hole", () => { const o = new SpreadsLiteralWithHole(1); log.length = 0; return [o.n, o.list, 1 in o.list]; });
 say("an empty literal", () => { const o = new SpreadsEmpty(); log.length = 0; return [o.n, o.list]; });
-// 131: what stands behind a spread of a literal is pushed to what the spread has become.
+// The arguments after a spread of a literal are pushed to the array that the spread has produced.
 class BehindLiteral extends Sees { constructor(a, b) { super(...[a, b], "last"); } }
 class TwoBehindLiteral extends Sees { constructor(a, b) { super(...[a, b], "l1", "l2"); } }
 class BehindTwoLiterals extends Sees { constructor(a, b) { super(...[a], ...[b], "last"); } }
@@ -78,7 +78,7 @@ say("an array with a getter", () => { const a = [1, 2, 3]; Object.defineProperty
 for (const [n, v] of [["undefined", undefined], ["null", null], ["a number", 1], ["an object", {}]]) { log.length = 0; say("spread of " + n, () => new Spreads(v)); say("the parent was entered", () => take()); }
 class Order extends Sees { constructor(...args) { super(note("a"), ...(note("b"), args), note("c"), ...(note("d"), [note("e")])); } }
 say("from the left", () => { log.length = 0; const o = new Order(1, 2); return [o.list, take()]; });
-// new.target, fields, what stands behind `extends`.
+// new.target, fields, the `extends` expression.
 class Target extends B { constructor(...a) { super(...a); this.t = new.target.name; } }
 class TargetHeir extends Target { }
 class WithFields extends D { f = log.push("field") && this.y; }
@@ -96,7 +96,7 @@ say("over Map and Promise", () => [new IMap([[1, 2]]).get(1), new IMap().size, n
 say("over Promise, nothing passed", () => new IPromise());
 say("over a plain function", () => { const o = new IF(1, 2, 3); return [o.x, o.n, o instanceof F, o instanceof IF]; });
 say("over null", () => new INull());
-// What the class object inherits from is asked when it constructs; the other parent sees what was passed.
+// The prototype of the class object is read when it constructs; the other parent sees the arguments.
 class Moves extends D { }
 class Elsewhere { constructor() { this.saw = Array.prototype.slice.call(arguments); } }
 say("the parent changed", () => { function make() { return new Moves(1, 2, 3); } const a = make(); Object.setPrototypeOf(Moves, Elsewhere); const b = make(); Object.setPrototypeOf(Moves, Sees); const c = make(); Object.setPrototypeOf(Moves, D); const d = make(); log.length = 0; return [a, b, c, d]; });

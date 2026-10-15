@@ -7,7 +7,7 @@ class ClassSpeaker implements Speaker {
 }
 function replacing(s: Speaker): string { return s.speak((s.speak = () => "replaced " + s.id, "old")) + " then " + s.speak("new") }
 function speaking(s: Speaker): string { return s.speak("old") + " then " + s.speak("new") }
-// `s.speak = ..` is seen by the checker: `speak` is a replaced method, also of the class. (A store that it does not see: type-rules/an-own-property-named-like-a-method-by-a-computed-name.)
+// `s.speak = ..` is seen by the checker: `speak` is a replaced method, also of the class. (A store that it does not see: type-rules/own-property-shadowing-a-method-via-computed-key.)
 console.log(replacing({ id: 20, speak: sharedSpeak }), "|", speaking(new ClassSpeaker(21)))
 const c = new ClassSpeaker(21)
 console.log(replacing(c), "|", c.speak("still"), Object.keys(c).join())

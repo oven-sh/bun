@@ -33,7 +33,12 @@ console.log(callHost((count, item) => count + 1 + item.name + item.name.length))
 // JavaScriptCore implements these: facts.
 console.log([3, 1, 2].sort((a, b) => a - b).map(n => n * 2).join())
 
-// Annotated by the program: asserted.
+// Annotated by the program, called by the host: still a prediction. The host supplies the value, and a prediction never throws.
 g.callHost = (callback: any): any => callback("seven", 7)
 try { console.log(callHost((count: number, item) => typeof count + " " + typeof item)) } catch (e) { console.log((e as Error).constructor.name) }
+
+// Annotated by the program, called by the program: a fact. A value of another kind is refused where it enters.
+const describe = (count: number) => typeof count
+const values: any[] = ["seven"]
+try { console.log(describe(values[0])) } catch (e) { console.log((e as Error).constructor.name) }
 export {}

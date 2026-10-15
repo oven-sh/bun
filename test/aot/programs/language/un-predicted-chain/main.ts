@@ -22,13 +22,13 @@ class Sub extends (Top as any) { ping() { return this.emit("data", 5) } }
 class SubOverriding extends (Top as any) { emit() { return "overridden" } ping() { return (this as any).emit("data", 5) } }
 attempt("a class on top", () => { const s: any = new Sub(); s.on("data", listen); return [s.ping(), s.push(6)].join() });
 attempt("a class that overrides", () => { const s: any = new SubOverriding(); s.on("data", listen); return [s.ping(), s.push(6)].join() });
-// The heir gets a function of its own, after the fact.
+// The inheriting object gets its own function afterwards.
 const before = make();
 Top.prototype.emit = function () { return "top's own" };
 attempt("the heir shadows", () => [before.emit("data", 1), before.push(1), make().push(1), new Middle().emit("data", 1)].join());
 delete Top.prototype.emit;
 attempt("and does not any more", () => before.push(7));
-// The chain is cut and joined elsewhere.
+// The prototype chain is cut and reattached elsewhere.
 const Other: any = function (this: any) {}; Other.prototype.emit = function () { return "other" }; Other.prototype.on = function () { return this };
 Object.setPrototypeOf(Top.prototype, Other.prototype);
 attempt("another base", () => [before.emit("data", 1), before.push(1), make().push(1)].join());
@@ -36,7 +36,7 @@ Object.setPrototypeOf(Top.prototype, null);
 attempt("no base", () => before.push(1));
 Object.setPrototypeOf(Top.prototype, Middle.prototype);
 attempt("the first base again", () => before.push(8));
-// `on` is stored anew: `addListener` stays.
+// `on` is stored again: `addListener` stays.
 Object.getPrototypeOf(Middle.prototype).on = function () { return "no listener" };
 attempt("the second name is replaced", () => { const t = new (Top as any)(); return [t.on("data", listen), t.push(9), t.addListener("data", listen) === t, t.push(9)].join() });
 export {};

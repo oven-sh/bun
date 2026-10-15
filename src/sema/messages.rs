@@ -75,16 +75,17 @@ const LAST_OF_TYPESCRIPT: u32 = 100000;
 static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100009, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped."),
     (100010, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped, which costs speed, not correctness."),
-    (100011, Category::Warning, "'{0}' is compiled untyped, which costs speed, not correctness: the types that cross between it and untyped code through '{1}' at {2} are too many to go through."),
+    (100011, Category::Warning, "'{0}' is compiled untyped, which costs speed, not correctness: too many types cross between it and untyped code through '{1}' at {2} to analyze."),
     (100012, Category::Error, "This non-null assertion always fails under --aot: the value is always {0}."),
     (100013, Category::Error, "This always throws a TypeError under --aot: {2} expects '{1}' and always gets {0}."),
     (100014, Category::Error, "This always fails under --aot: {0}."),
     (100015, Category::Error, "This always throws a TypeError under --aot: {0}."),
     (100016, Category::Error, "This always throws a TypeError under --aot: {0}."),
-    (100017, Category::Error, "'as {0}' is applied to a value that is always {1}: under --aot the cast converts it or throws, where plain JavaScript leaves it as it is."),
+    (100017, Category::Error, "'as {0}' is applied to a value that is always {1}: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged."),
     (100018, Category::Message, "The value comes from {0}."),
-    (100019, Category::Warning, "{2} expects '{1}' and always gets {0}: with --aot-type-errors=log the executable writes a record here and goes on as plain JavaScript does; any other --aot build stops with TS100013."),
+    (100019, Category::Warning, "{2} expects '{1}' and always gets {0}: with --aot-type-errors=log the executable logs a record here and continues as plain JavaScript would; any other --aot build fails with TS100013."),
     (100020, Category::Warning, "{0} The 'catch' around it runs instead."),
+    (100021, Category::Error, "The typed version of '{0}' in {1} has type errors ({2}), the first at {3}. Fix it, or remove it to compile '{0}' untyped."),
 ];
 
 const _: () = {

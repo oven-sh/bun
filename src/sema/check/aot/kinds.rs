@@ -24,7 +24,8 @@
 //! A function returns what its `return`s yield, whoever calls it. A call yields that where its callee is a name that stands for one function
 //! of the file whenever it is read. The functions of a file are in the same fixed point as its variables.
 
-use super::integers::Store;
+use super::ByFile;
+use super::integers::{Place, Store};
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Flow, FlowId, FlowTarget, FnOwner, Parent, PatParent, SymFlags, SymbolId, UNREACHABLE};
 use crate::check::Checker;
@@ -60,32 +61,48 @@ pub mod kind {
 #[derive(Default)]
 pub(super) struct State {
     /// By file: what the variables, parameters and `#private` fields hold whose stores are followed.
-    held: FxHashMap<FileId, Rc<FxHashMap<SymbolId, u16>>>,
+    held: FxHashMap<FileId, FxHashMap<SymbolId, u16>>,
+    variables_followed: Vec<(SymbolId, Rc<Place>, bool)>,
+    functions_followed: Vec<FnId>,
     /// While that is found for a file: what has been found so far.
     growing: Option<(FileId, FxHashMap<SymbolId, u16>)>,
     reads_of_what_grows: u64,
     /// By file: `kinds_returned_by`.
-    returned: FxHashMap<FileId, Rc<FxHashMap<FnId, u16>>>,
+    returned: FxHashMap<FileId, FxHashMap<FnId, u16>>,
     /// The same while `growing`.
     returned_so_far: FxHashMap<FnId, u16>,
     /// `kinds_yielded_by`, once the file is done.
     yielded: FxHashMap<(FileId, ExprId), u16>,
     /// The same while `growing`, for one round.
-    yielded_this_round: FxHashMap<ExprId, u16>,
+    produced_this_round: FxHashMap<ExprId, u16>,
     /// `told_of_variable`, as far as it has been asked.
     told: FxHashMap<Sym, Option<Told>>,
     /// `kinds_asserted_by`, as far as it has been asked. What is found further in is cut off earlier: by the depth too.
     asserted: FxHashMap<(FileId, FnId, u32, u8), u16>,
-    /// `is_tested`, by file.
-    tested: FxHashMap<FileId, Rc<FxHashSet<SymbolId>>>,
     /// `kinds_at`, by variable and flow node, once the file is done.
     at_flow: FxHashMap<(Sym, FlowId), u16>,
     /// The same while `growing`, for one round.
     at_flow_this_round: FxHashMap<(SymbolId, FlowId), u16>,
-    /// `is_used_as_number`, by file.
-    used_as_numbers: FxHashMap<FileId, Rc<FxHashSet<SymbolId>>>,
-    /// `is_used_as_array`, by file.
-    used_as_arrays: FxHashMap<FileId, Rc<FxHashSet<SymbolId>>>,
+}
+
+struct Uses {
+    surely: FxHashSet<SymbolId>,
+    otherwise: FxHashSet<SymbolId>,
+    if_number: FxHashMap<SymbolId, Vec<ExprId>>,
+}
+
+impl Uses {
+    fn holds_for(&self, name: SymbolId, mut is_number: impl FnMut(ExprId) -> bool) -> bool {
+        !self.otherwise.contains(&name) && (self.surely.contains(&name) || self.if_number.get(&name).is_some_and(|deciding| deciding.iter().any(|&e| is_number(e))))
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Shared {
+    tested: ByFile<FxHashSet<SymbolId>>,
+    used_as_numbers: ByFile<Uses>,
+    used_as_arrays: ByFile<Uses>,
+    used_as_strings: ByFile<FxHashSet<SymbolId>>,
 }
 
 impl State {
@@ -179,49 +196,73 @@ fn sum(a: u16, b: u16) -> u16 {
 impl<'p, 's> Checker<'p, 's> {
     /// Every value that the variable or the parameter ever holds is of one of the kinds. `kind::ANYTHING`: nothing is known.
     pub fn kinds_held_by(&mut self, at: Sym) -> u16 {
-        let found = match &self.aot.kinds.growing {
-            Some((file, so_far)) if *file == at.file => {
-                self.aot.kinds.reads_of_what_grows += 1;
-                so_far.get(&at.id).copied()
-            }
-            _ => self.kinds_held_in(at.file).get(&at.id).copied(),
-        };
-        match found {
-            Some(found) => found,
+        if let Some(&known) = self.aot.kinds.held.get(&at.file).and_then(|held| held.get(&at.id)) {
+            return known;
+        }
+        if let Some((file, so_far)) = &self.aot.kinds.growing
+            && *file == at.file
+        {
+            let so_far = so_far.get(&at.id).copied();
+            self.aot.kinds.reads_of_what_grows += 1;
+            return match so_far {
+                Some(so_far) => so_far,
+                None if self.follow_variable(at) => kind::NOTHING,
+                None => self.kinds_declared_for(at),
+            };
+        }
+        self.settle_kinds(at.file, |c| {
+            c.follow_variable(at);
+        });
+        match self.aot.kinds.held.get(&at.file).and_then(|held| held.get(&at.id)) {
+            Some(&found) => found,
             None => self.kinds_declared_for(at),
         }
     }
 
-    fn kinds_held_in(&mut self, file: FileId) -> Rc<FxHashMap<SymbolId, u16>> {
-        if let Some(known) = self.aot.kinds.held.get(&file) {
-            return Rc::clone(known);
+    fn follow_variable(&mut self, at: Sym) -> bool {
+        let is_variable = match self.bound(at.file).symbols.get(at.id.idx()).and_then(|symbol| symbol.decls.first()) {
+            Some(Decl::Var(_)) => true,
+            Some(Decl::Param(_) | Decl::Member(_)) => false,
+            _ => return false,
+        };
+        let growing = self.aot.kinds.growing.take();
+        let place = self.place_of_integers(at);
+        // A variable is blank at first. Whether anything reads it by then is known.
+        let starts_blank = place.is_followed && place.starts_nil && (!is_variable || self.starts_undefined(self.files().sym(at.file, at.id)));
+        self.aot.kinds.growing = growing;
+        if !place.is_followed {
+            return false;
         }
-        let mut followed = Vec::new();
-        for id in (0..self.bound(file).symbols.len() as u32).map(SymbolId) {
-            let is_variable = match self.bound(file).symbols[id.idx()].decls.first() {
-                Some(Decl::Var(_)) => true,
-                Some(Decl::Param(_) | Decl::Member(_)) => false,
-                _ => continue,
-            };
-            let place = self.place_of_integers(Sym { file, id });
-            if place.is_followed {
-                // A variable is blank at first. Whether anything reads it by then is known.
-                let starts_blank = place.starts_nil && (!is_variable || self.starts_undefined(self.files().sym(file, id)));
-                followed.push((id, place, starts_blank));
-            }
+        if let Some((_, so_far)) = &mut self.aot.kinds.growing {
+            so_far.insert(at.id, kind::NOTHING);
         }
-        let functions: Vec<FnId> = (0..self.hir(file).fns.len() as u32).map(FnId).filter(|&func| !matches!(self.hir(file)[func].body, FnBody::None)).collect();
+        self.aot.kinds.variables_followed.push((at.id, place, starts_blank));
+        true
+    }
+
+    fn follow_function(&mut self, func: FnId) {
+        self.aot.kinds.returned_so_far.insert(func, kind::NOTHING);
+        self.aot.kinds.functions_followed.push(func);
+    }
+
+    fn settle_kinds(&mut self, file: FileId, begin: impl FnOnce(&mut Self)) {
         // No name of another file is looked into, so one file is gone through at a time.
-        let outer = self.aot.kinds.growing.replace((file, followed.iter().map(|it| (it.0, kind::NOTHING)).collect()));
-        let outer_returned = std::mem::replace(&mut self.aot.kinds.returned_so_far, functions.iter().map(|&func| (func, kind::NOTHING)).collect());
-        let outer_yielded = std::mem::take(&mut self.aot.kinds.yielded_this_round);
+        let outer = self.aot.kinds.growing.replace((file, FxHashMap::default()));
+        let outer_variables = std::mem::take(&mut self.aot.kinds.variables_followed);
+        let outer_functions = std::mem::take(&mut self.aot.kinds.functions_followed);
+        let outer_returned = std::mem::take(&mut self.aot.kinds.returned_so_far);
+        let outer_produced = std::mem::take(&mut self.aot.kinds.produced_this_round);
         let outer_at_flow = std::mem::take(&mut self.aot.kinds.at_flow_this_round);
+        begin(self);
         let (mut settled_functions, mut settled): (FxHashSet<FnId>, FxHashSet<SymbolId>) = Default::default();
         loop {
             let mut has_grown = false;
-            self.aot.kinds.yielded_this_round.clear();
+            let followed_before = (self.aot.kinds.functions_followed.len(), self.aot.kinds.variables_followed.len());
+            self.aot.kinds.produced_this_round.clear();
             self.aot.kinds.at_flow_this_round.clear();
-            for &func in &functions {
+            let mut next = 0;
+            while let Some(&func) = self.aot.kinds.functions_followed.get(next) {
+                next += 1;
                 if self.aot.kinds.returned_so_far.get(&func) == Some(&kind::ANYTHING) || settled_functions.contains(&func) {
                     continue;
                 }
@@ -232,12 +273,14 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 has_grown |= self.aot.kinds.returned_so_far.insert(func, all) != Some(all);
             }
-            for (id, place, starts_blank) in &followed {
-                if matches!(&self.aot.kinds.growing, Some((_, so_far)) if so_far.get(id) == Some(&kind::ANYTHING)) || settled.contains(id) {
+            let mut next = 0;
+            while let Some((id, place, starts_blank)) = self.aot.kinds.variables_followed.get(next).cloned() {
+                next += 1;
+                if matches!(&self.aot.kinds.growing, Some((_, so_far)) if so_far.get(&id) == Some(&kind::ANYTHING)) || settled.contains(&id) {
                     continue;
                 }
                 let reads = self.aot.kinds.reads_of_what_grows;
-                let mut all = if *starts_blank { kind::UNDEFINED } else { kind::NOTHING };
+                let mut all = if starts_blank { kind::UNDEFINED } else { kind::NOTHING };
                 for &store in &place.stores {
                     all |= match store {
                         Store::Value(e) | Store::Computed(e) => self.kinds_yielded_by(file, e),
@@ -245,33 +288,44 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                 }
                 if self.aot.kinds.reads_of_what_grows == reads {
-                    settled.insert(*id);
+                    settled.insert(id);
                 }
                 if let Some((_, so_far)) = &mut self.aot.kinds.growing {
-                    let all = all | so_far.get(id).copied().unwrap_or(kind::NOTHING);
-                    has_grown |= so_far.insert(*id, all) != Some(all);
+                    let all = all | so_far.get(&id).copied().unwrap_or(kind::NOTHING);
+                    has_grown |= so_far.insert(id, all) != Some(all);
                 }
             }
-            if !has_grown {
+            if !has_grown && followed_before == (self.aot.kinds.functions_followed.len(), self.aot.kinds.variables_followed.len()) {
                 break;
             }
         }
-        let held = Rc::new(std::mem::replace(&mut self.aot.kinds.growing, outer).map_or_else(Default::default, |it| it.1));
-        self.aot.kinds.held.insert(file, Rc::clone(&held));
-        self.aot.kinds.yielded_this_round = outer_yielded;
-        self.aot.kinds.at_flow_this_round = outer_at_flow;
+        let held = std::mem::replace(&mut self.aot.kinds.growing, outer).map_or_else(Default::default, |it| it.1);
+        self.aot.kinds.held.entry(file).or_default().extend(held);
         let returned = std::mem::replace(&mut self.aot.kinds.returned_so_far, outer_returned);
-        self.aot.kinds.returned.insert(file, Rc::new(returned));
-        held
+        self.aot.kinds.returned.entry(file).or_default().extend(returned);
+        self.aot.kinds.variables_followed = outer_variables;
+        self.aot.kinds.functions_followed = outer_functions;
+        self.aot.kinds.produced_this_round = outer_produced;
+        self.aot.kinds.at_flow_this_round = outer_at_flow;
     }
 
     /// Whatever a call of the function yields is of one of the kinds, whoever calls it. Not what `new` makes of it.
     pub fn kinds_returned_by(&mut self, file: FileId, func: FnId) -> u16 {
+        if let Some(&known) = self.aot.kinds.returned.get(&file).and_then(|returned| returned.get(&func)) {
+            return known;
+        }
+        if matches!(self.hir(file)[func].body, FnBody::None) {
+            return kind::ANYTHING;
+        }
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
             self.aot.kinds.reads_of_what_grows += 1;
-            return self.aot.kinds.returned_so_far.get(&func).copied().unwrap_or(kind::ANYTHING);
+            if let Some(&so_far) = self.aot.kinds.returned_so_far.get(&func) {
+                return so_far;
+            }
+            self.follow_function(func);
+            return kind::NOTHING;
         }
-        self.kinds_held_in(file);
+        self.settle_kinds(file, |c| c.follow_function(func));
         self.aot.kinds.returned.get(&file).and_then(|returned| returned.get(&func)).copied().unwrap_or(kind::ANYTHING)
     }
 
@@ -325,11 +379,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// As a number: an operand of `<`, `<=`, `>`, `>=` whose other side is shown to be a number, or of an operator on numbers other than
     /// `+`, which also concatenates.
     pub(super) fn is_used_as_number(&mut self, at: Sym) -> bool {
-        if let Some(known) = self.aot.kinds.used_as_numbers.get(&at.file) {
-            return known.contains(&at.id);
-        }
-        let (file, hir, bound) = (at.file, self.hir(at.file), self.bound(at.file));
+        let program = self.p;
+        let uses = program.aot.kinds.used_as_numbers.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_numbers_in(at.file));
+        uses.holds_for(at.id, |beside| self.kinds_yielded_by(at.file, beside) == kind::NUMBER)
+    }
+
+    fn find_names_used_as_numbers_in(&self, file: FileId) -> Uses {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut as_numbers, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
+        let mut if_number: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
         for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
@@ -338,9 +396,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match hir[parent].kind {
                 ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, left, right } => {
-                    if self.kinds_yielded_by(file, if left == e { right } else { left }) == kind::NUMBER {
-                        as_numbers.insert(symbol);
-                    }
+                    if_number.entry(symbol).or_default().push(if left == e { right } else { left });
                 }
                 ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. }
                     if matches!(op, BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor) =>
@@ -359,21 +415,22 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
-        as_numbers.retain(|symbol| !otherwise.contains(symbol));
-        let is_used = as_numbers.contains(&at.id);
-        self.aot.kinds.used_as_numbers.insert(file, Rc::new(as_numbers));
-        is_used
+        Uses { surely: as_numbers, otherwise, if_number }
     }
 
     /// Whether the variable or the parameter is used as an array, and nowhere as a string, a number or a function. A PREDICTION, for one of which nothing else is known.
     ///
     /// As an array: it is indexed by what is shown to be a number, or a method is called on it that only arrays have.
     pub(super) fn is_used_as_array(&mut self, at: Sym) -> bool {
-        if let Some(known) = self.aot.kinds.used_as_arrays.get(&at.file) {
-            return known.contains(&at.id);
-        }
-        let (file, hir, bound) = (at.file, self.hir(at.file), self.bound(at.file));
+        let program = self.p;
+        let uses = program.aot.kinds.used_as_arrays.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_arrays_in(at.file));
+        uses.holds_for(at.id, |index| self.kinds_yielded_by(at.file, index) == kind::NUMBER)
+    }
+
+    fn find_names_used_as_arrays_in(&self, file: FileId) -> Uses {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let (mut as_arrays, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
+        let mut if_number: FxHashMap<SymbolId, Vec<ExprId>> = FxHashMap::default();
         for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
             let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
@@ -382,9 +439,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match hir[parent].kind {
                 ExprKind::Index { obj, index, .. } if obj == e => {
-                    if self.kinds_yielded_by(file, index) == kind::NUMBER {
-                        as_arrays.insert(symbol);
-                    }
+                    if_number.entry(symbol).or_default().push(index);
                 }
                 ExprKind::Dot { obj, name, .. } if obj == e => match self.atoms().bytes(name) {
                     b"push" | b"pop" | b"shift" | b"unshift" | b"splice" | b"forEach" | b"map" | b"filter" | b"reduce" | b"reduceRight" | b"join" | b"sort" | b"reverse" | b"every" | b"some" | b"find" | b"findIndex" | b"flat" | b"flatMap" | b"fill" => {
@@ -405,10 +460,80 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
-        as_arrays.retain(|symbol| !otherwise.contains(symbol));
-        let is_used = as_arrays.contains(&at.id);
-        self.aot.kinds.used_as_arrays.insert(file, Rc::new(as_arrays));
-        is_used
+        Uses { surely: as_arrays, otherwise, if_number }
+    }
+
+    pub(super) fn is_method_of_strings_alone(&self, name: Atom) -> bool {
+        matches!(
+            self.atoms().bytes(name),
+            b"charCodeAt"
+                | b"codePointAt"
+                | b"charAt"
+                | b"toLowerCase"
+                | b"toUpperCase"
+                | b"toLocaleLowerCase"
+                | b"toLocaleUpperCase"
+                | b"startsWith"
+                | b"endsWith"
+                | b"padStart"
+                | b"padEnd"
+                | b"trim"
+                | b"trimStart"
+                | b"trimEnd"
+                | b"repeat"
+                | b"split"
+                | b"normalize"
+                | b"localeCompare"
+                | b"replace"
+                | b"replaceAll"
+                | b"match"
+                | b"matchAll"
+                | b"search"
+                | b"substring"
+                | b"substr"
+                | b"isWellFormed"
+                | b"toWellFormed"
+        )
+    }
+
+    pub(super) fn is_used_as_string(&mut self, at: Sym) -> bool {
+        let program = self.p;
+        program.aot.kinds.used_as_strings.get_or_init(program.files.modules.len(), at.file, || self.find_names_used_as_strings_in(at.file)).contains(&at.id)
+    }
+
+    fn find_names_used_as_strings_in(&self, file: FileId) -> FxHashSet<SymbolId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut as_strings, mut otherwise): (FxHashSet<SymbolId>, FxHashSet<SymbolId>) = Default::default();
+        for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+            let symbol = bound.expr_symbol[e.idx()];
+            let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { continue };
+            if symbol.is_none() || parent.is_none() {
+                continue;
+            }
+            match hir[parent].kind {
+                ExprKind::Dot { obj, name, .. } if obj == e => {
+                    if self.is_method_of_strings_alone(name) {
+                        as_strings.insert(symbol);
+                    } else if matches!(
+                        self.atoms().bytes(name),
+                        b"push" | b"pop" | b"shift" | b"unshift" | b"splice" | b"forEach" | b"map" | b"filter" | b"reduce" | b"reduceRight" | b"join" | b"sort" | b"reverse" | b"every" | b"some" | b"find" | b"findIndex" | b"flat" | b"flatMap" | b"fill"
+                    ) {
+                        otherwise.insert(symbol);
+                    }
+                }
+                ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. }
+                    if matches!(op, BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor) =>
+                {
+                    otherwise.insert(symbol);
+                }
+                ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee == e => {
+                    otherwise.insert(symbol);
+                }
+                _ => {}
+            }
+        }
+        as_strings.retain(|symbol| !otherwise.contains(symbol));
+        as_strings
     }
 
     /// Of a name whose stores are not followed one by one: a function declaration that nothing is assigned to. Not in JavaScript, where a
@@ -473,10 +598,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the name of the variable stands somewhere where `kinds_passing` and `kinds_entering` look at it. One pass over the names of a file.
     fn is_tested(&mut self, at: Sym) -> bool {
-        if let Some(known) = self.aot.kinds.tested.get(&at.file) {
-            return known.contains(&at.id);
-        }
-        let (file, hir, bound) = (at.file, self.hir(at.file), self.bound(at.file));
+        let program = self.p;
+        program.aot.kinds.tested.get_or_init(program.files.modules.len(), at.file, || self.find_names_tested_in(at.file)).contains(&at.id)
+    }
+
+    fn find_names_tested_in(&self, file: FileId) -> FxHashSet<SymbolId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         let mut tested: FxHashSet<SymbolId> = FxHashSet::default();
         for &e in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
             let symbol = bound.expr_symbol[e.idx()];
@@ -498,9 +625,7 @@ impl<'p, 's> Checker<'p, 's> {
                 tested.insert(symbol);
             }
         }
-        let is_tested = tested.contains(&at.id);
-        self.aot.kinds.tested.insert(file, Rc::new(tested));
-        is_tested
+        tested
     }
 
     /// Whatever the name `e` yields where it stands is of one of the kinds: what its variable holds, less what the tests that have been passed and the stores on the way
@@ -781,26 +906,26 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn kinds_yielded_by(&mut self, file: FileId, e: ExprId) -> u16 {
         // In the last round nothing grows, so what is remembered there is what is found there.
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
-            if let Some(&known) = self.aot.kinds.yielded_this_round.get(&e) {
+            if let Some(&known) = self.aot.kinds.produced_this_round.get(&e) {
                 self.aot.kinds.reads_of_what_grows += 1;
                 return known;
             }
-            let found = self.find_kinds_yielded_by(file, e);
-            self.aot.kinds.yielded_this_round.insert(e, found);
+            let found = self.find_kinds_produced_by(file, e);
+            self.aot.kinds.produced_this_round.insert(e, found);
             return found;
         }
         if self.aot.kinds.growing.is_some() {
-            return self.find_kinds_yielded_by(file, e);
+            return self.find_kinds_produced_by(file, e);
         }
         if let Some(&known) = self.aot.kinds.yielded.get(&(file, e)) {
             return known;
         }
-        let found = self.find_kinds_yielded_by(file, e);
+        let found = self.find_kinds_produced_by(file, e);
         self.aot.kinds.yielded.insert((file, e), found);
         found
     }
 
-    fn find_kinds_yielded_by(&mut self, file: FileId, e: ExprId) -> u16 {
+    fn find_kinds_produced_by(&mut self, file: FileId, e: ExprId) -> u16 {
         if self.is_half_of_stack_in_use() {
             return kind::ANYTHING;
         }
@@ -890,7 +1015,7 @@ impl<'p, 's> Checker<'p, 's> {
                         kind::NOTHING => kind::NOTHING,
                         kind::STRING => {
                             let first = hir.ids(hir[call].args).next();
-                            self.kinds_yielded_by_method_of_string(file, name, first)
+                            self.kinds_returned_by_string_method(file, name, first)
                         }
                         _ => kind::ANYTHING,
                     },
@@ -902,7 +1027,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `s.name(first, ..)`, where `s` is a string: it has no properties of its own, and nothing can be put in the place of a function of `String.prototype`.
-    fn kinds_yielded_by_method_of_string(&mut self, file: FileId, name: Atom, first: Option<ExprId>) -> u16 {
+    fn kinds_returned_by_string_method(&mut self, file: FileId, name: Atom, first: Option<ExprId>) -> u16 {
         // Handed an object, these hand over to a method of it, which yields what it likes. That of a regular expression is the engine's.
         let is_plain = |c: &mut Self| match first {
             Some(first) => matches!(c.hir(file)[first].kind, ExprKind::Regex) || c.kinds_yielded_by(file, first) & !kind::STRING == 0,

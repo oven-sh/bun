@@ -75,5 +75,5 @@ for (let i = 0; i < makers.length; i++) {
 }
 function nil(): any { return makers.length > 1000 ? "" : undefined; }
 print(attempt(() => oldStartsWith(nil(), "x")) + " " + attempt(() => oldStartsWithDot(nil())) + " " + attempt(() => oldEndsWith(nil(), "x")) + " " + attempt(() => lastIndexOfAtZero("undefined", nil())) + " " + attempt(() => indexOfFrom("xundefined", nil(), 1)));
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [oldStartsWith, oldStartsWithDot, oldStartsWithText, lastIndexOfBelowZero, lastIndexOfOne, lastIndexOfAnywhere, oldEndsWith]; console.log("number");

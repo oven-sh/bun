@@ -73,16 +73,18 @@ pub struct StandaloneModuleGraph {
 pub struct RuntimeOptions {
     /// `compile.jitPolicy`: JSC tier-up threshold scale the main VM starts with (`Bun.unsafe.setJITPolicy`); 1 = normal.
     pub jit_policy: f32,
+    pub crash_if_interpreter_is_used: bool,
 }
 
 impl RuntimeOptions {
     /// value = `jit_policy` as `f32` bits. Bit 0 belonged to an older record layout and is ignored.
     const HAS_JIT_POLICY: u32 = 1 << 1;
+    const CRASH_IF_INTERPRETER_IS_USED: u32 = 1 << 2;
 }
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
-        Self { jit_policy: 1.0 }
+        Self { jit_policy: 1.0, crash_if_interpreter_is_used: false }
     }
 }
 
@@ -1232,6 +1234,7 @@ impl StandaloneModuleGraph {
                     runtime_options.jit_policy = scale;
                 }
             }
+            runtime_options.crash_if_interpreter_is_used = flags & RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED != 0;
         }
         let mut linked_bytecode_payload = StringPointer::default();
         let mut linked_bytecode_region_ends = [0u32; LINKED_BYTECODE_REGION_COUNT];
@@ -2086,9 +2089,11 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
-    if runtime_options.jit_policy > 1.0 {
+    if runtime_options.jit_policy > 1.0 || runtime_options.crash_if_interpreter_is_used {
         let mut record = [0u8; 8];
-        record[0..4].copy_from_slice(&RuntimeOptions::HAS_JIT_POLICY.to_le_bytes());
+        let has_jit_policy = if runtime_options.jit_policy > 1.0 { RuntimeOptions::HAS_JIT_POLICY } else { 0 };
+        let crashes = if runtime_options.crash_if_interpreter_is_used { RuntimeOptions::CRASH_IF_INTERPRETER_IS_USED } else { 0 };
+        record[0..4].copy_from_slice(&(has_jit_policy | crashes).to_le_bytes());
         record[4..8].copy_from_slice(&runtime_options.jit_policy.to_bits().to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_RUNTIME_OPTIONS;
@@ -2279,8 +2284,200 @@ fn map_privately(fd: Fd) -> Option<&'static mut [u8]> {
     Some(unsafe { core::slice::from_raw_parts_mut(map, size) })
 }
 
+struct ChangedBlocksWriter<'a> {
+    fd: Fd,
+    offset: usize,
+    already_in_file: &'a [u8],
+}
+
+impl std::io::Write for ChangedBlocksWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        const BLOCK: usize = 16 << 10;
+        let already_in_file = self.already_in_file.get(self.offset..).unwrap_or(&[]);
+        let mut is_changed = vec![true; bytes.len().div_ceil(BLOCK)];
+        let threads = usize::from(bun_core::get_thread_count()).clamp(1, 16);
+        let blocks_of_a_thread = is_changed.len().div_ceil(threads).max(1);
+        std::thread::scope(|scope| {
+            for (chunk, is_changed) in is_changed.chunks_mut(blocks_of_a_thread).enumerate() {
+                scope.spawn(move || {
+                    for (block, is_changed) in is_changed.iter_mut().enumerate() {
+                        let start = (chunk * blocks_of_a_thread + block) * BLOCK;
+                        let end = bytes.len().min(start + BLOCK);
+                        *is_changed = already_in_file.get(start..end) != Some(&bytes[start..end]);
+                    }
+                });
+            }
+        });
+        let mut block = 0;
+        while block < is_changed.len() {
+            let run = is_changed[block..].iter().take_while(|&&other| other == is_changed[block]).count();
+            if is_changed[block] {
+                let changed = &bytes[block * BLOCK..bytes.len().min((block + run) * BLOCK)];
+                bun_sys::File::borrow(&self.fd)
+                    .pwrite_all(changed, (self.offset + block * BLOCK) as i64)
+                    .map_err(|error| std::io::Error::from_raw_os_error(error.errno as i32))?;
+            }
+            block += run;
+        }
+        self.offset += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+static EARLY_TEMPLATE_COPY: std::sync::Mutex<Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>> = std::sync::Mutex::new(None);
+
+#[cfg(target_os = "linux")]
+pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8]>) {
+    if self_exe_path.is_some() || !target.is_default() {
+        return;
+    }
+    let Ok(self_exe) = bun_core::self_exe_path() else { return };
+    let mut slot = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.is_some() {
+        return;
+    }
+    let path = self_exe.as_bytes().to_vec();
+    let template = bun_core::ZBox::from_vec_with_nul(path.clone());
+    let copy_thread = std::thread::spawn(move || {
+        let fd = Syscall::open(bun_core::zstr!("."), libc::O_TMPFILE | bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0o600).ok()?;
+        let is_copied = Syscall::open(&template, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok().is_some_and(|from| {
+            let is_copied = bun_sys::copy_file(from, fd).is_ok();
+            from.close();
+            is_copied
+        });
+        if !is_copied {
+            fd.close();
+            return None;
+        }
+        Some(fd)
+    });
+    *slot = Some((path, copy_thread));
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn start_copying_template(_: &CompileTarget, _: Option<&[u8]>) {}
+
+#[cfg(target_os = "linux")]
+pub fn discard_early_template_copy() {
+    let unused = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    if let Some(fd) = unused.and_then(|(_, copy_thread)| copy_thread.join().ok().flatten()) {
+        fd.close();
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn discard_early_template_copy() {}
+
+#[cfg(target_os = "linux")]
+fn take_early_template_copy(self_exe: &ZStr, name: &ZStr) -> Option<Fd> {
+    let (path, copy_thread) = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()?;
+    let fd = copy_thread.join().ok().flatten()?;
+    let fd_path = format!("/proc/self/fd/{}\0", fd.native());
+    let is_linked = path == self_exe.as_bytes()
+        && unsafe { libc::linkat(libc::AT_FDCWD, fd_path.as_ptr().cast(), libc::AT_FDCWD, name.as_ptr().cast(), libc::AT_SYMLINK_FOLLOW) } == 0;
+    if !is_linked {
+        fd.close();
+        return None;
+    }
+    Some(fd)
+}
+
+#[cfg(target_os = "linux")]
+fn offsets_of_privately_modified_pages(private_mapping: &[u8], page_size: usize) -> Option<Vec<usize>> {
+    use std::os::unix::fs::FileExt;
+    const IS_PRESENT: u64 = 1 << 63;
+    const IS_SWAPPED: u64 = 1 << 62;
+    const IS_FILE_PAGE: u64 = 1 << 61;
+    let address = private_mapping.as_ptr() as usize;
+    if page_size == 0 || address % page_size != 0 {
+        return None;
+    }
+    let mut entries = vec![0u8; private_mapping.len().div_ceil(page_size) * 8];
+    std::fs::File::open("/proc/self/pagemap").ok()?.read_exact_at(&mut entries, (address / page_size * 8) as u64).ok()?;
+    let is_modified = |entry: u64| entry & (IS_PRESENT | IS_SWAPPED) != 0 && entry & IS_FILE_PAGE == 0;
+    Some(
+        (entries.chunks_exact(8).enumerate())
+            .filter(|(_, entry)| is_modified(u64::from_ne_bytes((*entry).try_into().expect("eight bytes"))))
+            .map(|(page, _)| page * page_size)
+            .collect(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn copy_changed_blocks(to: *mut u8, from: &[u8], already_written: &[u8]) {
+    let page_size = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(0);
+    if let Some(offsets) = offsets_of_privately_modified_pages(from, page_size) {
+        for offset in offsets {
+            let page = &from[offset..from.len().min(offset + page_size)];
+            unsafe { core::ptr::copy_nonoverlapping(page.as_ptr(), to.add(offset), page.len()) };
+        }
+        return;
+    }
+    const BLOCK: usize = 4096;
+    let threads = usize::from(bun_core::get_thread_count()).clamp(1, 16);
+    let chunk_size = from.len().div_ceil(threads).next_multiple_of(BLOCK).max(BLOCK);
+    let to = to as usize;
+    std::thread::scope(|scope| {
+        for (chunk, (from, already_written)) in from.chunks(chunk_size).zip(already_written.chunks(chunk_size)).enumerate() {
+            scope.spawn(move || {
+                for (block, (from, already_written)) in from.chunks(BLOCK).zip(already_written.chunks(BLOCK)).enumerate() {
+                    if from != already_written {
+                        unsafe { core::ptr::copy_nonoverlapping(from.as_ptr(), (to + chunk * chunk_size + block * BLOCK) as *mut u8, from.len()) };
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn write_pieces_through_a_mapping(pieces: &[bun_elf::Piece<'_>], fd: Fd, already_written: Option<&[u8]>) -> bool {
+    let length_of = |piece: &bun_elf::Piece<'_>| match piece {
+        bun_elf::Piece::Bytes(bytes) => bytes.len() as u64,
+        bun_elf::Piece::Length(length) => length.len() as u64,
+        bun_elf::Piece::Zeros(count) => *count,
+    };
+    let size: u64 = pieces.iter().map(length_of).sum();
+    let (Ok(length), Ok(end)) = (usize::try_from(size), libc::off_t::try_from(size)) else {
+        return false;
+    };
+    if length == 0 || unsafe { libc::fallocate(fd.native(), 0, 0, end) } != 0 {
+        return false;
+    }
+    let Ok(map) = Syscall::mmap(core::ptr::null_mut(), length, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0) else {
+        return false;
+    };
+    let mut offset: usize = 0;
+    for (index, piece) in pieces.iter().enumerate() {
+        let bytes: &[u8] = match piece {
+            bun_elf::Piece::Bytes(bytes) => bytes,
+            bun_elf::Piece::Length(length) => length,
+            bun_elf::Piece::Zeros(count) => {
+                if already_written.is_some() {
+                    unsafe { core::ptr::write_bytes(map.add(offset), 0, *count as usize) };
+                }
+                &[]
+            }
+        };
+        match already_written.filter(|already_written| index == 0 && already_written.len() >= bytes.len()) {
+            Some(already_written) => unsafe { copy_changed_blocks(map.add(offset), bytes, &already_written[..bytes.len()]) },
+            None => unsafe { bun_core::copy_in_parallel(map.add(offset), bytes.as_ptr(), bytes.len()) },
+        }
+        offset += length_of(piece) as usize;
+    }
+    let _ = Syscall::munmap(map, length);
+    already_written.is_none() || Syscall::ftruncate(fd, end).is_ok()
+}
+
 #[cfg(not(windows))]
-fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd) -> Result<bool, String> {
+fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd, already_written: Option<&[u8]>) -> Result<bool, String> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = already_written;
     let mut elf_file = bun_elf::ElfFile::over(original).map_err(|error| error.to_string())?;
     elf_file.normalize_interpreter();
     let pieces = elf_file.bun_section_in_pieces(payload).map_err(|error| error.to_string())?;
@@ -2288,6 +2485,11 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd) -> Result<bo
         bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF: no pieces: copied");
         return Ok(false);
     };
+    #[cfg(target_os = "linux")]
+    if write_pieces_through_a_mapping(&pieces, fd, already_written) {
+        bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces through a mapping");
+        return Ok(true);
+    }
     let file = bun_sys::File::borrow(&fd);
     let mut offset: i64 = 0;
     for piece in &pieces {
@@ -2419,6 +2621,12 @@ pub(crate) fn inject<'a>(
 
     #[cfg(not(windows))]
     let mut mapped_executable: Option<&'static mut [u8]> = None;
+    #[cfg(not(windows))]
+    let mut template_contents: Option<&'static mut [u8]> = None;
+    #[cfg(target_os = "linux")]
+    let early_template_copy: Option<Fd> = take_early_template_copy(self_exe, zname);
+    #[cfg(all(not(windows), not(target_os = "linux")))]
+    let early_template_copy: Option<Fd> = None;
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
@@ -2483,6 +2691,9 @@ pub(crate) fn inject<'a>(
         #[cfg(not(windows))]
         let fd: Fd = 'brk2: {
             let mut tried_changing_abs_dir = false;
+            if let Some(copied) = early_template_copy {
+                break 'brk2 copied;
+            }
             for retry in 0..3 {
                 match Syscall::open(
                     zname,
@@ -2578,10 +2789,13 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
-            if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
+            if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd | CompileTargetOs::Mac) {
                 mapped_executable = map_privately(self_fd);
+                if early_template_copy.is_some() {
+                    template_contents = map_privately(self_fd);
+                }
                 if mapped_executable.is_none() {
-                    bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF: not mapped: copied");
+                    bun_core::scoped_log!(StandaloneModuleGraph, "inject: not mapped: copied");
                 }
             }
             if mapped_executable.is_some() {
@@ -2603,15 +2817,27 @@ pub(crate) fn inject<'a>(
 
     match target.os {
         CompileTargetOs::Mac => {
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return None;
-                }
+            #[cfg(not(windows))]
+            let mapped_template = mapped_executable.take();
+            #[cfg(windows)]
+            let mapped_template: Option<&'static mut [u8]> = None;
+            let input_bytes = match &mapped_template {
+                Some(_) => Vec::new(),
+                None => match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
+                    Ok(b) => b,
+                    Err(err) => {
+                        bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                },
             };
-            let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
+            let initialized = bun_macho::MachoFile::init(mapped_template.as_deref().unwrap_or(&input_bytes), bytes.len());
+            #[cfg(not(windows))]
+            if let Some(mapped_template) = mapped_template {
+                let _ = Syscall::munmap(mapped_template.as_mut_ptr(), mapped_template.len());
+            }
+            let mut macho_file = match initialized {
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
@@ -2629,19 +2855,9 @@ pub(crate) fn inject<'a>(
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            drop(input_bytes);
 
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            let mut buffered_writer = std::io::BufWriter::with_capacity(
-                512 * 1024,
-                bun_sys::FileWriter(cloned_executable_fd),
-            );
-            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+            let mut writer = ChangedBlocksWriter { fd: cloned_executable_fd, offset: 0, already_in_file: &input_bytes };
+            let written = match macho_file.build_and_sign(&mut writer) {
                 Ok(n) => n,
                 Err(e) => {
                     bun_core::pretty_errorln!(
@@ -2652,11 +2868,6 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
             // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
             if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
@@ -2753,7 +2964,10 @@ pub(crate) fn inject<'a>(
             #[cfg(not(windows))]
             if let Some(original) = mapped_executable.take() {
                 let (pointer, length) = (original.as_mut_ptr(), original.len());
-                let written = write_elf_in_pieces(&mut *original, bytes, cloned_executable_fd);
+                let written = write_elf_in_pieces(&mut *original, bytes, cloned_executable_fd, template_contents.as_deref());
+                if let Some(already_written) = template_contents.take() {
+                    let _ = Syscall::munmap(already_written.as_mut_ptr(), already_written.len());
+                }
                 if matches!(written, Ok(false)) {
                     from_the_mapping = Some(original.to_vec());
                 }
@@ -3307,27 +3521,33 @@ pub fn to_executable(
         Err(e) => return Ok(CompileResult::Err(e)),
     };
 
+    let aot_image: Option<&[u8]> = (output_files.iter())
+        .find(|file| file.output_kind == options::OutputKind::AotImage)
+        .map(|image| image.value.as_slice());
     #[cfg(unix)]
-    let aot_symbols: Option<(Vec<u8>, usize)> = aot_image_at.and_then(|at| {
-        let image = output_files
-            .iter()
-            .find(|file| file.output_kind == options::OutputKind::AotImage)?;
-        Some((symbols_of_aot_image(image.value.as_slice())?, at))
-    });
+    let list_symbols = || -> Option<(Vec<u8>, usize)> { Some((symbols_of_aot_image(aot_image?)?, aot_image_at?)) };
     #[cfg(not(unix))]
-    let aot_symbols: Option<(Vec<u8>, usize)> = None;
+    let list_symbols = || -> Option<(Vec<u8>, usize)> { None };
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
-    let Some(injected) = inject(
-        &bytes,
-        output_files
-            .iter()
-            .any(|file| file.output_kind == options::OutputKind::AotImage),
-        aot_symbols.as_ref().map(|(table, at)| (table.as_slice(), *at)),
-        &self_exe,
-        windows_options,
-        target,
-        &mut temp_path_buf,
-    ) else {
+    let (injected, aot_symbols) = std::thread::scope(|scope| {
+        if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
+            let listing = scope.spawn(list_symbols);
+            let injected = inject(&bytes, aot_image.is_some(), None, &self_exe, windows_options, target, &mut temp_path_buf);
+            return (injected, listing.join().ok().flatten());
+        }
+        let aot_symbols = list_symbols();
+        let injected = inject(
+            &bytes,
+            aot_image.is_some(),
+            aot_symbols.as_ref().map(|(table, at)| (table.as_slice(), *at)),
+            &self_exe,
+            windows_options,
+            target,
+            &mut temp_path_buf,
+        );
+        (injected, aot_symbols)
+    });
+    let Some(injected) = injected else {
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
             "failed to write compiled executable {}",
@@ -3829,7 +4049,8 @@ fn append_aligned(
     writable[0..padding].fill(0);
     string_builder.len += padding;
     let aligned_offset = string_builder.len;
-    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
+    let room = &mut string_builder.writable()[0..bytecode.len()];
+    unsafe { bun_core::copy_in_parallel(room.as_mut_ptr(), bytecode.as_ptr(), bytecode.len()) };
     string_builder.len += bytecode.len();
     StringPointer {
         offset: aligned_offset as u32,

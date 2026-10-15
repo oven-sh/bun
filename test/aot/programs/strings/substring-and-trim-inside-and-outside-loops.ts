@@ -44,14 +44,14 @@ export function trimmedUntyped(s: any): any { return s.trim(); }
 export function slicedInLoop(list: string[]): string { let out = ""; for (const s of list) out += s.slice(1, 3) + ","; return out; }
 export function trimmedInLoop(list: string[]): string { let out = ""; for (const s of list) out += "[" + s.trim() + "]"; return out; }
 export function recorded(s: string): { a: number; b: string; c: string; d: number } { return { a: 1, b: s.slice(1), c: s.trim(), d: 2 }; }
-// The same with the operation inside a loop: there it stands in place.
+// The same with the operation inside a loop, where it is compiled inline.
 export function slicedL(s: string, a: number, b: number, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.slice(a, b); return r; }
 export function substringedL(s: string, a: number, b: number, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.substring(a, b); return r; }
 export function substredL(s: string, a: number, b: number, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.substr(a, b); return r; }
 export function trimmedL(s: string, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.trim(); return r; }
 export function trimmedStartL(s: string, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.trimStart(); return r; }
 export function trimmedEndL(s: string, n: number): string { let r = ""; for (let k = 0; k < n; k++) r = s.trimEnd(); return r; }
-// A call through a table is inlined all the same, behind a test of the callee (IsClosureOf), into the loop of the caller: there the code in place would run. What is called by code that the compiler never saw runs its own code.
+// A call through a table is still inlined into the caller's loop, after a test of the callee (IsClosureOf), and the inline code would run there. A function called by code that the compiler never saw runs its own code.
 const f: any = { recorded, sliced, slicedFrom, slicedOne, slicedLast, substringed, substred, slicedUntyped, trimmed, trimmedStart, trimmedEnd, trimmedUntyped, slicedInLoop, trimmedInLoop };
 const unseen: any = new Function("f", "return (...args) => f(...args)");
 for (const name of Object.keys(f)) f[name] = unseen(f[name]);

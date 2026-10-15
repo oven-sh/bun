@@ -19,7 +19,7 @@ interface Options { flag?: boolean; name?: string; size?: number }
 function read(o: Options) { const flag = o.flag as boolean, name = o.name as string, size = o.size as number; return [flag === undefined ? "default" : flag, name === undefined ? "default" : name, size === undefined ? "default" : size].join() }
 console.log(read({}), read({ flag: false, name: "", size: 0 }));
 const token = env.TOKEN as string; console.log(token ? "has a token: " + token : "no token");
-// The TypeScript compiler's scanner.ts:4036. Unlike plain JavaScript: null or undefined that a cast has let through is converted where it enters a DECLARED raw place: plain: undefined; ours: NaN.
+// The TypeScript compiler's scanner.ts:4036. Unlike plain JavaScript: null or undefined that a cast has let through is converted where it enters a DECLARED unboxed slot: plain Bun: undefined; --aot: NaN.
 function codePointAt(s: string, i: number): number { return s.codePointAt(i) as number }
 show("declared result, out of bounds", codePointAt("a", 5));
 show("declared result, in bounds", codePointAt("a", 0));

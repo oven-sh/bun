@@ -6,7 +6,7 @@ const KINDS = {
   "set values": () => new Set([5, 6, 7, 8]).values(), "set entries": () => new Set([5, 6, 7, 8]).entries(), "set @@iterator": () => new Set([5, 6, 7, 8])[Symbol.iterator](),
   "string @@iterator": () => "wxyz"[Symbol.iterator](), "typed array entries": () => new Uint8Array([1, 2, 3, 4]).entries(), "typed array values": () => new Uint8Array([1, 2, 3, 4]).values(),
 };
-// the kinds through a table: the general way: the control
+// the kinds through a table: the generic path, as a control
 for (const k in KINDS) row("by a table, " + k, () => { const e = KINDS[k](); let s = ""; for (let r = 0; r < 3; r++) { for (const x of e) { s += String(x) + ";"; break; } s += "|"; } return s; });
 // each kind written where it is used, so that the call goes to one place
 row("entries, exhausted twice", () => { const e = [7, 8].entries(); let n = 0; for (let r = 0; r < 2; r++) for (const [i] of e) n++; return n; });

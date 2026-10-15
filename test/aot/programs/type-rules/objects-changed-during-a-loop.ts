@@ -30,8 +30,8 @@ function reparent(r: Runner): number { Object.setPrototypeOf(r, { go() { return 
 const r1 = new Runner()
 try { console.log(r1.go(reparent(r1))); console.log("another prototype for an instance (rule 4): no error") } catch (e) { console.log("another prototype for an instance (rule 4):", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(r1.go(0), r1.size, Object.keys(r1).join())
-// An element is replaced by what is no plain data: `any` enters an element of a `Cell[]`, which is held to Cell like any store whose type is written down; what inherits its fields is not copied. So the store throws, in the
-// first call of the callback, before anything is added.
+// An element is replaced with an object that is not plain data: `any` enters an element of a `Cell[]`, which is checked against Cell like any store to
+// an annotated slot; an object that inherits its fields is not copied. So the store throws, in the first call of the callback, before anything is added.
 const cells: Cell[] = [cell(), cell(), cell()]
 let seen = 0
 try { cells.forEach((c, i, all) => { if (i === 0) all[2] = Object.create({ v: 0.5, w: 0.25 }); seen += c.v }); console.log("element under Object.create: no error") } catch (e) { console.log("element under Object.create:", e instanceof TypeError ? "TypeError" : "other " + e) }

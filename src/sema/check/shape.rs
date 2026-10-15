@@ -8194,6 +8194,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut result: Vec<SigId> = Vec::new();
         let mut index_with_overloads = 0;
         let mut count_with_overloads = 0;
+        let mut lists_without_match: SmallVec<[usize; 4]> = SmallVec::new();
         for (i, list) in lists.iter().enumerate() {
             if list.len() > 1 {
                 index_with_overloads = i;
@@ -8210,7 +8211,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if earlier.is_some() {
                     continue;
                 }
-                let Some(matching) = self.find_matching_signatures(lists, sig, i) else {
+                let Some(matching) = self.find_matching_signatures(lists, sig, i, &mut lists_without_match) else {
                     continue;
                 };
                 if let [_] = matching[..] {
@@ -8284,6 +8285,7 @@ impl<'p, 's> Checker<'p, 's> {
         lists: &[Vec<SigId>],
         sig: SigId,
         list_index: usize,
+        lists_without_match: &mut SmallVec<[usize; 4]>,
     ) -> Option<Vec<SigId>> {
         if !self.sig_type_params(sig).is_empty() {
             // For a generic signature only an identical one matches, and it is taken from the first
@@ -8296,6 +8298,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             return Some(vec![sig]);
         }
+        if !lists_without_match.is_empty() && self.fuel.get() == u64::MAX && !self.are_compared_pairs_noted() {
+            for &i in lists_without_match.iter() {
+                if i != list_index
+                    && self.find_matching_signature(&lists[i], sig, PartialMatch::No, IgnoreReturnTypes::Yes).is_none()
+                    && self.find_matching_signature(&lists[i], sig, PartialMatch::Yes, IgnoreReturnTypes::Yes).is_none()
+                {
+                    return None;
+                }
+            }
+        }
         let mut result = Vec::with_capacity(lists.len());
         for (i, list) in lists.iter().enumerate() {
             let matching = if i == list_index {
@@ -8307,12 +8319,15 @@ impl<'p, 's> Checker<'p, 's> {
                 match exact {
                     Some(exact) => exact,
                     // Failing that, one with fewer parameters matches.
-                    None => self.find_matching_signature(
-                        list,
-                        sig,
-                        PartialMatch::Yes,
-                        ignore_return_types,
-                    )?,
+                    None => match self.find_matching_signature(list, sig, PartialMatch::Yes, ignore_return_types) {
+                        Some(partial) => partial,
+                        None => {
+                            lists_without_match.retain(|known| *known != i);
+                            lists_without_match.truncate(3);
+                            lists_without_match.insert(0, i);
+                            return None;
+                        }
+                    },
                 }
             };
             if !result.contains(&matching) {

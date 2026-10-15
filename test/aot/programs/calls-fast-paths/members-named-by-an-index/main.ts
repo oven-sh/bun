@@ -1,6 +1,6 @@
 // Class members whose names are array indices: setters, getters and methods, on the prototype and on the class, in typed and untyped code.
 // @ts-ignore
-import untyped from "./untyped-classes-with-members-named-by-an-index.js";
+import untyped from "./untyped-classes-with-index-named-members.js";
 declare const console: any;
 const said: string[] = [];
 function block(name: string, body: () => void) { try { body(); } catch (error) { said.push(name + ": THROWS " + (error as Error).constructor.name); } }

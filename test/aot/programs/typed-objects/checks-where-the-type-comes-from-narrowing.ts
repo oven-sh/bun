@@ -25,7 +25,7 @@ attempt("e3", () => (JSON.parse('[1,"a"]') as number[]).reduce((sum, n) => sum +
 function isNumber(v: unknown): v is number { return v !== null }
 attempt("e4", () => [1, "two", 3n].filter(isNumber).map(n => typeof n).join())
 attempt("e5", () => [1, null, 3].filter(isNumber).map(n => typeof n).join())
-// The receiver is narrowed to an branch of a union, or by a guard: the property is what the branch, or the guard's type, declares.
+// The receiver is narrowed to a member of a union, or by a guard: the property has the type that the member, or the guard's type, declares.
 type S = { kind: "n"; v: number } | { kind: "s"; v: string }
 function read(s: S): number | string { return s.kind === "n" ? s.v + 1 : s.v }
 attempt("f1", () => read(JSON.parse('{"kind":"n","v":"text"}')))

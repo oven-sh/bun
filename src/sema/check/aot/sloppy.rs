@@ -32,7 +32,10 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let name = self.files().module(file).file_name();
-        (name.ends_with(b".cjs") || name.ends_with(b".js") && self.is_in_commonjs_package(file)) && !self.is_reached_by_import(file)
+        if name.ends_with(b".cjs") && (self.is_entry_point(file) || !self.is_reached_by_import(file)) {
+            return true;
+        }
+        (name.ends_with(b".cjs") || name.ends_with(b".js")) && self.is_in_commonjs_package(file)
     }
 
     /// Whether the code of the function is sloppy.

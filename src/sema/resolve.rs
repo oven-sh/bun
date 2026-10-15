@@ -73,6 +73,9 @@ pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
 pub trait Host: Sync {
+    fn build_constants(&self) -> Option<std::sync::Arc<crate::fold::BuildConstants>> {
+        None
+    }
     /// One thread has spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
     fn spent(&self, _phase: Phase, _time: Duration) {}
     /// The totals reported to `spent` so far, in the order of `Phase::ALL`.
@@ -120,6 +123,15 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+    fn uses_default_parse_settings(&self, _path: &[u8]) -> bool {
+        true
+    }
+    fn is_early_parse_cancelled(&self) -> bool {
+        false
+    }
+    fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
+        None
+    }
     /// Called once, when the program and `Options::roots_for_code` are loaded, with every file so far. The sources of the runtime
     /// that are compiled with them: they are loaded like `Options::roots_for_code`. Each with its `Module::builtin`.
     fn builtin_files(
@@ -561,6 +573,7 @@ pub struct Options {
     /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
     /// file afterwards leaves it off.
     pub drops_unreferenced: bool,
+    pub early_parse_only: bool,
     pub gives_direct_evals_their_scopes: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
@@ -630,6 +643,7 @@ pub struct Options {
     /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
     pub names_make_commonjs: bool,
     pub one_name_is_one_binding: bool,
+    pub build_constants: Option<std::sync::Arc<crate::fold::BuildConstants>>,
     /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
     /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
     /// has to be the same in every task.

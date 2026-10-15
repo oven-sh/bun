@@ -100,7 +100,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
   const manifest = json(join(folder, "sound.json"));
   const { name, version } = manifest;
 
-  test("the manifest is of the format", () => {
+  test("the manifest has the expected format", () => {
     expect(Object.keys(manifest).sort()).toEqual(["basis", "lay", "name", "needs", "sound", "version", "when"]);
     expect(manifest.sound).toBe(1);
     expect(`${name}/${version}`).toBe(where);
@@ -145,7 +145,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
     for (const path of Object.keys(manifest.lay)) expect(path).not.toMatch(/\.d\.[cm]?ts$/);
   });
 
-  test("the licence and the notice are there", () => {
+  test("the license and the notice are present", () => {
     expect(licences).toHaveProperty([name]);
     const { holder, says, licence } = licences[name];
     const text = readFileSync(join(folder, "LICENSE"), "utf8");

@@ -3,7 +3,7 @@ interface Acct { id: number; owner: string; limit?: number; peer?: Acct }
 function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o, (k, v) => k === "peer" ? "peer" : v) }
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 function acct(id: number): Acct { return { id, owner: "o" + id } }
-// What the untyped side does with whatever it gets hold of: a late field, an extra property.
+// What the untyped side does with whatever it receives: a late field, an extra property.
 let tampered = 0
 function tamper(x: any) {
   tampered++

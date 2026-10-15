@@ -2,7 +2,7 @@
 interface Props { id: number; title: string; hidden?: boolean; size?: number; style: { color: string; width?: number } }
 function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o) }
 const props: Props = { title: "t", id: 1, style: { color: "red" }, size: 0 }
-// No cast, no any (triage/g-exact2.md).
+// No cast, no any.
 const which: "id" | "title" = props.id > 0 ? "title" : "id"
 const { [which]: chosen, ...others } = props
 console.log(String(chosen), show(others))

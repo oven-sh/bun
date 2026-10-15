@@ -42,7 +42,7 @@ class Plain extends E { ping() { return this.emit("x", 3) } }
 class Overriding extends E { emit(..._: unknown[]) { return "overridden" } ping() { return this.emit("x", 3) } }
 attempt("a subclass", () => { const g: any = new Plain(); g.on("x", listen); return g.ping() });
 attempt("a subclass that overrides", () => { const g: any = new Overriding(); g.on("x", listen); return [g.ping(), g.both("x", 1), fire(g)].join() });
-// What is passed is not what the other calls pass.
+// The argument differs from what the other calls pass.
 attempt("a symbol for the event", () => { const e = make(); const key = Symbol("k"); e.on(key, listen); return e.emit(key, 4) });
 attempt("a number for the event", () => { const e = make(); e.on(7, listen); return e.emit(7, 5) });
 attempt("no function for the listener", () => { const e = make(); e.on("x", 5); return e.emit("x", 1) });

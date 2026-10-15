@@ -17,7 +17,7 @@ function all() {
   out.push(pick("error"), pick("x"), pick("y"), pick(1), pick(null));
   return out;
 }
-// Under a handler, and where what is compared is no constant after all.
+// Inside a handler, and where the compared value is not a constant after all.
 function watched() { try { return strict("a", "a") + ":" + loose(null, 0) + ":" + not(1); } catch (e) { return "caught"; } }
 function given(a, b) { return [strict(a, "x"), strict("x", a), loose(a, b), not(a), nil(b), pick(a)].join(); }
 module.exports = { all, watched, given };

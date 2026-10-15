@@ -141,6 +141,7 @@ impl Program {
                     (class_flags::HAS_FIXED_MEMBERS, " fixed members"),
                     (class_flags::MAY_HAVE_OTHER_PROTOTYPE, " other prototypes"),
                     (class_flags::HAS_STATIC_MEMBER_OF_UNKNOWN_NAME, " unknown static names"),
+                    (class_flags::CONSTRUCTOR_MAY_BE_REPLACED, " replaceable constructor"),
                 ] {
                     if layout.class_flags & flag != 0 {
                         o.push_str(what);
@@ -161,6 +162,9 @@ impl Program {
             }
             if layout.is_opened_for_the_log {
                 o.push_str(" for the log");
+            }
+            if layout.admits_only_other_layouts {
+                o.push_str(" other layouts only");
             }
             o.push('\n');
             for (what, layouts) in [("members", &layout.members), ("members by fit", &layout.members_by_fit), ("specializations", &layout.specializations)] {
@@ -372,6 +376,9 @@ impl Program {
                     if matches!(r.opcode, Opcode::NewArray | Opcode::Strcat | Opcode::Call | Opcode::Construct | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation | Opcode::NewClosure | Opcode::NewClosureOnce) {
                         o.push(' ');
                         list(o, r.args);
+                    }
+                    if func.values[v.idx()].is_in_tail_position {
+                        o.push_str(" tail");
                     }
                     o.push('\n');
                 }

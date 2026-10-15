@@ -4,6 +4,6 @@ accessor defined: TypeError
 method replaced: TypeError
 method deleted: TypeError
 its prototype changed: TypeError
-false false false false
+line 16: TypeError
 true true
 stored/undefined/true/true own/undefined/true/true undefined/undefined/true/true [] m constructor,method false

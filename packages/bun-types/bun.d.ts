@@ -3753,8 +3753,8 @@ declare module "bun" {
      */
     assets?: string[];
     /**
-     * With `aot`: whether the executable keeps the text that `Function.prototype.toString()` answers with
-     * for a compiled function. Without it the answer is `function name() { [native code] }`.
+     * With `aot`: whether the executable keeps the source text that `Function.prototype.toString()`
+     * returns for a compiled function. Without it, `toString()` returns `function name() { [native code] }`.
      *
      * Equivalent CLI flags: `--compile-function-source`, `--no-compile-function-source`
      *
@@ -3806,8 +3806,8 @@ declare module "bun" {
      * debugger are not available.
      *
      * Requires `format: "esm"` (the default with `aot`), and a `target` that is the
-     * platform and version of Bun that runs the build. Supported on arm64 macOS.
-     * `Bun.build` throws when it cannot compile ahead of time.
+     * platform and version of Bun that runs the build. Supported on macOS arm64 and
+     * on Linux x64 with glibc. `Bun.build` throws when it cannot compile ahead of time.
      *
      * Equivalent CLI flag: `--aot`
      *
@@ -3818,7 +3818,7 @@ declare module "bun" {
      * With `aot`: what the executable does when a value does not match its TypeScript type.
      *
      * - `"throw"`: throw a `TypeError`
-     * - `"log"`: write one line that names the place, the expected type and the kind of value it got,
+     * - `"log"`: write one line with the location, the expected type and the kind of value it got,
      *   never the value itself, and continue as JavaScript where it can. Lines go to stderr, or to the
      *   file named by the environment variable `BUN_AOT_TYPE_ERROR_LOG` when the executable runs.
      *

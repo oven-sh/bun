@@ -46,7 +46,7 @@ function order() {
   out.push(Object.getPrototypeOf(o) === first, Object.getPrototypeOf(o).replaced === true);
   return out;
 }
-// `prototype` is exchanged, is no object, is changed in place, between constructions by one and the same site.
+// `prototype` is replaced, is not an object, or is changed in place, between constructions at the same site.
 function prototypes() {
   const out = [];
   function G() { this.g = 1; }
@@ -70,7 +70,7 @@ function closures() {
   const a = new A(1), b = new B(1);
   return [a.value, b.value, a instanceof A, a instanceof B, b instanceof B, Object.getPrototypeOf(a) === A.prototype, A.prototype !== B.prototype, a.constructor === A];
 }
-// One site, many callees: what is expected is not what comes.
+// One site, many callees: the expected callee is not the one that arrives.
 function mixed(list) { return list.map(F => attempt(() => new F(1, 2))); }
 // Objects are ordinary: everything an ordinary object allows.
 function ordinary() {

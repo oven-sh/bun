@@ -21,7 +21,7 @@ for (let round = 0; round < 2; round++) {
     for (let n = 0; n <= 12; n++) { attempt("apply " + n, () => f.apply("t", args.slice(0, n))); attempt("spread " + n, () => f(...args.slice(0, n))); }
     attempt("call", () => f.call("t", 1, 2, 3, 4, 5, 6, 7, 8, 9));
   }
-  // The second round: each has a property of its own, and so another structure.
+  // The second round: each has an own property, and therefore a different structure.
   for (const f of closures) f.extra = round;
 }
 log.push(typeof asynchronous(1).then, [...generator(1, 2, 3)].join(","), typeof asynchronous.call(null, 1).then, [...generator.apply(null, [1, 2])].join(","));

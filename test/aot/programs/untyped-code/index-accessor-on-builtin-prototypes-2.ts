@@ -48,7 +48,7 @@ console.log("bad time:", vm.isHavingABadTime(globalThis), many(300));
 haveABadTime();
 console.log("bad time:", vm.isHavingABadTime(globalThis));
 show("made in it,");
-// Until every free list has run out several times: the operations behind the stubs have their say.
+// Until every free list has run out several times, so that the slow-path operations of the stubs run too.
 console.log(many(60000));
 show("and still,");
 console.log("done");

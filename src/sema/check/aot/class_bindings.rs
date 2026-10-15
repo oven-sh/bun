@@ -8,7 +8,7 @@ use crate::program::Sym;
 impl<'p, 's> Checker<'p, 's> {
     /// Whether the variable holds the class object from its initialization on, although it is assigned to: every assignment is `||=` or `??=`. A class object decides those, so that the right
     /// side is never evaluated and nothing is ever stored. A transpiler writes `((C) => { .. })(C ||= {})` for a namespace that is merged with the class `C`.
-    pub fn holds_its_class_for_good(&self, sym: Sym) -> bool {
+    pub fn always_holds_its_class(&self, sym: Sym) -> bool {
         let Some((file, decl @ Decl::Class(_))) = self.declaration_of_variable(sym) else { return false };
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.symbol_of_declaration(decl);

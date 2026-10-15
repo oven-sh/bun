@@ -193,7 +193,7 @@ say("what is extended is no constructor", () => [T(() => { class X extends 5 { }
 say("its prototype is no object", () => { function G() { } G.prototype = 5; return T(() => { class X extends G { } }); });
 say("its prototype is null", () => { function G() { } G.prototype = null; class X extends G { m() { return 1; } } return [Object.getPrototypeOf(X.prototype), Object.getPrototypeOf(X) === G]; });
 say("extends null", () => { class X extends null { static s() { return 1; } } return [Object.getPrototypeOf(X) === Function.prototype, Object.getPrototypeOf(X.prototype), X.s(), Object.getOwnPropertyNames(X)]; });
-// The parent changes behind the declaration.
+// The parent changes after the declaration.
 class ParentA { static who() { return "A"; } } class ParentB { static who() { return "B"; } }
 class Child extends ParentA { }
 say("inherited statics follow the parent", () => { const before = Child.who(); Object.setPrototypeOf(Child, ParentB); const after = Child.who(); ParentB.late = 1; return [before, after, Child.late, Object.getOwnPropertyNames(Child)]; });

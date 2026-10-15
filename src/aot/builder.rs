@@ -4,8 +4,24 @@
 //! parameters in the place of phi functions.
 
 use crate::id::{BlockId, TyId, V};
-use crate::ir::{Func, Op, Prediction, Target, Term};
+use crate::ir::{Block, Func, Op, Prediction, Target, Term, Value};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::Cell;
+
+thread_local! {
+    static SPARE_VALUES: Cell<Vec<Value>> = const { Cell::new(Vec::new()) };
+    static SPARE_BLOCKS: Cell<Vec<Block>> = const { Cell::new(Vec::new()) };
+}
+
+/// Moves the entries into a list of exactly their length. `spare` gets the emptied list, for the next function.
+fn settle<T>(grown: &mut Vec<T>, spare: &'static std::thread::LocalKey<Cell<Vec<T>>>) {
+    let mut exact = Vec::with_capacity(grown.len());
+    exact.append(grown);
+    let emptied = std::mem::replace(grown, exact);
+    if emptied.capacity() <= 1 << 16 {
+        spare.set(emptied);
+    }
+}
 
 /// A local variable of the function being built that no inner function captures.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -67,7 +83,9 @@ pub struct FuncBuilder {
 
 impl FuncBuilder {
     /// `func` has no block yet. The entry block is made, current and sealed. `undefined`: the type of that.
-    pub fn new(func: Func, undefined: TyId) -> FuncBuilder {
+    pub fn new(mut func: Func, undefined: TyId) -> FuncBuilder {
+        func.values = SPARE_VALUES.take();
+        func.blocks = SPARE_BLOCKS.take();
         let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states: Vec::new(), vars: Vec::new(), stored: Vec::new(), homes: Vec::new(), blanks: FxHashMap::default(), undefined };
         let entry = builder.new_block();
         builder.seal(entry);
@@ -373,7 +391,7 @@ impl FuncBuilder {
             self.func.values.pop();
         } else {
             let undefined = self.undefined;
-            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None, finds_initialized: false };
+            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false };
             self.func.blocks[block.idx()].ops.insert(0, param);
         }
         true
@@ -429,6 +447,8 @@ impl FuncBuilder {
                 self.func.blocks[b].term = Some(Term::Unreachable);
             }
         }
+        settle(&mut self.func.values, &SPARE_VALUES);
+        settle(&mut self.func.blocks, &SPARE_BLOCKS);
         self.func
     }
 }

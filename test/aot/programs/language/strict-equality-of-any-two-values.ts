@@ -59,5 +59,5 @@ for (const t of ["identifier", "expression", "abcdefgh", "abcdefghijklmnopqrstuv
     for (const v of [t, fresh(t), JSON.parse(JSON.stringify({ kind: t })).kind, t.length > 1 ? wide(t) : t, t.length > 1 ? cat(t.slice(0, 1), t.slice(1)) : t])
         print(show(t) + " " + isKind({ kind: v }));
 }
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [sameUnknown, isKind]; console.log("number");

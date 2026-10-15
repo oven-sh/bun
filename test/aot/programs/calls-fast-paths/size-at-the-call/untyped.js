@@ -12,7 +12,7 @@ function dispatch(type, ...args) {
     default: { let r = h0.apply(this, args); r = r * 3 + 1; r = r % 7; r = r ^ 5; return r; }
   }
 }
-// The switch stands inside a loop: `args` reaches it through the parameters of the loop's header, which hands it on unchanged.
+// The switch is inside a loop: `args` reaches it through the parameters of the loop's header, which passes it on unchanged.
 function each(list, ...args) {
   let s = 0;
   for (let i = 0; i < list.length; i += 1) {
@@ -44,7 +44,7 @@ function eachBorrowing(list, ...args) {
 }
 function knowsInTheLoopBorrowing(list, n) { let s = 0; for (let i = 0; i < n; i++) s += eachBorrowing(list, i); return s; }
 function knowsInTheLoop(list, n) { let s = 0; for (let i = 0; i < n; i++) s += each(list, i); return s; }
-// A little over the limit, and the constant takes little of it away: that is no other function, only a larger one. It stays a call.
+// A little over the limit, and the constant removes only a little: it is still the same function, only larger. It stays a call.
 function aLittleTooLarge(flag, a) {
   let t = a * 3; if (flag) { t = t + 1; t = t ^ 2; t = t | 4; }
   t = t % 11; t = t ^ 9; t = t | 2; t = t & 127; t = t << 2; t = t >> 2; t = -t; t = ~t; t = t + 1; t = t - 2; t = t * 5; t = t % 13; t = t ^ 3; t = t | 8; t = t & 255; t = t << 1; t = t >> 1; t = -t; t = ~t; t = t + 3;

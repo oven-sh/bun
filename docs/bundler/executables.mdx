@@ -418,19 +418,22 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
   </Tab>
 </Tabs>
 
-`--aot` implies `--bytecode` and `--format=esm`. `--bytecode-depth` and `--bytecode-order` have nothing to act on, because the executable has machine code in the place of bytecode, and `bun build` reports an error for them. CommonJS files in your program work as they do in any other bundle.
+`--aot` implies `--bytecode` and `--format=esm`. `--bytecode-depth` and `--bytecode-order` have nothing to act on, because the executable contains machine code instead of bytecode, so `bun build` reports an error for them. CommonJS files in your program work as they do in any other bundle.
 
 The compiler sees your whole program at once, and the executable differs from one built without `--aot` in these ways:
 
 - **Types are enforced.** The compiler relies on your TypeScript types, so a value that does not match its type throws a `TypeError`, and `as` between primitive types converts. [Adopting `--aot`](/bundler/aot-adoption) shows how to find the places this affects before you ship.
-- **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, files that your program loads from disk when it runs, and Workers created from a blob URL.
-- **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable. So do the built-in objects of a context that your program creates with `node:vm`, and of a `ShadowRealm`: each has its own.
-- **There are no tail calls.** Without `--aot`, a strict-mode function that ends in `return f(x)` gives its stack frame to `f`, so such a recursion can be as deep as you like. Compiled code keeps a frame for every call, as Node.js does, and a very deep recursion throws `RangeError: Maximum call stack size exceeded`.
+- **An array type means an ordinary array.** When the TypeScript type of a value is an array or a tuple, such as `number[]`, reading an element that is defined as a getter throws a `TypeError` instead of calling the getter. The same applies to an element that the array would inherit from a getter or a `Proxy` on its prototype chain. `a[i]`, `for...of` and destructuring are affected. Assignments still call setters, methods such as `map` and `join` and the spread syntax still call getters, and arrays that typed code never sees behave as usual.
+- **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, `import()` of a `data:` or `blob:` URL that your program puts together when it runs, files that your program loads from disk when it runs, and Workers created from a blob URL.
+- **Built-in objects are immutable.** Assigning to, redefining or deleting a property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in both strict and sloppy mode. So does adding a property to a built-in prototype such as `Object.prototype`, changing the prototype of a built-in object, or replacing a global variable that names one, such as `Promise`. You can add new properties to a constructor or a namespace such as `Date` or `Math`, unless the new property would hide one that it inherits from another built-in object: `Date.toString = f` throws because it would hide `Function.prototype.toString`. The `Reflect` functions return `false` instead of throwing. `bun build` reports a write that always runs as error `TS100014`, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds the others. Objects that Bun or your program defines, such as `console` and `process`, stay mutable. So do the built-in objects of a context that your program creates with `node:vm`, and of a `ShadowRealm`: each has its own.
 - **`bun:ffi` callbacks are unavailable.** `dlopen` and calls into native code work. `JSCallback` needs the JIT, and throws a `TypeError` that says so.
 - **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not. [Debugging and profiling with `--aot`](/bundler/aot-debugging) lists what each tool shows.
 - **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
+- **`Bun.build` cannot compile with `aot`** from inside an executable that was compiled with `--aot`: it throws. A build script that you run with `bun run --aot` can.
+- **`Bun.ModuleGraph` runs the compiled code.** Each graph gets its own copy of the module state, as without `--aot`. The `globals` option can add names, but it cannot replace a global that already exists, such as `console` or `Math`: importing a compiled module into such a graph throws a `TypeError`.
 - **An HTML file is imported with `import page from "./page.html"`**, as in a [full-stack executable](#full-stack-executables). `import()`, `require()` and `import * as` of an HTML file are errors at build time.
 - **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
+- **`--minify` shortens names and the paths of your sources in stack traces**, as it does without `--aot`. With `--sourcemap=external`, `bun build` writes a file that turns them back: see [Minified executables](/bundler/aot-debugging#minified-executables).
 - **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.
 
 The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
@@ -444,9 +447,11 @@ bun run --aot ./app.ts
 bun test --aot
 ```
 
-Your program sees the paths of its source files, as it does with `bun run`. An HTML import is what it is in an executable: Bun bundles the page once, before your program starts, and there is no hot reloading. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
+Your program sees the paths of its source files, as it does with `bun run`. An HTML import works as it does in an executable: Bun bundles the page once, before your program starts, and there is no hot reloading. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
 
-`bun test --aot` compiles each test file, with what it imports, before it runs it. Expect seconds per file. It does not support `--isolate`, `--parallel` and `--rerun-each`. Neither it nor `bun run --aot` supports `--watch` and `--hot`, because the program is built before it runs and is not built again when a file changes. Bun reports an error for each of these flags. `--coverage` is ignored, with a warning.
+`bun test --aot` compiles each test file and everything it imports before running it. Expect seconds per file. It does not support `--isolate`, `--parallel` and `--rerun-each`. Neither it nor `bun run --aot` supports `--watch` and `--hot`, because the program is built before it runs and is not built again when a file changes. Bun reports an error for each of these flags. `--coverage` is ignored, with a warning.
+
+`--aot` applies to a file. For a `package.json` script, a shell script, or an executable in `node_modules/.bin`, `bun run --aot` exits with an error: put `--aot` in the script's own command instead.
 
 A `--preload` script is compiled with your program. If its nearest `tsconfig.json` is not the one your entry point uses, it is left out, because a build uses a single `tsconfig.json`. Bun interprets it, like other code that the build cannot see.
 
@@ -506,7 +511,18 @@ warn: the typed version of "react-reconciler" in node_modules/@sound/react-recon
 
 `Bun.build` returns both in `logs`. `bun run --aot` and `bun test --aot` print neither.
 
-Bun type checks a typed version when you build. What your `tsconfig.json` asks for beyond `strict`, such as `noUncheckedIndexedAccess`, and its `lib`, `target` and `types` do not apply to it. If it has a type error, Bun prints a warning and compiles it without its types.
+Bun type checks a typed version when you build. What your `tsconfig.json` asks for beyond `strict`, such as `noUncheckedIndexedAccess`, and its `lib`, `target` and `types` do not apply to it. If it has a type error, the build stops with that error, as it does for a type error in your own files:
+
+```txt
+error: TS100021: The typed version of 'react-reconciler' in .sound/react-reconciler has type errors (1), the first at /app/node_modules/react-reconciler/cjs/react-reconciler.production.ts:12354:35. Fix it, or remove it to compile 'react-reconciler' untyped.
+
+12354 |   export type ReactElement = $jsx.ReactElement;
+                                          ^
+note: TS2694: Namespace '"/app/node_modules/react/cjs/react-jsx-runtime.production"' has no exported member 'ReactElement'.
+   at /app/node_modules/react-reconciler/cjs/react-reconciler.production.ts:12354:35
+```
+
+A package that ships its own TypeScript and has no typed version is compiled without its types instead, with a warning that shows the error, and the `compile` line counts it.
 
 ---
 

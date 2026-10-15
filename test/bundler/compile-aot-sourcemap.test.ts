@@ -20,10 +20,11 @@ try {
     compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
   }),
 };
-const note = "note: --sourcemap adds nothing to --aot";
+const note = "note: --sourcemap has no effect with --aot";
 
 async function built(flags: string[]) {
-  const dir = String(tempDir("compile-aot-sourcemap", files));
+  using folder = tempDir("compile-aot-sourcemap", files);
+  const dir = String(folder);
   await using build = spawn({
     cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
     cwd: dir,
@@ -48,13 +49,14 @@ test.each(["--sourcemap", "--sourcemap=inline", "--sourcemap=external", "--sourc
   },
 );
 
-test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external"]]])("%p: it says nothing", async flags => {
+test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external"]]])("%p: prints no note", async flags => {
   const { said } = await built(flags);
   expect(said).not.toContain(note);
 });
 
-test("bun run --aot, which asks for a source map by itself: it says nothing", async () => {
-  const dir = String(tempDir("compile-aot-sourcemap", files));
+test("bun run --aot, which requests a source map itself: prints no note", async () => {
+  using folder = tempDir("compile-aot-sourcemap", files);
+  const dir = String(folder);
   await using run = spawn({ cmd: [bunExe(), "run", "--aot", "app.ts"], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stderr).not.toContain(note);

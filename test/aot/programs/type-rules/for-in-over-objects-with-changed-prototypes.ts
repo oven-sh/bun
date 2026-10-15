@@ -19,7 +19,7 @@ class Derived2 extends Base2 { q = 2; r?: number }
 const inst = new Derived2()
 try { (Base2.prototype as any).patched = true; console.log("property added to the prototype of a class: no error") } catch (e) { console.log("property added to the prototype of a class:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(keysOf(inst).replace("r", ""))
-// What is not there is deleted without an error, as in ES.
+// Deleting an absent property is not an error, as in ECMAScript.
 try { console.log(delete (Base2.prototype as any).patched); console.log("absent property of the prototype of a class deleted: no error") } catch (e) { console.log("absent property of the prototype of a class deleted:", e instanceof TypeError ? "TypeError" : "other " + e) }
 
 const dressed: Rec = { a: 1, d: 2 }

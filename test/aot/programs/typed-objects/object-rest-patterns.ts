@@ -4,7 +4,7 @@ function show(o: object): string { return Object.keys(o).join() + " " + JSON.str
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 const props: Props = { title: "t", id: 1, style: { color: "red" }, size: 0 }
 
-// The rest object has what is left, in the order of the source, and is a new plain object.
+// The rest object has the remaining properties, in source order, and is a new plain object.
 const { id, ...withoutId } = props
 const { style, title, ...small } = props
 const { ...everything } = props
@@ -31,7 +31,7 @@ const which = "title"
 const { [which]: chosen, ...others } = props
 console.log(String(chosen), show(others))
 
-// Extras, symbols and indices behind the type land in the rest; non-enumerable ones do not.
+// Extra properties, symbols and indices added through `any` end up in the rest object; non-enumerable ones do not.
 const sym = Symbol("s")
 const dressed: Props = { id: 2, title: "d", style: { color: "c" } }
 const anyDressed: any = dressed
@@ -51,7 +51,7 @@ class Widget { x = 1; y = 2; get area() { return this.x * this.y } grow() { retu
 const { area, grow, x: wx, ...widgetRest } = new Widget()
 console.log(area, typeof grow, wx, show(widgetRest), attempt(() => grow()))
 
-// Plain data behind the type.
+// Plain data used as the type.
 const parsed: Props = JSON.parse('{"style":{"color":"j","width":1},"title":"json","more":[1],"id":9}')
 const { id: parsedId, style: { width: parsedWidth }, ...parsedRest } = parsed
 console.log(parsedId + 1, parsedWidth, show(parsedRest))

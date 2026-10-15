@@ -81,7 +81,7 @@ test.if(isLinux)("BUN_JSC_useAOTPerfMap=1 writes a map that perf reads: names, i
   }
 });
 
-test.if(isLinux)("without it there is no map and the code is the file's", async () => {
+test.if(isLinux)("without it no map is written and the code stays file-backed", async () => {
   const { path, maps } = await ran({});
   expect(() => readFileSync(path)).toThrow();
   expect(maps.split("\n").filter(line => / r-xp \S+ \S+ 0\s*$/.test(line))).toEqual([]);

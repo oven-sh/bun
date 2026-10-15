@@ -3,13 +3,12 @@
 
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
-use crate::ir::{Def, Func, Op, Program, Why, field_flags};
+use crate::ir::{Program, field_flags};
 use bun_sema::check::FieldTypes;
 use bun_sema::types::TypeId;
-use bun_sema::util::{InParallel, for_each_mut};
 
 /// `views`: the layouts that a type of the checker stands for.
-pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], in_parallel: InParallel<'_>) -> FieldTypes {
+pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], copied_to: Vec<u32>) -> FieldTypes {
     let mut view_of = vec![u32::MAX; program.layouts.len()];
     for (index, view) in views.iter().enumerate() {
         view_of[view.0.idx()] = index as u32;
@@ -17,19 +16,25 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], in_pa
     let mut together: Vec<Vec<u32>> = Vec::new();
     // By type: its number in `together`.
     let mut union_of = vec![u32::MAX; program.tys.list.len()];
+    let mut views_of_parts: Vec<u32> = Vec::new();
     for (ty, number) in union_of.iter_mut().enumerate() {
         let parts = program.tys.get(TyId::new(ty)).parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some(*layout) } else { None });
-        let mut parts: Vec<u32> = parts.filter(|layout| layout.is_some()).map(|layout| view_of[layout.idx()]).filter(|&view| view != u32::MAX).collect();
-        if parts.len() > 1 {
-            parts.sort_unstable();
+        views_of_parts.clear();
+        views_of_parts.extend(parts.filter(|layout| layout.is_some()).map(|layout| view_of[layout.idx()]).filter(|&view| view != u32::MAX));
+        if views_of_parts.len() > 1 {
+            views_of_parts.sort_unstable();
             *number = together.len() as u32;
-            together.push(parts);
+            together.push(views_of_parts.clone());
         }
     }
     let mut views_in: Vec<Vec<u32>> = Vec::with_capacity(program.tys.list.len());
     let mut unions_in: Vec<Vec<u32>> = Vec::with_capacity(program.tys.list.len());
+    let (mut passed, mut pending): (Vec<TyId>, Vec<TyId>) = (Vec::new(), Vec::new());
     for ty in 0..program.tys.list.len() {
-        let (mut found, mut unions, mut passed, mut pending) = (Vec::new(), Vec::new(), vec![TyId::new(ty)], vec![TyId::new(ty)]);
+        let (mut found, mut unions) = (Vec::new(), Vec::new());
+        passed.clear();
+        passed.push(TyId::new(ty));
+        pending.push(TyId::new(ty));
         while let Some(at) = pending.pop() {
             // What comes before this one has been gone through, all the way down.
             if at.idx() < ty {
@@ -63,19 +68,6 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], in_pa
         unions.dedup();
         unions_in.push(unions);
     }
-    let mut runs: Vec<(&[Func], Vec<u32>)> = program.funcs.chunks(256).map(|funcs| (funcs, Vec::new())).collect();
-    for_each_mut(&mut runs, in_parallel, &|(funcs, copied_to)| {
-        let casts = funcs.iter().flat_map(|func| &func.values).filter_map(|value| match value.def {
-            Def::Op(Op::Coerce { to, why: Why::Cast | Why::CastFresh | Why::Coerce | Why::CoerceFreshGraph, .. }) if to.is_some() => Some(to.0),
-            _ => None,
-        });
-        copied_to.extend(casts);
-        copied_to.sort_unstable();
-        copied_to.dedup();
-    });
-    let mut copied_to: Vec<u32> = runs.into_iter().flat_map(|run| run.1).collect();
-    copied_to.sort_unstable();
-    copied_to.dedup();
     let of_views = (views.iter())
         .map(|view| {
             let fields = program.layouts[view.0.idx()].fields.iter().filter(|field| field.name.is_some() && field.declared.is_some() && field.flags & field_flags::NEVER_STORED == 0);

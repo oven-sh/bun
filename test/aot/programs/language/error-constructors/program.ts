@@ -119,5 +119,5 @@ for (let i = 0; i < 20000; i++) {
         kept.push(e);
 }
 print(kept.map(e => e.name + ":" + e.message + ":" + typeof e.stack).join());
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [makeError, makeTypeError, makeRangeError, callError, makeWithCause, makeOfAnything, makeAggregate, reflected]; console.log("number");

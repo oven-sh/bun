@@ -350,13 +350,13 @@ pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compi
     };
     let files: Vec<&Module<'_>> = loaded.iter().zip(is_compiled).filter(|it| *it.1).filter_map(|it| it.0.as_ref()).collect();
     let scan = looked_through(&empty, &files, in_parallel);
-    let mut roots: Vec<u32> = Vec::new();
+    let mut program_roots: Vec<u32> = Vec::new();
     let mut why: FxHashMap<u32, Why> = FxHashMap::default();
     let mut add = |id: u32, reason: Why| {
-        why.entry(id).or_insert_with(|| {
-            roots.push(id);
-            reason
-        });
+        if reason != Why::Always {
+            program_roots.push(id);
+        }
+        why.entry(id).or_insert(reason);
     };
     for &id in manifest.always_included() {
         add(id, Why::Always);
@@ -392,7 +392,7 @@ pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compi
         }
     }
     let mut included: Vec<Included> = Vec::new();
-    for (id, reason) in manifest.closure(&roots) {
+    for (id, reason) in manifest.closure(&program_roots, manifest.always_included()) {
         let Some(module) = manifest.module(id) else { continue };
         if module.path.is_empty() {
             native.push((module.name.to_vec(), Some(id)));

@@ -198,17 +198,23 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--aot" type="boolean">
-  Compile JavaScript to machine code when the executable is built. Requires <code>--compile</code>. Implies <code>--bytecode</code> and{" "}
-  <code>--format=esm</code>
+  Compile JavaScript to machine code when the executable is built. Requires <code>--compile</code>. Implies{" "}
+  <code>--bytecode</code> and <code>--format=esm</code>
 </ParamField>
 
 <ParamField path="--aot-type-errors" type="string" default="throw">
-  With <code>--aot</code>: what the executable does when a value does not match its TypeScript type: <code>throw</code>, or{" "}
-  <code>log</code> to write a line to stderr and continue
+  With <code>--aot</code>: what the executable does when a value does not match its TypeScript type: <code>throw</code>,
+  or <code>log</code> to write a line to stderr and continue
 </ParamField>
 
 <ParamField path="--aot-explain" type="string">
-  With <code>--aot</code>: print a report. <code>throws</code> lists every type check that can fail when the program runs
+  With <code>--aot</code>: print a report. <code>throws</code> lists every type check that can fail when the program
+  runs
+</ParamField>
+
+<ParamField path="--no-compile-function-source" type="boolean">
+  With <code>--aot</code>: leave out the source text of functions. <code>Function.prototype.toString()</code> then
+  returns <code>[native code]</code> for them
 </ParamField>
 
 <ParamField path="--compile-jit-policy" type="number" default="1">

@@ -2109,8 +2109,10 @@ it("can continue to use existing statements after database has been GC'd", async
     expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
     stmt.finalize();
     expect(() => stmt.all()).toThrow();
+    return registry;
   }
-  await run();
+  // a FinalizationRegistry that is collected never calls its callback, so keep it reachable until the database is gone.
+  const registry = await run();
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);
@@ -2118,6 +2120,7 @@ it("can continue to use existing statements after database has been GC'd", async
     // on Windows, FinalizationRegistry is more flaky than on POSIX.
     expect(called).toBe(true);
   }
+  expect(registry).toBeInstanceOf(FinalizationRegistry);
 });
 
 it("statements should be disposable", () => {

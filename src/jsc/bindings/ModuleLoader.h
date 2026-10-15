@@ -103,10 +103,16 @@ JSValue fetchESMSourceCodeAsync(
 bool hasFilesOfCompiledProgram(JSC::JSGlobalObject*);
 JSC::JSPromise* importFileOfCompiledProgram(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
 JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject*, const String& key);
+JSC::JSPromise* sourceOfFileOfCompiledProgramThatAwaits(Zig::GlobalObject*, const String& key);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceOfCompiledNamespace);
 bool overrideExportOfCompiledNamespace(Zig::GlobalObject*, JSC::JSObject* namespaceObject, const JSC::Identifier& name, JSC::JSValue);
 JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject*, JSC::JSObject* namespaceObject);
 bool overrideExportsOfCompiledModule(Zig::GlobalObject*, const String& path, JSC::JSObject* exports);
 void noteThatRequireCacheIsRead(Zig::GlobalObject*);
+void evictCompiledModule(Zig::GlobalObject*, const String& path);
+JSC::JSObject* namespaceOfEvaluatedCompiledModule(Zig::GlobalObject*, const String& path);
+void appendEvaluatedCompiledModules(Zig::GlobalObject*, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed);
+bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,

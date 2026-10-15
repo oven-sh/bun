@@ -10,7 +10,7 @@
 import untyped from "./untyped.js";
 declare const console: any;
 const m: any = untyped;
-// Typed, and otherwise without effects: what is summed up for them is what the read of the argument does.
+// Typed, and otherwise without effects: their effect summary consists of the read of the argument.
 function typedInteger(...args: unknown[]): number { let n = 0; for (let i = args.length + 1; i >= -1; i--) if (args[i] === undefined) n++; return n; }
 function typedNumber(k: number, ...args: unknown[]): boolean { return args[k] === undefined; }
 function typedString(k: string, ...args: unknown[]): boolean { return (args as any)[k] === undefined; }

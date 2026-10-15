@@ -3,7 +3,7 @@
 import untyped from "./untyped.js";
 declare const console: any;
 const m: any = untyped;
-// Not here: a value that is a CELL and cannot be called (a string, a symbol, a bigint, a plain object): with up to as many arguments as there are registers the stub reports it, and knows no name: so it was for a call by name too.
+// Not tested here: a value that is a CELL and cannot be called (a string, a symbol, a bigint, a plain object). With no more arguments than there are registers the stub reports it and does not know the name, as for a call by name.
 const values: any[] = ["keep", 5, undefined, null, true, 1.5];
 for (let round = 0; round < 2; round++) {
   for (const v of values) {

@@ -1,0 +1,3 @@
+{
+  "skipInShell": "uses structuredClone, which the jsc shell does not provide"
+}

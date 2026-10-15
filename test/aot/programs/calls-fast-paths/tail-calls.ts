@@ -1,4 +1,4 @@
-// There are no tail calls under --aot, a documented difference: a recursion a million deep in tail position throws RangeError where plain Bun runs it, and every caller keeps its frame in stack traces.
+// Tail calls: a recursion a million deep in tail position finishes, and a caller that makes a tail call has no frame in stack traces, as in plain Bun.
 declare const console: any;
 function names(e: any): string { return String(e.stack).split("\n").map((l: string) => /(?:at )?(t_[a-z]+)/.exec(l)).filter(Boolean).map((m: any) => m[1]).join(); }
 function count(n: number, a: number): number { return n === 0 ? a : count(n - 1, a + 1); }

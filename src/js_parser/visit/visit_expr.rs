@@ -1883,6 +1883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr_in_out(&mut e_.args[0], in_);
             return;
         }
+        if !p.own_require_names.is_empty() && !p.is_control_flow_dead {
+            Self::add_file_required_by_own_require(p, &e_);
+        }
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -2536,6 +2539,64 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    fn add_file_required_by_own_require(p: &mut Self, e_: &E::Call) {
+        let (Data::EIdentifier(target), [argument]) = (e_.target.data, e_.args.slice()) else {
+            return;
+        };
+        if p.own_require_names.contains(&p.load_name_from_ref(target.ref_)) {
+            Self::add_files_named_by(p, argument);
+        }
+    }
+
+    fn add_files_named_by(p: &mut Self, specifier: &Expr) {
+        match specifier.data {
+            Data::EString(string) => {
+                if let Ok(text) = string.string(p.arena) {
+                    let index =
+                        p.add_import_record(bun_ast::ImportKind::Require, specifier.loc, text);
+                    p.import_records.items_mut()[index as usize]
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                }
+            }
+            Data::EIf(choice) => {
+                Self::add_files_named_by(p, &choice.yes);
+                Self::add_files_named_by(p, &choice.no);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn is_create_require_for_this_file(&self, value: &Expr) -> bool {
+        let Data::ECall(call) = value.data else {
+            return false;
+        };
+        let [argument] = call.args.slice() else {
+            return false;
+        };
+        let is_named = |e: &Expr, names: &[&[u8]]| match e.data {
+            Data::EIdentifier(identifier) => names.contains(&self.load_name_from_ref(identifier.ref_)),
+            _ => false,
+        };
+        let is_import_meta = |e: &Expr, names: &[&[u8]]| match e.data {
+            Data::EDot(dot) => matches!(dot.target.data, Data::EImportMeta(..)) && names.contains(&dot.name.slice()),
+            _ => false,
+        };
+        let makes_require = match call.target.data {
+            Data::EDot(dot) => dot.name.slice() == b"createRequire",
+            _ => is_named(&call.target, &[b"createRequire"]) || is_named(&call.target, &self.create_require_names),
+        };
+        makes_require
+            && match argument.data {
+                Data::EBinary(sum) => {
+                    sum.op == Op::BinAdd
+                        && (is_import_meta(&sum.left, &[b"dirname", b"dir"]) || is_named(&sum.left, &[b"__dirname"]))
+                        && matches!(sum.right.data, Data::EString(slash) if slash.eql_comptime(b"/"))
+                }
+                _ => is_import_meta(argument, &[b"url", b"filename", b"path"]) || is_named(argument, &[b"__filename"]),
+            }
+    }
+
     fn add_worker_entry_point(p: &mut Self, e_: &E::New) {
         let is_named = |p: &Self, target: &Expr, name: &[u8]| match target.data {
             Data::EIdentifier(identifier) => p.load_name_from_ref(identifier.ref_) == name,
@@ -2587,7 +2648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         };
         if !is_path(text) {
-            if text.contains(&b':') {
+            if bun_core::strings::contains_char(text, b':') {
                 return;
             }
             text = p.arena.alloc_slice_copy(&[b"./", text].concat());

@@ -12,14 +12,15 @@
 //! every fragment that has to know its fields defines it, all alike, and the link keeps one. See `link`.
 
 use crate::build::Problem;
-use crate::declared::DeclaredTable;
+use crate::declared::{Declared, DeclaredTable, Part};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Block, Def, Field, Func, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, Strs, Value, Why};
+use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, Strs, Value, Why};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
-use std::sync::Mutex;
+use std::hash::{BuildHasher, Hash};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 // ───────────────────────────── keys ─────────────────────────────
 
@@ -218,7 +219,7 @@ pub struct ModulePart {
 }
 
 impl ModulePart {
-    pub fn find_what_is_handed_through(&mut self, func: &Func) {
+    pub fn find_passed_through_values(&mut self, func: &Func) {
         let ((from, start), (to, _)) = (self.from, self.to);
         if from == to || func.blocks[to.idx()].params.is_empty() {
             return;
@@ -387,6 +388,9 @@ pub struct Fragment {
     pub builtin_functions: Vec<(u32, FuncKey, u32)>,
     /// How many times the file has been translated, this time included: more than once if a task was invalid.
     pub times_translated: u32,
+    pub program_ids: LocalToProgram,
+    pub summary: Summary,
+    pub outline: Outline,
 }
 
 /// In the place of the file of a fragment.
@@ -515,7 +519,7 @@ fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
-    let Value { def, pos: _, ty, prediction, finds_initialized: _ } = value;
+    let Value { def, pos: _, ty, prediction, finds_initialized: _, is_in_tail_position: _ } = value;
     pass!(ids.ty(ty));
     match prediction {
         Prediction::None => {}
@@ -554,6 +558,7 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         may_be_frozen: _,
         admits_foreign: _,
         is_opened_for_the_log: _,
+        admits_only_other_layouts: _,
         members,
         members_by_fit,
         specializations,
@@ -709,6 +714,309 @@ impl Mentioning {
     }
 }
 
+// ───────────────────────────── program-wide ids ─────────────────────────────
+
+#[derive(Default)]
+pub struct LocalToProgram {
+    pub strs: Vec<u32>,
+    pub tys: Vec<u32>,
+    pub layouts: Vec<u32>,
+    pub globals: Vec<u32>,
+    pub funcs: Vec<u32>,
+}
+
+pub mod outline_flags {
+    pub const HAS_HEADER: u8 = 1;
+    pub const HAS_BODY: u8 = 1 << 1;
+    pub const IS_CONSTRUCTOR: u8 = 1 << 2;
+    pub const HAS_PARTS: u8 = 1 << 3;
+    pub const EVALUATES_MODULE: u8 = 1 << 4;
+    pub const RUNS_AT_START: u8 = 1 << 5;
+}
+
+#[derive(Copy, Clone)]
+pub struct FunctionOutline {
+    start: u32,
+    ends: [u32; Outline::LISTS],
+    pub class: LayoutId,
+    pub module: ModuleId,
+    pub name: StrId,
+    pub file: FileId,
+    pub captures: u32,
+    pub flags: u8,
+}
+
+impl FunctionOutline {
+    pub fn has(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+
+    pub fn list(&self, list: usize) -> std::ops::Range<usize> {
+        (if list == 0 { self.start } else { self.ends[list - 1] }) as usize..self.ends[list] as usize
+    }
+}
+
+#[derive(Default)]
+pub struct Outline {
+    pub funcs: Vec<FunctionOutline>,
+    pub local: Vec<u32>,
+    pub program: Vec<u32>,
+}
+
+impl Outline {
+    pub const HEADER_TYS: usize = 0;
+    pub const STRS: usize = 1;
+    pub const TYS: usize = 2;
+    pub const LAYOUTS: usize = 3;
+    pub const GLOBALS: usize = 4;
+    pub const CALLED: usize = 5;
+    pub const VALUES: usize = 6;
+    pub const CLASSES_AS_VALUES: usize = 7;
+    pub const DECLARES: usize = 8;
+    const LISTS: usize = 9;
+
+    fn add(&mut self, locals: impl Iterator<Item = u32>, ids: &[u32]) -> u32 {
+        for local in locals {
+            self.local.push(local);
+            self.program.push(if local == u32::MAX { local } else { ids[local as usize] });
+        }
+        self.local.len() as u32
+    }
+
+    fn make_room<'a>(&mut self, functions: impl Iterator<Item = &'a Function>) {
+        let of_header = |function: &Function| function.func.as_ref().map_or(0, |func| 2 + func.captures.len() + func.params.len());
+        let of_body = |function: &Function| function.body.as_ref().map_or(0, |body| body.mentions.all.len() + body.classes_as_values.len() + body.declares.len());
+        let room: usize = functions.map(|function| of_header(function) + of_body(function)).sum();
+        self.local.reserve_exact(room);
+        self.program.reserve_exact(room);
+    }
+
+    pub fn of_function(&mut self, function: &Function, file_of_fragment: FileId, ids: &LocalToProgram) -> FunctionOutline {
+        use outline_flags::{EVALUATES_MODULE, HAS_BODY, HAS_HEADER, HAS_PARTS, IS_CONSTRUCTOR};
+        self.make_room(std::iter::once(function));
+        let start = self.local.len() as u32;
+        let runs_at_start = matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleTouch(_) | FuncKey::ModuleSettling(_));
+        let mut outline = FunctionOutline { start, ends: [start; Outline::LISTS], class: LayoutId::NONE, module: ModuleId::NONE, name: StrId::NONE, file: function.key.file(), captures: 0, flags: if runs_at_start { outline_flags::RUNS_AT_START } else { 0 } };
+        if let Some(func) = &function.func {
+            outline.flags |= HAS_HEADER | if func.kind == FuncKind::Constructor { IS_CONSTRUCTOR } else { 0 };
+            (outline.module, outline.name, outline.captures) = (func.module, func.name, func.captures.len() as u32);
+            outline.ends[Outline::HEADER_TYS] = self.add([func.this_declared, func.result].into_iter().chain(func.captures.iter().copied()).chain(func.params.iter().copied()).map(|ty| ty.0), &ids.tys);
+        }
+        let end_of_header = outline.ends[Outline::HEADER_TYS];
+        outline.ends[Outline::STRS..].fill(end_of_header);
+        if let Some(body) = &function.body {
+            outline.flags |= HAS_BODY | if body.parts.is_empty() { 0 } else { HAS_PARTS } | if function.key == FuncKey::Module(file_of_fragment) { EVALUATES_MODULE } else { 0 };
+            outline.class = body.class;
+            outline.ends[Outline::STRS] = self.add(body.mentions.strs().map(|id| id.0), &ids.strs);
+            outline.ends[Outline::TYS] = self.add(body.mentions.tys().map(|id| id.0), &ids.tys);
+            outline.ends[Outline::LAYOUTS] = self.add(body.mentions.layouts().map(|id| id.0), &ids.layouts);
+            outline.ends[Outline::GLOBALS] = self.add(body.mentions.globals().map(|id| id.0), &ids.globals);
+            outline.ends[Outline::CALLED] = self.add(body.mentions.called().map(|id| id.0), &ids.funcs);
+            outline.ends[Outline::VALUES] = self.add(body.mentions.values().map(|id| id.0), &ids.funcs);
+            outline.ends[Outline::CLASSES_AS_VALUES] = self.add(body.classes_as_values.iter().map(|id| id.0), &ids.layouts);
+            outline.ends[Outline::DECLARES] = self.add(body.declares.iter().map(|id| id.0), &ids.layouts);
+        }
+        outline
+    }
+}
+
+#[derive(Copy, Clone)]
+pub enum RuntimeModule {
+    Number(i64),
+    Name(StrId),
+}
+
+#[derive(Default)]
+pub struct Summary {
+    pub runtime_modules: Vec<(u32, RuntimeModule)>,
+    pub entries_and_second_bodies: Vec<u32>,
+    pub run_at_evaluation: Vec<u32>,
+    pub with_alterations: Vec<u32>,
+}
+
+impl Summary {
+    fn of(fragment: &Fragment) -> Summary {
+        let mut summary = Summary::default();
+        let [require_builtin, require_external, import_external] = [&b"RequireBuiltinModule"[..], b"RequireExternalModule", b"ImportExternalModule"].map(|name| fragment.strs.find(name).unwrap_or(StrId::NONE));
+        for (index, function) in fragment.funcs.iter().enumerate() {
+            let index = index as u32;
+            if matches!(function.key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::ModuleDriver(file) | FuncKey::ModuleInner(file) | FuncKey::Required(file) if file == fragment.file) {
+                summary.run_at_evaluation.push(index);
+            }
+            let (Some(func), Some(body)) = (&function.func, &function.body) else { continue };
+            if matches!(function.key, FuncKey::EntryBeside(..) | FuncKey::SecondBody(..)) {
+                summary.entries_and_second_bodies.push(index);
+            }
+            if body.notes.has_alterations() {
+                summary.with_alterations.push(index);
+            }
+            for value in &func.values {
+                let found = match &value.def {
+                    Def::Op(Op::Operation { name, args }) if !args.is_empty() && *name == require_builtin => match func.op(args[0]) {
+                        Some(&Op::Int(number)) => Some(RuntimeModule::Number(number)),
+                        _ => None,
+                    },
+                    Def::Op(Op::Operation { name, args }) if !args.is_empty() && (*name == require_external || *name == import_external) => crate::link::constant_string(func, args[0]).map(RuntimeModule::Name),
+                    Def::Op(Op::ExternalModule(name)) => Some(RuntimeModule::Name(*name)),
+                    _ => None,
+                };
+                summary.runtime_modules.extend(found.map(|module| (index, module)));
+            }
+        }
+        summary
+    }
+}
+
+const SHARDS: usize = 64;
+
+fn shard_of(hash: u64) -> usize {
+    ((hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58) as usize
+}
+
+fn locked<T>(shard: &Mutex<T>) -> MutexGuard<'_, T> {
+    shard.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+struct InternerShard<K> {
+    keys: Vec<K>,
+    hashes: Vec<u64>,
+    ids: hashbrown::HashTable<u32>,
+}
+
+pub struct Interner<K> {
+    shards: Vec<Mutex<InternerShard<K>>>,
+}
+
+impl<K: Hash + Eq + Clone> Interner<K> {
+    fn new() -> Interner<K> {
+        Interner { shards: (0..SHARDS).map(|_| Mutex::new(InternerShard { keys: Vec::new(), hashes: Vec::new(), ids: hashbrown::HashTable::new() })).collect() }
+    }
+
+    fn intern(&self, key: K) -> u32 {
+        let hash = rustc_hash::FxBuildHasher.hash_one(&key);
+        let shard_number = shard_of(hash);
+        let mut shard = locked(&self.shards[shard_number]);
+        let InternerShard { keys, hashes, ids } = &mut *shard;
+        if let Some(&index) = ids.find(hash, |&index| keys[index as usize] == key) {
+            return index * SHARDS as u32 + shard_number as u32;
+        }
+        let index = keys.len() as u32;
+        keys.push(key);
+        hashes.push(hash);
+        ids.insert_unique(hash, index, |&index| hashes[index as usize]);
+        index * SHARDS as u32 + shard_number as u32
+    }
+
+    pub fn find(&self, key: &K) -> Option<u32> {
+        let hash = rustc_hash::FxBuildHasher.hash_one(key);
+        let shard_number = shard_of(hash);
+        let shard = locked(&self.shards[shard_number]);
+        let index = *shard.ids.find(hash, |&index| shard.keys[index as usize] == *key)?;
+        Some(index * SHARDS as u32 + shard_number as u32)
+    }
+
+    pub fn key(&self, id: u32) -> K {
+        locked(&self.shards[id as usize % SHARDS]).keys[id as usize / SHARDS].clone()
+    }
+
+    pub fn bound(&self) -> usize {
+        SHARDS * self.shards.iter().map(|shard| locked(shard).keys.len()).max().unwrap_or(0)
+    }
+}
+
+pub struct ProgramIds {
+    strs: Vec<Mutex<Strs>>,
+    tys: Interner<Declared>,
+    pub layouts: Interner<LayoutKey>,
+    pub globals: Interner<GlobalKey>,
+    pub funcs: Interner<FuncKey>,
+}
+
+impl Default for ProgramIds {
+    fn default() -> ProgramIds {
+        ProgramIds { strs: (0..SHARDS).map(|_| Mutex::new(Strs::default())).collect(), tys: Interner::new(), layouts: Interner::new(), globals: Interner::new(), funcs: Interner::new() }
+    }
+}
+
+impl ProgramIds {
+    pub fn str(&self, hash: u64, bytes: &[u8]) -> u32 {
+        let shard_number = shard_of(hash);
+        locked(&self.strs[shard_number]).intern_hashed(hash, bytes).0 * SHARDS as u32 + shard_number as u32
+    }
+
+    pub fn bound_of_strs(&self) -> usize {
+        SHARDS * self.strs.iter().map(|shard| locked(shard).len()).max().unwrap_or(0)
+    }
+
+    pub fn bound_of_tys(&self) -> usize {
+        self.tys.bound()
+    }
+
+    pub fn assign(&self, fragment: &mut Fragment) {
+        let strs: Vec<u32> = (0..fragment.strs.len()).map(StrId::new).map(|id| self.str(fragment.strs.hash(id), fragment.strs.get(id))).collect();
+        let layouts: Vec<u32> = fragment.layouts.iter().map(|shape| self.layouts.intern(shape.key)).collect();
+        let globals: Vec<u32> = fragment.globals.iter().map(|variable| self.globals.intern(variable.key.clone())).collect();
+        let funcs: Vec<u32> = fragment.funcs.iter().map(|function| self.funcs.intern(function.key)).collect();
+        let mut tys: Vec<u32> = Vec::with_capacity(fragment.tys.list.len());
+        for Declared { prims, ints, parts, any_object, any_function } in &fragment.tys.list {
+            let ty = |local: TyId| if local.is_none() { local } else { TyId(tys[local.idx()]) };
+            let mut parts: smallvec::SmallVec<[Part; 1]> = (parts.iter())
+                .map(|part| match part {
+                    Part::Class(layout) => Part::Class(if layout.is_none() { *layout } else { LayoutId(layouts[layout.idx()]) }),
+                    Part::Global(name, arguments) => Part::Global(if name.is_none() { *name } else { StrId(strs[name.idx()]) }, arguments.iter().map(|&argument| ty(argument)).collect()),
+                    Part::Array(element) => Part::Array(ty(*element)),
+                })
+                .collect();
+            parts.sort_unstable();
+            tys.push(self.tys.intern(Declared { prims: *prims, ints: *ints, parts, any_object: *any_object, any_function: *any_function }));
+        }
+        fragment.program_ids = LocalToProgram { strs, tys, layouts, globals, funcs };
+        fragment.summary = Summary::of(fragment);
+        fragment.tys.close();
+    }
+}
+
+impl Outline {
+    pub fn of_functions(functions: &mut [Function], first: usize, file_of_fragment: FileId, ids: &LocalToProgram, is_in_the_index: &dyn Fn(usize, u32) -> bool) -> Outline {
+        let is_in_the_index: Vec<bool> = ids.funcs[first..first + functions.len()].iter().enumerate().map(|(index, &id)| is_in_the_index(first + index, id)).collect();
+        let mut outline = Outline::default();
+        outline.make_room(functions.iter().zip(&is_in_the_index).filter(|function| *function.1).map(|function| function.0));
+        outline.funcs = (functions.iter().zip(&is_in_the_index))
+            .map(|(function, &is_in_the_index)| match is_in_the_index {
+                true => outline.of_function(function, file_of_fragment, ids),
+                false => outline.of_function(&Function { key: function.key, func: None, body: None }, file_of_fragment, ids),
+            })
+            .collect();
+        for body in functions.iter_mut().filter_map(|function| function.body.as_mut()) {
+            body.mentions = Mentions::default();
+        }
+        outline
+    }
+
+    pub fn append(&mut self, mut following: Outline) {
+        if self.funcs.is_empty() {
+            return *self = following;
+        }
+        let before = self.local.len() as u32;
+        for function in &mut following.funcs {
+            function.start += before;
+            function.ends.iter_mut().for_each(|end| *end += before);
+        }
+        self.funcs.reserve_exact(following.funcs.len());
+        self.funcs.append(&mut following.funcs);
+        self.local.reserve_exact(following.local.len());
+        self.local.append(&mut following.local);
+        self.program.reserve_exact(following.program.len());
+        self.program.append(&mut following.program);
+    }
+}
+
+impl Fragment {
+    pub fn make_outline(&mut self) {
+        self.outline = Outline::of_functions(&mut self.funcs, 0, self.file, &self.program_ids, &|_, _| true);
+    }
+}
+
 // ───────────────────────────── handing them in ─────────────────────────────
 
 /// Where the tasks of a check put the fragments. An invalid task is retried, and its files are translated again: the last fragment of
@@ -716,18 +1024,24 @@ impl Mentioning {
 pub struct Fragments {
     /// By `FileId`.
     by_file: Vec<Mutex<Option<Box<Fragment>>>>,
+    pub program_ids: ProgramIds,
 }
 
 impl Fragments {
     /// `files`: how many the program has.
     pub fn new(files: usize) -> Fragments {
-        Fragments { by_file: (0..files).map(|_| Mutex::new(None)).collect() }
+        Fragments { by_file: (0..files).map(|_| Mutex::new(None)).collect(), program_ids: ProgramIds::default() }
     }
 
     pub fn put(&self, mut fragment: Box<Fragment>) {
+        self.program_ids.assign(&mut fragment);
         let mut place = self.by_file[fragment.file.idx()].lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         fragment.times_translated += place.as_ref().map_or(0, |earlier| earlier.times_translated);
         *place = Some(fragment);
+    }
+
+    pub fn is_any_of(&self, test: &dyn Fn(FileId) -> bool) -> bool {
+        self.by_file.iter().any(|place| place.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().is_some_and(|fragment| test(fragment.file)))
     }
 
     /// Once every task has ended.

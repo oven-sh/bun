@@ -1,5 +1,5 @@
-// `a[i]!` as an operand of `<`, `<=`, `>`, `>=` or of arithmetic on numbers asserts nothing: where there is no such element the
-// operator does what it does with `undefined`. A loop may end by reading one past the end.
+// `a[i]!` as an operand of `<`, `<=`, `>`, `>=` or of arithmetic on numbers asserts nothing: where the element
+// is missing the operator does what it does with `undefined`. A loop may end by reading one past the end.
 function lastDue(offsets: number[], end: number) {
   let last = -1
   while (offsets[last + 1]! <= end) last++

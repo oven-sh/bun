@@ -15,9 +15,12 @@ use crate::check::task::Stored;
 use crate::program::{FileId, Sym};
 use crate::bind::{ScopeKind, SymFlags};
 use crate::hir::{Keyword, TypeNodeId, TypeNodeKind};
+use crate::local::MaybeLocal;
 use crate::types::{ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, Prop, PropFlags, PropSource, Provenance, Shape, SigId, TypeData, TypeId, Types, UnionOrigin, Visitor, tf};
 use crate::util::FxHashMap;
+use crate::util::memory::Cells;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 128 bits. Two types with one identity are taken for the same type.
 pub type Identity = [u64; 2];
@@ -31,6 +34,31 @@ pub(super) struct State {
     components: FxHashMap<ComponentsId, Identity>,
     /// `Checker::type_parameters_named_within`
     named_within: FxHashMap<(FileId, TypeNodeId), Option<Vec<Sym>>>,
+}
+
+#[derive(Default)]
+struct Identities(Cells<AtomicU64>);
+
+impl Identities {
+    #[inline]
+    fn get(&self, number: u32) -> Option<Identity> {
+        let first = self.0.cell(2 * number).load(Ordering::Acquire);
+        (first != 0).then(|| [first, self.0.cell(2 * number + 1).load(Ordering::Relaxed)])
+    }
+
+    fn put(&self, number: u32, identity: Identity) -> bool {
+        self.0.cell(2 * number + 1).store(identity[1], Ordering::Relaxed);
+        self.0.cell(2 * number).store(identity[0], Ordering::Release);
+        identity[0] != 0
+    }
+}
+
+#[derive(Default)]
+pub(super) struct Shared {
+    types: Identities,
+    sigs: Identities,
+    mappers: Identities,
+    components: Identities,
 }
 
 /// What takes the checker to say: how a record would look to every task.
@@ -48,6 +76,8 @@ trait Normalizer {
 struct Known<'a> {
     state: &'a mut State,
     checker: &'a mut dyn Normalizer,
+    shared: &'a Shared,
+    times_checker_was_asked: u32,
 }
 
 /// Which kind of record is hashed: no two kinds share an identity.
@@ -138,6 +168,7 @@ impl Walker for Identify<'_, '_, '_, '_> {
     }
 
     fn intersected(&mut self, members: &[TypeId]) {
+        self.known.times_checker_was_asked += 1;
         let members = self.known.checker.members_of_intersection(members);
         self.distinct(&members);
     }
@@ -324,9 +355,17 @@ impl Records<'_, '_> {
     }
 
     fn of_type(self, known: &mut Known<'_>, ty: TypeId) -> Identity {
-        if let Some(&identity) = known.state.types.get(&ty) {
+        if !ty.is_local()
+            && let Some(identity) = known.shared.types.get(ty.0)
+        {
             return identity;
         }
+        if let Some(&identity) = known.state.types.get(&ty) {
+            known.times_checker_was_asked += 1;
+            return identity;
+        }
+        let asked_before = known.times_checker_was_asked;
+        known.times_checker_was_asked += u32::from(matches!(self.types.get(ty), TypeData::Intersection(_) | TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }));
         // `A & A` is `A` to whoever sees that they are one.
         let members = match self.types.get(ty) {
             TypeData::Union(members) => members.to_vec(),
@@ -336,7 +375,9 @@ impl Records<'_, '_> {
         if let Some((&first, rest)) = members.split_first() {
             let only = self.of_type(known, first);
             if rest.iter().all(|&member| self.of_type(known, member) == only) {
-                known.state.types.insert(ty, only);
+                if ty.is_local() || known.times_checker_was_asked != asked_before || !known.shared.types.put(ty.0, only) {
+                    known.state.types.insert(ty, only);
+                }
                 return only;
             }
         }
@@ -355,18 +396,29 @@ impl Records<'_, '_> {
             None => self.walk_type(ty, &mut it),
         }
         let identity = it.lanes.0;
-        known.state.types.insert(ty, identity);
+        if ty.is_local() || known.times_checker_was_asked != asked_before || !known.shared.types.put(ty.0, identity) {
+            known.state.types.insert(ty, identity);
+        }
         identity
     }
 
     fn of_sig(self, known: &mut Known<'_>, sig: SigId) -> Identity {
-        if let Some(&identity) = known.state.sigs.get(&sig) {
+        if !sig.is_local()
+            && let Some(identity) = known.shared.sigs.get(sig.0)
+        {
             return identity;
         }
+        if let Some(&identity) = known.state.sigs.get(&sig) {
+            known.times_checker_was_asked += 1;
+            return identity;
+        }
+        let asked_before = known.times_checker_was_asked;
         let mut it = Identify::new(self, known, Of::Sig);
         self.types.sig(sig).visit(&mut it);
         let identity = it.lanes.0;
-        known.state.sigs.insert(sig, identity);
+        if sig.is_local() || known.times_checker_was_asked != asked_before || !known.shared.sigs.put(sig.0, identity) {
+            known.state.sigs.insert(sig, identity);
+        }
         identity
     }
 
@@ -375,13 +427,22 @@ impl Records<'_, '_> {
         if mapper == MapperId::IDENTITY {
             return [Of::Mapper as u64, 0];
         }
-        if let Some(&identity) = known.state.mappers.get(&mapper) {
+        if !mapper.is_local()
+            && let Some(identity) = known.shared.mappers.get(mapper.0)
+        {
             return identity;
         }
+        if let Some(&identity) = known.state.mappers.get(&mapper) {
+            known.times_checker_was_asked += 1;
+            return identity;
+        }
+        let asked_before = known.times_checker_was_asked;
         let mut it = Identify::new(self, known, Of::Mapper);
         it.unordered(self.types.mapping(mapper));
         let identity = it.lanes.0;
-        known.state.mappers.insert(mapper, identity);
+        if mapper.is_local() || known.times_checker_was_asked != asked_before || !known.shared.mappers.put(mapper.0, identity) {
+            known.state.mappers.insert(mapper, identity);
+        }
         identity
     }
 
@@ -389,13 +450,22 @@ impl Records<'_, '_> {
         if components == ComponentsId::NONE {
             return [Of::Components as u64, 0];
         }
-        if let Some(&identity) = known.state.components.get(&components) {
+        if !components.is_local()
+            && let Some(identity) = known.shared.components.get(components.0)
+        {
             return identity;
         }
+        if let Some(&identity) = known.state.components.get(&components) {
+            known.times_checker_was_asked += 1;
+            return identity;
+        }
+        let asked_before = known.times_checker_was_asked;
         let mut it = Identify::new(self, known, Of::Components);
         self.types.components(components).visit(&mut it);
         let identity = it.lanes.0;
-        known.state.components.insert(components, identity);
+        if components.is_local() || known.times_checker_was_asked != asked_before || !known.shared.components.put(components.0, identity) {
+            known.state.components.insert(components, identity);
+        }
         identity
     }
 }
@@ -403,6 +473,11 @@ impl Records<'_, '_> {
 impl Checker<'_, '_> {
     /// What the type is called by what outlives the task.
     pub fn identity_of_type(&mut self, ty: TypeId) -> Identity {
+        if !ty.is_local()
+            && let Some(identity) = self.p.aot.identity.types.get(ty.0)
+        {
+            return identity;
+        }
         match self.aot.identity.types.get(&ty) {
             Some(&identity) => identity,
             None => self.with_known(|records, known| records.of_type(known, ty)),
@@ -414,7 +489,8 @@ impl Checker<'_, '_> {
         // The checker keeps what it looks up itself.
         let mut state = std::mem::take(&mut self.aot.identity);
         self.aot.identity.named_within = std::mem::take(&mut state.named_within);
-        let result = walk(records, &mut Known { state: &mut state, checker: self });
+        let program = self.p;
+        let result = walk(records, &mut Known { state: &mut state, checker: self, shared: &program.aot.identity, times_checker_was_asked: 0 });
         state.named_within = std::mem::take(&mut self.aot.identity.named_within);
         self.aot.identity = state;
         result
@@ -573,7 +649,7 @@ mod tests {
     }
 
     fn with<T>(records: Records<'_, '_>, state: &mut State, walk: impl FnOnce(&mut Known<'_>) -> T) -> T {
-        walk(&mut Known { state, checker: &mut AsItIs(records.types) })
+        walk(&mut Known { state, checker: &mut AsItIs(records.types), shared: &Shared::default(), times_checker_was_asked: 0 })
     }
 
     fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -668,7 +744,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn the_way_to_the_first_difference_is_found() {
+    fn finds_path_to_first_difference() {
         let session = Session::new();
         let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let own = OwnStore::new_in(session.arena());
@@ -700,7 +776,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn a_type_keeps_its_identity_when_it_is_published() {
+    fn published_type_keeps_its_identity() {
         let session = Session::new();
         let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
         let mut first = OwnStore::new_in(session.arena());

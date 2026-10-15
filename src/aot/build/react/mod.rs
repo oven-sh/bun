@@ -341,7 +341,7 @@ impl<'a> Report<'a> {
         let all = |run: &mut Run<'_, '_, '_, '_>| candidates.iter().map(|candidate| run.compile(candidate)).collect::<Vec<Outcome>>();
         let outcomes = run(&mut build, file, Numbering::Dense, all);
 
-        let line_of = |pos: u32| hir.text[..(pos as usize).min(hir.text.len())].iter().filter(|&&byte| byte == b'\n').count() + 1;
+        let line_of = |pos: u32| bun_core::strings::count_char(&hir.text[..(pos as usize).min(hir.text.len())], b'\n') + 1;
         let title = |candidate: &Candidate| {
             let name = candidate.name.as_deref().map_or("(anonymous)".into(), String::from_utf8_lossy);
             format!("{shown}:{}: {name}", line_of(hir[candidate.func].start))

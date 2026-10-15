@@ -81,6 +81,9 @@ impl NoUnsafeTypeAssertion {
         }
 
         if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
+            if node.ts_node().is_left_to_aot_outside_data() {
+                return;
+            }
             cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_expression_any.sender))
@@ -105,6 +108,9 @@ impl NoUnsafeTypeAssertion {
             return;
         }
 
+        if node.ts_node().is_left_to_aot_outside_data() {
+            return;
+        }
         let mut message = UNSAFE_TYPE_ASSERTION;
         if is_type_parameter(asserted_type) {
             match asserted_type.get_base_constraint_of_type() {

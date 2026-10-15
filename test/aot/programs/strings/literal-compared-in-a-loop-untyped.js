@@ -1,4 +1,4 @@
-// `v === "literal"` in a loop gives the same answer whatever the string is made of: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings (the same program without type annotations).
+// `v === "literal"` in a loop gives the same answer however the string was created: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings (the same program without type annotations).
 const base = "xx-b-text-a longer one!-\u0416b";
 function made(text) {
   const rope = text.slice(0, 1) + text.slice(1), flat = text.slice(0, 1) + text.slice(1);

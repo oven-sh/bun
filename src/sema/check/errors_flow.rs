@@ -102,7 +102,7 @@ impl Checker<'_, '_> {
             self.reported_unreachable_nodes.push(next);
         }
         let end = self.end_of_stmt(file, last);
-        let is_error = self.p.files.options.allow_unreachable_code == Some(false) && !self.is_held_to_the_fixed_set(file);
+        let is_error = self.p.files.options.allow_unreachable_code == Some(false) && !self.is_restricted_to_fixed_set(file);
         let diagnostic = self.new_diagnostic((file, hir[s].start, end), 7027, &[]);
         self.add_error_or_suggestion(is_error, diagnostic);
         true
@@ -195,7 +195,7 @@ impl Checker<'_, '_> {
             // A getter without a symbol: the setter's parameter annotation, or else the type
             // inferred from the body.
             Some(self.return_type_of_fn(file, func))
-        } else if self.p.files.options.no_implicit_returns && !self.is_held_to_the_fixed_set(file) {
+        } else if self.p.files.options.no_implicit_returns && !self.is_restricted_to_fixed_set(file) {
             None
         } else {
             return;
@@ -224,7 +224,7 @@ impl Checker<'_, '_> {
             {
                 2366
             }
-            _ if self.p.files.options.no_implicit_returns && !self.is_held_to_the_fixed_set(file) => {
+            _ if self.p.files.options.no_implicit_returns && !self.is_restricted_to_fixed_set(file) => {
                 if declared.is_none() {
                     if !has_explicit_return {
                         return;

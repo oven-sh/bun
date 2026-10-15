@@ -50,6 +50,7 @@ pub(crate) enum Intrinsic {
     PublicGlobal(&'static str),
     /// `Op::FreeGet` of the name behind `PRIVATE_NAME_PREFIX`.
     PrivateGlobal,
+    ReplaceablePrivateGlobal,
     /// The key is the name behind `PRIVATE_NAME_PREFIX`.
     PrivateName,
     /// `Manifest::macro_for_call` says what the call stands for.
@@ -235,7 +236,7 @@ const ROWS: &[(&[u8], Position, Intrinsic)] = &[
     (b"newResolvedPromise", Position::Call, Intrinsic::LinkTimeConstant(23)),
     (b"newRustFunction", Position::Call, Intrinsic::Macro),
     (b"orderedHashTableSentinel", Position::Value, Intrinsic::LinkTimeConstant(25)),
-    (b"overridableRequire", Position::Value, Intrinsic::PrivateGlobal),
+    (b"overridableRequire", Position::Value, Intrinsic::ReplaceablePrivateGlobal),
     (b"overriddenName", Position::Value, Intrinsic::Directive),
     (b"ownKeys", Position::Call, Intrinsic::LinkTimeConstant(26)),
     (b"peekPromiseSettledValue", Position::Call, Intrinsic::PrivateGlobal),

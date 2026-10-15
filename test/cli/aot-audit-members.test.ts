@@ -35,13 +35,13 @@ function answers(stdout: string) {
 
 describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outside object to the same members", () => {
   test.each([
-    ["shapes", 65, 25],
+    ["shapes", 65, 19],
     ["open", 109, 10],
-    ["objects", 76, 30],
+    ["objects", 76, 29],
     ["members", 70, 30],
     ["kinds", 34, 34],
     ["roads", 128, 20],
-    ["reads", 60, 20],
+    ["reads", 60, 18],
     ["twice", 8, 2],
     ["stored", 17, 2],
     ["rings", 11, 4],
@@ -49,7 +49,7 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
     ["classes", 69, 30],
     ["calls", 14, 13],
     ["served", 11, 4],
-    ["attributes", 33, 12],
+    ["attributes", 33, 10],
     ["absent", 21, 6],
     ["unmarked", 20, 17],
     ["siblings", 4, 0],

@@ -51,7 +51,7 @@ function look(label: string, constants: string[], computed: string[], typed: any
     out.push(unseen(read)(typed), unseen(read)(parsed), unseen(read)(byKey), map.size, set.size, [...map.values()].join("/"), Object.keys({ ...parsed, ...typed, ...byKey }).length);
     print(label + ": " + out.join());
 }
-// The text made at run time becomes an atom first: as a key of an object, and by JSON.parse. No constant of that text has been asked for yet: these two functions are the first to do so.
+// The string created at run time becomes an atom first: as a key of an object, and through JSON.parse. No constant with that text has been requested yet: these two functions are the first to do so.
 const early = [made("made", "First", "Alpha"), made("madeFirst", "Beta")];
 const warm: any = {}; for (const k of early) warm[k] = 1; JSON.parse('{"madeFirstAlpha":1,"madeFirstBeta":2}');
 function firstConstants(): string[] { return ["madeFirstAlpha", "madeFirstBeta"]; }

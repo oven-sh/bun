@@ -16,6 +16,6 @@ show("last", () => new Last(other));
 show("only", () => new Only(other));
 show("function", () => new Old(other));
 show("run", () => run({}, other));
-// What is no object and not null is ignored by the accessor.
+// The accessor ignores a value that is neither an object nor null.
 { const o = new First(5); console.log("a number", Object.getPrototypeOf(o) === First.prototype, own(o, "__proto__"), o.t); }
 { const o = new First(null); console.log("null", Object.getPrototypeOf(o), Object.keys(o).join()); }

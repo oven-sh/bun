@@ -1,5 +1,5 @@
-// `const x = a[i]!` that is tested before it is used: the test takes the missing element away, as in JavaScript. Every use of `x`
-// stands behind such a test, or is itself a test, a comparison or arithmetic on numbers.
+// `const x = a[i]!` that is tested before it is used: the test handles the missing element, as in JavaScript.
+// Every use of `x` follows such a test, or is itself a test, a comparison or arithmetic on numbers.
 type Box = { v: number }
 const boxes: Box[] = [{ v: 1 }, { v: 2 }]
 const numbers = [10, 0, 30]

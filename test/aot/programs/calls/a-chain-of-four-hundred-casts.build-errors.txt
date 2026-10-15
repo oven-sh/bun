@@ -1,2 +1,2 @@
-error: TS100017: 'as boolean' is applied to a value that is always 5: under --aot the cast converts it or throws, where plain JavaScript leaves it as it is.
-error: TS100017: 'as boolean' is applied to a value that is always 2: under --aot the cast converts it or throws, where plain JavaScript leaves it as it is.
+error: TS100017: 'as boolean' is applied to a value that is always 5: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.
+error: TS100017: 'as boolean' is applied to a value that is always 2: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.

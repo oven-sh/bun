@@ -272,6 +272,15 @@ impl<'a> Expr<'a> {
         self.ts_node().get_resolved_signature()
     }
 
+    /// Whether the expression is what a `const` without an annotation starts with, inside a function, and under `--aot`
+    /// the constant may hold `undefined` as in JavaScript: each mention of it is a test, a comparison or arithmetic on
+    /// numbers, or stands behind a test that it is there. It is the compiler's own answer.
+    pub fn is_kept_only_where_undefined_has_an_answer(self) -> bool {
+        let node = self.ts_node().raw();
+        self.file()
+            .query(|q| q.is_kept_only_where_undefined_has_an_answer(node))
+    }
+
     /// The expression with its parentheses, as the `ParenthesizedExpression` that TypeScript has.
     pub fn ts_node_with_parentheses(self) -> TsNode<'a> {
         Location::from(Row::Parenthesized(self.id())).locate(self.file())

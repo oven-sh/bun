@@ -13,6 +13,6 @@ try {
   console.log("a proxy as State: no error", show({ ...proxied }))
 } catch (e) { console.log("a proxy as State:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(traps.length)
-// What inherits the fields is no plain data object.
+// An object that inherits the fields is not plain data.
 try { const heir: State = Object.create(s0); heir.count = 100; console.log("an heir as State: no error", show({ ...heir })) } catch (e) { console.log("an heir as State:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(show(s0))

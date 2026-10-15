@@ -16,7 +16,7 @@ function mixed(x: number): { flag: boolean, count: number, name: string, held: H
   let a = big(x), b = big(x + 1); for (let i = 0; i < 2; i++) { a += big(a & 7); b += big(b & 7); if (a > 1e12) a = 1; if (b > 1e12) b = 2; }
   return { flag: a > b, count: (a & 1023) | 0, name: "n" + (b & 15), held: (a & 1) ? { id: a & 255 } : null };
 }
-// The second family: what these return is a fresh object only once the tiny maker has been copied in: they are taken by the pass behind all others, which turns the callers' READS into results WHERE THEY STAND.
+// The second family: these return a fresh object only once the tiny constructor function has been inlined. They are handled by the last pass, which turns the callers' READS into results in place.
 function recordOf(lo: number, hi: number): { lo: number, hi: number } { return { lo, hi }; }
 function pairOf(a: number, b: number): [number, number] { return [a, b]; }
 function mixedOf(flag: boolean, count: number, name: string, held: Held | null): { flag: boolean, count: number, name: string, held: Held | null } { return { flag, count, name, held }; }

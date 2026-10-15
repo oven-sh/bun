@@ -294,7 +294,7 @@ fn may_hold_what_is_not_laid_out(program: &Program, declared: &Declared, is_link
         })
 }
 
-fn is_number_or_nil_or_boolean(declared: &Declared) -> bool {
+fn is_number_or_nullish_or_boolean(declared: &Declared) -> bool {
     !declared.has_objects() && declared.prims & (prim::STRING | prim::SYMBOL | prim::BIGINT) == 0
 }
 
@@ -305,19 +305,19 @@ fn is_vouched_by_operands(program: &Program, func: &Func, op: &Op, yields: &Decl
         Op::Binary { op: BinOp::Add, a, b } => {
             let (a, b) = (of(a), of(b));
             let is_string = |declared: &Declared| !declared.has_objects() && declared.ints.is_none() && declared.prims == prim::STRING;
-            if is_number_or_nil_or_boolean(a) && is_number_or_nil_or_boolean(b) {
+            if is_number_or_nullish_or_boolean(a) && is_number_or_nullish_or_boolean(b) {
                 return takes_numbers;
             }
             yields.prims & prim::STRING != 0 && (is_string(a) || is_string(b)) && !a.has_objects() && !b.has_objects() && (a.prims | b.prims) & prim::SYMBOL == 0
         }
-        Op::Binary { a, b, .. } => takes_numbers && is_number_or_nil_or_boolean(of(a)) && is_number_or_nil_or_boolean(of(b)),
-        Op::Unary { op: UnOp::Neg | UnOp::ToNumeric | UnOp::BitNot | UnOp::ToNumber, a } => takes_numbers && is_number_or_nil_or_boolean(of(a)),
+        Op::Binary { a, b, .. } => takes_numbers && is_number_or_nullish_or_boolean(of(a)) && is_number_or_nullish_or_boolean(of(b)),
+        Op::Unary { op: UnOp::Neg | UnOp::ToNumeric | UnOp::BitNot | UnOp::ToNumber, a } => takes_numbers && is_number_or_nullish_or_boolean(of(a)),
         _ => true,
     }
 }
 
 struct Held {
-    is_known_by_the_link_alone: bool,
+    is_known_only_at_link: bool,
     what: String,
     to: TyId,
     result: TyId,
@@ -332,7 +332,7 @@ fn held(program: &Program, func: &Func, v: V, is_linked: bool) -> Option<Held> {
     let none = crate::id::StrId::NONE;
     if let Op::Coerce { value: from, to, why } = *op {
         let (what, text) = match why {
-            Why::Upcast | Why::Forced => return None,
+            Why::Upcast | Why::Forced | Why::ArgumentClaim(_) => return None,
             Why::Store => ("Store", none),
             Why::Cast | Why::CastFresh => ("As", none),
             Why::NonNull(text) => ("NonNull", text),
@@ -340,13 +340,13 @@ fn held(program: &Program, func: &Func, v: V, is_linked: bool) -> Option<Held> {
             Why::Flow => ("Flow", none),
             Why::Coerce | Why::CoerceFreshGraph => ("Coerce", none),
         };
-        return Some(Held { is_known_by_the_link_alone: false, what: what.to_owned(), to, result: value.ty, text, from });
+        return Some(Held { is_known_only_at_link: false, what: what.to_owned(), to, result: value.ty, text, from });
     }
     if let Op::IterOpen(iterated) = *op {
         let ty = func.ty(iterated);
         let declared = program.tys.get(ty);
         let is_array = !declared.parts.is_empty() && !declared.any_object && declared.parts.iter().all(|part| matches!(part, Part::Array(_)));
-        return is_array.then(|| Held { is_known_by_the_link_alone: false, what: "IteratorOpen".to_owned(), to: ty, result: ty, text: none, from: V::NONE });
+        return is_array.then(|| Held { is_known_only_at_link: false, what: "IteratorOpen".to_owned(), to: ty, result: ty, text: none, from: V::NONE });
     }
     if value.ty.is_none() || value.ty == anything || program.tys.get(value.ty).is_never() {
         return None;
@@ -364,8 +364,8 @@ fn held(program: &Program, func: &Func, v: V, is_linked: bool) -> Option<Held> {
         Op::Binary { .. } | Op::Unary { .. } => !is_vouched_by_operands(program, func, op, program.tys.get(value.ty)),
         _ => false,
     };
-    let is_known_by_the_link_alone = !is_linked && matches!(op, Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } if !may_hold_what_is_not_laid_out(program, program.tys.get(func.ty(*obj)), true));
-    is_held.then(|| Held { is_known_by_the_link_alone, what: format!("{:?}", record(&value.def).opcode), to: value.ty, result: value.ty, text: none, from: V::NONE })
+    let is_known_only_at_link = !is_linked && matches!(op, Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } if !may_hold_what_is_not_laid_out(program, program.tys.get(func.ty(*obj)), true));
+    is_held.then(|| Held { is_known_only_at_link, what: format!("{:?}", record(&value.def).opcode), to: value.ty, result: value.ty, text: none, from: V::NONE })
 }
 
 pub struct Group {
@@ -409,7 +409,7 @@ pub mod class {
 fn is_closed(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
     let is_named_class = |layout: &crate::ir::Layout| layout.kind == LayoutKind::Instance && layout.name.is_some() && !program.strs.get(layout.name).is_empty() && layout.class_flags & crate::ir::class_flags::IS_LAID_OUT != 0;
-    is_named_class(described) && !described.admits_foreign && !described.members.is_empty() && described.members.iter().all(|member| is_named_class(&program.layouts[member.idx()]))
+    is_named_class(described) && !described.admits_unchecked_objects() && !described.members.is_empty() && described.members.iter().all(|member| is_named_class(&program.layouts[member.idx()]))
 }
 
 /// What is made once of a linked program, for the types that only the link knows about.
@@ -453,7 +453,7 @@ impl Linked {
 /// A record type that admits no strangers.
 fn is_closed_record(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
-    described.kind == LayoutKind::Record && !described.admits_foreign
+    described.kind == LayoutKind::Record && !described.admits_unchecked_objects()
 }
 
 /// Whether an object that typed code has not made is held to the members of the closed records among the parts. Only the link knows which
@@ -490,13 +490,55 @@ fn text_of_view(program: &Program, view: crate::id::LayoutId, keys: &[String]) -
         }
         quoted(&mut text, keys[made.idx()].as_bytes());
     }
-    text.push_str("]}");
+    text.push_str("],\"members\":[");
+    for (i, key) in member_keys(program, view, keys).into_iter().enumerate() {
+        if i > 0 {
+            text.push(',');
+        }
+        quoted(&mut text, key.as_bytes());
+    }
+    let _ = write!(text, "],\"stays\":{}}}", program.layouts[view.idx()].admits_only_other_layouts);
     text
+}
+
+fn member_keys<'k>(program: &Program, view: crate::id::LayoutId, keys: &'k [String]) -> Vec<&'k str> {
+    let members = &program.layouts[view.idx()].members;
+    let becomes_member = |layout: usize| {
+        let (mut pending, mut seen) = (vec![layout], vec![layout]);
+        while let Some(next) = pending.pop() {
+            if members.iter().any(|member| member.idx() == next) {
+                return true;
+            }
+            for specialization in &program.layouts[next].specializations {
+                if !seen.contains(&specialization.idx()) {
+                    seen.push(specialization.idx());
+                    pending.push(specialization.idx());
+                }
+            }
+        }
+        false
+    };
+    (0..program.layouts.len()).filter(|&layout| program.layouts[layout].kind == LayoutKind::Record && !keys[layout].is_empty() && becomes_member(layout)).map(|layout| keys[layout].as_str()).collect()
+}
+
+fn narrows_records(program: &Program, from: &Declared, to: &Declared) -> bool {
+    let members = |declared: &Declared| -> Vec<crate::id::LayoutId> {
+        (declared.parts.iter())
+            .filter_map(|part| match part {
+                Part::Class(view) => Some(&program.layouts[view.idx()].members),
+                _ => None,
+            })
+            .flatten()
+            .copied()
+            .collect()
+    };
+    let taken = members(to);
+    members(from).into_iter().any(|member| program.layouts[member.idx()].kind == LayoutKind::Record && program.layouts[member.idx()].is_allocated && !taken.contains(&member))
 }
 
 /// Whether a place of the type can hold an object that typed code has not made. Where it cannot, what is cast from it brings no stranger.
 fn may_be_a_stranger(program: &Program, declared: &Declared) -> bool {
-    declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if program.layouts[layout.idx()].admits_foreign))
+    declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if program.layouts[layout.idx()].admits_unchecked_objects()))
 }
 
 fn passes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> u32 {
@@ -509,7 +551,7 @@ fn passes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> u3
             Part::Class(layout) => !(is_held && is_closed_record(program, *layout)),
             Part::Global(..) => true,
         });
-    declared.prims | if is_any_object_taken { class::OBJECT } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 } | if is_any_object_taken || is_held { class::TAGGED } else { 0 }
+    declared.prims | if is_any_object_taken { class::OBJECT | class::TAGGED } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 }
 }
 
 fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked: Option<&Linked>) {
@@ -527,7 +569,7 @@ fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked:
         match part {
             Part::Class(layout) => {
                 let described = &program.layouts[layout.idx()];
-                let _ = write!(out, "{{\"k\":\"class\",\"instance\":{},\"foreign\":{},\"name\":", described.kind == LayoutKind::Instance, described.admits_foreign);
+                let _ = write!(out, "{{\"k\":\"class\",\"instance\":{},\"foreign\":{},\"name\":", described.kind == LayoutKind::Instance, described.admits_unchecked_objects());
                 quoted(out, name_of_layout(program, *layout).as_bytes());
                 if is_closed(program, *layout) {
                     out.push_str(",\"members\":[");
@@ -806,7 +848,7 @@ pub fn may_give_up(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
     described.kind == LayoutKind::Record
         && described.is_allocated
-        && described.admits_foreign
+        && described.admits_unchecked_objects()
         && !program.layouts.iter().any(|view| !view.admits_foreign && view.members.contains(&layout))
 }
 
@@ -1096,7 +1138,9 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                     }
                 }
                 let Some(held) = held(program, func, v, is_linked) else { continue };
-                let linked = linked.filter(|_| held.from.is_none() || func.ty(held.from).is_none() || may_be_a_stranger(program, program.tys.get(func.ty(held.from))));
+                let linked = linked.filter(|_| {
+                    held.from.is_none() || func.ty(held.from).is_none() || may_be_a_stranger(program, program.tys.get(func.ty(held.from))) || narrows_records(program, program.tys.get(func.ty(held.from)), program.tys.get(held.to))
+                });
                 let mut line = String::from(",\"to\":");
                 write_type(program, &mut line, held.to, 0, linked);
                 if held.result != held.to {
@@ -1118,7 +1162,7 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 if !conversions_behind(func, v).is_empty() {
                     line.push(']');
                 }
-                if held.is_known_by_the_link_alone {
+                if held.is_known_only_at_link {
                     line.push_str(",\"unsure\":2");
                 } else if !is_linked && held.what != "NonNull" {
                     line.push_str(",\"unsure\":1");
@@ -1250,6 +1294,7 @@ pub fn program_of_fragment(fragment: crate::fragment::Fragment, shown_from: &[u8
                 may_be_frozen: false,
                 admits_foreign: false,
                 is_opened_for_the_log: false,
+                admits_only_other_layouts: false,
                 members: Vec::new(),
                 members_by_fit: Vec::new(),
                 specializations: Vec::new(),
@@ -1324,7 +1369,7 @@ mod tests {
     use crate::format::line_table;
 
     #[test]
-    fn lines_are_read_as_they_are_written() {
+    fn lines_round_trip() {
         let text = "a\n\u{e9}=1\r\n\u{1f600}x\u{20ac}y".as_bytes();
         let lines = Lines::read(&line_table(text, &[0, 2, 8])).expect("a table");
         assert_eq!(lines.line_and_column(0), (1, 1));
@@ -1336,7 +1381,7 @@ mod tests {
     }
 
     #[test]
-    fn an_id_is_the_folded_hash() {
+    fn id_is_folded_hash() {
         assert_eq!(id_of(b"h01_audit.ts", 3, 19, "read-property", 0), "ad8cb700bf69");
     }
 }

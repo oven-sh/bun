@@ -41,7 +41,7 @@ row("what a call yields, cast", () => { const r = makeMine() as Record<string, u
 row("an element, cast", () => { const r = mines[0] as Record<string, unknown>; return describeValue(r.a) + describeValue(r.b) })
 const awaited = (await Promise.resolve(makeMine())) as Record<string, unknown>
 row("what is awaited, cast", () => describeValue(awaited.a))
-// Generic functions of JavaScriptCore on what is given: awaited and iterated afterwards.
+// JavaScriptCore's generic functions on external data: awaited and iterated afterwards.
 const settled = await Promise.all([parse().projects!["wrong"], parse().projects!["more"]])
 row("Promise.all of what is given", () => settled.map(p => typeof p.tools).join())
 row("Array.from of what is given", () => Array.from(Object.values(parse().projects!)).map(p => (p && typeof p === "object" ? typeof p.tools : typeof p)).join())

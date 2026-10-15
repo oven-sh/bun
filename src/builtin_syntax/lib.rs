@@ -43,6 +43,8 @@ pub struct Manifest {
     /// By path and name, with a tab between them.
     builtin_functions: Vec<(Box<[u8]>, u32)>,
     requires: Vec<(u32, Box<[u32]>)>,
+    required_besides: Vec<(u32, Box<[u32]>)>,
+    triggered: Vec<(u32, Box<[u32]>)>,
     evaluated_by_first_tick: Vec<u32>,
     always_included: Vec<u32>,
     triggers: Vec<Trigger>,
@@ -118,7 +120,7 @@ impl Manifest {
 
     pub fn parse(text: &[u8]) -> Result<Manifest, ParseError> {
         let mut manifest = Manifest::default();
-        for (index, line) in text.split(|&byte| byte == b'\n').enumerate() {
+        for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
             let error = || ParseError { line: index + 1 };
             if index == 0 {
                 if line != HEADER {
@@ -129,7 +131,7 @@ impl Manifest {
             if line.is_empty() {
                 continue;
             }
-            let mut fields = line.split(|&byte| byte == b'\t');
+            let mut fields = bun_core::strings::split(line, b"\t");
             let kind = fields.next().ok_or_else(error)?;
             let mut field = || fields.next().ok_or_else(error);
             match kind {
@@ -169,6 +171,14 @@ impl Manifest {
                     let id = number(field()?).ok_or_else(error)?;
                     manifest.requires.push((id, numbers(fields).ok_or_else(error)?));
                 }
+                b"besides" => {
+                    let id = number(field()?).ok_or_else(error)?;
+                    manifest.required_besides.push((id, numbers(fields).ok_or_else(error)?));
+                }
+                b"triggered" => {
+                    let id = number(field()?).ok_or_else(error)?;
+                    manifest.triggered.push((id, numbers(fields).ok_or_else(error)?));
+                }
                 b"first_tick" => {
                     let id = number(field()?).ok_or_else(error)?;
                     manifest.evaluated_by_first_tick.push(id);
@@ -180,7 +190,7 @@ impl Manifest {
                 }
                 b"trigger" => {
                     let path = field()?;
-                    let dot = path.iter().position(|&byte| byte == b'.');
+                    let dot = bun_core::strings::index_of_char_usize(path, b'.');
                     let (global, property) = path.split_at(dot.ok_or_else(error)?);
                     manifest.triggers.push(Trigger {
                         global: global.into(),
@@ -290,7 +300,7 @@ impl Manifest {
         {
             return Some(module.id);
         }
-        let directory: &[u8] = match importer.iter().rposition(|&byte| byte == b'/') {
+        let directory: &[u8] = match bun_core::strings::last_index_of_char(importer, b'/') {
             Some(end) => &importer[..end],
             None => &[],
         };
@@ -300,9 +310,8 @@ impl Manifest {
 
     fn resolve_path(&self, directory: &[u8], specifier: &[u8]) -> Option<u32> {
         let mut parts: Vec<&[u8]> = Vec::new();
-        for part in directory
-            .split(|&byte| byte == b'/')
-            .chain(specifier.split(|&byte| byte == b'/'))
+        for part in bun_core::strings::split(directory, b"/")
+            .chain(bun_core::strings::split(specifier, b"/"))
         {
             match part {
                 b"" | b"." => {}
@@ -353,7 +362,7 @@ impl Manifest {
     /// In no order.
     pub fn native_bindings(&self) -> impl Iterator<Item = NativeBinding<'_>> {
         self.native_bindings.iter().filter_map(|(key, id)| {
-            let mut fields = key.split(|&byte| byte == b'\t');
+            let mut fields = bun_core::strings::split(key, b"\t");
             Some(NativeBinding {
                 id: *id,
                 kind: fields.next()?,
@@ -375,6 +384,11 @@ impl Manifest {
     }
 
     /// Those, and what else native code may require, whatever the program does.
+    /// Those of the modules it requires that it requires through native code or a builtin function: no `require("..")` in its text says so.
+    pub fn required_besides(&self, id: u32) -> &[u32] {
+        self.required_besides.iter().find(|module| module.0 == id).map_or(&[], |module| &module.1)
+    }
+
     pub fn always_included(&self) -> &[u32] {
         &self.always_included
     }
@@ -383,26 +397,35 @@ impl Manifest {
         &self.triggers
     }
 
-    /// `roots` and all they can come to require, native modules too, each with the first reason
-    /// found. Ascending.
-    pub fn closure(&self, roots: &[u32]) -> Vec<(u32, Reason)> {
+    /// The roots and all they can come to require, native modules too, each with the first reason
+    /// found. Ascending. `program_roots`: modules the program can get hold of, so any of their
+    /// functions may run, including one that reads a trigger property such as `process.stdout`;
+    /// what that read loads is included. `native_roots`: modules only native code asks for. The
+    /// functions it calls there read no trigger property, so those modules are not followed that way.
+    pub fn closure(&self, program_roots: &[u32], native_roots: &[u32]) -> Vec<(u32, Reason)> {
         let mut found: Vec<(u32, Reason)> = Vec::new();
         let mut is_found = vec![false; self.modules.len()];
-        let mut add = |found: &mut Vec<(u32, Reason)>, id: u32, reason: Reason| {
-            if let Some(is_found) = is_found.get_mut(id as usize)
-                && !std::mem::replace(is_found, true)
-            {
+        let mut follows_triggers = vec![false; self.modules.len()];
+        let of_native_code = native_roots.iter().map(|&root| (root, Reason::Root, false));
+        let of_program = program_roots.iter().map(|&root| (root, Reason::Root, true));
+        let mut pending: std::collections::VecDeque<(u32, Reason, bool)> = of_native_code.chain(of_program).collect();
+        while let Some((id, reason, with_triggers)) = pending.pop_front() {
+            let index = id as usize;
+            if index >= is_found.len() {
+                continue;
+            }
+            let is_new = !std::mem::replace(&mut is_found[index], true);
+            if is_new {
                 found.push((id, reason));
             }
-        };
-        for &root in roots {
-            add(&mut found, root, Reason::Root);
-        }
-        let mut next = 0;
-        while let Some(&(id, _)) = found.get(next) {
-            next += 1;
-            for &required in self.requires(id) {
-                add(&mut found, required, Reason::RequiredBy(id));
+            let is_upgraded = with_triggers && !std::mem::replace(&mut follows_triggers[index], true);
+            if !is_new && !is_upgraded {
+                continue;
+            }
+            pending.extend(self.requires(id).iter().map(|&required| (required, Reason::RequiredBy(id), with_triggers)));
+            if with_triggers {
+                let triggered = self.triggered.iter().find(|module| module.0 == id).map_or(&[][..], |module| &module.1);
+                pending.extend(triggered.iter().map(|&required| (required, Reason::RequiredBy(id), true)));
             }
         }
         found.sort_unstable_by_key(|entry| entry.0);
@@ -590,10 +613,7 @@ fn is_path_suffix(path: &[u8], suffix: &[u8]) -> bool {
 
 /// `pathToUpperSnakeCase` of `src/codegen/helpers.ts`.
 fn write_upper_snake_case(text: &[u8], out: &mut Vec<u8>) {
-    let start = text
-        .iter()
-        .position(|&byte| byte == b':')
-        .map_or(0, |colon| colon + 1);
+    let start = bun_core::strings::index_of_char_usize(text, b':').map_or(0, |colon| colon + 1);
     out.extend(text[start..].iter().map(|&byte| match byte {
         b'-' | b'_' | b'.' | b'/' | b'\\' => b'_',
         _ => byte.to_ascii_uppercase(),

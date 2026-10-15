@@ -1,4 +1,5 @@
 {
+  "assets.json_ns.mjs": "compiled",
   "assets.optional_peer.cjs": "compiled",
   "assets.text_req.cjs": "compiled"
 }

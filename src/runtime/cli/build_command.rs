@@ -165,9 +165,11 @@ impl BuildCommand {
                 features: &mut std::iter::empty(),
                 dropped_imports: &mut std::iter::empty(),
                 without_side_effects: &mut std::iter::empty(),
+                lifted_commonjs: &mut std::iter::empty(),
                 statements: &mut std::iter::empty(),
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
+                has_late_strings: false,
                 cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
@@ -180,13 +182,15 @@ impl BuildCommand {
                 ignore_dce_annotations: false,
                 jsx_side_effects: false,
                 minify_syntax: false,
+                shortens_names: false,
                 preserve_source_paths: false,
-                react_compiler_outputs: &mut core::iter::empty(),
+                react_compiler_outputs: bun_bundler::options::ReactCompilerOutputsLater::none(),
                 jsx: &mut core::iter::empty(),
                 function_texts: None,
                 explain: &[],
                 explains_into_log: false,
                 logs_type_errors: false,
+                early_analysis: None,
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -307,6 +311,12 @@ impl BuildCommand {
         this_transpiler.options.aot_explain = ctx.bundler_options.aot_explain.clone();
         this_transpiler.options.aot_logs_type_errors = ctx.bundler_options.aot_logs_type_errors;
         this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_run {
+            bun_standalone_module_graph::StandaloneModuleGraph::start_copying_template(
+                &ctx.bundler_options.compile_target,
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            );
+        }
         this_transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
         this_transpiler.options.compile_function_source =
@@ -999,6 +1009,7 @@ impl BuildCommand {
                 };
                 let graph_runtime_options = bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
                     jit_policy: ctx.bundler_options.compile_jit_policy,
+                    crash_if_interpreter_is_used: ctx.bundler_options.aot_crash_if_interpreter_is_used,
                 };
                 let compile_exec_argv = ctx
                     .bundler_options
@@ -1167,6 +1178,15 @@ impl BuildCommand {
                         ""
                     }
                 );
+
+                let compiled_untyped = log_ref
+                    .msgs
+                    .iter()
+                    .filter(|msg| msg.kind == bun_ast::Kind::Warn && strings::contains(&msg.data.text, b"compiled untyped"))
+                    .count();
+                if compiled_untyped > 0 {
+                    bun_core::pretty!("  <r><yellow>{} compiled untyped<r>", compiled_untyped);
+                }
 
                 if is_cross_compile {
                     bun_core::pretty!(" <r><d>{}<r>\n", compile_target);

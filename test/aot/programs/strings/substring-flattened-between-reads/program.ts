@@ -29,7 +29,7 @@ const isPart: (s: string) => boolean = typeof isRope === "function" ? isRope : (
 const isFlat: (s: string) => boolean = typeof isRope === "function" ? s => !isRope(s) : () => true;
 // The test tests nothing unless the string is a part before and flat after.
 function flatten(s: string): void { if (!isPart(s)) throw new Error("no part"); Symbol.for(s); if (!isFlat(s)) throw new Error("not flat"); }
-// Fills what the collector has freed.
+// Fills the memory that the collector has freed.
 let litter: string[] = [];
 function fill(): void { litter = []; for (let i = 0; i < 20000; i++) litter.push(("#".repeat(40) + i).slice(1, 30 + (i & 7))); }
 const unseen = (f: any): any => new Function("f", "return (...a) => f(...a)")(f);

@@ -428,5 +428,85 @@
     "typed": 95.0,
     "untyped": 353.0,
     "jit": 207.8
+  },
+  "built-in/buffer-read-integers": {
+    "typed": 122.0,
+    "untyped": 160.0,
+    "jit": 26.0
+  },
+  "built-in/buffer-write-integers": {
+    "typed": 117.0,
+    "untyped": 139.0,
+    "jit": 31.5
+  },
+  "built-in/events-emit": {
+    "typed": 222.0,
+    "untyped": 227.0,
+    "jit": 15.0
+  },
+  "built-in/events-on-off": {
+    "typed": 1216.9,
+    "untyped": 1226.8,
+    "jit": 179.8
+  },
+  "built-in/path-basename": {
+    "typed": 286.2,
+    "untyped": 288.1,
+    "jit": 924.6
+  },
+  "built-in/path-dirname": {
+    "typed": 311.2,
+    "untyped": 313.2,
+    "jit": 913.4
+  },
+  "built-in/path-extname": {
+    "typed": 237.2,
+    "untyped": 239.2,
+    "jit": 1043.2
+  },
+  "built-in/path-isAbsolute": {
+    "typed": 117.5,
+    "untyped": 118.5,
+    "jit": 354.0
+  },
+  "built-in/path-join": {
+    "typed": 757.7,
+    "untyped": 761.7,
+    "jit": 3099.7
+  },
+  "built-in/path-normalize": {
+    "typed": 523.5,
+    "untyped": 525.5,
+    "jit": 2326.7
+  },
+  "built-in/path-relative": {
+    "typed": 1715.5,
+    "untyped": 1718.7,
+    "jit": 4656.2
+  },
+  "built-in/path-resolve": {
+    "typed": 777.7,
+    "untyped": 781.6,
+    "jit": 3225.5
+  },
+  "built-in/path-of-16-bit-paths": {
+    "typed": 4310.7,
+    "untyped": 4340.4,
+    "jit": 36209.2
+  },
+  "built-in/path-of-untidy-paths": {
+    "typed": 7555.1,
+    "untyped": 7576.0,
+    "jit": 10211.7
+  },
+  "built-in/process-argv": {
+    "typed": 108.0,
+    "untyped": 108.0,
+    "jit": 52.8
+  },
+  "built-in/process-members": {
+    "typed": 41.0,
+    "untyped": 79.0,
+    "jit": 13.0
   }
 }

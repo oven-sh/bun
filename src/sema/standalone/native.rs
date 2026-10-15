@@ -1000,7 +1000,7 @@ extern "C" fn bun_cpu_features() -> u8 {
 #[unsafe(no_mangle)]
 extern "C" fn bun_restore_stdio() {}
 #[unsafe(no_mangle)]
-extern "C" fn on_before_reload_process_posix() {}
+extern "C" fn on_before_reload_process_posix(_close_inherited_fds: bool) {}
 #[unsafe(no_mangle)]
 extern "C" fn getRSS(rss: &mut usize) -> c_int {
     *rss = 0;

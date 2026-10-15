@@ -301,8 +301,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some(super::Place::Global(_)) => true,
                     None => false,
                 };
-            let is_bound_anew = self.value_declaration(sym).is_some_and(|(of, decl)| !self.c.is_bound_once(of, decl));
-            if sym.file == fx.file && is_bound_anew && !is_at_hand {
+            let is_rebound = self.value_declaration(sym).is_some_and(|(of, decl)| !self.c.is_bound_once(of, decl));
+            if sym.file == fx.file && is_rebound && !is_at_hand {
                 self.problem(fx.file, pos, "a locally bound JSX factory (jsxFactory) that is used from a nested function");
             }
         }
@@ -344,7 +344,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
 /// `getTransformedJsxText`: lines are trimmed and joined by one space, lines of white space only are dropped, entities are decoded.
 pub(super) fn jsx_text(raw: &[u8]) -> Vec<u8> {
-    let lines: Vec<&[u8]> = raw.split(|&byte| byte == b'\n').collect();
+    let lines: Vec<&[u8]> = bun_core::strings::split(raw, b"\n").collect();
     let mut joined: Vec<u8> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let mut line: &[u8] = line.strip_suffix(b"\r").unwrap_or(line);

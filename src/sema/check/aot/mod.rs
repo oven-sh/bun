@@ -20,7 +20,11 @@ mod integers;
 mod javascript;
 mod kinds;
 mod libraries;
+pub mod locked_builtins;
+mod locked_builtins_generated;
 mod mapped_arguments;
+mod reported_by_lint;
+mod rows;
 mod sloppy;
 mod storage;
 mod subtypes;
@@ -37,24 +41,25 @@ pub use identity::Identity;
 pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use javascript::CodeOfImport;
 pub use kinds::kind;
-pub use flows::{Answer, BuiltIn, Candidate, GaveUp, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
+pub use flows::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
 pub use subtypes::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
 pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
-pub use trust::{Claim, is_builtin_of_the_engine, is_locked_global_of_the_engine};
+pub use reported_by_lint::{AotCheck, AotCheckKind};
+pub use trust::{Claim, is_global_of_the_engine};
 
 use super::{Checker, Program};
 use super::relate::Relation;
-use crate::atom::known;
+use crate::atom::{Atom, known};
 use crate::bind::Parent;
-use crate::hir::ExprsByKind;
+use crate::hir::{ExprId, ExprsByKind, StmtId};
 use crate::local::MaybeLocal;
-use crate::program::FileId;
+use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{InParallel, for_each_mut};
 
 const DEEPEST_NEST_OF_A_TASK: u32 = 1000;
 const STACK_OF_A_LEVEL: usize = 16 << 10;
-const MOST_STACK_FOR_A_NEST: usize = 2 << 30;
+const MAX_STACK_FOR_A_NEST: usize = 2 << 30;
 
 fn longest_chain(parents: &[Parent], above: impl Fn(Parent) -> Option<usize>) -> u32 {
     if parents.len() <= DEEPEST_NEST_OF_A_TASK as usize / 2 {
@@ -82,9 +87,9 @@ fn longest_chain(parents: &[Parent], above: impl Fn(Parent) -> Option<usize>) ->
 }
 
 impl Program<'_> {
-    pub fn stack_beyond_that_of_a_task(&self, files: &[FileId]) -> usize {
+    pub fn extra_stack_beyond_task(&self, files: &[FileId]) -> usize {
         let deepest = files.iter().map(|&file| self.deepest_nest(file)).max().unwrap_or(0);
-        if deepest <= DEEPEST_NEST_OF_A_TASK { 0 } else { (deepest as usize * STACK_OF_A_LEVEL).min(MOST_STACK_FOR_A_NEST) }
+        if deepest <= DEEPEST_NEST_OF_A_TASK { 0 } else { (deepest as usize * STACK_OF_A_LEVEL).min(MAX_STACK_FOR_A_NEST) }
     }
 
     fn deepest_nest(&self, file: FileId) -> u32 {
@@ -98,7 +103,7 @@ impl Program<'_> {
 }
 
 /// What `Checker::is_provably_assignable` may make before it gives up.
-const FUEL: u64 = 1 << 16;
+const FUEL: u64 = 1 << 14;
 
 thread_local! {
     static IS_WARMING_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -142,6 +147,10 @@ impl<T> OnceLock<T> {
         }
     }
 
+    fn is_made_for_good(&self) -> bool {
+        self.made.get().is_some()
+    }
+
     fn set_for_warming_up(&self, value: T) {
         let _ = self.made_while_warming_up.set(Box::new(value));
     }
@@ -150,15 +159,23 @@ impl<T> OnceLock<T> {
 impl<'p, 's> Checker<'p, 's> {
     pub fn while_warming_up<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
         let kept = std::mem::take(&mut self.aot);
+        let kept_by_translator = self.translator.take();
         IS_WARMING_UP.set(true);
         let result = work(self);
         IS_WARMING_UP.set(false);
+        let compared = self.aot.flows.take_pairs_compared();
         self.aot = kept;
+        self.translator = kept_by_translator;
+        self.aot.flows.add_pairs_compared(compared);
         result
     }
 
     pub fn is_warming_up(&self) -> bool {
         IS_WARMING_UP.get()
+    }
+
+    pub fn has_answers_that_depend_on_order(&self) -> bool {
+        !self.task.listings.is_empty() || self.task.order_dependent_variances.iter().any(|it| it.compared | it.failed | it.inferred != 0)
     }
 
     pub fn while_translating<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
@@ -205,6 +222,161 @@ impl<T> ByFile<T> {
     }
 }
 
+struct ByExpression<T> {
+    file: FileId,
+    round: u32,
+    of_file: Vec<(u32, T)>,
+    of_other_files: crate::util::FxHashMap<(FileId, ExprId), T>,
+}
+
+impl<T> Default for ByExpression<T> {
+    fn default() -> ByExpression<T> {
+        ByExpression { file: FileId(u32::MAX), round: 1, of_file: Vec::new(), of_other_files: Default::default() }
+    }
+}
+
+impl<T: Copy> ByExpression<T> {
+    fn turn_to(&mut self, file: FileId, expressions: usize, blank: T) {
+        if self.file == file {
+            return;
+        }
+        self.file = file;
+        self.round += 1;
+        if self.of_file.len() < expressions {
+            self.of_file.resize(expressions, (0, blank));
+        }
+    }
+
+    #[inline]
+    fn get(&self, at: (FileId, ExprId)) -> Option<&T> {
+        if at.0 != self.file {
+            return self.of_other_files.get(&at);
+        }
+        self.of_file.get(at.1.idx()).filter(|entry| entry.0 == self.round).map(|entry| &entry.1)
+    }
+
+    #[inline]
+    fn insert(&mut self, at: (FileId, ExprId), answer: T) {
+        match self.of_file.get_mut(at.1.idx()) {
+            Some(entry) if at.0 == self.file => *entry = (self.round, answer),
+            _ => {
+                self.of_other_files.insert(at, answer);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.round += 1;
+        self.of_other_files.clear();
+    }
+}
+
+struct WaysUp {
+    file: FileId,
+    from_expressions: Vec<Parent>,
+    from_statements: Vec<Parent>,
+}
+
+impl Default for WaysUp {
+    fn default() -> WaysUp {
+        WaysUp { file: FileId(u32::MAX), from_expressions: Vec::new(), from_statements: Vec::new() }
+    }
+}
+
+impl Checker<'_, '_> {
+    fn find_ways_up_in(&mut self, file: FileId) {
+        if self.aot.ways_up.file == file {
+            return;
+        }
+        const NOT_FOUND: Parent = Parent::Expr(ExprId::NONE);
+        let bound = self.bound(file);
+        let (mut from_expressions, mut from_statements) = (std::mem::take(&mut self.aot.ways_up.from_expressions), std::mem::take(&mut self.aot.ways_up.from_statements));
+        from_expressions.clear();
+        from_expressions.resize(bound.expr_parent.len(), NOT_FOUND);
+        from_statements.clear();
+        from_statements.resize(bound.stmt_parent.len(), NOT_FOUND);
+        let mut passed: Vec<Parent> = Vec::new();
+        let expressions = (0..bound.expr_parent.len() as u32).map(|e| Parent::Expr(ExprId(e)));
+        let statements = (0..bound.stmt_parent.len() as u32).map(|stmt| Parent::Stmt(StmtId(stmt)));
+        for start in statements.rev().chain(expressions.rev()) {
+            let above = match start {
+                Parent::Expr(e) => bound.expr_parent[e.idx()],
+                Parent::Stmt(stmt) => bound.stmt_parent[stmt.idx()],
+                _ => NOT_FOUND,
+            };
+            let known = match above {
+                Parent::Expr(e) if e.is_some() => from_expressions[e.idx()],
+                Parent::Stmt(stmt) if stmt.is_some() => from_statements[stmt.idx()],
+                Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) | Parent::Module(_) | Parent::File | Parent::None => above,
+                _ => NOT_FOUND,
+            };
+            if known != NOT_FOUND {
+                match start {
+                    Parent::Expr(e) => from_expressions[e.idx()] = known,
+                    Parent::Stmt(stmt) => from_statements[stmt.idx()] = known,
+                    _ => {}
+                }
+                continue;
+            }
+            let mut at = start;
+            let found = loop {
+                at = match at {
+                    Parent::Expr(e) if e.is_some() => {
+                        if from_expressions[e.idx()] != NOT_FOUND {
+                            break from_expressions[e.idx()];
+                        }
+                        passed.push(at);
+                        bound.expr_parent[e.idx()]
+                    }
+                    Parent::Stmt(stmt) if stmt.is_some() => {
+                        if from_statements[stmt.idx()] != NOT_FOUND {
+                            break from_statements[stmt.idx()];
+                        }
+                        passed.push(at);
+                        bound.stmt_parent[stmt.idx()]
+                    }
+                    Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) | Parent::Module(_) | Parent::File | Parent::None => break at,
+                    _ => self.parent_of_node(file, at),
+                };
+            };
+            for below in passed.drain(..) {
+                match below {
+                    Parent::Expr(e) => from_expressions[e.idx()] = found,
+                    Parent::Stmt(stmt) => from_statements[stmt.idx()] = found,
+                    _ => {}
+                }
+            }
+        }
+        self.aot.ways_up = WaysUp { file, from_expressions, from_statements };
+    }
+
+    #[inline]
+    pub fn way_up_from_expression(&self, file: FileId, e: ExprId) -> Parent {
+        if file == self.aot.ways_up.file { self.aot.ways_up.from_expressions[e.idx()] } else { self.bound(file).expr_parent[e.idx()] }
+    }
+
+    #[inline]
+    pub fn way_up_from_statement(&self, file: FileId, stmt: StmtId) -> Parent {
+        if file == self.aot.ways_up.file { self.aot.ways_up.from_statements[stmt.idx()] } else { self.bound(file).stmt_parent[stmt.idx()] }
+    }
+
+    #[inline]
+    pub(super) fn symbol_kept_for(&self, file: FileId, e: ExprId, name: Atom) -> Option<Option<Sym>> {
+        let kept = &self.aot.symbols_named;
+        if file != kept.file {
+            return None;
+        }
+        kept.get((file, e)).filter(|known| known.0 == name).map(|known| known.1)
+    }
+
+    #[inline]
+    pub(super) fn keep_symbol_for(&mut self, file: FileId, e: ExprId, name: Atom, found: Option<Sym>) {
+        if file == self.aot.symbols_named.file {
+            self.aot.symbols_named.insert((file, e), (name, found));
+        }
+    }
+}
+
 /// What holds for every checker of the program, a field for each part of this module that has such. It belongs to the program: it
 /// mentions no type, nor anything else that is numbered by task. Each table is made once and is only read from then on. Whoever asks
 /// first makes what follows from the trees and the symbols alone. Whoever sets the program up says what is for the bundler to say.
@@ -217,8 +389,10 @@ pub(super) struct Shared {
     classes: classes::Shared,
     commonjs: commonjs::Shared,
     escape: escape::Shared,
+    identity: identity::Shared,
     integers: integers::Shared,
     javascript: javascript::Shared,
+    kinds: kinds::Shared,
     storage: storage::Shared,
     undeclared_fields: undeclared_fields::Shared,
     is_given_up: std::sync::atomic::AtomicBool,
@@ -254,13 +428,15 @@ pub(super) struct State {
     storage: storage::State,
     is_translating: bool,
     is_behind_the_check: bool,
+    symbols_named: ByExpression<(Atom, Option<Sym>)>,
+    ways_up: WaysUp,
 }
 
 impl<'p, 's> Checker<'p, 's> {
     /// `exprs_by_kind`, for a file that need not be the one the task is at. That keeps the index of one file. This one stays.
     fn exprs_by_kind_of(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
-        program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::new(self.hir(file)))
+        program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::outside(self.hir(file), program.files.module(file).cut))
     }
 
     pub fn in_slices<T: Sync, R: Send>(&mut self, items: &[T], size: usize, in_parallel: Option<InParallel<'_>>, work: &(dyn Fn(&mut Checker<'p, 's>, &[T]) -> R + Sync)) -> Vec<R> {
@@ -281,18 +457,35 @@ impl<'p, 's> Checker<'p, 's> {
     /// properties. Not of a class that extends `Array`, nor of an intersection with one: what such a class makes has another prototype,
     /// where it may find other methods, and the engine does not take it for an array.
     pub fn element_of_array_subtype(&mut self, ty: TypeId) -> Option<TypeId> {
-        let is_array = match self.data(ty) {
+        if !matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Intersection(_)) {
+            return None;
+        }
+        let known = if self.answers_are_provisional() { None } else { self.aot.flows.array_subtypes.get(&ty).copied() };
+        let is_array = match known {
+            Some(known) => known,
+            None => {
+                let (found, is_cacheable) = self.compute_cacheable(|c| c.is_array_subtype(ty));
+                if is_cacheable {
+                    self.aot.flows.array_subtypes.insert(ty, found);
+                }
+                found
+            }
+        };
+        if !is_array {
+            return None;
+        }
+        self.index_type_of_type(ty, TypeId::NUMBER)
+    }
+
+    fn is_array_subtype(&mut self, ty: TypeId) -> bool {
+        match self.data(ty) {
             TypeData::Ref { .. } => !self.is_array_or_tuple(ty) && !self.is_type_of_instances(ty) && self.is_array_like(ty),
             TypeData::Intersection(parts) => {
                 !parts.iter().any(|&part| self.is_type_of_instances(part) && self.is_array_like(part))
                     && parts.iter().any(|&part| self.is_array_or_tuple(part) || self.element_of_array_subtype(part).is_some())
             }
             _ => false,
-        };
-        if !is_array {
-            return None;
         }
-        self.index_type_of_type(ty, TypeId::NUMBER)
     }
 
     /// `any`, `unknown`, `never`, `void`: no value is known for what it is by it.
@@ -302,11 +495,11 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::OBJECT || matches!(self.data(ty), TypeData::Union(_)) {
             return false;
         }
-        let by_itself = match self.aot.flows.takes_primitives_by_itself.get(&ty) {
+        let by_itself = match self.aot.flows.accepts_primitives_itself.get(&ty) {
             Some(&known) => known,
             None => {
                 let found = self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]);
-                self.aot.flows.takes_primitives_by_itself.insert(ty, found);
+                self.aot.flows.accepts_primitives_itself.insert(ty, found);
                 found
             }
         };
@@ -330,6 +523,11 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (cuts, fuel) = (self.cuts(), self.fuel.get());
+        let is_kept = fuel == u64::MAX && !self.answers_are_provisional();
+        if is_kept && let Some(&known) = self.aot.flows.provably_related.get(&(source, target, relation as u8)) {
+            return known;
+        }
+        let was_too_complex = self.relation_too_complex;
         let had_run_out_of_stack = self.ran_out_of_stack.get();
         let most = fuel.min(FUEL);
         self.fuel.set(most);
@@ -341,6 +539,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.aot.flows.times_not_known += 1;
             self.aot.flows.cut_short.insert((source, target, relation as u8));
             return false;
+        }
+        if is_kept && self.relation_too_complex == was_too_complex {
+            self.aot.flows.provably_related.insert((source, target, relation as u8), is_related);
         }
         is_related
     }

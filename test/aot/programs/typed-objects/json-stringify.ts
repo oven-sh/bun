@@ -24,7 +24,7 @@ doc.big = 1n
 console.log(attempt(() => JSON.stringify(doc)))
 delete doc.big
 
-// toJSON: on a class, on a literal of the type, added behind the type, inherited; it gets the key.
+// toJSON: on a class, on a literal of the type, added through `any`, inherited; it receives the key.
 class Stamp { constructor(public at: number, private zone = "utc") {} toJSON(key: string) { return key + "@" + this.at + this.zone } }
 interface Entry { when: Stamp; list: Stamp[]; id: number }
 const entry: Entry = { id: 1, when: new Stamp(5), list: [new Stamp(6), new Stamp(7, "cet")] }
@@ -60,7 +60,7 @@ console.log(attempt(() => JSON.stringify(ring)), JSON.stringify(ring, (k, v) => 
 const shared: Leaf = { v: 7 }
 console.log(JSON.stringify({ a: shared, b: shared, c: [shared, shared] }))
 
-// There and back: the parsed object behind the type gives the same answers as the one it came from.
+// Round trip: the parsed object used as the type gives the same answers as the object it came from.
 const back: Doc = JSON.parse(JSON.stringify(doc))
 console.log(back.title + back.count + back.ok, back.leaf.v + back.leaves[0].v + back.leaves[1].v, back.leaves[0].note, back.leaves[1].note, back.maybe, Object.keys(back).join() === Object.keys(doc).join(), JSON.stringify(back) === JSON.stringify(doc))
 const revived: Doc = JSON.parse(JSON.stringify(doc), (key, value) => typeof value === "number" ? value + 1 : value)

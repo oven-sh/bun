@@ -540,6 +540,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ctor = self.declare_default_constructor(file, class, info);
         }
         self.finish_constructor(file, class, info, ctor);
+        if self.hir(file)[class].name.is_none() {
+            self.out.funcs[ctor.idx()].flags |= func_flags::NAME_IS_GIVEN;
+        }
         if environment.is_some() {
             self.out.layouts[environment.idx()].fields = scope.fields;
         }
@@ -599,7 +602,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn add_kept_closure(&mut self, scope: &mut ClassScope, key: (FileId, ClassId, ClassVariable), only_function: FuncId) {
         let index = scope.fields.len() as u32;
         let declared = self.or_undefined(self.known.function);
-        scope.fields.push(Field { only_function, only_function_flags: ir::only_function_flags::OR_NIL, ..Field::new(StrId::NONE, declared, 0) });
+        scope.fields.push(Field { only_function, only_function_flags: ir::only_function_flags::OR_NULLISH, ..Field::new(StrId::NONE, declared, 0) });
         self.kept_closures.insert((scope.env, index));
         self.class_variables.insert(key, Place::Env(scope.env, index));
     }
@@ -631,7 +634,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let id = self.declare_function(file, func, Some((file, class)));
         if is_static {
             // `this` is the class object, which is handed over only where it is looked at, by `this` or by `super`.
-            let takes_this = captures || self.c.looks_at_this(file, func);
+            let takes_this = captures || self.c.inspects_this(file, func);
             let out = &mut self.out.funcs[id.idx()];
             out.this_declared = TyId::NONE;
             out.flags = if takes_this { out.flags | func_flags::HAS_THIS } else { out.flags & !func_flags::HAS_THIS };
@@ -795,7 +798,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let env = self.env_of(fx, layout);
                 self.emit_throwing(fx, Op::FieldGet { obj: env, layout, field })
             }
-            None => self.unsupported(fx, 0, "what a class keeps to itself, outside the class"),
+            None => self.unsupported(fx, 0, "a private member outside its class"),
         }
     }
 
@@ -860,7 +863,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 ExprKind::Ident(name) => name,
                 _ => self.files.symbol(self.class_symbol(file, class)).name,
             };
-            let message = [b"Cannot access '", self.c.atoms().bytes(name), b"' before initialization."].concat();
+            let name = self.c.atoms().bytes(name).to_vec();
+            let message = if self.shared.constants.shortens_names { [&[crate::names::MARK_OF_DEAD_ZONE][..], &name].concat() } else { crate::names::message_of_dead_zone(&name) };
             return self.throw_error(fx, b"ReferenceError", &message);
         }
         // `const Links = class { .. }`: the reference is to the variable, which holds nothing until the static members are evaluated.
@@ -1150,8 +1154,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn call_decorator_helper(&mut self, fx: &mut Fx, at: ExprId, helper: &[u8], args: &[V]) -> V {
         let pos = self.hir(fx.file)[at].pos;
-        let runtime = self.c.atoms().intern(b"bun:wrap");
-        let callee = self.module_binding(fx, runtime, helper, pos);
+        let helper = self.shared.decorator_helpers().zip(self.c.atoms().lookup(helper));
+        let Some(helper) = helper.and_then(|(file, name)| self.binding_exported_as(file, name)) else {
+            return self.unsupported(fx, pos, "a decorator in a program that was loaded without prelude/decorators.ts");
+        };
+        let callee = self.read_sym(fx, helper, pos);
         let this = self.emit(fx, Op::Undefined);
         self.emit_throwing(fx, Op::Call { callee, this, args: args.iter().copied().collect() })
     }
@@ -1159,7 +1166,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn emit_design_metadata(&mut self, fx: &mut Fx, at: ExprId, label: &[u8], value: V) -> V {
         let label = self.out.strs.intern(label);
         let label = self.emit(fx, Op::Str(label));
-        self.call_decorator_helper(fx, at, b"__legacyMetadataTS", &[label, value])
+        self.call_decorator_helper(fx, at, b"decoratorMetadata", &[label, value])
     }
 
     fn emit_design_paramtypes(&mut self, fx: &mut Fx, class: ClassId, at: ExprId, of_parameters: &[TypeMetadata]) -> V {
@@ -1205,7 +1212,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             for &(i, written) in &of_parameters {
                 let index = self.emit(fx, Op::Int(i as i64));
                 let decorator = self.expr(fx, written);
-                elements.push(self.call_decorator_helper(fx, written, b"__legacyDecorateParamTS", &[index, decorator]));
+                elements.push(self.call_decorator_helper(fx, written, b"decorateParameter", &[index, decorator]));
             }
             if emits_metadata {
                 let has_decorators = !own.is_empty();
@@ -1247,7 +1254,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let key = self.str(key);
             let key = self.emit(fx, Op::Str(key));
             let descriptor = self.emit(fx, if m.kind == MemberKind::Property { Op::Undefined } else { Op::Null });
-            self.call_decorator_helper(fx, at, b"__legacyDecorateClassTS", &[elements, prototype, key, descriptor]);
+            self.call_decorator_helper(fx, at, b"decorateMember", &[elements, prototype, key, descriptor]);
         }
         let own = written_on(DecoratorOwner::Class(class));
         let Some(at) = own.first().copied().or(of_constructor.first().map(|written| written.1)) else { return };
@@ -1258,14 +1265,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for &(i, written) in &of_constructor {
             let index = self.emit(fx, Op::Int(i as i64));
             let decorator = self.expr(fx, written);
-            elements.push(self.call_decorator_helper(fx, written, b"__legacyDecorateParamTS", &[index, decorator]));
+            elements.push(self.call_decorator_helper(fx, written, b"decorateParameter", &[index, decorator]));
         }
         if emits_metadata && constructor.is_some() {
             let of_parameters = self.metadata_of_parameters(file, constructor, !own.is_empty());
             elements.push(self.emit_design_paramtypes(fx, class, at, &of_parameters));
         }
         let elements = self.emit_throwing(fx, Op::NewArray(elements));
-        let decorated = self.call_decorator_helper(fx, at, b"__legacyDecorateClassTS", &[elements, target]);
+        let decorated = self.call_decorator_helper(fx, at, b"decorateClass", &[elements, target]);
         if let Some(sym) = binding {
             self.write_sym(fx, sym, decorated, c.start);
         }
@@ -1522,8 +1529,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             };
             self.check_class_is_declared(fx, on.0, on.1, obj);
-            let looks_at_this = members.into_iter().any(|member| member.is_some() && self.out.funcs[member.idx()].has(func_flags::HAS_THIS));
-            return Some(if looks_at_this { self.class_as_value(fx, on.0, on.1) } else { self.class_object(fx, on.0, on.1) });
+            let inspects_this = members.into_iter().any(|member| member.is_some() && self.out.funcs[member.idx()].has(func_flags::HAS_THIS));
+            return Some(if inspects_this { self.class_as_value(fx, on.0, on.1) } else { self.class_object(fx, on.0, on.1) });
         }
         None
     }
@@ -1551,12 +1558,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn is_class(&mut self, fx: &mut Fx, value: V, on: (FileId, ClassId)) -> V {
         let is_evaluated_once = self.define_class(on.0, on.1).facts.is_evaluated_once;
         let hir = self.hir(on.0);
-        let is_in_key_made_at_declaration = fx.file == on.0
+        let is_in_key_created_at_declaration = fx.file == on.0
             && hir[on.1].members.iter().any(|member| {
                 matches!(hir[member].key, PropKey::Computed(key) if (hir[member].name_pos..bun_sema::hir::end_of_expr(hir, key)).contains(&fx.b.pos))
                     && self.class_variables.contains_key(&(on.0, on.1, ClassVariable::Key(member)))
             });
-        if is_in_key_made_at_declaration {
+        if is_in_key_created_at_declaration {
             let (undeclared, join) = (fx.b.new_block(), fx.b.new_block());
             let is_class = fx.b.new_var(self.known.boolean);
             fx.handlers.push(undeclared);
@@ -1768,11 +1775,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         fx.returns_this = info.returns_what_is_constructed();
         // Where `super()` may come back with another object than it was handed, or is handed none, there is no `this` before it has.
-        let is_handed_this = match info.base {
+        let is_passed_this = match info.base {
             Some(base) => !self.classes[&base].facts.may_return_another_object,
             None => !info.is_derived,
         };
-        if is_handed_this {
+        if is_passed_this {
             fx.this = fx.given;
         } else if let Some(layout) = self.layout_of_this_binding(Receiver::Function(fx.func)) {
             let binding = self.emit(fx, Op::New(layout));
@@ -2032,11 +2039,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let info = self.class_info(file, class);
         if !info.is_derived {
-            return self.unsupported(fx, pos, "`super()` in a class that extends nothing");
+            return self.unsupported(fx, pos, "`super()` in a class without `extends`");
         }
         let Some(base) = info.base else {
             let written = args;
-            if self.hir(fx.file).ids(written).all(|e| self.argument_of_super_runs_no_code(fx, written, e)) {
+            if self.hir(fx.file).ids(written).all(|e| self.super_argument_is_side_effect_free(fx, written, e)) {
                 let args = self.emit_array_with_spread(fx, args);
                 self.emit_super_construct(fx, args, pos);
                 return self.this(fx, pos);
@@ -2065,7 +2072,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.this(fx, pos)
     }
 
-    fn argument_of_super_runs_no_code(&mut self, fx: &Fx, args: IdList<ExprId>, e: ExprId) -> bool {
+    fn super_argument_is_side_effect_free(&mut self, fx: &Fx, args: IdList<ExprId>, e: ExprId) -> bool {
         use bun_sema::bind::SymFlags;
         let hir = self.hir(fx.file);
         let mut names_own_variable = |e: ExprId| match hir[e].kind {

@@ -174,4 +174,7 @@ impl DeclaredTable {
     pub fn find(&self, declared: &Declared) -> Option<TyId> {
         self.ids.get(declared).copied()
     }
+    pub fn close(&mut self) {
+        self.ids = FxHashMap::default();
+    }
 }

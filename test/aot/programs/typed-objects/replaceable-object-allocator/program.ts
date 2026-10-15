@@ -71,7 +71,7 @@ report("classes", byClasses)
 report("functions again", byFunctions)
 console.log(byClasses instanceof NodeObject, byClasses.expression instanceof IdentifierObject, byClasses.separators[0] instanceof NodeObject, byFunctions instanceof NodeObject, byFunctions instanceof (AstNode as any))
 
-// A constructor that hands out an object of its own making.
+// A constructor that returns an object it has created itself.
 let counted = 0
 function Counting(this: unknown, kind: SyntaxKind, pos: number, end: number) { counted++; return counted % 2 ? new NodeObject(kind, pos, end) : { end, pos, kind, flags: 32, counted } }
 setObjectAllocator({ getNodeConstructor: () => Counting as any })

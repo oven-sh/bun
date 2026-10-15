@@ -70,6 +70,6 @@ console.log(elements([one, one], 0, 1), elements([one, { v: 0, w: 0 }], 0, 1), o
 function fields(p: { first: Left; second: Right }): number { p.first.v = 1; p.second.v = 2; return p.first.v }
 console.log(fields({ first: one, second: one }), fields({ first: one, second: { v: 0 } }))
 
-// What is stored is what is read, bit for bit.
+// A read returns exactly what was stored, bit for bit.
 function roundTrip(a: Left, b: Right, v: number): boolean { a.v = v; const viaB = b.v; b.v = viaB; return Object.is(a.v, v) }
 console.log([0, -0, NaN, 1.5, 2 ** 31, -(2 ** 31) - 1, 2 ** 53, 1e308, -1e-308].map(v => roundTrip(shared, shared, v)).join())

@@ -355,7 +355,11 @@ export class Dev extends EventEmitter {
     return b;
   }
 
-  write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
+  write(
+    file: string,
+    contents: string | Uint8Array,
+    options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {},
+  ) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
@@ -369,7 +373,7 @@ export class Dev extends EventEmitter {
 
       await Bun.write(
         this.join(file),
-        ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
+        typeof contents === "string" && (options.dedent ?? true) ? dedent(contents) : contents,
       );
     });
   }
@@ -1453,7 +1457,7 @@ const fetchExpectProxyHandler: ProxyHandler<any> = {
   },
 };
 
-type CssPropertyName = keyof React.CSSProperties;
+type CssPropertyName = keyof import("react").CSSProperties;
 type LazyStyle = {
   [K in CssPropertyName]: LazyStyleProp;
 } & {

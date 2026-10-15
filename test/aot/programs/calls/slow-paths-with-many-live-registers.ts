@@ -32,7 +32,7 @@ function integersOnly(r: R, u: R, w: R): number {
     const x = (w.f & 255) + (w.h & 255);
     return ((a ^ b) + (c ^ d) + v * 13 + x * 17 + a * 3 + b * 5 + c * 7 + d * 11) | 0;
 }
-// ToNumber of what is not a number: yields a double, may throw, may run code.
+// ToNumber of a value that is not a number: returns a double, may throw, may run code.
 function toNumber(r: R, x: any, y: any): number {
     const a = r.a, b = r.b, c = r.c, d = r.d, e = r.e, f = r.f, g = r.g, h = r.h;
     const v = x * 2 + y * 3;

@@ -394,6 +394,26 @@ extern "C" bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncod
     return encoder->setTypedProgram({ program, size }, std::span { modules, numberOfModules }, { replacedStrings, replacedStringsSize });
 }
 
+extern "C" JSC::BytecodeLinkEncoder::PreparedTypedProgram* Bun__AOT__readTypedProgram(const uint8_t* program, size_t size)
+{
+    return JSC::BytecodeLinkEncoder::readTypedProgram({ program, size });
+}
+
+extern "C" void Bun__AOT__optimizeTypedProgram(JSC::BytecodeLinkEncoder::PreparedTypedProgram* prepared, const uint8_t* replacedStrings, size_t replacedStringsSize)
+{
+    JSC::BytecodeLinkEncoder::optimizeTypedProgram(*prepared, { replacedStrings, replacedStringsSize });
+}
+
+extern "C" void Bun__AOT__discardTypedProgram(JSC::BytecodeLinkEncoder::PreparedTypedProgram* prepared)
+{
+    JSC::BytecodeLinkEncoder::discardTypedProgram(prepared);
+}
+
+extern "C" bool Bun__BytecodeLinkEncoder__setPreparedTypedProgram(JSC::BytecodeLinkEncoder* encoder, JSC::BytecodeLinkEncoder::PreparedTypedProgram* prepared, const uint32_t* modules, size_t numberOfModules)
+{
+    return encoder->setTypedProgram(prepared, std::span { modules, numberOfModules });
+}
+
 extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeLinkEncoder* encoder, const uint8_t* blob, size_t blobSize, const uint32_t* stringSlots, size_t stringSlotCount, const uint32_t* graphModuleIndices, size_t addCount)
 {
     JSC::JSLockHolder locker(vmOfBytecodeLinkEncoder(*encoder));

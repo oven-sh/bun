@@ -142,6 +142,9 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
     pub inline_import_meta_paths: bool,
+    pub leaves_assignments_to_imports_to_run_time: bool,
+    pub compiles_requires_made_by_create_require: bool,
+    pub keeps_reexport_only_modules: bool,
 
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
@@ -192,6 +195,9 @@ impl<'a> Default for Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             inline_import_meta_paths: false,
+            leaves_assignments_to_imports_to_run_time: false,
+            keeps_reexport_only_modules: false,
+            compiles_requires_made_by_create_require: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
@@ -282,6 +288,9 @@ impl<'a> Options<'a> {
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             inline_import_meta_paths: self.inline_import_meta_paths,
+            leaves_assignments_to_imports_to_run_time: self.leaves_assignments_to_imports_to_run_time,
+            compiles_requires_made_by_create_require: self.compiles_requires_made_by_create_require,
+            keeps_reexport_only_modules: self.keeps_reexport_only_modules,
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
@@ -358,6 +367,9 @@ impl<'a> Options<'a> {
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             inline_import_meta_paths: false,
+            leaves_assignments_to_imports_to_run_time: false,
+            keeps_reexport_only_modules: false,
+            compiles_requires_made_by_create_require: false,
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
@@ -1684,6 +1696,7 @@ impl<'a> Parser<'a> {
                                 };
                                 if let Some(id) = redirect_import_record_index
                                     && !p.options.is_entry_point
+                                    && !p.options.keeps_reexport_only_modules
                                 {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {

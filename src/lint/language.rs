@@ -159,6 +159,86 @@ impl GlobalsOfOptions {
     }
 }
 
+bitflags::bitflags! {
+    /// [`LanguageOptions::twins_on`]. Two rules report the same place, and one of them leaves it to the other: a bit for each such
+    /// pair. It is set where the other runs and is at least as severe, so that nothing is lost and no error becomes a warning.
+    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct Twins: u8 {
+        /// These leave to `bun/aot-no-any-to-typed` what it reports.
+        const NO_UNSAFE_ARGUMENT_LEAVES = 1 << 0;
+        const NO_UNSAFE_ASSIGNMENT_LEAVES = 1 << 1;
+        const NO_UNSAFE_RETURN_LEAVES = 1 << 2;
+        /// It leaves to `bun/aot-outside-data` what that reports.
+        const NO_UNSAFE_TYPE_ASSERTION_LEAVES = 1 << 7;
+        /// The rest are left what they report, by the rule of `bun/aot` that reports it too.
+        const NO_NON_NULL_ASSERTION = 1 << 3;
+        const NO_EXTEND_NATIVE = 1 << 4;
+        const NO_GLOBAL_ASSIGN = 1 << 5;
+        const NO_UNSAFE_TYPE_ASSERTION = 1 << 6;
+    }
+}
+
+impl Twins {
+    const NAMED: [(crate::rule::Plugin, &'static str); 10] = {
+        use crate::rule::Plugin::{Bun, TypeScript};
+        [
+            (Bun, "aot-no-any-to-typed"),
+            (Bun, "aot-outside-data"),
+            (Bun, "aot-non-null-escapes"),
+            (Bun, "aot-cast-lacks-member"),
+            (Bun, "aot-locked-builtin-write"),
+            (TypeScript, "no-unsafe-argument"),
+            (TypeScript, "no-unsafe-assignment"),
+            (TypeScript, "no-unsafe-return"),
+            (TypeScript, "no-unsafe-type-assertion"),
+            (TypeScript, "no-non-null-assertion"),
+        ]
+    };
+    /// Which of [`Twins::NAMED`] reports the place, and which leaves it. 10, 11: `no-extend-native`, `no-global-assign`.
+    const PAIRS: [(usize, usize, Twins); 8] = [
+        (0, 5, Twins::NO_UNSAFE_ARGUMENT_LEAVES),
+        (0, 6, Twins::NO_UNSAFE_ASSIGNMENT_LEAVES),
+        (0, 7, Twins::NO_UNSAFE_RETURN_LEAVES),
+        (1, 8, Twins::NO_UNSAFE_TYPE_ASSERTION_LEAVES),
+        (9, 2, Twins::NO_NON_NULL_ASSERTION),
+        (8, 3, Twins::NO_UNSAFE_TYPE_ASSERTION),
+        (10, 4, Twins::NO_EXTEND_NATIVE),
+        (11, 4, Twins::NO_GLOBAL_ASSIGN),
+    ];
+
+    /// `rules`: those that run, each with its severity.
+    pub fn among<'r>(rules: impl Iterator<Item = (&'r crate::rule::Meta, crate::context::Severity)>) -> Twins {
+        use crate::context::Severity;
+        use crate::rule::Plugin;
+        let mut severities = [Severity::Off; 12];
+        for (meta, severity) in rules.filter(|it| it.1 != Severity::Off) {
+            let at = match (meta.plugin, meta.name) {
+                (Plugin::Eslint, "no-extend-native") => Some(10),
+                (Plugin::Eslint, "no-global-assign") => Some(11),
+                (Plugin::Bun | Plugin::TypeScript, name) => Twins::NAMED.iter().position(|it| *it == (meta.plugin, name)),
+                _ => None,
+            };
+            if let Some(at) = at {
+                severities[at] = severities[at].max(severity);
+            }
+        }
+        let is_left = |pair: &&(usize, usize, Twins)| severities[pair.0] != Severity::Off && severities[pair.0] >= severities[pair.1];
+        Twins::PAIRS.iter().filter(is_left).fold(Twins::empty(), |on, pair| on | pair.2)
+    }
+
+    /// Whether the rule leaves reports to another.
+    pub fn leaves_reports(self, meta: &crate::rule::Meta) -> bool {
+        meta.plugin == crate::rule::Plugin::TypeScript
+            && self.intersects(match meta.name {
+                "no-unsafe-argument" => Twins::NO_UNSAFE_ARGUMENT_LEAVES,
+                "no-unsafe-assignment" => Twins::NO_UNSAFE_ASSIGNMENT_LEAVES,
+                "no-unsafe-return" => Twins::NO_UNSAFE_RETURN_LEAVES,
+                "no-unsafe-type-assertion" => Twins::NO_UNSAFE_TYPE_ASSERTION_LEAVES,
+                _ => Twins::empty(),
+            })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct LanguageOptions {
     /// The year: 2015, 2016, .. For ES3 and ES5, 3 and 5.
@@ -220,6 +300,8 @@ pub struct LanguageOptions {
     pub has_scopes_of_oxc: bool,
     /// With a configuration of oxlint: the rules that are on and that oxlint could only run as rules of a plugin in JavaScript.
     pub rules_that_oxlint_lacks: Vec<&'static crate::rule::Meta>,
+    /// Which of the rules are on that report a place together with another: it is reported once.
+    pub twins_on: Twins,
     /// A rule is on that can't run without types.
     pub has_rule_that_requires_types: bool,
     /// With a configuration of oxlint in which no rule makes the variables of every file: the parser looks out for a name that may
@@ -478,6 +560,7 @@ impl LanguageOptions {
             stands_alone: false,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
+            twins_on: Twins::empty(),
             has_rule_that_requires_types: false,
             parser_tracks_names: false,
             eslint_8: None,
@@ -588,6 +671,7 @@ impl Default for LanguageOptions {
             stands_alone: false,
             has_scopes_of_oxc: false,
             rules_that_oxlint_lacks: Vec::new(),
+            twins_on: Twins::empty(),
             has_rule_that_requires_types: false,
             parser_tracks_names: false,
             eslint_8: None,

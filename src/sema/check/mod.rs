@@ -120,14 +120,16 @@ use task::{Open, OrderDependent, Stored, Task};
 
 pub use aot::{ClassFacts, MethodStore, ReplacedMethods};
 pub use aot::CodeOfImport;
+pub use aot::{AotCheck, AotCheckKind};
 pub use aot::{CommonJsExports, ExportsMention};
 pub use aot::Identity;
 pub use aot::given;
 pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
-pub use aot::{Answer, BuiltIn, Candidate, GaveUp, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
+pub use aot::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
 pub use aot::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
 pub use aot::{Evaluates, FirstStore, Primitive, Recovery, ReferenceRead, Storage, kind};
-pub use aot::{Claim, is_builtin_of_the_engine, is_locked_global_of_the_engine};
+pub use aot::{Claim, is_global_of_the_engine};
+pub use aot::locked_builtins;
 pub use aot::{Callee, OnlyFunction};
 pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver, argument_use};
 pub use call::ResolvedCall;
@@ -778,6 +780,8 @@ impl<'s> Program<'s> {
             simplified: Default::default(),
             inherited_names: [0; 4],
             cond_distributive_memo: Default::default(),
+            identities_of_intersections: Default::default(),
+            cond_constraint_instantiations: Default::default(),
             relation_too_complex: false,
             relation_too_deep: false,
             current_source_element: None,
@@ -915,6 +919,7 @@ impl<'s> Program<'s> {
             unwind_work: 0,
             restart_with: None,
             aot: Default::default(),
+            translator: None,
         }
     }
 }
@@ -1485,6 +1490,8 @@ pub struct Checker<'p, 's> {
     pub(super) inherited_names: [u64; 4],
     /// `resolvedConstraintOfDistributive`. `None` is `noConstraintType`.
     cond_distributive_memo: FxHashMap<TypeId, Option<TypeId>>,
+    identities_of_intersections: FxHashMap<TypeId, Option<std::rc::Rc<relate::IdentitiesOfMembers>>>,
+    cond_constraint_instantiations: FxHashMap<(FileId, TypeNodeId, MapperId), TypeId>,
     /// Set when a comparison exhausts `Relater::relation_count` (2859). The caller clears it before comparing.
     pub(super) relation_too_complex: bool,
     /// Whether the last `checkTypeRelatedToEx` reached 100 nested comparisons (2321).
@@ -1830,6 +1837,7 @@ pub struct Checker<'p, 's> {
     restart_with: Option<Query>,
     /// What the queries of ahead-of-time compilation have found.
     aot: aot::State,
+    pub translator: Option<Box<dyn std::any::Any>>,
 }
 
 /// The stack pointer of the thread, less a constant: only the difference of two results is used.

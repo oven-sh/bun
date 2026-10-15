@@ -92,9 +92,9 @@ pub enum DeclaredClosure {
     /// Wherever it is used, nothing observes which object it is: `Checker::use_of_value`. One is made at each use.
     Unobserved,
     /// It is used in one place, which is evaluated at most once for each time the declaration is instantiated: it is made there.
-    MadeAtUse,
+    CreatedAtUse,
     /// It is used by the code that declares it alone: it is made when the scope of the declaration is entered, and a local variable holds it.
-    MadeAtEntry,
+    CreatedAtEntry,
     /// The index among `Checker::environment_of`.
     KeptInEnvironment(Activation, u32),
 }
@@ -171,7 +171,7 @@ struct FileCaptures {
     imports: FxHashMap<ClassId, Vec<Capture>>,
     declared_closures: FxHashMap<FnId, DeclaredClosure>,
     /// The loops where what is evaluated before the first iteration makes a function that refers to a variable the loop binds.
-    captured_ahead_of_iterations: FxHashSet<StmtId>,
+    captured_before_iterations: FxHashSet<StmtId>,
     receivers: FxHashMap<FnId, Receiver>,
     /// By function expression whose one closure per environment that environment keeps: the index of the field, behind the variables.
     kept_expressions: FxHashMap<FnId, (Activation, u32)>,
@@ -232,8 +232,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether what is evaluated before the first iteration of the loop makes a function that refers to a variable the loop binds. In the
     /// initializer of a `for` statement: that function has the bindings as the initializer left them for good, and each iteration, the
     /// first too, has copies. In what a `for-in` or `for-of` statement iterates over: it has bindings that are never initialized.
-    pub fn is_captured_ahead_of_iterations(&mut self, file: FileId, statement: StmtId) -> bool {
-        self.captures_of_file(file).captured_ahead_of_iterations.contains(&statement)
+    pub fn is_captured_before_iterations(&mut self, file: FileId, statement: StmtId) -> bool {
+        self.captures_of_file(file).captured_before_iterations.contains(&statement)
     }
 
     pub fn place_of_environment_of_more_than(&mut self, file: FileId, most: usize) -> Option<u32> {
@@ -516,7 +516,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_made_within_class(&self, file: FileId, func: FnId, class: ClassId) -> bool {
+    fn is_created_within_class(&self, file: FileId, func: FnId, class: ClassId) -> bool {
         let bound = self.bound(file);
         matches!(bound.fns[func.idx()].owner, FnOwner::Expr(made) if self.is_within_class(file, bound.expr_parent[made.idx()], class))
     }
@@ -598,7 +598,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the inner function that the reference `e` to the parameter is in is made once the parameter is bound: in the body of the function,
     /// or in a parameter further to the right. Parameters are bound from left to right, before the body runs.
-    fn is_made_after_parameter(&self, file: FileId, pat: PatId, e: ExprId) -> bool {
+    fn is_created_after_parameter(&self, file: FileId, pat: PatId, e: ExprId) -> bool {
         let bound = self.bound(file);
         let PatParent::Param(declared) = root_declaration(bound, pat) else { return false };
         let func = bound.param_fn[declared.idx()];
@@ -638,7 +638,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Some(at) => at,
                 None => return false,
             };
-            if let Some(made) = self.where_made(file, at) {
+            if let Some(made) = self.where_created(file, at) {
                 (pos, parent) = made;
                 continue;
             }
@@ -647,7 +647,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Site::Parameter(p) => bound.param_fn[p.idx()],
                 Site::File | Site::Initializer(_) => return false,
             };
-            if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_)) || matches!(closures.get(&func), Some(DeclaredClosure::MadeAtEntry)) || self.is_declared_over_parameter(file, func) {
+            if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_)) || matches!(closures.get(&func), Some(DeclaredClosure::CreatedAtEntry)) || self.is_declared_over_parameter(file, func) {
                 return false;
             }
             // A name that is stored to is a variable, which is given the closure where the scope is entered. Its mentions are not listed.
@@ -711,7 +711,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
-            Decl::Param(pat) => references.iter().copied().find(|&e| !self.is_made_after_parameter(file, pat, e)).map(NotCopied::SeenEarly),
+            Decl::Param(pat) => references.iter().copied().find(|&e| !self.is_created_after_parameter(file, pat, e)).map(NotCopied::SeenEarly),
             Decl::Class(_) => (!self.is_never_captured_uninitialized(sym)).then(|| NotCopied::SeenEarly(references[0])),
             Decl::Var(pat) => {
                 let PatParent::Var(d) = root_declaration(bound, pat) else { return Some(NotCopied::Declaration) };
@@ -723,7 +723,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return Some(NotCopied::Declaration);
                 }
                 // What is bound before the statement runs that alone can refer to it.
-                let bound_ahead_of = match (hir[stmt].kind, bound.stmt_parent[stmt.idx()]) {
+                let bound_before = match (hir[stmt].kind, bound.stmt_parent[stmt.idx()]) {
                     (StmtKind::Try { handler, .. }, _) => handler,
                     (_, Parent::Stmt(outer)) if outer.is_some() => match hir[outer].kind {
                         StmtKind::ForIn { left, body, .. } | StmtKind::ForOf { left, body, .. } if left == stmt => body,
@@ -732,8 +732,8 @@ impl<'p, 's> Checker<'p, 's> {
                     },
                     _ => StmtId::NONE,
                 };
-                if bound_ahead_of.is_some() {
-                    let within = hir[bound_ahead_of].start..hir[bound_ahead_of].loc.end;
+                if bound_before.is_some() {
+                    let within = hir[bound_before].start..hir[bound_before].loc.end;
                     return references.iter().copied().find(|&e| !within.contains(&hir[e].pos)).map(NotCopied::OutsideBody);
                 }
                 (!self.is_never_captured_uninitialized(sym)).then(|| NotCopied::SeenEarly(references[0]))
@@ -805,7 +805,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // A function expression whose own name is used as a value may capture the scope of that name, which nobody but itself has at hand.
         let atoms = self.atoms();
-        let hands_over_a_generator = |func: FnId, e: ExprId| {
+        let returns_a_generator = |func: FnId, e: ExprId| {
             hir[func].flags.contains(Flags::GENERATOR)
                 && match bound.expr_parent[e.idx()] {
                     Parent::Expr(call) => match bound.expr_parent[call.idx()] {
@@ -822,7 +822,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_callee = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Call(call) if hir[call].callee == e && hir[call].chain == Chain::No));
         let mut through_closures: FxHashSet<ExprId> = FxHashSet::default();
         let mut names_itself: FxHashSet<FnId> = (references.iter())
-            .filter_map(|reference| declared_function(self, reference).filter(|&func| !is_called_directly(reference.e) || hands_over_a_generator(func, reference.e)))
+            .filter_map(|reference| declared_function(self, reference).filter(|&func| !is_called_directly(reference.e) || returns_a_generator(func, reference.e)))
             .filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)))
             .collect();
         // So may one whose `arguments` object shows it: `arguments.callee`.
@@ -856,8 +856,8 @@ impl<'p, 's> Checker<'p, 's> {
                 edges.insert((node, Node::Code(self.code_of_fn(file, func))));
                 mentions.entry(func).or_default().push(reference.e);
                 // The name of a function expression within it stands for the closure that the evaluation of the expression made.
-                if (!is_called_directly(reference.e) || hands_over_a_generator(func, reference.e)) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
-                    if is_callee(reference.e) && hands_over_a_generator(func, reference.e) {
+                if (!is_called_directly(reference.e) || returns_a_generator(func, reference.e)) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
+                    if is_callee(reference.e) && returns_a_generator(func, reference.e) {
                         through_closures.insert(reference.e);
                     }
                     uses_as_value.entry(func).or_default().push((reference.e, reference.code, reference.holder));
@@ -873,7 +873,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(func) = self.callee_with_captures_at_hand(reference.sym)
                 && !names_itself.contains(&func)
             {
-                if !hands_over_a_generator(func, reference.e) {
+                if !returns_a_generator(func, reference.e) {
                     edges.insert((node, Node::Code(Code::Function(func))));
                     continue;
                 }
@@ -913,7 +913,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             match self.receiver_at(file, parent) {
                 Receiver::None => {}
-                Receiver::Static(class) if self.is_class_evaluated_once(file, class) || !self.is_made_within_class(file, func, class) => {}
+                Receiver::Static(class) if self.is_class_evaluated_once(file, class) || !self.is_created_within_class(file, func, class) => {}
                 Receiver::Static(class) => {
                     raw.entry(Node::Code(Code::Function(func))).or_default().insert(Need::Class(class));
                 }
@@ -931,7 +931,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if let Some(method) = method_of_literal {
                 raw.entry(Node::Code(code)).or_default().insert(Need::HomeObject(method));
-            } else if let Some(class) = self.class_around(file, parent).filter(|&class| !matches!(code, Code::Function(func) if hir[func].kind == FnKind::Arrow && !self.is_made_within_class(file, func, class))) {
+            } else if let Some(class) = self.class_around(file, parent).filter(|&class| !matches!(code, Code::Function(func) if hir[func].kind == FnKind::Arrow && !self.is_created_within_class(file, func, class))) {
                 raw.entry(Node::Code(code)).or_default().insert(Need::Class(class));
             }
             // `super.m()` passes `this`.
@@ -940,7 +940,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 match self.receiver_at(file, parent) {
                     Receiver::None => {}
-                    Receiver::Static(class) if !self.is_made_within_class(file, func, class) => {}
+                    Receiver::Static(class) if !self.is_created_within_class(file, func, class) => {}
                     Receiver::Static(class) => {
                         raw.entry(Node::Code(code)).or_default().insert(Need::Class(class));
                     }
@@ -1013,7 +1013,7 @@ impl<'p, 's> Checker<'p, 's> {
 
         // Where the closures of function declarations are kept.
         let mut kept: FxHashMap<Activation, Vec<(Sym, FnId, ExprId)>> = FxHashMap::default();
-        let mut kept_if_there_is_an_environment: Vec<(Activation, Sym, FnId, ExprId)> = Vec::new();
+        let mut kept_if_environment_exists: Vec<(Activation, Sym, FnId, ExprId)> = Vec::new();
         found.generators_called_through_closures = through_closures;
         let mut functions: Vec<FnId> = uses_as_value.keys().copied().collect();
         functions.sort_unstable();
@@ -1028,16 +1028,16 @@ impl<'p, 's> Checker<'p, 's> {
                     && bound.fns[outermost.idx()].enclosing.is_none()
                     && let Some(&(inner, ..)) = uses.iter().find(|used| used.1 != used.2)
                 {
-                    kept_if_there_is_an_environment.push((activation, sym, func, inner));
+                    kept_if_environment_exists.push((activation, sym, func, inner));
                 }
             } else if let Some(&(inner, ..)) = uses.iter().find(|used| used.1 != used.2) {
                 kept.entry(activation).or_default().push((sym, func, inner));
             } else if let [(only, ..)] = uses[..]
                 && self.is_evaluated_once_in(file, bound.expr_parent[only.idx()], activation)
             {
-                found.declared_closures.insert(func, DeclaredClosure::MadeAtUse);
+                found.declared_closures.insert(func, DeclaredClosure::CreatedAtUse);
             } else {
-                found.declared_closures.insert(func, DeclaredClosure::MadeAtEntry);
+                found.declared_closures.insert(func, DeclaredClosure::CreatedAtEntry);
             }
         }
 
@@ -1052,7 +1052,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some((statement, ahead)) = self.loop_binding(file, *decl)
                 && inner.iter().any(|&e| ahead.contains(&hir[e].pos))
             {
-                found.captured_ahead_of_iterations.insert(statement);
+                found.captured_before_iterations.insert(statement);
             }
             if let Some(why) = self.why_not_copied(file, sym, *decl, inner) {
                 found.not_copied.insert(sym, why);
@@ -1080,7 +1080,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        for (activation, sym, func, inner) in kept_if_there_is_an_environment {
+        for (activation, sym, func, inner) in kept_if_environment_exists {
             if by_activation.get(&activation).is_some_and(|held| held.len() > MOST_COPIES || held.iter().any(|sym| found.not_copied.contains_key(sym))) {
                 found.declared_closures.remove(&func);
                 kept.entry(activation).or_default().push((sym, func, inner));
@@ -1140,14 +1140,14 @@ impl<'p, 's> Checker<'p, 's> {
         // So does a declaration whose name is stored to: the name is a variable, which is given the closure where its scope is entered and may hold anything later.
         for &func in &showing_themselves {
             let name = bound.fn_symbol[func.idx()];
-            let has_scope_of_its_own = match bound.fns[func.idx()].owner {
+            let has_own_scope = match bound.fns[func.idx()].owner {
                 FnOwner::Expr(_) => true,
                 FnOwner::Stmt(_) => {
                     name.is_some() && (bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(name).is_empty() || self.is_stored_through_casts(file, name))
                 }
                 _ => false,
             };
-            if !has_scope_of_its_own {
+            if !has_own_scope {
                 continue;
             }
             let activation = Activation::Expression(func);

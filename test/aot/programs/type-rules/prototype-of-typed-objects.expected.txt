@@ -10,7 +10,6 @@ an ordinary object for an instance: TypeError
 null for an instance: TypeError
 shape 4 4 undefined false true
 the prototype of the prototype of a class: TypeError
-false
-by Reflect: no error
+by Reflect: TypeError
 the prototype of the class object (e-classes L5): TypeError
 shape 24 4 undefined true

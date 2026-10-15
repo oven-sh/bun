@@ -55,7 +55,7 @@ console.log(keys(broken), broken.weight, (broken.first as Leaf).value, broken.se
 console.log(keys(broken), broken.second === broken.first)
 attempt("thrown by the hook", () => keys(withHook(() => { throw new EvalError("hook") }, () => leaf(15))))
 
-// The hook makes nodes of its own, and keeps the one being created in a typed field of another object.
+// The hook creates its own nodes, and stores the one being created in a typed field of another object.
 const holder: { current?: Nd; all: Nd[] } = { all: [] }
 let depth = 0
 const nested = withHook(n => { holder.current = n; holder.all.push(n); if (depth++ < 2) named("inner" + depth, n) }, () => leaf(16))

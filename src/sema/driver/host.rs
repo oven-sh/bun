@@ -213,6 +213,9 @@ pub struct Disk {
     /// `Provided::jsx_of_files`, by `tspath.Path`.
     pub(crate) jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
     pub(crate) constants_of_imports: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
+    pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
+    pub(crate) early_paths: Option<std::sync::Mutex<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    pub(crate) early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// `Request::is_one_program`: what is compiled.
     pub(crate) compiled: Option<Compiled>,
     pub(crate) reads_as_the_runtime: bool,
@@ -281,6 +284,9 @@ pub struct Provided {
     /// By path, as the caller has it.
     pub jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
     pub constants_of_imports: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
+    pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
+    pub early_paths: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
+    pub early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
     pub without_builtin_modules: bool,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
@@ -496,6 +502,18 @@ impl Disk {
         self.already_read.keys()
     }
 
+    pub(crate) fn has_already_read(&self, path: &[u8]) -> bool {
+        self.already_read.contains_key(&*to_path(path, self.case_sensitive))
+    }
+
+    pub(crate) fn times_of(path: &[u8]) -> Option<[i64; 4]> {
+        let rooted = with_root(path);
+        let mut buffer = path_buffer_pool::get();
+        let found = bun_sys::fstatat(Fd::cwd(), z(for_the_system(&rooted)?, &mut buffer)).ok()?;
+        let (modified, changed) = (bun_sys::stat_mtime(&found), bun_sys::stat_ctime(&found));
+        Some([modified.sec, modified.nsec, changed.sec, changed.nsec])
+    }
+
     /// From now on several programs are read through it at the same time. Each starts parallel regions of `threads` threads: of
     /// all of them together, no more than `threads` work at a time.
     pub(crate) fn take_turns(&self) {
@@ -550,6 +568,9 @@ impl Disk {
             scripts_of_page: None,
             jsx_of_files: Vec::new(),
             constants_of_imports: FxHashMap::default(),
+            build_constants: None,
+            early_paths: None,
+            early_parse_cancelled: None,
             compiled: None,
             reads_as_the_runtime: false,
         }
@@ -1571,6 +1592,19 @@ impl Host for Disk {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension
     }
+    fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
+        let receiver = self.early_paths.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let first = loop {
+            match receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(first) => break first,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !self.is_early_parse_cancelled() => {}
+                Err(_) => return None,
+            }
+        };
+        let mut paths = vec![first];
+        paths.extend(receiver.try_iter());
+        Some(paths.iter().map(|path| from_native(path)).collect())
+    }
     fn builtin_files(&self, loaded: &[Option<Module<'_>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
         let Some(compiled) = &self.compiled else { return Vec::new() };
         let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text);
@@ -1588,7 +1622,8 @@ impl Host for Disk {
         }
         let found = crate::builtins::find(loaded, atoms, &is_compiled, &|count, work| self.parallel(count, work));
         let archive = bun_builtin_syntax::Archive::embedded();
-        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id)));
+        let is_root = |why: &crate::builtins::Why| !matches!(why, crate::builtins::Why::RequiredBy(_));
+        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id, is_root(&module.why))));
         let functions = archive.manifest().function_files().iter().map(|file| ([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), Builtin::Functions));
         let files = modules.chain(functions).collect();
         *compiled.builtin_modules.lock() = Some(found);
@@ -1604,7 +1639,7 @@ impl Host for Disk {
         let archive = bun_builtin_syntax::Archive::embedded();
         let path = archive.manifest().resolve(specifier, importer).map(|id| archive.path(id));
         // Without the extension, which an import does not name.
-        Some(path.and_then(|path| Some(path[..path.iter().rposition(|&byte| byte == b'.')?].to_vec())))
+        Some(path.and_then(|path| Some(path[..bun_core::strings::last_index_of_char(path, b'.')?].to_vec())))
     }
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
         // They are all written in TypeScript.
@@ -1660,11 +1695,20 @@ impl Host for Disk {
         }
         file
     }
+    fn is_early_parse_cancelled(&self) -> bool {
+        self.early_parse_cancelled.as_ref().is_some_and(|cancelled| cancelled.load(Ordering::Relaxed))
+    }
+    fn uses_default_parse_settings(&self, path: &[u8]) -> bool {
+        self.jsx_of_files.is_empty() || !self.jsx_of_files.iter().any(|it| it.0 == *to_path(path, self.case_sensitive))
+    }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)
     }
     fn loaded(&self) {
         self.caches.drop_those_of_the_parser();
+    }
+    fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
+        self.build_constants.clone()
     }
     fn threads(&self) -> usize {
         self.threads

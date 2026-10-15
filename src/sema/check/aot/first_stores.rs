@@ -15,7 +15,7 @@
 //!   the object before the last. AND THE ENGINE HANDS `F` A FRESH `L` ONLY IF `F` STORES FIRST ALL THAT IS NEVER SEEN ABSENT IN `L`: any other `F` makes
 //!   its own object, of the layout of its `this`. So which `F` are gone by is a choice, and no answer hangs on it: those that are meant to
 //!   get an `L`. The run time makes for `F` what `F` declares `this` to be. A `new` that makes an `L` expects one function
-//!   (`Checker::function_yielded_by`), or nobody in particular: then every `F` with `L` among the subtypes of `this`. What all of them store
+//!   (`Checker::function_produced_by`), or nobody in particular: then every `F` with `L` among the subtypes of `this`. What all of them store
 //!   first is never seen absent. (`SourceFile` is a subtype of `SourceMapSource`; no `new` that makes one expects `function SourceMapSource`.)
 //! * A SHAPE TRANSITION from a layout `B`, at a cast. The run time makes transitions at casts that no source has, so none is looked at: a
 //!   field that `L` has and `B` lacks may be seen absent.
@@ -41,24 +41,24 @@ pub(crate) struct Constructions<T = TypeId> {
     /// For each constructor function, and each layout in the type of its `this`: its first stores, and `has_mutable_prototype`.
     constructors: Vec<(T, (FileId, FnId), Vec<Atom>, bool)>,
     /// For each `new callee(..)` that makes the object itself: its layout, and the one function that `callee` is expected to be.
-    made_by_new: Vec<(T, Option<(FileId, FnId)>)>,
+    created_by_new: Vec<(T, Option<(FileId, FnId)>)>,
     /// The layouts that an allocation makes with a discriminant: `Checker::discriminant_of_new`, `discriminant_of_object_literal`.
-    made_with_discriminant: Vec<T>,
+    created_with_discriminant: Vec<T>,
     /// One has been left out, so nothing is known.
     is_incomplete: bool,
 }
 
 impl<T> Default for Constructions<T> {
     fn default() -> Constructions<T> {
-        Constructions { constructors: Vec::new(), made_by_new: Vec::new(), made_with_discriminant: Vec::new(), is_incomplete: false }
+        Constructions { constructors: Vec::new(), created_by_new: Vec::new(), created_with_discriminant: Vec::new(), is_incomplete: false }
     }
 }
 
 impl<T: Copy> Constructions<T> {
     pub(super) fn absorb(&mut self, other: Constructions<T>) {
         self.constructors.extend(other.constructors);
-        self.made_by_new.extend(other.made_by_new);
-        self.made_with_discriminant.extend(other.made_with_discriminant);
+        self.created_by_new.extend(other.created_by_new);
+        self.created_with_discriminant.extend(other.created_with_discriminant);
         self.is_incomplete |= other.is_incomplete;
     }
 
@@ -70,13 +70,13 @@ impl<T: Copy> Constructions<T> {
                 None => renamed.is_incomplete = true,
             }
         }
-        for (layout, expected) in self.made_by_new {
+        for (layout, expected) in self.created_by_new {
             match rename(layout) {
-                Some(layout) => renamed.made_by_new.push((layout, expected)),
+                Some(layout) => renamed.created_by_new.push((layout, expected)),
                 None => renamed.is_incomplete = true,
             }
         }
-        renamed.made_with_discriminant = self.made_with_discriminant.into_iter().filter_map(rename).collect();
+        renamed.created_with_discriminant = self.created_with_discriminant.into_iter().filter_map(rename).collect();
         renamed
     }
 }
@@ -85,18 +85,18 @@ impl Constructions<TypeId> {
     pub(super) fn by_view(&self, index_of: &FxHashMap<TypeId, u32>) -> ConstructionsByView {
         let constructors: Vec<(u32, (FileId, FnId), Vec<Atom>, bool)> =
             (self.constructors.iter()).filter_map(|(view, function, stores, has_mutable_prototype)| Some((*index_of.get(view)?, *function, stores.clone(), *has_mutable_prototype))).collect();
-        let made_by_new: Vec<(u32, Option<(FileId, FnId)>)> = self.made_by_new.iter().filter_map(|(layout, expected)| Some((*index_of.get(layout)?, *expected))).collect();
-        let is_incomplete = self.is_incomplete || constructors.len() < self.constructors.len() || made_by_new.len() < self.made_by_new.len();
-        let made_with_discriminant = self.made_with_discriminant.iter().filter_map(|layout| index_of.get(layout).copied()).collect();
-        ConstructionsByView { constructors, made_by_new, made_with_discriminant, is_incomplete }
+        let created_by_new: Vec<(u32, Option<(FileId, FnId)>)> = self.created_by_new.iter().filter_map(|(layout, expected)| Some((*index_of.get(layout)?, *expected))).collect();
+        let is_incomplete = self.is_incomplete || constructors.len() < self.constructors.len() || created_by_new.len() < self.created_by_new.len();
+        let created_with_discriminant = self.created_with_discriminant.iter().filter_map(|layout| index_of.get(layout).copied()).collect();
+        ConstructionsByView { constructors, created_by_new, created_with_discriminant, is_incomplete }
     }
 }
 
 /// `Constructions`, with the index of a view in the place of its type.
 pub(crate) struct ConstructionsByView {
     constructors: Vec<(u32, (FileId, FnId), Vec<Atom>, bool)>,
-    made_by_new: Vec<(u32, Option<(FileId, FnId)>)>,
-    made_with_discriminant: Vec<u32>,
+    created_by_new: Vec<(u32, Option<(FileId, FnId)>)>,
+    created_with_discriminant: Vec<u32>,
     is_incomplete: bool,
 }
 
@@ -112,7 +112,7 @@ impl ConstructionsByView {
         // By layout: what every function stores first that it is meant to be handed to. `None`: it is handed to none.
         let mut stored_first: Vec<Option<Vec<Atom>>> = vec![None; views.len()];
         let mut expected_by_new: Vec<Vec<Option<(FileId, FnId)>>> = vec![Vec::new(); views.len()];
-        for &(layout, expected) in &self.made_by_new {
+        for &(layout, expected) in &self.created_by_new {
             expected_by_new[layout as usize].push(expected);
         }
         let is_instance = |layout: u32| facts[layout as usize].flags & IS_INSTANCE != 0;
@@ -150,7 +150,7 @@ impl ConstructionsByView {
             .collect();
         // What is made with a discriminant, and all that it may become. One that is left out costs flags, and no answer.
         let mut is_in_family = vec![false; views.len()];
-        let mut reached = self.made_with_discriminant;
+        let mut reached = self.created_with_discriminant;
         while let Some(layout) = reached.pop() {
             if !std::mem::replace(&mut is_in_family[layout as usize], true) {
                 reached.extend(&becomes[layout as usize]);
@@ -221,26 +221,26 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// An allocation makes an object of the layout of the type with a discriminant.
-    pub fn note_object_made_with_discriminant(&mut self, made: TypeId) {
+    pub fn note_object_created_with_discriminant(&mut self, made: TypeId) {
         let made = self.laid_out_as(made);
-        self.noted_constructions().made_with_discriminant.push(made);
+        self.noted_constructions().created_with_discriminant.push(made);
     }
 
     /// An object of the layout of the type `made` is made with none of its fields, and whoever can get at it may before they are stored
     /// to: that of a namespace.
-    pub fn note_object_born_empty(&mut self, made: TypeId, file: FileId) {
+    pub fn note_object_allocated_empty(&mut self, made: TypeId, file: FileId) {
         let made = self.laid_out_as(made);
         self.noted_constructions().constructors.push((made, (file, FnId::NONE), Vec::new(), false));
     }
 
     /// `new callee(..)` makes the object itself, of the layout of the type `made`, and hands it to what `callee` turns out to be. `None`: of a layout that no type stands for.
-    pub fn note_object_made_by_new(&mut self, made: Option<TypeId>, file: FileId, callee: ExprId) {
+    pub fn note_object_created_by_new(&mut self, made: Option<TypeId>, file: FileId, callee: ExprId) {
         let Some(made) = made else {
             self.noted_constructions().is_incomplete = true;
             return;
         };
-        let (made, expected) = (self.laid_out_as(made), self.function_yielded_by(file, callee));
-        self.noted_constructions().made_by_new.push((made, expected));
+        let (made, expected) = (self.laid_out_as(made), self.function_produced_by(file, callee));
+        self.noted_constructions().created_by_new.push((made, expected));
     }
 
     /// The statements `this.name = value` that the body of the function starts with, up to one that repeats a name.
@@ -299,7 +299,7 @@ impl<'p, 's> Checker<'p, 's> {
             return stores;
         }
         let on_prototypes = self.prototype_property_names();
-        let keeps_them_off = self.keeps_field_names_off_its_prototype(file, func);
+        let keeps_them_off = self.has_no_field_names_on_prototype(file, func);
         for stmt in hir.ids(body) {
             let StmtKind::Expr(e) = hir[stmt].kind else { break };
             // A directive.
@@ -313,8 +313,8 @@ impl<'p, 's> Checker<'p, 's> {
                 value = assigned;
             }
             let has_no_operand = matches!(hir[value].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::Ident(_));
-            let yields_primitive = (targets.len() == 1 || has_no_operand) && self.yields_primitive(file, value);
-            if targets.is_empty() || !(self.names_parameter_of(file, func, value) || self.is_plain_nil(file, value) || self.is_enum_constant(file, value) || yields_primitive) {
+            let evaluates_to_primitive = (targets.len() == 1 || has_no_operand) && self.evaluates_to_primitive(file, value);
+            if targets.is_empty() || !(self.names_parameter_of(file, func, value) || self.is_plain_nullish(file, value) || self.is_enum_constant(file, value) || evaluates_to_primitive) {
                 break;
             }
             let before = stores.len();
@@ -347,12 +347,25 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `undefined!`, `null!`: of type `never`, which nothing is held to.
-    pub fn is_plain_nil(&self, file: FileId, e: ExprId) -> bool {
+    pub fn is_plain_nullish(&self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         let ExprKind::NonNull(operand) = hir[e].kind else { return false };
         match hir[operand].kind {
             ExprKind::Null => true,
             ExprKind::Ident(name) => self.bound(file).expr_symbol[operand.idx()].is_none() && self.atoms().bytes(name) == b"undefined",
+            _ => false,
+        }
+    }
+
+    pub fn is_nullish_by_its_text(&self, file: FileId, mut e: ExprId) -> bool {
+        let hir = self.hir(file);
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[e].kind {
+            e = expr;
+        }
+        match hir[e].kind {
+            ExprKind::Null => true,
+            ExprKind::Unary { op: crate::hir::UnOp::Void, .. } => true,
+            ExprKind::Ident(name) => self.bound(file).expr_symbol[e.idx()].is_none() && self.atoms().bytes(name) == b"undefined",
             _ => false,
         }
     }

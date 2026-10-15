@@ -135,7 +135,7 @@ describe("require", () => {
     }
   });
 
-  test("what the registry does not have is an error", async () => {
+  test("a specifier that is missing from the registry is an error", async () => {
     const { stderr, exitCode } = await compile(`export default require("left-pad");`);
     expect(stderr).toContain('Could not resolve "left-pad"');
     expect(exitCode).toBe(1);
@@ -171,7 +171,7 @@ describe("macros", () => {
     expect(text).toMatch(/@lazy\(\d+\)/);
   });
 
-  test("a native function no module of src/js calls is an error", async () => {
+  test("a native function that no module in src/js calls is an error", async () => {
     const { stderr, exitCode } = await compile(`export default $cpp("Path.cpp", "createNothing");`);
     expect(stderr).toContain('This "$cpp" call is not in the builtins manifest');
     expect(exitCode).toBe(1);
@@ -185,7 +185,7 @@ describe("macros", () => {
     };
   `;
 
-  test("$debug and $assert are nothing in a release build", async () => {
+  test("$debug and $assert are removed in a release build", async () => {
     const { text } = await compile(checks, "OFF");
     expect(text).not.toContain("called with");
     expect(text).not.toContain("not one");
@@ -287,7 +287,7 @@ describe("exports", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a type export is no export", async () => {
+  test("a type export does not count as an export", async () => {
     const { text } = await compile(`
       export type One = 1;
       export interface Two {}

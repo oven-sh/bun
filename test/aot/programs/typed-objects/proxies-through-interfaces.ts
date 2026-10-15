@@ -44,14 +44,14 @@ const soon: any = revocable.proxy
 console.log(norm1(soon), soon.tag)
 revocable.revoke()
 console.log(attempt(() => norm1(soon)), attempt(() => { soon.x = 1 }), attempt(() => "x" in soon), attempt(() => ({ ...soon })), typeof soon)
-// An instance of a class behind a proxy: fields, `instanceof`, keys.
+// An instance of a class wrapped in a proxy: fields, `instanceof`, keys.
 class Acc { total = 0; steps?: number; add(n: number): this { this.total += n; this.steps = (this.steps ?? 0) + 1; return this } get mean(): number { return this.total / (this.steps ?? 1) } }
 const acc = new Acc()
 const pa = spy(acc)
 pa.total = 6; pa.steps = 2
 console.log(pa.total, typeof pa.add, flush())
 console.log(acc.total, acc.steps, acc.mean, pa instanceof Acc, Object.keys(acc).join(), Object.keys(pa).join(), flush())
-// A proxy as the prototype: what the object lacks is asked of the traps.
+// A proxy as the prototype: the traps are called for what the object lacks.
 const child: any = Object.create(spy({ x: 5, y: 6, tag: "proto" } satisfies Point3))
 child.x = 50
 console.log(flush())

@@ -51,7 +51,7 @@ function dataOf(l: Loaded): string { return l.error === null ? l.data.join("+") 
 function nOf(p: Perhaps): string { return p.present === undefined ? p.fallback : String(p.present.n) }
 console.log(([{ error: null, data: [1, 2] }, { error: "bad" }, { error: "", data: undefined }] as Loaded[]).map(dataOf).join(),([{ present: undefined, fallback: "f" }, { present: { n: 3 } }] as Perhaps[]).map(nOf).join())
 
-// Bit flags: the value of a flags field is often no member of the enum, and larger than all of them. (Casts to the interface the flags promise, and a value beyond 32 bits: type-rules/unions-with-numeric-discriminants.)
+// Bit flags: the value of a flags field is often not a member of the enum, and larger than all of them. (Casts to the interface that the flags imply, and a value beyond 32 bits: type-rules/unions-with-numeric-discriminants.)
 const enum Has { None = 0, Label = 1, Count = 2, Child = 4, Deep = 1 << 20, Top = 1 << 30 }
 interface Flagged { flags: Has }
 interface WithLabel extends Flagged { label: string }

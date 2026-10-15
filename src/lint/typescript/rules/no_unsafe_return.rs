@@ -1,3 +1,4 @@
+use bun_lint::language::Twins;
 use bun_lint::prelude::*;
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::types::tsutils::{
@@ -113,6 +114,9 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
             return;
         }
 
+        if return_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_RETURN_LEAVES) {
+            return;
+        }
         let options = cx.file().type_checker().compiler_options();
         let is_this_any = !is_strict_compiler_option_enabled(options, CompilerOption::NoImplicitThis)
             && get_this_expression(return_node)
@@ -140,6 +144,9 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     else {
         return;
     };
+    if return_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_RETURN_LEAVES) {
+        return;
+    }
     cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)
         .comments_apply_at(keyword)
         .data("receiver", result.receiver.to_text())

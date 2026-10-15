@@ -8,7 +8,7 @@ const trace: string[] = []
 const c2 = conf()
 Object.assign(c2, { extra1: 1, tags: [], extra2: 2, secure: false } as any)
 console.log(show(c2), c2.secure, c2.tags?.length, (c2 as any).extra1 + (c2 as any).extra2)
-// Silent: an accessor of a literal is no field: it lists, and is read, after the fields.
+// Silent: an accessor of a literal is not a field: it is listed, and read, after the fields.
 const c9 = conf()
 const throwing = { host: "one", get port(): number { throw new RangeError("x") }, secure: true }
 console.log(Object.keys(throwing).join(), attempt(() => Object.assign(c9, throwing as any)), show(c9))

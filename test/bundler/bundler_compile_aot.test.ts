@@ -267,6 +267,39 @@ describe("bundler", () => {
       run: usesImage("main 610 worker 987\n"),
     });
 
+    itBundled("WorkerTerminatedInALoop", {
+      files: {
+        "/entry.ts": /* js */ `
+          import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+          class Rec { constructor(public n: number) {} }
+          function framed(seed: number, list: Rec[]): number { let t = seed; while (true) { t = (t * 31 + list.length) | 0; if (t === 123456789) list.push(new Rec(t)); } }
+          function frameless(a: number, b: number): number { let t = a; while (t !== 0.5) { t = (t * 31 + b) | 0; } return t; }
+          function inTry(seed: number): number { let t = seed; try { do { t = (t * 31 + 7) | 0; } while (t !== 0.5); } catch { console.log("caught"); } return t; }
+          function overArray(list: Rec[]): number { let t = 0; for (;;) { for (const r of list) t = (t + r.n) | 0; } }
+          function nested(n: number): number { let t = 0; for (;;) { for (let i = 0; i < n; i++) { let j = i; while (j > 0) { t = (t + j) | 0; j >>= 1; } } } }
+          if (isMainThread) {
+            for (const shape of ["framed", "frameless", "inTry", "overArray", "nested"]) {
+              const worker = new Worker(new URL(import.meta.url), { workerData: shape });
+              await new Promise<void>(resolve => worker.on("message", () => resolve()));
+              await new Promise<void>(resolve => setTimeout(resolve, 50));
+              console.log(shape, await worker.terminate());
+            }
+          } else {
+            parentPort!.postMessage("spinning");
+            const list = [new Rec(1), new Rec(2), new Rec(3)];
+            switch (workerData as string) {
+              case "framed": framed(1, list); break;
+              case "frameless": frameless(1, 7); break;
+              case "inTry": inTry(1); break;
+              case "overArray": overArray(list); break;
+              case "nested": nested(1000); break;
+            }
+          }
+        `,
+      },
+      run: usesImage("framed 1\nframeless 1\ninTry 1\noverArray 1\nnested 1\n"),
+    });
+
     itBundled("WorkerFromBlobURL", {
       files: {
         "/entry.ts": /* js */ `
@@ -525,6 +558,62 @@ describe("bundler", () => {
   });
 });
 
+test("compile.aot: compiles the contents a plugin returns instead of the file on disk", async () => {
+  using dir = tempDir("compile-aot-plugin-text", {
+    "app.ts": `
+      import { answer, type Shape } from "./other";
+      const shape: Shape = { kind: "plugin", size: 2 };
+      console.log(answer(), shape.kind, shape.size);
+    `,
+    "other.ts": `
+      export type Shape = { kind: string };
+      export function answer() { return "from the disk"; }
+    `,
+    "build.ts": `
+      const result = await Bun.build({
+        entrypoints: ["./app.ts"],
+        compile: { aot: true, outfile: "./app" },
+        plugins: [
+          {
+            name: "rewrites other.ts",
+            setup(build) {
+              build.onLoad({ filter: /other\\.ts$/ }, async () => {
+                await Bun.sleep(300);
+                return {
+                  loader: "ts",
+                  contents: 'export type Shape = { kind: string; size: number }; export function answer() { return "from the plugin"; }',
+                };
+              });
+            },
+          },
+        ],
+      });
+      console.log(result.success);
+    `,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(stdout).toBe("true\n");
+  expect(exitCode).toBe(0);
+
+  await using app = Bun.spawn({
+    cmd: [join(String(dir), "app")],
+    env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [appStdout, appStderr, appExitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+  expect(appStdout).toBe("from the plugin plugin 2\n");
+  expect(appStderr).toContain("[aot] image: ");
+  expect(appExitCode).toBe(0);
+});
+
 test("compile.aot: concurrent builds from several threads", async () => {
   const apps = [1, 2, 3, 4];
   using dir = tempDir("compile-aot-at-once", {
@@ -635,6 +724,7 @@ describe("Bun.ModuleGraph with --aot", () => {
   async function run(entry: string) {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
+        declare const tag: string | undefined;
         const url = new URL("./app.js", import.meta.url).href;
         async function main() { ${entry} }
         if (Bun.isMainThread && process.argv[2] === "worker") {
@@ -647,6 +737,7 @@ describe("Bun.ModuleGraph with --aot", () => {
         }
       `,
       "app.ts": `
+        declare const tag: string;
         let n = 0;
         export function count() { return ++n; }
         export const viaClosure = () => () => count();
@@ -664,6 +755,18 @@ describe("Bun.ModuleGraph with --aot", () => {
           Bun.gc(true);
           return [count(), [1, 2, 3].map(x => x + n).join()];
         }
+        export class Box {
+          method() { return n; }
+          get accessor() { return n; }
+          set accessor(value: number) { n = value; }
+        }
+        export function makeBox(): Box { return new Box(); }
+        export function callMethod(box: Box) { return box.method(); }
+        export function readAccessor(box: Box) { return box.accessor; }
+        export function writeAccessor(box: Box, value: number) { box.accessor = value; }
+        export interface Point { x: number; y: number }
+        export function makePoint(x: number, y: number): Point { return { x, y }; }
+        export function movePoint(point: Point) { point.x += n; return point.x * 10 + point.y; }
       `,
     });
     await using build = Bun.spawn({
@@ -722,7 +825,7 @@ describe("Bun.ModuleGraph with --aot", () => {
   test.concurrent("closure outlives its graph", async () => {
     expect(
       await run(`
-        let graph = new Bun.ModuleGraph();
+        let graph: Bun.ModuleGraph | null = new Bun.ModuleGraph();
         const { count, viaClosure } = await graph.import(url);
         const closure = viaClosure();
         count();
@@ -771,6 +874,54 @@ describe("Bun.ModuleGraph with --aot", () => {
         return [x.tagInLoop(), y.tagInLoop(), x.tagInLoop(), x.tagsViaBuiltin(), y.tagsViaBuiltin(), typeof tag];
       `),
     ).toEqual(everywhere(["xxx", "yyy", "xxx", "xx", "yy", "undefined"]));
+  });
+
+  test.concurrent("globals cannot replace an existing global", async () => {
+    expect(
+      await run(`
+        const results = [];
+        for (const globals of [{ fresh: 1 }, { Math: {} }, { console: {} }]) {
+          try {
+            results.push(typeof (await new Bun.ModuleGraph({ globals }).import(url)).count);
+          } catch (error) {
+            results.push((error as Error).name + ": " + (error as Error).message.split(" (bun --aot")[0]);
+          }
+        }
+        return results;
+      `),
+    ).toEqual(
+      everywhere([
+        "function",
+        'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "Math" for a module that was compiled ahead of time',
+        'TypeError: The `globals` of a Bun.ModuleGraph cannot replace the global "console" for a module that was compiled ahead of time',
+      ]),
+    );
+  });
+
+  test.concurrent("methods and accessors of another graph's object use that graph's variables", async () => {
+    expect(
+      await run(`
+        const [a, b] = await Promise.all([1, 2].map(() => new Bun.ModuleGraph().import(url)));
+        const host = await import(url);
+        a.count(); b.count(); b.count(); host.count(); host.count(); host.count();
+        const box = a.makeBox();
+        const read = [b.callMethod(box), host.callMethod(box), a.callMethod(host.makeBox()), b.readAccessor(box), host.readAccessor(b.makeBox())];
+        b.writeAccessor(box, 50);
+        host.writeAccessor(b.makeBox(), 70);
+        return [...read, a.count(), b.count(), host.count(), b.callMethod(b.makeBox())];
+      `),
+    ).toEqual(everywhere([1, 1, 3, 1, 2, 51, 71, 4, 71]));
+  });
+
+  test.concurrent("records cross graphs as the objects they are", async () => {
+    expect(
+      await run(`
+        const [a, b] = await Promise.all([1, 2].map(() => new Bun.ModuleGraph().import(url)));
+        a.count(); b.count(); b.count();
+        const point = a.makePoint(1, 2);
+        return [b.movePoint(point), a.movePoint(point), point.x];
+      `),
+    ).toEqual(everywhere([32, 42, 4]));
   });
 
   test.concurrent("600 graphs at once", async () => {
@@ -927,6 +1078,44 @@ test.each([
   const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
   expect(expected).toStartWith("[aot] image: ");
   expect(actual).toBe(expected);
+});
+
+test("file imports evaluate to the paths of the embedded files", async () => {
+  using dir = tempDir("compile-aot-file-imports", {
+    "first.bin": "first",
+    "nested/second.bin": "second",
+    "types.d.ts": `declare module "*.bin" { const path: string; export default path; }`,
+    "helper.ts": `
+      import second from "./nested/second.bin" with { type: "file" };
+      export const secondPath = second;
+      export const secondLength = second.length;
+    `,
+    "entry.ts": `
+      /// <reference path="./types.d.ts" />
+      import first from "./first.bin" with { type: "file" };
+      import { readFileSync } from "node:fs";
+      import { secondLength, secondPath } from "./helper";
+      console.log(first.endsWith(".bin"), first.includes("first"), first.length === [...first].length);
+      console.log(secondPath.endsWith(".bin"), secondPath.includes("second"), secondLength === [...secondPath].length);
+      console.log(readFileSync(first, "utf8"), readFileSync(secondPath, "utf8"));
+    `,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ buildStderr, buildExitCode }).toEqual({ buildStderr: "", buildExitCode: 0 });
+  await using app = Bun.spawn({ cmd: [join(String(dir), "out")], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true true true\ntrue true true\nfirst second\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("builds are reproducible", async () => {

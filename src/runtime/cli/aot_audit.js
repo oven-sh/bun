@@ -63,7 +63,7 @@
       case "function":
         if (type.o || type.fn) return true;
         for (let i = 0; i < type.parts.length; i++) if (type.parts[i].k !== "array" && type.parts[i].view === undefined) return true;
-        return false;
+        return under === undefined && mayStay(type, value);
     }
     if (value === null) return (type.p & NULL) !== 0;
     if (type.o) return true;
@@ -122,17 +122,73 @@
   // JavaScriptCore/aot/AOTTypedObject.cpp: coerce(), copy(), chooseLayout(), distanceTo(), mayBeCoerced(). Plain data is made one of a
   // shape that the program allocates: every own property that the shape has a field for is an enumerable data property whose value
   // enters the type of the field in its turn (read only or not configurable: taken where objects of the shape may be frozen, which of a
-  // record only the engine knows: nothing is said); every field that is not optional is there; what the shape does not name stays. Nothing is made of a Proxy, an array, a function or a native object. test/cli/aot-audit-members.test.ts holds the two to
+  // record only the engine knows: nothing is said); every field that is not optional is there; what the shape does not name stays. Nothing is made of a Proxy, an array, a function or a native object. Where nothing can be made and the type also takes records of other shapes, what is not all plain data stays the object it is if it may satisfy the type when read by name: mayStayWhereNothingCanBeMadeOfIt(). test/cli/aot-audit-members.test.ts holds the two to
   // each other.
   // It errs on the side of silence. The engine takes the nearest shape and fails with it: here any will do. Whether an object that typed
-  // code has made is of the type goes by its layout in a build: a literal with the tag passes, and so does whatever has another prototype
-  // and is not native: `new` on a class or a function of the program may have made it.
+  // code has made is of the type goes by its layout in a build: a literal with the tag passes if it was made as a member of the type, and
+  // is looked at like plain data otherwise. Whatever has another prototype and is not native passes: `new` on a class or a function of the
+  // program may have made it.
   // In a build the data has become a record from there on. Here it gets the tag that a literal of typed code gets, with the shape it has
   // entered as, so that it is walked once, and the site knows its Structure again without asking.
   function canBeMade(type, value, under) {
+    return canBeCopied(type, value, under) || (under === undefined && mayStay(type, value));
+  }
+
+  function mayStay(type, value) {
+    const parts = type.parts;
+    let stays = false;
+    for (let i = 0; i < parts.length; i++) if (parts[i].view !== undefined && shapeBy(parts[i].view)?.stays) stays = true;
+    if (!stays || isAllPlainData(value)) return false;
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i].view === undefined) continue;
+      const view = shapeBy(parts[i].view);
+      if (view === null) return true;
+      for (let j = 0; j < view.made.length; j++) {
+        const shape = shapeBy(view.made[j]);
+        if (shape === null || maySatisfyWhenReadByName(shape, value)) return true;
+      }
+    }
+    return false;
+  }
+
+  function isAllPlainData(value) {
+    if (isProxy(value) || isArray(value) || !isExtensible(value) || apply(objectToString, value, []) !== "[object Object]") return false;
+    const prototype = getPrototypeOf(value);
+    if (prototype !== null && prototype !== ObjectPrototype) return false;
+    const names = ownKeys(value);
+    for (let i = 0; i < names.length; i++) {
+      const descriptor = getOwnPropertyDescriptor(value, names[i]);
+      if (descriptor.get !== undefined || descriptor.set !== undefined || !descriptor.writable || !descriptor.enumerable || !descriptor.configurable) return false;
+    }
+    return true;
+  }
+
+  function maySatisfyWhenReadByName(shape, value) {
+    const fields = shape.fields, names = keys(fields);
+    for (let i = 0; i < names.length; i++) {
+      const field = fields[names[i]];
+      let descriptor;
+      for (let holder = value; holder !== null && descriptor === undefined; holder = getPrototypeOf(holder)) {
+        if (isProxy(holder)) descriptor = null;
+        else descriptor = getOwnPropertyDescriptor(holder, names[i]);
+        if (descriptor === null) break;
+      }
+      if (descriptor === null) continue;
+      if (descriptor === undefined) {
+        if (field.optional) continue;
+        return false;
+      }
+      if (descriptor.get !== undefined || descriptor.set !== undefined) continue;
+      const held = descriptor.value;
+      if ((held === null || (typeof held !== "object" && typeof held !== "function")) && !fits(field.to, held)) return false;
+    }
+    return true;
+  }
+
+  function canBeCopied(type, value, under) {
     if (isProxy(value) || isArray(value)) return false;
     const tagged = tagOf(value), parts = type.parts;
-    if (tagged !== undefined && tagged < ENTERED) return true;
+    if (tagged !== undefined && tagged < ENTERED && isMadeAsMember(parts, keyOfShapeTagged(tagged))) return true;
     const prototype = getPrototypeOf(value);
     if (prototype !== null && prototype !== ObjectPrototype) {
       if (hasProxyAbove(prototype)) return true;
@@ -160,6 +216,17 @@
           return true;
         }
       }
+    }
+    return false;
+  }
+
+  function isMadeAsMember(parts, key) {
+    if (key === undefined || key === "") return true;
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i].view === undefined) continue;
+      const view = shapeBy(parts[i].view);
+      if (view === null) return true;
+      for (let j = 0; j < view.members.length; j++) if (view.members[j] === key) return true;
     }
     return false;
   }
@@ -252,7 +319,10 @@
     if (isProxy(value)) return "native ProxyObject";
     if (isArray(value)) return "Array";
     const prototype = getPrototypeOf(value);
-    if (prototype === null || prototype === ObjectPrototype) return "untyped object";
+    if (prototype === null || prototype === ObjectPrototype) {
+      const tagged = tagOf(value);
+      return (tagged !== undefined && tagged < ENTERED && shapeOf(value)?.name) || "untyped object";
+    }
     if (hasProxyAbove(prototype)) return "object";
     const tag = apply(stringSlice, apply(objectToString, value, []), [8, -1]);
     if (tag !== "Object" && typeof getOwnPropertyDescriptor(global, tag)?.value === "function") return "native " + tag;

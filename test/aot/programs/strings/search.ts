@@ -112,5 +112,5 @@ print(attempt(() => searchAnything("a/b/", /b/, 0)) + attempt(() => ("a/b/" as a
 print(attempt(() => indexOfAnything("abc", Symbol("b"))) + attempt(() => indexOfAnything([1, "b", 3], "b")) + attempt(() => indexOfAnything(new String("abc"), "c")) + attempt(() => indexOfAnything({ indexOf() { return "mine"; } }, "c")));
 let order = "";
 print(show(("abcabc" as any).indexOf({ toString() { order += "x"; return "c"; } }, { valueOf() { order += "p"; return 3; } })) + order);
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [indexOfCharacter, includesCharacter, lastIndexOfCharacter, indexOf1, includes1, lastIndexOf1, searchKnown, startsWithKnown, endsWithKnown, startsWithText, indexOfAnything]; console.log("number");

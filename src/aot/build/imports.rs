@@ -5,8 +5,10 @@
 //! its value is of. The value is what the bundler's file exports under that name. Nothing here follows the checker from one module
 //! to the next: an import, a re-export and `export *` all go where the bundler has them go.
 
-use super::{FileBuild, Fx};
-use crate::id::V;
+use super::fit::Ty;
+use super::{FileBuild, Fx, Place};
+use crate::fragment::GlobalKey;
+use crate::id::{GlobalId, V};
 use crate::ir::Op;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Decl, Parent, SymFlags};
@@ -53,7 +55,7 @@ pub(crate) enum ImportSource {
     /// All that an ES module of the program exports: `import * as ns`.
     Namespace(FileId),
     /// `import a = b.c`: what the checker has `b.c` stand for.
-    Entity,
+    Entity(Sym),
     /// A property of what a CommonJS or JSON module exports, as an ES module sees it. No name: all of it.
     ExportedObject { importer: FileId, file: FileId, name: Option<Atom> },
     /// A module that is not compiled with the program.
@@ -61,6 +63,35 @@ pub(crate) enum ImportSource {
     /// The default export of a file that is imported as a string, which `file` imports as `specifier`.
     Text { file: FileId, specifier: Atom },
     Unknown,
+}
+
+#[derive(Copy, Clone)]
+pub(crate) enum EntityAlias {
+    TypeOnly,
+    SameBinding(Sym),
+    CopiedValue,
+}
+
+struct ResolvedAliasPath {
+    source: Option<ImportSource>,
+    names: Vec<Atom>,
+    resolved_count: usize,
+    aliases_crossed: Vec<Sym>,
+}
+
+pub(crate) fn is_builtin_specifier(specifier: &[u8]) -> bool {
+    specifier == b"bun" || specifier.starts_with(b"bun:") || specifier.starts_with(b"node:") || known_builtin_exports(specifier).is_some()
+}
+
+fn known_builtin_exports(specifier: &[u8]) -> Option<(&'static [u8], &'static [&'static [u8]])> {
+    static TABLE: std::sync::OnceLock<Vec<(&'static [u8], Vec<&'static [u8]>)>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let lines = include_str!("../builtin-export-names.txt").lines();
+        lines.filter_map(|line| line.split_once(' ')).map(|(module, names)| (module.as_bytes(), names.split(' ').map(str::as_bytes).collect())).collect()
+    });
+    let find = |name: &[u8]| table.binary_search_by_key(&name, |module| module.0).ok();
+    let found = find(specifier).or_else(|| find(&[&b"node:"[..], specifier].concat()))?;
+    Some((table[found].0, table[found].1.as_slice()))
 }
 
 pub(crate) fn written_in_the_place_of(files: &Files<'_>, code: FileId) -> FileId {
@@ -73,7 +104,7 @@ pub(crate) struct Bundle<'p> {
     /// By importing file and specifier: the path the import is resolved to, and the file at it if that is one of the program.
     resolved: FxHashMap<(FileId, &'p [u8]), (&'p [u8], Option<FileId>)>,
     /// `Constants::dropped_imports`
-    dropped: FxHashSet<(FileId, &'p [u8])>,
+    pub(super) dropped: FxHashSet<(FileId, &'p [u8])>,
     /// See `FileBuild::only_declares`.
     declaring: FxHashSet<FileId>,
 }
@@ -178,11 +209,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return modules.binary_search_by_key(&id, |module| module.0).ok().map(|found| modules[found].1);
         }
         let text = self.c.atoms().bytes(specifier);
+        if text == b"bun:wrap" {
+            return self.shared.runtime_helpers();
+        }
         let imported = match &self.shared.bundle {
             Some(bundle) => bundle.resolved.get(&(file, text))?.1?,
             None => self.file_resolved_by_checker(file, specifier)?,
         };
         (!self.only_declares(imported)).then_some(imported)
+    }
+
+    fn report_unknown_runtime_helpers(&mut self, file: FileId) -> bool {
+        let Some(helpers) = self.shared.runtime_helpers() else { return false };
+        let hir = self.hir(file);
+        let from_runtime = hir.imports.iter().filter(|import| !import.type_only && self.c.atoms().bytes(import.spec) == b"bun:wrap");
+        let named: Vec<(u32, Atom)> = from_runtime.flat_map(|import| import.named.iter().map(|spec| &hir[spec])).filter(|spec| !spec.type_only).map(|spec| (spec.imported_pos, spec.imported)).collect();
+        let mut is_any_unknown = false;
+        for (pos, name) in named {
+            if self.binding_exported_as(helpers, name).is_some() {
+                continue;
+            }
+            is_any_unknown = true;
+            if !self.problems.iter().any(|problem| problem.file == file && problem.pos == pos) {
+                let what = format!("the helper `{}`, which \"bun:wrap\" does not export", String::from_utf8_lossy(self.c.atoms().bytes(name)));
+                self.problems.push(super::Problem { file, pos, what: std::borrow::Cow::Owned(what) });
+            }
+        }
+        is_any_unknown
     }
 
     /// Without a bundler.
@@ -238,6 +291,70 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             StmtKind::Import(import) if hir[import].spec == specifier => self.type_attribute(file, stmt),
             _ => None,
         })
+    }
+
+    pub(crate) fn is_reached_otherwise_than_with_type(&self, file: FileId, specifier: Atom, said: Option<Atom>) -> bool {
+        self.types_said_where_the_program_reaches(file, specifier).iter().any(|&(_, says)| says != said)
+    }
+
+    pub(crate) fn is_imported_by_a_statement_with_type(&self, file: FileId, specifier: Atom, said: Atom) -> bool {
+        self.types_said_where_the_program_reaches(file, specifier).contains(&(true, Some(said)))
+    }
+
+    pub(crate) fn type_said_by_options(&self, file: FileId, options: Option<hir::ExprId>) -> Option<Atom> {
+        let hir = self.hir(file);
+        let member = |object: Option<hir::ExprId>, name: &[u8]| match hir[object?].kind {
+            hir::ExprKind::Object(props) => props.iter().find_map(|p| match hir[p].key {
+                hir::PropKey::Name(key) if self.c.atoms().bytes(key) == name => Some(hir[p].value),
+                _ => None,
+            }),
+            _ => None,
+        };
+        match member(member(options, b"with"), b"type").map(|value| hir[value].kind) {
+            Some(hir::ExprKind::String(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn types_said_where_the_program_reaches(&self, file: FileId, specifier: Atom) -> Vec<(bool, Option<Atom>)> {
+        let without_dots = |path: &[u8]| {
+            let mut parts: Vec<&[u8]> = Vec::new();
+            for part in bun_core::strings::split(path, b"/") {
+                match part {
+                    b"." => {}
+                    b".." => {
+                        parts.pop();
+                    }
+                    _ => parts.push(part),
+                }
+            }
+            parts.join(&b"/"[..])
+        };
+        let asked_for = without_dots(self.c.atoms().bytes(self.as_the_host_finds_it(file, specifier)));
+        let mut found = Vec::new();
+        for &module in &self.shared.modules {
+            let hir = self.hir(module);
+            for used in hir.specifier_uses.iter() {
+                if used.kind == hir::SpecifierKind::ImportType || without_dots(self.c.atoms().bytes(self.as_the_host_finds_it(module, used.spec))) != asked_for {
+                    continue;
+                }
+                found.push(match used.kind {
+                    hir::SpecifierKind::Import | hir::SpecifierKind::SideEffect => {
+                        let statement = hir.ids(hir.body).find(|&stmt| hir[stmt].start <= used.pos && used.pos < hir[stmt].loc.end);
+                        (true, statement.and_then(|stmt| self.type_attribute(module, stmt)))
+                    }
+                    hir::SpecifierKind::ImportCall => {
+                        let options = hir.exprs.iter().find_map(|e| match e.kind {
+                            hir::ExprKind::ImportCall { args } if hir[hir.id_at(args, 0)].pos == used.pos => hir.ids(args).nth(1),
+                            _ => None,
+                        });
+                        (false, self.type_said_by_options(module, options))
+                    }
+                    _ => (false, None),
+                });
+            }
+        }
+        found
     }
 
     pub(crate) fn asset_the_host_loads(&self, file: FileId, specifier: Atom) -> Option<HostLoads> {
@@ -299,7 +416,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The symbol that stands for the value `sym` refers to: the end of a chain of imports, and the export of a declaration.
     pub(crate) fn value_symbol(&mut self, sym: Sym) -> Sym {
-        self.value_symbol_after(sym, &mut Vec::new())
+        if !self.files.flags(sym).contains(SymFlags::ALIAS) {
+            return self.value_symbol_after(sym, &mut Vec::new());
+        }
+        if let Some(&known) = self.value_symbols.get(&sym) {
+            return known;
+        }
+        let found = self.value_symbol_after(sym, &mut Vec::new());
+        self.value_symbols.insert(sym, found);
+        found
     }
 
     /// `seen`: see `value_symbol_of_export_after`.
@@ -309,7 +434,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             match self.import_source(sym) {
                 ImportSource::Declaration(exported) => return self.value_symbol_of_export_after(exported, seen),
                 ImportSource::Namespace(file) => return self.files.file_symbol(file),
-                ImportSource::Entity => {}
+                ImportSource::Entity(alias) => match self.entity_alias_kind(alias) {
+                    EntityAlias::SameBinding(binding) => {
+                        seen.push(alias);
+                        return binding;
+                    }
+                    EntityAlias::CopiedValue => return alias,
+                    EntityAlias::TypeOnly => {}
+                },
                 // What a CommonJS module exports is not known before it has run: the import stays an import.
                 _ => return sym,
             }
@@ -344,6 +476,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.files.flags(sym).contains(SymFlags::ALIAS)
             && let Some(target) = self.files.resolve_alias(sym)
         {
+            if self.files.symbol(exported).name == known::export_equals && matches!(self.value_declaration(target), Some((_, Decl::Var(_) | Decl::Param(_)))) {
+                return exported;
+            }
             sym = target;
         }
         self.files.export_symbol_of_value_symbol_if_exported(sym)
@@ -365,26 +500,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match self.source_of_export(file, name) {
             ImportSource::Declaration(exported) => {
                 let member = self.value_symbol_of_export(exported);
-                !self.has_value_at_run_time(member)
+                !self.has_value_at_runtime(member)
             }
-            ImportSource::Unknown => self.re_exports_modules_of_the_program_alone(file, &mut vec![file]),
+            ImportSource::Unknown => self.re_exports_only_program_modules(file, &mut vec![file]),
             _ => false,
         }
     }
 
     /// Not a type or what is only declared.
-    pub(crate) fn has_value_at_run_time(&self, member: Sym) -> bool {
+    pub(crate) fn has_value_at_runtime(&self, member: Sym) -> bool {
         let flags = self.files.flags(member);
         flags.intersects(SymFlags::VALUE) && !self.is_ambient(member)
     }
 
-    fn re_exports_modules_of_the_program_alone(&self, file: FileId, seen: &mut Vec<FileId>) -> bool {
+    fn re_exports_only_program_modules(&self, file: FileId, seen: &mut Vec<FileId>) -> bool {
         self.modules_exported_whole(file).into_iter().all(|specifier| match self.imported_file(file, specifier) {
             Some(imported) if self.exports_an_object(imported) => false,
             Some(imported) if seen.contains(&imported) => true,
             Some(imported) => {
                 seen.push(imported);
-                self.re_exports_modules_of_the_program_alone(imported, seen)
+                self.re_exports_only_program_modules(imported, seen)
             }
             None => false,
         })
@@ -434,7 +569,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             None => (spec, Some(known::default)),
                         }
                     }
-                    _ => return ImportSource::Entity,
+                    _ => return ImportSource::Entity(alias),
                 },
                 _ => continue,
             };
@@ -468,6 +603,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
         }
         ImportSource::Unknown
+    }
+
+    pub(crate) fn all_star_exports_resolve(&self, file: FileId) -> bool {
+        let (mut seen, mut left) = (vec![file], vec![file]);
+        while let Some(module) = left.pop() {
+            for &star in &self.stars_of(module).list {
+                match star {
+                    Star::Object(_) | Star::Outside(_) => return false,
+                    Star::Module(imported) if seen.contains(&imported) => {}
+                    Star::Module(imported) => {
+                        seen.push(imported);
+                        left.push(imported);
+                    }
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn only_object_behind_stars(&self, file: FileId) -> Option<(FileId, FileId)> {
@@ -522,6 +674,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn export_of_module(&self, file: FileId, name: Atom, seen: &mut Vec<FileId>) -> ImportSource {
         if let Some(own) = self.files.export(self.files.file_symbol(file), name) {
             return ImportSource::Declaration(own);
+        }
+        if (name == known::default || self.c.atoms().bytes(name) == b"module.exports")
+            && let Some(assigned) = self.files.export(self.files.file_symbol(file), known::export_equals)
+        {
+            return ImportSource::Declaration(assigned);
         }
         // `export *` leaves it out.
         if name == known::default {
@@ -615,6 +772,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match (followed(a), followed(b)) {
             (ImportSource::Declaration(a), ImportSource::Declaration(b)) => a == b,
             (ImportSource::Namespace(a), ImportSource::Namespace(b)) => a == b,
+            (ImportSource::Entity(a), ImportSource::Entity(b)) => a == b,
             (ImportSource::ExportedObject { file: a, name: x, .. }, ImportSource::ExportedObject { file: b, name: y, .. }) => a == b && x == y,
             (ImportSource::External { specifier: a, name: x }, ImportSource::External { specifier: b, name: y }) => a == b && x == y,
             _ => false,
@@ -664,6 +822,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         };
         for (name, exported) in self.files.exports(self.files.file_symbol(file)) {
+            if name == known::export_equals && !is_exported_whole {
+                add(known::default, exported, false);
+                add(self.c.atoms().intern(b"module.exports"), exported, false);
+            }
             add(name, exported, is_exported_whole);
         }
         let mut modules = Vec::new();
@@ -687,6 +849,42 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.add_exported_names(imported, true, names, added, seen);
             }
         }
+    }
+
+    pub(crate) fn unproven_builtin_imports(&mut self, file: FileId, specifier: Atom) -> (&'static [u8], Vec<Atom>) {
+        let Some((module, known)) = known_builtin_exports(self.c.atoms().bytes(specifier)) else { return (b"", Vec::new()) };
+        let (hir, bound) = (self.hir(file), self.c.bound(file));
+        let mut unproven: Vec<(Atom, Atom)> = Vec::new();
+        for stmt in hir.ids(hir.body) {
+            let StmtKind::Import(import) = hir[stmt].kind else { continue };
+            if hir[import].spec != specifier || hir[import].type_only {
+                continue;
+            }
+            let named = hir[import].named.iter().map(|spec| &hir[spec]).filter(|spec| !spec.type_only);
+            let is_known = |name: Atom| known.binary_search_by(|probe| (*probe).cmp(self.c.atoms().bytes(name))).is_ok();
+            unproven.extend(named.filter(|spec| !is_known(spec.imported)).map(|spec| (spec.imported, spec.local)));
+        }
+        let drops_unused_imports = !hir.is_js || self.shared.constants.own_paths.is_none();
+        if unproven.is_empty() || !drops_unused_imports {
+            return (module, unproven.into_iter().map(|name| name.0).collect());
+        }
+        let mut kept = Vec::new();
+        for (imported, local) in unproven {
+            let is_exported = hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == local));
+            let mut is_used = is_exported;
+            for (index, node) in hir.exprs.iter().enumerate() {
+                let e = hir::ExprId(index as u32);
+                if is_used || !matches!(node.kind, hir::ExprKind::Ident(name) if name == local) || bound.expr_parent[index] == Parent::None || bound.is_in_type_query(e) {
+                    continue;
+                }
+                let Some(sym) = self.c.binding_of_identifier(file, e, local) else { continue };
+                is_used = self.is_import(sym);
+            }
+            if is_used {
+                kept.push(imported);
+            }
+        }
+        (module, kept)
     }
 
     pub(crate) fn is_namespace_used_as_a_value(&mut self, importer: FileId, imported: FileId) -> bool {
@@ -744,6 +942,193 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    pub(crate) fn entity_alias_declaration(&self, alias: Sym) -> Option<(FileId, hir::ImportEqualsId)> {
+        self.files.decls(alias).into_iter().find_map(|(file, decl)| match decl {
+            Decl::ImportEquals(import) if matches!(self.hir(file)[import].target, hir::ImportEqualsTarget::Entity(_)) => Some((file, import)),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn entity_alias_kind(&mut self, alias: Sym) -> EntityAlias {
+        if let Some(&known) = self.entity_aliases.get(&alias) {
+            return known;
+        }
+        self.entity_aliases.insert(alias, EntityAlias::CopiedValue);
+        let kind = self.entity_alias_kind_uncached(alias);
+        self.entity_aliases.insert(alias, kind);
+        kind
+    }
+
+    fn entity_alias_kind_uncached(&mut self, alias: Sym) -> EntityAlias {
+        let Some((file, import)) = self.entity_alias_declaration(alias) else { return EntityAlias::TypeOnly };
+        if !self.files.symbol_flags(alias).intersects(SymFlags::VALUE) {
+            return EntityAlias::TypeOnly;
+        }
+        if self.reified_namespace_exporting(alias).is_some() {
+            return EntityAlias::CopiedValue;
+        }
+        match self.alias_path_binding(file, import) {
+            Some(binding) if self.is_immutable_binding(binding) && self.c.namespace_runs_before_import_equals(binding, file, import) => EntityAlias::SameBinding(binding),
+            _ => EntityAlias::CopiedValue,
+        }
+    }
+
+    fn is_immutable_binding(&mut self, binding: Sym) -> bool {
+        match self.value_declaration(binding) {
+            Some((_, Decl::Fn(_))) => !self.is_assigned(binding),
+            Some((_, Decl::Class(_) | Decl::Enum(_) | Decl::EnumMember(_) | Decl::Module(_) | Decl::File)) => true,
+            Some((_, Decl::Var(_))) => self.c.is_constant(binding) && self.namespace_with_property(binding).is_none(),
+            _ => false,
+        }
+    }
+
+    fn alias_path_binding(&mut self, file: FileId, import: hir::ImportEqualsId) -> Option<Sym> {
+        let path = self.resolve_alias_path(file, import);
+        match path.source {
+            Some(ImportSource::Declaration(found) | ImportSource::Entity(found)) if path.resolved_count == path.names.len() => {
+                let binding = self.value_symbol(found);
+                (!self.is_ambient(binding)).then_some(binding)
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_alias_path(&mut self, file: FileId, import: hir::ImportEqualsId) -> ResolvedAliasPath {
+        let names: Vec<Atom> = match self.hir(file)[import].target {
+            hir::ImportEqualsTarget::Entity(names) => self.hir(file).texts(names).collect(),
+            hir::ImportEqualsTarget::Require(_) => Vec::new(),
+        };
+        let mut path = ResolvedAliasPath { source: None, names, resolved_count: 1, aliases_crossed: Vec::new() };
+        let scope = self.c.bound(file).import_equals_scope[import.idx()];
+        let Some(root) = path.names.first().and_then(|_| self.files.resolve_entity(file, scope, &path.names[..1], SymFlags::VALUE | SymFlags::NAMESPACE | SymFlags::ALIAS)) else { return path };
+        path.source = Some(ImportSource::Declaration(root));
+        while let Some(ImportSource::Declaration(found) | ImportSource::Entity(found)) = path.source {
+            let holder = self.value_symbol_after(found, &mut path.aliases_crossed);
+            if path.resolved_count == path.names.len() || self.is_ambient(holder) || self.exports_an_object(holder.file) {
+                break;
+            }
+            let (name, flags) = (path.names[path.resolved_count], self.files.flags(holder));
+            let next = if matches!(self.value_declaration(holder), Some((_, Decl::File))) {
+                match self.source_of_export(holder.file, name) {
+                    ImportSource::Unknown => match self.member_of_only_object_behind_stars(holder.file, name) {
+                        ImportSource::Unknown => None,
+                        source => Some(source),
+                    },
+                    ImportSource::Namespace(module) => Some(ImportSource::Declaration(self.files.file_symbol(module))),
+                    source => Some(source),
+                }
+            } else if flags.intersects(SymFlags::ENUM) || flags.intersects(SymFlags::VALUE_MODULE) && !self.c.is_reified_namespace(holder) {
+                self.files.export(holder, name).map(ImportSource::Declaration)
+            } else {
+                None
+            };
+            let Some(next) = next else { break };
+            path.source = Some(next);
+            path.resolved_count += 1;
+        }
+        path
+    }
+
+    fn read_alias_path(&mut self, fx: &mut Fx, file: FileId, import: hir::ImportEqualsId, pos: u32) -> V {
+        let path = self.resolve_alias_path(file, import);
+        for &crossed in &path.aliases_crossed {
+            self.check_entity_alias_initialized(fx, crossed, hir::ExprId::NONE);
+        }
+        let mut value = match path.source {
+            Some(ImportSource::Declaration(found) | ImportSource::Entity(found)) => self.read_binding(fx, Some(found), path.names[path.resolved_count - 1], None, pos, false),
+            Some(source) => self.read_import(fx, source, pos),
+            None => self.read_binding(fx, None, path.names[0], None, pos, false),
+        };
+        for &name in &path.names[path.resolved_count..] {
+            let name = self.str(name);
+            value = self.emit_throwing(fx, Op::PropGet { obj: value, name });
+        }
+        value
+    }
+
+    fn entity_alias_global(&mut self, alias: Sym) -> GlobalId {
+        if let Some(Place::Global(known)) = self.places.get(&alias) {
+            return *known;
+        }
+        let name = self.str(self.files.symbol(alias).name);
+        let variable = self.add_global(name, alias.file, Ty::NONE, GlobalKey::Symbol(alias.file, alias.id));
+        let was = self.places.insert(alias, Place::Global(variable));
+        if let Some(undo) = &mut self.undo {
+            undo.places.push((alias, was));
+        }
+        variable
+    }
+
+    pub(crate) fn check_entity_alias_initialized(&mut self, fx: &mut Fx, alias: Sym, e: hir::ExprId) {
+        let Some((of, import)) = self.entity_alias_declaration(alias) else { return };
+        if matches!(self.entity_alias_kind(alias), EntityAlias::SameBinding(_)) && self.c.may_run_before_import_equals(of, import, fx.file, e) {
+            let variable = self.entity_alias_global(alias);
+            self.emit_throwing(fx, Op::GlobalGet(variable));
+        }
+    }
+
+    pub(crate) fn read_entity_alias(&mut self, fx: &mut Fx, alias: Sym, e: hir::ExprId) -> V {
+        if let Some(namespace) = self.reified_namespace_exporting(alias) {
+            return self.read_property_of_namespace(fx, namespace, alias);
+        }
+        let variable = self.entity_alias_global(alias);
+        let may_run_early = match self.entity_alias_declaration(alias) {
+            Some((of, import)) => self.c.may_run_before_import_equals(of, import, fx.file, e),
+            None => true,
+        };
+        if may_run_early {
+            return self.emit_throwing(fx, Op::GlobalGet(variable));
+        }
+        let found = self.emit(fx, Op::GlobalGet(variable));
+        fx.b.func.values[found.idx()].finds_initialized = true;
+        found
+    }
+
+    fn starts_with_named_import(&mut self, file: FileId, import: hir::ImportEqualsId) -> bool {
+        let hir::ImportEqualsTarget::Entity(names) = self.hir(file)[import].target else { return false };
+        let names: Vec<Atom> = self.hir(file).texts(names).collect();
+        let scope = self.c.bound(file).import_equals_scope[import.idx()];
+        let root = names.first().and_then(|_| self.files.resolve_entity(file, scope, &names[..1], SymFlags::VALUE | SymFlags::NAMESPACE | SymFlags::ALIAS));
+        root.is_some_and(|root| self.files.decls(root).into_iter().any(|(_, decl)| matches!(decl, Decl::ImportSpec(_) | Decl::ImportDefault(_))))
+    }
+
+    pub(crate) fn emit_entity_alias(&mut self, fx: &mut Fx, import: hir::ImportEqualsId, pos: u32) {
+        let file = fx.file;
+        let Some((alias, is_referenced)) = self.c.import_equals_symbol(file, import) else { return };
+        let kind = self.entity_alias_kind(alias);
+        if matches!(kind, EntityAlias::TypeOnly) || !is_referenced && !self.starts_with_named_import(file, import) {
+            return;
+        }
+        if let EntityAlias::SameBinding(binding) = kind {
+            let path = self.resolve_alias_path(file, import);
+            for &crossed in &path.aliases_crossed {
+                self.check_entity_alias_initialized(fx, crossed, hir::ExprId::NONE);
+            }
+            if matches!(self.value_declaration(binding), Some((_, Decl::Var(_) | Decl::Class(_)))) && self.may_be_in_dead_zone(fx, binding, hir::ExprId::NONE) {
+                self.read_sym(fx, binding, pos);
+            }
+            let (variable, marker) = (self.entity_alias_global(alias), self.emit(fx, Op::Undefined));
+            self.emit(fx, Op::GlobalSet(variable, marker));
+            return;
+        }
+        let value = self.read_alias_path(fx, file, import, pos);
+        let Some(namespace) = self.reified_namespace_exporting(alias) else {
+            let variable = self.entity_alias_global(alias);
+            self.emit(fx, Op::GlobalSet(variable, value));
+            return;
+        };
+        let member = self.files.symbol(alias).name;
+        if let Some(holder) = self.layout_of_namespace(namespace).and_then(|layout| self.layout_types.get(&layout).copied()) {
+            match self.alias_path_binding(file, import).and_then(|binding| self.function_declared_as(binding)) {
+                Some((of, func)) => self.c.note_callee_declared(holder, member, of, func),
+                None => self.c.note_unknown_callee(holder, member, file, pos),
+            }
+        }
+        let obj = self.namespace_object(fx, namespace);
+        let name = self.str(member);
+        self.emit_throwing(fx, Op::PropSet { obj, name, value });
+    }
+
     /// The value of an import that no binding of the program holds. It is read on each use, which keeps it live.
     pub(crate) fn read_import(&mut self, fx: &mut Fx, source: ImportSource, pos: u32) -> V {
         let (namespace, name) = match source {
@@ -751,13 +1136,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let text = self.text_imported_as(file, specifier).unwrap_or_default();
                 return self.emit_value_of_asset(fx, file, specifier, text);
             }
+            ImportSource::External { specifier, name: None } if self.c.atoms().bytes(specifier) == b"bun" => {
+                let bun = self.out.strs.intern(b"Bun");
+                return self.emit_throwing(fx, Op::FreeGet { name: bun, is_typeof: false });
+            }
             ImportSource::External { specifier, name } => (self.external_module(fx, specifier), name),
             ImportSource::ExportedObject { importer, file, name: Some(name) } => {
                 let name = self.c.atoms().bytes(name);
                 return self.member_of_exported_object(fx, importer, file, name);
             }
             ImportSource::ExportedObject { importer, file, name: None } => (self.namespace_of_exported_object(fx, importer, file), None),
-            _ => return self.unsupported(fx, pos, "an import of what the module does not export"),
+            _ if self.report_unknown_runtime_helpers(fx.file) => return self.emit(fx, Op::Undefined),
+            _ => return self.unsupported(fx, pos, "an import of a name that the module does not export"),
         };
         match name {
             Some(name) => {

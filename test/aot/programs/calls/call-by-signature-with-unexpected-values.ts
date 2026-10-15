@@ -8,7 +8,7 @@ const tail = new N(1, undefined), head = new N(2, tail), sub = new M(3, "x")
 function attempt(what: () => unknown): string { try { return String(what()) } catch (e) { return (e as Error).constructor.name } }
 function show(v: unknown): string { return v instanceof N ? "N" + v.id : typeof v === "function" ? "function" : String(v) }
 
-// The sites. Each is a function of its own, kept out of its callers by its size and by being a value.
+// The call sites. Each is a separate function, kept from being inlined by its size and by being used as a value.
 function num(f: (x: number) => number, x: number): number { return f(x) }
 function ref(f: (n: N) => N | undefined, n: N): N | undefined { return f(n) }
 function two(f: (a: number, n: N) => number, a: number, n: N): number { return f(a, n) }
@@ -20,7 +20,7 @@ function nothing(f: (n: N) => void, n: N): string { return String(f(n)) }
 let row = 0
 function say(name: string, ...values: unknown[]): void { console.log(++row, name, values.map(show).join(" ")) }
 
-// What is of the signature, with and without captures of every representation.
+// Functions that match the signature, with and without captures of every representation.
 {
     const k = 3, d = 0.5, s = "s", o = head, b = true
     say("no captures", num(x => x + 1, 1), ref(n => n.next, head), two((a, n) => a + n.id, 1, head), none(() => 7), pred(n => n.id > 1, head), str(t => t + "!", "a"), nothing(n => { n.id }, head))
@@ -71,7 +71,7 @@ say("the stack trace names the closure", attempt(() => { const thrower = (x: num
 { let sum = 0; for (let i = 0; i < 20000; i++) { const o = new N(i, undefined); sum += two((a, n) => a + n.id + o.id, 1, head); if (i % 5000 === 0) collect() } say("closures made and dropped", sum) }
 // A closure that changes between calls at one site.
 { const f: any = (x: number) => x + 1; const before = num(f, 1); f.later = 1; const after = num(f, 1); delete f.later; say("given a property between two calls", before, after, num(f, 1)) }
-// NaN, -0, integers that are no int32, as raw doubles both ways.
+// NaN, -0, integers outside the int32 range, as raw doubles in both directions.
 say("numbers", num(x => x, NaN), Object.is(num(x => x, -0), -0), num(x => x * 2, 2 ** 31), num(x => x / 3, 1), num(x => x | 0, 2 ** 32 + 5), num(x => -x, 0) === 0)
 
 { const seen: any = function () { return arguments.length * 100 + (arguments[0] === undefined ? 0 : 10) + (arguments[1] === undefined ? 0 : 1) }
@@ -79,7 +79,7 @@ say("numbers", num(x => x, NaN), Object.is(num(x => x, -0), -0), num(x => x * 2,
   say("every argument reaches an untyped callee", num(seen, 1), two(seen, 1, head), none(seen), num(nothing as any, 1), none(nothing), two(one as any, 4, head))
   const native: any = Math.max; say("and a native one", num(native, 5), two(((a: number, b: unknown) => native(a, 9)) as any, 1, head), num(Math.abs, -3))
   const bound: any = function (this: unknown, a: any, b: any) { return (this === undefined ? 0 : 1000) + arguments.length * 100 + a + (b === undefined ? 0 : 1) }.bind({ }, 2); say("and a bound one", num(bound, 1), none(bound)) }
-// `this` at a site that reads the function from an object: the general way passes the object; a function of the signature does not look.
+// `this` at a site that reads the function from an object: the generic path passes the object; a function that matches the signature does not use it.
 { interface Holder { tag: number; f: (x: number) => number }
   function through(h: Holder, x: number): number { return h.f(x) }
   const reads: any = function (this: Holder, x: number) { return this.tag + x }

@@ -839,16 +839,24 @@ pub struct ExprsByKind {
 
 impl ExprsByKind {
     pub fn new(file: &File) -> ExprsByKind {
+        ExprsByKind::outside(file, &[])
+    }
+
+    pub fn outside(file: &File, ranges: &[(u32, u32)]) -> ExprsByKind {
+        let is_outside = |e: &Expr| {
+            let after = if ranges.is_empty() { 0 } else { ranges.partition_point(|range| range.0 <= e.pos) };
+            after == 0 || ranges[after - 1].1 <= e.pos
+        };
         let mut starts = [0u32; ExprTag::COUNT + 1];
-        for e in &file.exprs {
+        for e in file.exprs.iter().filter(|e| is_outside(e)) {
             starts[e.kind.tag() as usize + 1] += 1;
         }
         for i in 0..ExprTag::COUNT {
             starts[i + 1] += starts[i];
         }
         let mut next = starts;
-        let mut ids = vec![ExprId::NONE; file.exprs.len()];
-        for (i, e) in file.exprs.iter().enumerate() {
+        let mut ids = vec![ExprId::NONE; starts[ExprTag::COUNT] as usize];
+        for (i, e) in file.exprs.iter().enumerate().filter(|(_, e)| is_outside(e)) {
             let at = &mut next[e.kind.tag() as usize];
             ids[*at as usize] = ExprId(i as u32);
             *at += 1;

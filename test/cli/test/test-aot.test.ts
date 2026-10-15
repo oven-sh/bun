@@ -78,7 +78,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("the globals, without an import", async () => {
+  test.concurrent("test globals work without an import", async () => {
     const { stderr } = await expectSameAsBunTest({
       "globals.test.js": `
         describe("globals", () => {
@@ -115,7 +115,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
-  test.concurrent("a dependency that is imported both ways and awaits at the top level", async () => {
+  test.concurrent("a dependency with top-level await that is imported statically and dynamically", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "both.test.ts": `
         import { expect, test } from "bun:test";
@@ -134,7 +134,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a test file that awaits at the top level and is imported by its dependency", async () => {
+  test.concurrent("a test file with top-level await that its own dependency imports", async () => {
     const { stderr, exitCode } = await expectSameAsBunTest({
       "self.test.ts": `
         import { expect, test } from "bun:test";
@@ -175,7 +175,38 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(readFileSync(join(String(actualDir), "snap.test.ts"), "utf8")).toContain(`"c": 4`);
   });
 
-  test.concurrent("other options mean what they mean without it", async () => {
+  test.concurrent("functions with inferred names are printed, mocked and snapshotted as without --aot", async () => {
+    const files = {
+      "names.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        const element = (type: unknown) => ({ $$typeof: Symbol.for("react.element"), type, key: null, ref: null, props: {} });
+        const Arrow = () => null;
+        function Declared() { return null; }
+        const Expression = function () { return null; };
+        const Named = function Own() { return null; };
+        const AnonymousClass = class { m() {} };
+        class DeclaredClass { m() {} }
+        const held = { Method() { return null; }, Property: () => null };
+        const all = [Arrow, Declared, Expression, Named, AnonymousClass, DeclaredClass, held.Method, held.Property];
+        test("the name property", () => { expect(all.map(f => f.name)).toEqual(["Arrow", "Declared", "Expression", "Own", "AnonymousClass", "DeclaredClass", "Method", "Property"]); });
+        test("mocks", () => { console.log(all.map(f => mock(f as () => unknown)).map(m => JSON.stringify([m.name, m.getMockName()])).join(" ")); });
+        test("a failure's text", () => { expect([...all, ...all.map(element)]).toEqual([]); });
+        test("a snapshot", () => { expect({ all, elements: all.map(element) }).toMatchSnapshot(); });
+      `,
+    };
+    using expectedDir = tempDir("test-aot", files);
+    using actualDir = tempDir("test-aot", files);
+    const [expected, actual] = await Promise.all([
+      runTests(String(expectedDir), false, ["--update-snapshots"]),
+      runTests(String(actualDir), true, ["--update-snapshots"]),
+    ]);
+    expect(actual).toEqual(expected);
+    expect(actual.stderr).toContain(" 3 pass");
+    const snapshot = join("__snapshots__", "names.test.ts.snap");
+    expect(readFileSync(join(String(actualDir), snapshot), "utf8")).toBe(readFileSync(join(String(expectedDir), snapshot), "utf8"));
+  });
+
+  test.concurrent("other options work the same as without --aot", async () => {
     const { stderr } = await expectSameAsBunTest(
       {
         "a.test.ts": `
@@ -195,7 +226,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 0 fail");
   });
 
-  test.concurrent("a preload under another tsconfig.json than the test", async () => {
+  test.concurrent("a preload governed by a different tsconfig.json than the test", async () => {
     const options = `"strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": ["bun"], "skipLibCheck": true`;
     const files = {
       "tsconfig.json": `{ "compilerOptions": { ${options}, "experimentalDecorators": true, "emitDecoratorMetadata": true } }`,
@@ -227,7 +258,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(refused.exitCode).toBe(1);
   });
 
-  test.concurrent("a preload that is right under its own tsconfig.json alone", async () => {
+  test.concurrent("a preload that type checks only under its own tsconfig.json", async () => {
     const options = `"target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": ["bun"], "skipLibCheck": true`;
     const { stderr } = await expectSameAsBunTest(
       {
@@ -254,7 +285,12 @@ describe.skipIf(!supported)("bun test --aot", () => {
     using dir = tempDir("test-aot", {
       "a.test.ts": `import { expect, test } from "bun:test";\ntest("runs", () => { expect(1).toBe(1); });`,
     });
-    const { stdout, stderr, exitCode } = await runTests(String(dir), true, [...flags, "a.test.ts"], false);
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      true,
+      [...[...flags].filter((flag): flag is string => typeof flag === "string"), "a.test.ts"],
+      false,
+    );
     expect(stdout.replace(/^bun test .*\n/, "")).toBe("");
     expect(stderr).toContain(`error: --aot does not support ${flags[0]}`);
     expect(stderr).not.toContain(" pass");
@@ -271,7 +307,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("a spy that a preload outside the build sets on a compiled export", async () => {
+  test.concurrent("a preload outside the build can spy on a compiled export", async () => {
     const options = `"target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": ["bun"], "skipLibCheck": true`;
     const { stdout, stderr } = await expectSameAsBunTest(
       {
@@ -322,7 +358,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("test files of one name and several extensions", async () => {
+  test.concurrent("test files with the same name and different extensions", async () => {
     const file = (name: string) => `import { test } from "bun:test"; test("in ${name}", () => { console.log("ran ${name}"); });`;
     const { stderr } = await expectSameAsBunTest(
       Object.fromEntries(["a.test.js", "a.test.mjs", "a.test.ts", "a.test.tsx", "sub/a.test.ts"].map(name => [name, file(name)])),
@@ -330,7 +366,35 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 5 pass");
   });
 
-  test.concurrent("built-in objects are immutable, and spyOn says so", async () => {
+  test.concurrent("a module with top-level await that a preload also imports is instantiated once", async () => {
+    const { stdout, stderr } = await expectSameAsBunTest(
+      {
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          import { state } from "./lib";
+          test("sees what the preload did", () => {
+            console.log(state.seen.join(", "));
+            expect((globalThis as any).ofThePreload).toBe(state);
+          });
+        `,
+        "lib.ts": `
+          console.log("lib is evaluated");
+          await Promise.resolve();
+          export const state: { seen: string[] } = { seen: [] };
+        `,
+        "preload.ts": `
+          import { state } from "./lib";
+          state.seen.push("the preload");
+          (globalThis as any).ofThePreload = state;
+        `,
+      },
+      ["--preload", "./preload.ts", "./a.test.ts"],
+    );
+    expect(stdout.match(/lib is evaluated/g)).toHaveLength(1);
+    expect(stderr).toContain(" 1 pass");
+  });
+
+  test.concurrent("built-in objects are immutable, and spyOn reports that", async () => {
     using dir = tempDir("test-aot", {
       "builtins.test.ts": `
         import { expect, setSystemTime, spyOn, test } from "bun:test";
@@ -359,7 +423,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a method of a compiled class is not spied on in silence", async () => {
+  test.concurrent("spying on a method of a compiled class never fails silently", async () => {
     using dir = tempDir("test-aot", {
       "methods.test.ts": `
         import { expect, spyOn, test } from "bun:test";
@@ -437,7 +501,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 2 pass");
   });
 
-  test.concurrent("what a mock returns is held to the type by what it holds", async () => {
+  test.concurrent("a mock's return value is checked against the declared type by its contents", async () => {
     const files = {
       "rules.ts": `
         export type Verdict = { allowed: true } | { allowed: false; reason: string };
@@ -505,7 +569,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(module.stderr).toContain(" 0 fail");
   });
 
-  test.concurrent("spies on methods of objects of a class", async () => {
+  test.concurrent("spies on methods of class instances", async () => {
     const { stderr } = await expectSameAsBunTest({
       "service.ts": `
         export type Answer = { ok: true; value: string } | { ok: false; error: string };
@@ -558,7 +622,61 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 0 fail");
   });
 
-  test.concurrent("an error in the build", async () => {
+  test.concurrent("a mocked class whose field types differ from the real class", async () => {
+    const double = `
+        class Client {
+          token: unknown = "m";
+          items: { id: number }[] = [];
+          constructor(public name: string) {}
+          show() { return "double-" + this.name; }
+        }
+        mock.module("./client", () => ({ Client, look: (c: Client) => c.show(), make: (n: string) => new Client(n), shared: new Client("shared") }));
+    `;
+    const head = `
+        import { expect, mock, test } from "bun:test";
+        import type { Client as Real } from "./client";
+        import { User } from "./user";
+    `;
+    const forms: Record<string, string> = {
+      "call": `test("t", async () => { const m = await import("./client"); expect(m.make("a").show()).toBe("double-a"); });`,
+      "handed-on": `test("t", async () => { const m = await import("./client"); expect(new User().take(m.make("a"))).toBe("double-a"); });`,
+      "new": `test("t", async () => { const m = await import("./client"); expect(new User().take(new m.Client("a"))).toBe("double-a"); });`,
+      "value": `test("t", async () => { const m = await import("./client"); expect(new User().take(m.shared)).toBe("double-shared"); });`,
+      "both": `test("t", async () => { const m = await import("./client"); expect(m.look(m.make("a"))).toBe("double-a"); });`,
+      "destructured": `test("t", async () => { const { make, look } = await import("./client"); expect(look(make("a"))).toBe("double-a"); });`,
+      "destructured-class": `test("t", async () => { const { Client: K } = await import("./client"); expect(new User().take(new K("a"))).toBe("double-a"); });`,
+      "then": `test("t", async () => { expect(await import("./client").then(m => new User().take(m.make("a")))).toBe("double-a"); });`,
+      "constant": `test("t", async () => { const m = await import("./client"); const c: Real = m.make("a"); expect(c.show()).toBe("double-a"); });`,
+      "field": `test("t", async () => { const m = await import("./client"); const u = new User(); u.held = m.make("a"); expect(u.held.show()).toBe("double-a"); });`,
+      "namespace-new": `import * as ns from "./client"; test("t", () => { expect(new User().take(new ns.Client("a"))).toBe("double-a"); });`,
+      "namespace-handed-on": `import * as ns from "./client"; test("t", () => { function use(m: typeof ns) { return new User().take(m.make("a")); } expect(use(ns)).toBe("double-a"); });`,
+    };
+    const files: Record<string, string> = {
+      "client.ts": `
+        export class Client {
+          token: string | null = null;
+          items: { id: number }[] = [];
+          constructor(public name: string) {}
+          show() { return this.name + String(this.token) + this.items.length; }
+        }
+        export function look(c: Client): string { return c.show(); }
+        export function make(name: string): Client { return new Client(name); }
+        export const shared = new Client("real");
+      `,
+      "user.ts": `
+        import { Client } from "./client";
+        export class User { held: Client | null = null; take(c: Client) { this.held = c; return c.show(); } }
+      `,
+    };
+    for (const [name, form] of Object.entries(forms)) files[name + ".test.ts"] = head + double + form;
+    const results = await Promise.all(Object.keys(forms).map(name => expectSameAsBunTest(files, ["./" + name + ".test.ts"])));
+    for (const { stderr } of results) {
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(" 0 fail");
+    }
+  });
+
+  test.concurrent("a build error", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);
     expect(stderr).toContain("./does-not-exist");

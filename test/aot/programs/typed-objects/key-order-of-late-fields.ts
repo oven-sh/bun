@@ -42,7 +42,7 @@ for (let i = 0; i < 4; i++) {
 }
 console.log(seen.join(), JSON.stringify(cycle))
 
-// Deleting what is not there changes nothing; `in` follows.
+// Deleting an absent property changes nothing; `in` agrees.
 const bare: Wide = { id: 7 }
 console.log(delete bare.p, delete bare.q, keys(bare), "p" in bare, bare.p, bare.q ?? "none")
 

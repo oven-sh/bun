@@ -68,7 +68,7 @@ class Eater { eat(v: number): string { return "ok " + (v + 1) } }
 const eater: { eat(v: number | string): string } = new Eater()
 attempt("f1", () => feed(v => eater.eat(v)))
 attempt("f2", () => eater.eat(1))
-// Readonly is no protection either.
+// Readonly does not protect either.
 const frozenView: Readonly<Narrow> = narrow
 attempt("g1", () => { wide.v = "again"; return frozenView.v })
 attempt("g2", () => { wide.v = 3; return frozenView.v + 1 })

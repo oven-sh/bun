@@ -295,11 +295,11 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" void Bun__installCompilers();
 extern "C" void Bun__AOT__setImageCodec();
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT)
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT, bool crashIfInterpreterIsUsed)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, useAOT, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, useAOT, crashIfInterpreterIsUsed, envp, envc, onCrash]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -351,6 +351,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = useAOT;
+            JSC::Options::crashIfInterpreterIsUsed() = crashIfInterpreterIsUsed;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
@@ -505,12 +506,12 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
-    auto& vm = this->vm();
-    if (this->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(nullptr);
-    } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    }
+    this->vm().setOnEachMicrotaskTick(nullptr);
+}
+
+extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
+{
+    vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }
 
 extern "C" size_t Bun__reported_memory_size;
@@ -629,15 +630,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
@@ -864,13 +856,20 @@ static bool isInternalStandaloneModule(const StringImpl* key)
     return Bun__standaloneModuleIsInternal(std::bit_cast<const Latin1Character*>(narrowed.data()), narrowed.length());
 }
 
+static bool isHiddenFromRequireCache(JSC::JSGlobalObject* globalObject, const StringImpl* key)
+{
+    if (isInternalStandaloneModule(key))
+        return true;
+    return key && key->is8Bit() && Bun::hasFilesOfCompiledProgram(globalObject) && Bun__standaloneModuleIsCompiled(key->span8().data(), key->length());
+}
+
 // A key that is not an atom already names no module, and does not become one.
 static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
 {
     if (!keyValue.isString())
         return nullptr;
     auto atom = asString(keyValue)->toExistingAtomString(globalObject);
-    if (!atom.data || isInternalStandaloneModule(atom.data))
+    if (!atom.data || isHiddenFromRequireCache(globalObject, atom.data))
         return nullptr;
     auto* loader = moduleLoaderOfRequirer(globalObject, requirer);
     if (!loader)
@@ -879,14 +878,24 @@ static JSC::AbstractModuleRecord* evaluatedModuleRecord(JSC::JSGlobalObject* glo
     return entry && isModuleEvaluated(entry->record()) ? entry->record() : nullptr;
 }
 
+static JSC::JSObject* evaluatedCompiledNamespace(JSC::JSGlobalObject* globalObject, JSValue keyValue, JSValue requirer)
+{
+    if (!keyValue.isString() || moduleLoaderOfRequirer(globalObject, requirer) != globalObject->moduleLoader())
+        return nullptr;
+    return Bun::namespaceOfEvaluatedCompiledModule(uncheckedDowncast<Zig::GlobalObject>(globalObject), asString(keyValue)->value(globalObject));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    if (!record)
-        return JSValue::encode(jsUndefined());
+    if (!record) {
+        JSObject* compiled = evaluatedCompiledNamespace(globalObject, callFrame->argument(0), callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(compiled ? JSValue(compiled) : jsUndefined());
+    }
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
@@ -898,7 +907,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryHasEvaluated, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* record = evaluatedModuleRecord(globalObject, callFrame->argument(0), callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(!!record));
+    if (!record) {
+        JSObject* compiled = evaluatedCompiledNamespace(globalObject, callFrame->argument(0), callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(jsBoolean(!!compiled));
+    }
+    return JSValue::encode(jsBoolean(true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -915,6 +929,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
         return JSValue::encode(jsBoolean(false));
     if (key.impl()->is8Bit() && Bun__standaloneModuleIsCompiled(key.impl()->span8().data(), key.impl()->length()))
         return throwVMTypeError(globalObject, scope, makeString("Cannot evict \""_s, key.string(), "\": it was compiled ahead of time"_s));
+    if (moduleLoader == globalObject->moduleLoader()) {
+        Bun::noteThatRequireCacheIsRead(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::evictCompiledModule(uncheckedDowncast<Zig::GlobalObject>(globalObject), key.string());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     // A module whose load is in flight is not in require.cache and is not evicted.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
         if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
@@ -930,9 +950,16 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     JSC::MarkedArgumentBuffer keys;
     if (auto* loader = moduleLoaderOfRequirer(globalObject, callFrame->argument(0))) {
         Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
-            if (isModuleEvaluated(entry->record()) && !isInternalStandaloneModule(specifier))
+            if (isModuleEvaluated(entry->record()) && !isHiddenFromRequireCache(globalObject, specifier))
                 keys.append(jsString(vm, String { specifier }));
         });
+        if (loader == globalObject->moduleLoader()) {
+            Bun::appendEvaluatedCompiledModules(uncheckedDowncast<Zig::GlobalObject>(globalObject), keys, [&](const JSC::Identifier& key) {
+                auto* entry = loader->registryEntry(key);
+                return entry && isModuleEvaluated(entry->record());
+            });
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -3823,6 +3850,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         }
         if (compiled)
             return resolvedInternalPromise(globalObject, compiled);
+        JSC::JSPromise* awaited = Bun::sourceOfFileOfCompiledProgramThatAwaits(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
+        if (scope.exception()) [[unlikely]] {
+            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
+            rejected->markAsHandled();
+            return rejected->rejectWithCaughtException(vm, scope);
+        }
+        if (awaited)
+            return awaited;
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);
@@ -4547,6 +4582,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
     } else if (handler == jsFunctionOnLoadObjectResultReject) {
         return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
+    } else if (handler == Bun::jsFunctionSourceOfCompiledNamespace) {
+        return GlobalObject::PromiseFunctions::jsFunctionSourceOfCompiledNamespace;
     } else if (handler == jsFunctionMockModuleFactoryResolve) {
         return GlobalObject::PromiseFunctions::jsFunctionMockModuleFactoryResolve;
     } else if (handler == jsFunctionMockModuleFactoryReject) {

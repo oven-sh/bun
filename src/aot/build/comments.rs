@@ -41,14 +41,14 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
     let mut marked: Vec<u32> = hir.comments.iter().filter(|comment| is_pure_mark(&text[comment.0 as usize..comment.1 as usize])).map(|comment| token_behind(comment.1)).collect();
     marked.sort_unstable();
     marked.dedup();
-    let casts_ahead_of_their_operands: Vec<(u32, ExprId, u32)> = (hir.exprs.iter())
+    let casts_before_their_operands: Vec<(u32, ExprId, u32)> = (hir.exprs.iter())
         .filter_map(|e| match e.kind {
             ExprKind::As { expr: operand, .. } | ExprKind::AsConst(operand) => Some((e.pos, operand, start_with_its_parentheses(hir, operand))),
             _ => None,
         })
         .filter(|&(cast, _, operand)| cast < operand)
         .collect();
-    marked.retain(|token| !casts_ahead_of_their_operands.iter().any(|cast| cast.2 == *token));
+    marked.retain(|token| !casts_before_their_operands.iter().any(|cast| cast.2 == *token));
     let mut first_places_of_for: Vec<u32> = (hir.stmts.iter())
         .filter_map(|statement| match statement.kind {
             StmtKind::For { init, .. } => Some(init.0),
@@ -83,7 +83,7 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
             _ => {}
         }
     }
-    for &(cast, operand, _) in &casts_ahead_of_their_operands {
+    for &(cast, operand, _) in &casts_before_their_operands {
         if let Ok(at) = marked.binary_search(&cast) {
             wholes[at] = operand;
         }
@@ -162,7 +162,7 @@ fn closes_at_the_top_level(hir: &hir::File<'_>, bound: &Bound<'_>, mut func: usi
     }
 }
 
-pub(crate) fn functions_under_a_suppression_of_react_hooks(hir: &hir::File<'_>, bound: &Bound<'_>) -> Vec<u32> {
+pub(crate) fn functions_with_react_hooks_suppression(hir: &hir::File<'_>, bound: &Bound<'_>) -> Vec<u32> {
     let text: &[u8] = &hir.text;
     if !strings::contains(text, b"eslint-disable") {
         return Vec::new();

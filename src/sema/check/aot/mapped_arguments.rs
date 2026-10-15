@@ -113,6 +113,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Of a parameter of such a function: the function, and which of its parameters it is.
     pub fn mapped_parameter(&mut self, sym: Sym) -> Option<(FnId, u32)> {
+        if !self.hir(sym.file).is_js {
+            return None;
+        }
         self.mapped_arguments_of_file(sym.file).parameters.get(&sym.id).copied()
     }
 }

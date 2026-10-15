@@ -21,5 +21,10 @@ row("under a written type: nothing more", () => written({}));
 row("under a written type: one member more", () => written({ extra: true }));
 function generic<T extends object>(more: T) { return { sound: 1, name: "shapes", ...more }; }
 row("a type parameter", () => [generic({ extra: true }), generic({ sound: "loud" } as object)]);
+interface Wide { model: string; max: number; judges?: boolean; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number; h?: string[] }
+const wide = (options: Wide) => [options.model, options.max, options.judges, options.h?.length];
+for (const served of [true, false]) row("a conditional spread of a literal, then a written type, " + served, () => { const made = { model: "m", max: 1, ...(served && { judges: true }), h: ["h"] }; return [wide(made), Object.keys(made)]; });
+row("one of two literals", () => { const made = { model: "m", ...(frames() ? { max: 1 } : { max: 2, a: 3 }) }; return [wide(made), Object.keys(made)]; });
+function frames() { return Object.keys({}).length > 0; }
 const twice = (a: object, b: object) => ({ first: 1, ...a, second: 2, ...b });
 row("two spreads", () => [twice({}, {}), twice({ first: "f" }, { second: "s" }), twice({ second: "lost" }, { first: "last" })]);

@@ -159,7 +159,9 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
 const FLAGS_OF_BUILD: [&[u8]; 3] = [b"--aot", b"--aot-explain", b"--aot-type-errors"];
 const FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot", b"--aot-audit", b"--aot-type-errors"];
 const INTERNAL_FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
+const INTERNAL_FLAGS_OF_BOTH: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
 pub(crate) const OPTIONS_OF_COMPILE: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
+pub(crate) const INTERNAL_OPTIONS_OF_COMPILE: [&[u8]; 1] = [b"aotCrashIfInterpreterIsUsed"];
 
 pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> String {
     let distance = |name: &[u8]| bun_core::strings::edit_distance(written.iter().copied(), name);
@@ -182,8 +184,8 @@ pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
         if arg == b"--" {
             break;
         }
-        let name = arg.split(|&byte| byte == b'=').next().unwrap_or(arg);
-        if !name.starts_with(b"--aot") || known.contains(&name) || (!is_build && INTERNAL_FLAGS_OF_RUN.contains(&name)) {
+        let name = bun_core::strings::split(arg, b"=").next().unwrap_or(arg);
+        if !name.starts_with(b"--aot") || known.contains(&name) || INTERNAL_FLAGS_OF_BOTH.contains(&name) || (!is_build && INTERNAL_FLAGS_OF_RUN.contains(&name)) {
             continue;
         }
         let is_of_others = of_others.contains(&name);
@@ -193,14 +195,14 @@ pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
         let list = known.join(&b", "[..]);
         if is_of_others {
             pretty_errorln!(
-                "<r><red>error<r>: <b>{}<r> is a flag of {}. The flags that start with --aot here are {}",
+                "<r><red>error<r>: <b>{}<r> is only valid with {}. The --aot flags available here are {}",
                 bstr::BStr::new(name),
                 others,
                 bstr::BStr::new(&list),
             );
         } else {
             pretty_errorln!(
-                "<r><red>error<r>: unknown flag <b>{}<r>.{} The flags that start with --aot here are {}",
+                "<r><red>error<r>: unknown flag <b>{}<r>.{} The --aot flags available here are {}",
                 bstr::BStr::new(name),
                 did_you_mean("", &known, name),
                 bstr::BStr::new(&list),
@@ -227,27 +229,27 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
     if for_tests && (ctx.test_options.parallel > 0 || ctx.test_options.isolate) {
         pretty_errorln!(
-            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: a program that is compiled ahead of time is loaded once, into one global object. Run without one of the two.",
+            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: an ahead-of-time compiled program is loaded once, into a single global object. Remove one of the two.",
             if ctx.test_options.parallel > 0 { "--parallel" } else { "--isolate" }
         );
         Global::exit(1);
     }
     if ctx.debug.hot_reload != bun_options_types::context::HotReload::None {
         pretty_errorln!(
-            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: a program that is compiled ahead of time is built before it runs and is not built again when a file changes. Run without one of the two.",
+            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: an ahead-of-time compiled program is built before it runs and is not rebuilt when a file changes. Remove one of the two.",
             if ctx.debug.hot_reload == bun_options_types::context::HotReload::Hot { "--hot" } else { "--watch" }
         );
         Global::exit(1);
     }
     if for_tests && ctx.test_options.repeat_count > 1 {
         pretty_errorln!(
-            "<r><red>error<r>: <b>--aot<r> does not support <b>--rerun-each<r> (or \"rerunEach\" in bunfig.toml): a program that is compiled ahead of time is loaded once, into one global object. Run without one of the two."
+            "<r><red>error<r>: <b>--aot<r> does not support <b>--rerun-each<r> (or \"rerunEach\" in bunfig.toml): an ahead-of-time compiled program is loaded once, into a single global object. Remove one of the two."
         );
         Global::exit(1);
     }
     if for_tests && ctx.test_options.coverage.enabled {
         pretty_errorln!(
-            "<r><yellow>warn<r><d>:<r> <b>--coverage<r> is ignored with <b>--aot<r>: code that is compiled ahead of time is not counted. Run without <b>--aot<r> to measure coverage."
+            "<r><yellow>warn<r><d>:<r> <b>--coverage<r> is ignored with <b>--aot<r>: ahead-of-time compiled code is not instrumented. Run without <b>--aot<r> to measure coverage."
         );
         bun_core::Output::flush();
     }
@@ -279,6 +281,9 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
     if ctx.runtime_options.aot_logs_type_errors {
         args.push(b"--aot-type-errors=log".to_vec());
+    }
+    if ctx.runtime_options.aot_crash_if_interpreter_is_used {
+        args.push(b"--aot-crash-if-interpreter-is-used".to_vec());
     }
     if ctx.args.jsx.as_ref().is_some_and(|jsx| jsx.side_effects) {
         args.push(b"--jsx-side-effects".to_vec());
@@ -369,14 +374,14 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         }
     }
     if !has_replaced_option {
-        pretty_errorln!("<r><red>error<r>: <b>--aot<r> has to be given on the command line");
+        pretty_errorln!("<r><red>error<r>: <b>--aot<r> must be passed on the command line");
         Global::exit(1);
     }
 
     args.extend(entry_points.iter().map(|path| path.to_vec()));
     fn directory_of_tsconfig_around(path: &[u8]) -> &[u8] {
         let mut directory = path;
-        while let Some(at) = directory.iter().rposition(|&byte| byte == b'/') {
+        while let Some(at) = bun_core::strings::last_index_of_char(directory, b'/') {
             directory = &directory[..at];
             if [&b"/tsconfig.json"[..], b"/jsconfig.json"].iter().any(|name| bun_sys::exists(&[directory, *name].concat())) {
                 return directory;

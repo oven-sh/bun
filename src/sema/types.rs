@@ -1365,6 +1365,7 @@ struct TypeSummary {
 struct Summaries<L: Length, A: Allocator + Clone> {
     flags: Stable<u32, L, A>,
     object_flags: Stable<ObjectFlags, L, A>,
+    rows: Stable<AtomicU64, L, A>,
     class: Stable<InstantiationClass, L, A>,
 }
 
@@ -1373,6 +1374,7 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
         Summaries {
             flags: Stable::new_in(alloc.clone()),
             object_flags: Stable::new_in(alloc.clone()),
+            rows: Stable::new_in(alloc.clone()),
             class: Stable::new_in(alloc),
         }
     }
@@ -1402,6 +1404,7 @@ impl<L: Length, A: Allocator + Clone> Summaries<L, A> {
     fn push(&self, summary: TypeSummary) -> u32 {
         self.flags.push(summary.flags);
         self.object_flags.push(summary.object_flags);
+        self.rows.push(AtomicU64::new(0));
         self.class.push(summary.class)
     }
 }
@@ -1522,6 +1525,10 @@ impl Bits {
             self.0.resize(index / 64 + 1, 0);
         }
         self.0[index / 64] |= 1 << (index % 64);
+    }
+
+    fn count(&self) -> usize {
+        self.0.iter().map(|word| word.count_ones() as usize).sum()
     }
 }
 
@@ -2149,6 +2156,15 @@ impl<'p, 's> Types<'p, 's> {
             self.published.summaries.class(id.0)
         } else {
             self.own.summaries.class(id.0 & !LOCAL)
+        }
+    }
+
+    #[inline]
+    pub fn row(&self, id: TypeId) -> &'p AtomicU64 {
+        if id.0 & LOCAL == 0 {
+            self.published.summaries.rows.get(id.0)
+        } else {
+            self.own.summaries.rows.get(id.0 & !LOCAL)
         }
     }
 
@@ -3777,17 +3793,60 @@ impl Hasher for Lanes {
     }
 }
 
+/// The content hashes of the marked records of one kind.
+struct Hashes<'a> {
+    marks: &'a Bits,
+    /// By word of `marks`: the number of marked records before it.
+    before: Vec<u32>,
+    /// In creation order.
+    of: Vec<ContentHash>,
+}
+
+impl<'a> Hashes<'a> {
+    fn new(marks: &'a Bits) -> Hashes<'a> {
+        let mut count = 0;
+        let before = (marks.0.iter())
+            .map(|word| {
+                count += word.count_ones();
+                count - word.count_ones()
+            })
+            .collect();
+        Hashes {
+            marks,
+            before,
+            of: vec![[0; 2]; count as usize],
+        }
+    }
+
+    /// Where `of` has the hash of the marked record `index`.
+    #[inline]
+    fn place(&self, index: u32) -> usize {
+        let (word, bit) = (index as usize / 64, index % 64);
+        let earlier = self.marks.0[word] & ((1 << bit) - 1);
+        (self.before[word] + earlier.count_ones()) as usize
+    }
+
+    /// Zero for a record that is not marked.
+    #[inline]
+    fn get(&self, index: u32) -> ContentHash {
+        match self.marks.has(index as usize) {
+            true => self.of[self.place(index)],
+            false => [0; 2],
+        }
+    }
+}
+
 /// Computes the content hash of one record. A published id is hashed as its number, a task-local id
 /// as the content hash of its record.
 struct Content<'a> {
     lanes: Lanes,
-    /// Indexed by kind and index. The records a record references are older, so their hashes are
-    /// already computed.
-    of: &'a [Vec<ContentHash>; 5],
+    /// Indexed by kind. The records a record references are older, so their hashes are already
+    /// computed.
+    of: &'a [Hashes<'a>; 5],
 }
 
 impl<'a> Content<'a> {
-    fn new(of: &'a [Vec<ContentHash>; 5], kind: Kind) -> Content<'a> {
+    fn new(of: &'a [Hashes<'a>; 5], kind: Kind) -> Content<'a> {
         let mut lanes = Lanes::START;
         lanes.add(kind as u64);
         Content { lanes, of }
@@ -3798,7 +3857,7 @@ impl<'a> Content<'a> {
         if id & LOCAL == 0 {
             self.lanes.add(u64::from(id));
         } else {
-            let [a, b] = self.of[kind as usize][(id & !LOCAL) as usize];
+            let [a, b] = self.of[kind as usize].get(id & !LOCAL);
             // No number of a published id has the high half set.
             self.lanes.add(a | 1 << 63);
             self.lanes.add(b);
@@ -3862,7 +3921,7 @@ impl Visitor for Content<'_> {
 /// The content hash of a type. A union is hashed as a set, and so is an origin that is a union: two
 /// tasks may have sorted members that tie in `compare_types` differently. See
 /// `Types::mark_ordered_by_id`.
-fn content_of_type(created: &Made, of: &[Vec<ContentHash>; 5]) -> ContentHash {
+fn content_of_type(created: &Made, of: &[Hashes<'_>; 5]) -> ContentHash {
     let mut content = Content::new(of, Kind::Type);
     match &created.0 {
         data @ TypeData::Union(members) => {
@@ -3964,9 +4023,10 @@ fn take<V>(own: &mut Own<V>, marks: &Bits, hashes: &[ContentHash]) -> Taken<V> {
         len: own.records.len() as usize,
         ..Taken::default()
     };
+    taken.records.reserve_exact(marks.count());
     own.records.drain(|index, record| {
         if marks.has(index as usize) {
-            taken.records.push((index, hashes[index as usize], record));
+            taken.records.push((index, hashes[taken.records.len()], record));
         }
     });
     own.found.clear();
@@ -4026,7 +4086,7 @@ impl<'s> OwnStore<'s> {
             }
         }
         // Forwards: the records a record references already have their hashes.
-        let mut hashes: [Vec<ContentHash>; 5] = stores.lengths().map(|len| vec![[0; 2]; len]);
+        let mut hashes: [Hashes<'_>; 5] = marks.0.each_ref().map(Hashes::new);
         for at in 0..stores.log.len() {
             let (kind, index) = entry(at);
             if !marks.0[kind as usize].has(index as usize) {
@@ -4053,17 +4113,18 @@ impl<'s> OwnStore<'s> {
                 }
                 Kind::Type => content_of_type(&stores.types.records.get(index).created, &hashes),
             };
-            hashes[kind as usize][index as usize] = hash;
+            let at = hashes[kind as usize].place(index);
+            hashes[kind as usize].of[at] = hash;
         }
         stores.log.clear();
         stores.unimported_files.0.clear();
         let [atoms, components, mappers, sigs, types] = &marks.0;
         OwnRecords {
-            atoms: take(&mut stores.atoms, atoms, &hashes[0]),
-            components: take(&mut stores.components, components, &hashes[1]),
-            mappers: take(&mut stores.mappers, mappers, &hashes[2]),
-            sigs: take(&mut stores.sigs, sigs, &hashes[3]),
-            types: take(&mut stores.types, types, &hashes[4]),
+            atoms: take(&mut stores.atoms, atoms, &hashes[0].of),
+            components: take(&mut stores.components, components, &hashes[1].of),
+            mappers: take(&mut stores.mappers, mappers, &hashes[2].of),
+            sigs: take(&mut stores.sigs, sigs, &hashes[3].of),
+            types: take(&mut stores.types, types, &hashes[4].of),
         }
     }
 }
@@ -4167,21 +4228,23 @@ fn number<V: Send + Sync>(
         .collect();
     for_each_mut(&mut links, in_parallel, &|(t, task, link)| {
         let mut ids = vec![u32::MAX; task.len].into_boxed_slice();
-        let mut stay = Vec::with_capacity(ranks[*t].count as usize);
         let records = std::mem::take(&mut task.records);
-        for (position, mut record) in records.into_iter().enumerate() {
+        let joined = &mut task.joined;
+        let stay = (records.into_iter().enumerate()).filter_map(|(position, mut record)| {
             let first = firsts[*t][position].load(Ordering::Relaxed);
             let (of, at) = ((first >> 32) as usize, first as u32 as usize);
             let id = begins[of] + ranks[of].ranks[at];
             ids[record.0 as usize] = id;
             record.0 = id;
             if first == place(*t, position) {
-                stay.push(record);
-            } else if cfg!(debug_assertions) {
-                task.joined.push((id, record.2));
+                return Some(record);
             }
-        }
-        task.records = stay;
+            if cfg!(debug_assertions) {
+                joined.push((id, record.2));
+            }
+            None
+        });
+        task.records = stay.collect();
         *link = ids;
     });
     links.into_iter().map(|it| it.2).collect()

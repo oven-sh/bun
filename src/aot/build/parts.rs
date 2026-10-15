@@ -52,7 +52,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_removable = self.is_removable(fx.file, stmt);
         match hir[stmt].kind {
             StmtKind::Var(_) => {}
-            StmtKind::ExportDefault(e) if !self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_as_good_as_binding(fx.file, e, sym)) => {}
+            StmtKind::ExportDefault(e) if !self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_equivalent_to_binding(fx.file, e, sym)) => {}
             // `exports.name = value`, where that is a store to a variable.
             StmtKind::Expr(e) if matches!(hir[e].kind, ExprKind::Assign { op: None, target, .. } if self.c.export_variable_named_by(fx.file, target).is_some()) => {}
             _ => return None,
@@ -69,6 +69,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             last: V::NONE,
             end_block: 0,
             is_removable,
+        })
+    }
+
+    pub(crate) fn begin_part_without_statement(&self, fx: &Fx) -> Option<Mark> {
+        if !fx.b.is_open() {
+            return None;
+        }
+        let from = fx.b.block;
+        Some(Mark {
+            from,
+            before: fx.b.func.blocks[from.idx()].ops.last().copied().unwrap_or(V::NONE),
+            first_block: fx.b.func.blocks.len() as u32,
+            to: from,
+            last: V::NONE,
+            end_block: 0,
+            is_removable: false,
         })
     }
 
@@ -91,7 +107,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Whether the operation does nothing that can be told but by what it yields, by the variables it stores to and by the objects in `made`,
     /// which are those that the part has made so far.
-    fn only_makes_values(&self, func: &Func, op: &Op, made: &[V]) -> bool {
+    fn only_creates_values(&self, func: &Func, op: &Op, made: &[V]) -> bool {
         let is_constant_key = |key: V| matches!(func.op(key), Some(Op::Str(_) | Op::Int(_)));
         match op {
             Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) | Op::Str(_) | Op::BigInt(_) | Op::FuncRef(_) | Op::Closure { .. } => true,
@@ -124,7 +140,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 continue;
             }
             let mut part = ModulePart { from: (mark.from, start), to: (mark.to, end), blocks, stores: Vec::new(), only_stores: Vec::new(), mentions: Mentions::default(), handed_through: Vec::new() };
-            part.find_what_is_handed_through(func);
+            part.find_passed_through_values(func);
             // It goes on within itself, or to whatever catches what it throws.
             let stays = |block: BlockId| (blocks.0..blocks.1).contains(&block.0);
             let ends = (!is_in_one_block).then_some(mark.from).into_iter().chain((blocks.0..blocks.1).map(BlockId).filter(|&block| block != mark.to));
@@ -138,10 +154,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             });
             let values = part.values(func);
             let mut made: Vec<V> = Vec::new();
-            let only_makes_values = mark.is_removable || values.iter().all(|&v| match &func.values[v.idx()].def {
+            let only_creates_values = mark.is_removable || values.iter().all(|&v| match &func.values[v.idx()].def {
                     Def::Param(..) => true,
                     Def::Op(op) => {
-                        let is_fine = self.only_makes_values(func, op, &made);
+                        let is_fine = self.only_creates_values(func, op, &made);
                         // What is looked at as another type is the same object.
                         if matches!(op, Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_)) || matches!(op, Op::Coerce { value, .. } if made.contains(value)) {
                             made.push(v);
@@ -149,7 +165,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         is_fine
                     }
                 });
-            if !is_closed || !only_makes_values {
+            if !is_closed || !only_creates_values {
                 continue;
             }
             candidates.push(Candidate { part, is_apart: true });

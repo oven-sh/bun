@@ -10,7 +10,7 @@ b3 3
 c1 s
 c2 s
 c3 8
-d1 TypeError
+d1 d
 d2 2v,w
 e1 TypeError
 e2 s

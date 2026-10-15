@@ -9,7 +9,7 @@ const END_OF_INSERTIONS: &[u8] = b" (bun --aot: where direct evals were given th
 
 fn insertions_noted_in(text: &[u8]) -> Option<(usize, &[u8])> {
     let noted = text.strip_suffix(END_OF_INSERTIONS)?;
-    let start = noted.iter().rposition(|&c| c == b'\n')?;
+    let start = bun_core::strings::last_index_of_char(noted, b'\n')?;
     let list = noted[start..].strip_prefix(b"\n//")?;
     list.iter().all(|c| c.is_ascii_digit() || matches!(c, b' ' | b'+')).then_some((start, list))
 }
@@ -21,8 +21,8 @@ pub fn text_without_note_of_insertions(text: &[u8]) -> &[u8] {
 pub fn position_in_source(text: &[u8], pos: u32) -> u32 {
     let Some((_, noted)) = insertions_noted_in(text) else { return pos };
     let mut inserted = 0;
-    for entry in noted.split(|&c| c == b' ').filter(|entry| !entry.is_empty()) {
-        let mut numbers = entry.split(|&c| c == b'+').map(|digits| digits.iter().fold(0u32, |n, c| n.saturating_mul(10).saturating_add(u32::from(c - b'0'))));
+    for entry in bun_core::strings::split(noted, b" ").filter(|entry| !entry.is_empty()) {
+        let mut numbers = bun_core::strings::split(entry, b"+").map(|digits| digits.iter().fold(0u32, |n, c| n.saturating_mul(10).saturating_add(u32::from(c - b'0'))));
         let (Some(at), Some(len)) = (numbers.next(), numbers.next()) else { break };
         if pos < at + inserted {
             break;
@@ -207,7 +207,7 @@ impl<'a, 's> Rewriting<'a, 's> {
                     if let PropKey::Private(name) = hir[member].key {
                         let name = self.atoms.bytes(name);
                         let name = name.strip_prefix(b"\xFE").unwrap_or(name);
-                        private_names.extend_from_slice(name.split(|&c| c == b'@').next().unwrap_or(name));
+                        private_names.extend_from_slice(bun_core::strings::split(name, b"@").next().unwrap_or(name));
                         private_names.push(b' ');
                     }
                 }
@@ -239,7 +239,7 @@ impl<'a, 's> Rewriting<'a, 's> {
         if has_super {
             text.extend_from_slice(b",\"\\u0000super\":1");
         }
-        if !private_names.is_empty() && !private_names.iter().any(|&c| c == b'"' || c == b'\\') {
+        if !private_names.is_empty() && bun_core::strings::index_of_any(&private_names, b"\"\\").is_none() {
             text.extend_from_slice(b",\"\\u0000private\":\"");
             text.extend_from_slice(&private_names);
             text.push(b'"');

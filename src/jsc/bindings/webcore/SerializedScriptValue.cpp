@@ -68,6 +68,8 @@
 #include <JavaScriptCore/JSSetInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/AOTFunction.h>
+#include <wtf/BitVector.h>
 #include <JavaScriptCore/JSWebAssemblyMemory.h>
 #include <JavaScriptCore/JSWebAssemblyModule.h>
 #include <JavaScriptCore/NumberObject.h>
@@ -2087,6 +2089,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSObject* inObject = asObject(inValue);
             if (!startObject(inObject))
                 break;
+            JSC::AOT::Typed::reifyClassPrototypeIfNeeded(inObject);
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
@@ -3745,6 +3748,11 @@ private:
                 fail();
                 return JSValue();
             }
+            if (m_finishesObjects) {
+                m_isReferencedInObjectPool.set(*index);
+                if (JSObject* finished = m_finishedInObjectPool.get(*index))
+                    return finished;
+            }
             return m_objectPool.at(*index);
         }
         case MessagePortReferenceTag: {
@@ -3952,6 +3960,10 @@ private:
     // Only values the serializer passed to recordObject() may be appended here (via
     // addToObjectPool), in the same order, or every later back-reference is wrong.
     MarkedArgumentBuffer m_objectPool;
+    const bool m_finishesObjects { !!m_globalObject->aotInstance() };
+    BitVector m_isReferencedInObjectPool;
+    HashMap<uint32_t, JSObject*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_finishedInObjectPool;
+    HashMap<JSObject*, uint32_t> m_placeInObjectPoolOfOpenObject;
     const Vector<RefPtr<MessagePort>>& m_messagePorts;
     ArrayBufferContentsArray* m_arrayBufferContents;
     Vector<RefPtr<JSC::ArrayBuffer>> m_arrayBuffers;
@@ -4043,6 +4055,8 @@ DeserializationResult CloneDeserializer::deserialize()
             if (outputObjectStack.size() > maximumFilterRecursion)
                 return std::make_pair(JSValue(), SerializationReturnCode::StackOverflowError);
             JSObject* outObject = constructEmptyObject(m_lexicalGlobalObject, m_globalObject->objectPrototype());
+            if (m_finishesObjects)
+                m_placeInObjectPoolOfOpenObject.set(outObject, static_cast<uint32_t>(m_objectPool.size()));
             addToObjectPool(outObject);
             outputObjectStack.append(outObject);
         }
@@ -4056,6 +4070,16 @@ DeserializationResult CloneDeserializer::deserialize()
                     goto error;
 
                 JSObject* outObject = outputObjectStack.last();
+                if (m_finishesObjects) {
+                    if (auto place = m_placeInObjectPoolOfOpenObject.takeOptional(outObject); place && !m_isReferencedInObjectPool.get(*place)) {
+                        JSObject* finished = JSC::AOT::withEveryPropertyInLine(m_globalObject, outObject);
+                        if (finished != outObject) {
+                            m_gcBuffer.appendWithCrashOnOverflow(finished);
+                            m_finishedInObjectPool.set(*place, finished);
+                            outObject = finished;
+                        }
+                    }
+                }
                 outValue = outObject;
                 outputObjectStack.removeLast();
                 break;

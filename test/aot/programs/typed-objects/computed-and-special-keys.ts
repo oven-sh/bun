@@ -45,7 +45,7 @@ const parsed = JSON.parse('{"__proto__": {"inherited": "json"}, "own": 2}')
 console.log(Object.keys(parsed).join(), Object.getPrototypeOf(parsed) === Object.prototype, parsed.inherited, parsed.own)
 // A store to `__proto__` of a typed object: see type-rules/computed-and-special-keys.
 
-// Fields by the names of what every object inherits. A typed read of the optional one while it is absent: see type-rules/computed-and-special-keys.
+// Fields named like the properties that every object inherits. A typed read of the optional one while it is absent: see type-rules/computed-and-special-keys.
 interface Shadow { constructor: string; hasOwnProperty: number; valueOf?: () => unknown; length: number; prototype?: string }
 const shadow: Shadow = { constructor: "mine", hasOwnProperty: 1, length: 3 }
 console.log(shadow.constructor, shadow.hasOwnProperty + 1, shadow.length, typeof hide(shadow).valueOf, shadow.prototype, Object.keys(shadow).join(), JSON.stringify(shadow), Object.hasOwn(shadow, "valueOf"), "valueOf" in shadow)

@@ -61,7 +61,7 @@ console.log(JSON.stringify(o1))
 delete anyO1.extra; delete anyO1.more; delete o1.b; o1.b = 22; anyO1.more = "y"
 console.log(JSON.stringify(o1), o1.a + o1.b + o1.c)
 
-// Accessors, methods, statics and private names are no keys.
+// Accessors, methods, statics and private names are not keys.
 class Rich {
   static count = 0
   #hidden = 1

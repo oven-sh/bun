@@ -164,6 +164,9 @@ impl Checker<'_, '_> {
 
     /// `getTypeNameForErrorDisplay`
     pub fn type_to_string_fully_qualified(&mut self, ty: TypeId) -> Vec<u8> {
+        if self.is_behind_the_check() {
+            return Vec::new();
+        }
         self.printed(|c, out| c.write_type(out, ty, USE_FULLY_QUALIFIED_TYPE))
     }
 
@@ -242,6 +245,9 @@ impl Checker<'_, '_> {
         left: TypeId,
         right: TypeId,
     ) -> (Vec<u8>, Vec<u8>) {
+        if self.is_behind_the_check() {
+            return (Vec::new(), Vec::new());
+        }
         let (left_text, right_text) = (
             self.type_to_string_at_value_declaration(left),
             self.type_to_string_at_value_declaration(right),

@@ -35,7 +35,7 @@ attempt("f2", () => { captured = 2; recapture(); return captured + 1 })
 attempt("f3", () => { let local: number | string = 1; const set = () => { local = "set" }; set(); return local + 1 })
 attempt("f4", () => { let local: number | string | boolean = true; const set = () => { local = "set" }; if (local === true) { set(); return !local } return "no" })
 attempt("f5", () => { captured = 2; recapture(); captured += 1; return captured })
-// delete, and stores behind the type.
+// delete, and stores through `any`.
 interface Opt { n?: number; s?: string }
 attempt("g1", () => { const o: Opt = { n: 1 }; o.n = 2; delete o.n; return o.n })
 attempt("g2", () => { const o: Opt = { n: 1 }; if (o.n !== undefined) { delete o.n; return String(o.n) + typeof o.n } return "no" })

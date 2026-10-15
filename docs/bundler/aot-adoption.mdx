@@ -22,6 +22,8 @@ Most programs have a few places where data from outside the type system, such as
 | 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going where it can |
 | 4    | `bun build --compile --aot`                                | production            | is compiled, and throws                |
 
+Before you run anything, [`bun lint --aot`](/lint#before-you-compile-with-aot) reads your source and lists where data without a type enters your program, and where it reaches a type.
+
 The examples use this program:
 
 ```ts app.ts icon="/icons/typescript.svg"
@@ -93,7 +95,7 @@ Each line ends with what an `--aot` build would do:
 
 An `--aot` build stops at the first `TypeError` that your program does not catch. The audit goes on, so a later line tells you what happens once the earlier ones are fixed.
 
-Fix `would-convert` lines first. The audit does not convert, so the value travels on as it is. To avoid false lines, the audit does not report a value that `as` has converted when it fails a later check, nor an equal value from somewhere else.
+Fix `would-convert` lines first. The audit does not convert, so the value continues unchanged. To avoid false lines, the audit does not report a value that `as` has converted when it fails a later check, nor an equal value from somewhere else.
 
 Bun type checks and analyzes the whole program before it starts, so the first start takes longer. After you save a file, Bun analyzes that file alone before it reloads, and the rest in the background.
 
@@ -102,7 +104,7 @@ Bun type checks and analyzes the whole program before it starts, so the first st
 - There is no way to silence a line. If the value is right and the type is not, change the type.
 - A file that calls `eval()` directly is not audited. Bun says so.
 - Under `bun test`, when a test file or a preload can replace a module (`mock.module()`, `jest.mock()`, `vi.mock()`, `spyOn()` on a module namespace), arguments passed to imported functions are not checked in that run.
-- Functions do not make tail calls while the audit is on, so stacks are deeper and very deep recursion overflows. The executable [makes none either](#common-fixes).
+- Functions do not make tail calls while the audit is on, so stack traces have more frames and [very deep recursion](#common-fixes) overflows. An executable built with `--aot-type-errors=log` makes none either. The final executable makes them, as Bun does without `--aot`.
 - Code with many type checks in hot loops runs 5% to 20% slower.
 
 The exit code does not change either. To fail a CI job, write the lines to a file and test that it is empty. Bun appends to the file, so remove it first. The audit reads the [same two environment variables](#3-log-in-production) as the executable:
@@ -115,6 +117,8 @@ BUN_AOT_TYPE_ERROR_LOG=audit.jsonl bun test --aot-audit && test ! -s audit.jsonl
 ## 2. Report when you build
 
 `bun check --aot` type checks your entry points and reports what can never work under `--aot`. `bun build --compile --aot` reports the same errors and stops.
+
+One group of type errors does not stop the build. When `@types/bun` is not installed, TypeScript does not know the names that Bun provides when your program runs. Errors about those names become warnings, Bun prints the first of them with a note to run `bun add -d @types/bun`, and the compiler treats each such name as `any`. The group is: `TS2580`, `TS2582`, `TS2584`, `TS2591`, `TS2593`, `TS2867` and `TS2868`, which TypeScript reports for names such as `console`, `process`, `require`, `describe` and `Bun`; `TS2304` and `TS2552` for the globals `AbortController`, `AbortSignal`, `Blob`, `BroadcastChannel`, `Buffer`, `Bun`, `ByteLengthQueuingStrategy`, `CloseEvent`, `CompressionStream`, `CountQueuingStrategy`, `Crypto`, `CryptoKey`, `CustomEvent`, `DOMException`, `DecompressionStream`, `ErrorEvent`, `Event`, `EventSource`, `EventTarget`, `File`, `FormData`, `HTMLRewriter`, `Headers`, `MessageChannel`, `MessageEvent`, `MessagePort`, `Performance`, `ReadableStream`, `Request`, `Response`, `SubtleCrypto`, `TextDecoder`, `TextDecoderStream`, `TextEncoder`, `TextEncoderStream`, `TransformStream`, `URL`, `URLSearchParams`, `WebAssembly`, `WebSocket`, `Worker`, `WritableStream`, `__dirname`, `__filename`, `addEventListener`, `alert`, `atob`, `btoa`, `clearImmediate`, `clearInterval`, `clearTimeout`, `confirm`, `console`, `crypto`, `exports`, `fetch`, `global`, `module`, `navigator`, `performance`, `postMessage`, `process`, `prompt`, `queueMicrotask`, `removeEventListener`, `reportError`, `require`, `self`, `setImmediate`, `setInterval`, `setTimeout` and `structuredClone`; `TS2307` for `bun`, any `bun:` or `node:` module, the Node.js modules `assert`, `async_hooks`, `buffer`, `child_process`, `cluster`, `console`, `constants`, `crypto`, `dgram`, `diagnostics_channel`, `dns`, `domain`, `events`, `fs`, `http`, `http2`, `https`, `inspector`, `module`, `net`, `os`, `path`, `perf_hooks`, `process`, `punycode`, `querystring`, `readline`, `repl`, `stream`, `string_decoder`, `timers`, `tls`, `tty`, `url`, `util`, `v8`, `vm`, `wasi`, `worker_threads` and `zlib` with their subpaths, and an import that ends in `.txt`, `.toml`, `.yaml`, `.yml`, `.jsonc`, `.json5`, `.xml`, `.html` or `/bun.lock`; and `TS2339` for a property of `import.meta`. With `@types/bun` installed, all of these are errors again and stop the build.
 
 ```ts wrong.ts icon="/icons/typescript.svg"
 function double(n: number): number {
@@ -150,10 +154,11 @@ bun check --aot --aot-explain=throws app.ts
 ```
 
 ```txt
-[aot] type-check 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, may get any; warning; call 4d3156b73eaf; logged as 19df4e0e09b7; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
-[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; logged as 7e37ac7b188a; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, may get any; warning; call 4d3156b73eaf; logged as 19df4e0e09b7; value from JSON.parse(..) at app.ts:5:24; fix: validate the value once, where it enters the program, and build a typed value from it
+[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): a value that the cast let through is used as the type of the cast: expected number, may get object | number; warning; logged as 7e37ac7b188a; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check summary: 3 checks can fail when the program runs, 0 always fail
+[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`
 ```
 
 | Report            | Lists                                                                                     |
@@ -162,6 +167,26 @@ bun check --aot --aot-explain=throws app.ts
 | `throws-all`      | also the checks that fail only if your TypeScript code itself produces a value of the wrong type |
 | `throws-json`     | the same as `throws`, one JSON object per line, on stdout                                 |
 | `throws-all-json` | the same as `throws-all`, one JSON object per line, on stdout                             |
+
+On a large program, `throws` prints at most 200 lines of each category and counts the rest. The other three reports are never cut short. To look up the id of a line from the log, use `throws-all-json`.
+
+The last line counts the checks that can fail by what causes them. Start with the causes that you wrote yourself: an `as`, a `!`, an `any`. In the JSON reports, each object has its cause as `cause`:
+
+| `cause`             | The check is                                                              |
+| ------------------- | ------------------------------------------------------------------------- |
+| `as`                | at an `as`                                                                |
+| `non-null`          | at a `!`                                                                  |
+| `after-as`          | where a value that an `as` let through is used                            |
+| `declared-only`     | on a value from code that has only a declaration: a package, a global     |
+| `called-as-a-value` | on a parameter of a function that is called as a value or with `any`      |
+| `any`               | on an `any`                                                               |
+| `unknown-source`    | on a value whose source is not known                                      |
+| `javascript`        | on a value from a JavaScript file of the program                          |
+| `caught`            | on a caught exception                                                     |
+| `builtin-write`     | at a write to a built-in object                                           |
+| `rule`              | by another `--aot` rule                                                   |
+| `narrowing`         | where a type is narrowed. Only in `throws-all`                            |
+| `typed-code`        | within typed code. Only in `throws-all`                                   |
 
 A line ends in `warning` if the check can fail, and in `error` if it always fails. `bun build --compile --aot` takes the same flag. `Bun.build` returns the lines in `logs`, at level `"verbose"`:
 
@@ -182,8 +207,8 @@ Tests do not see all the data that production sees. Build with `--aot-type-error
 
 | What happens                                                                                                                                              | The line says            | Then                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
-| A string, number or boolean of the wrong type is passed to a function, an arrow function or an `async` function: by name, or as a callback, a listener, a handler in a table or a `Map` | `continued`              | The call runs as plain JavaScript                           |
-| The same is passed to a method of a class or of an object literal, a generator, a constructor, or a function that uses `this`, `arguments`, a rest parameter, `super` or a private name, or that declares a class | `threw`                  | `TypeError`                                                 |
+| A string, number or boolean is passed where the parameter has another type, also an interface or a type literal, to a function, an arrow function, an `async` function or a method of an object literal, such as a handler of `Bun.serve`: by name, or as a callback, a listener, a handler in a table or a `Map`, or a closure that another function returns, yields or stores | `continued`              | The call runs as plain JavaScript                           |
+| The same is passed to a method of a class, a generator, a constructor, a `function` that uses `this`, or any function that uses `arguments`, a rest parameter, `super` or a private name, or that declares a class | `threw`                  | `TypeError`                                                 |
 | A string, number, boolean, `null` or `undefined` of the wrong type reaches a variable, a property or a return type, or comes out of a call or an `await` | `threw`                  | `TypeError`                                                 |
 | `as number`, `as string` or `as boolean` on a value of another of these types                                                                             | `converted`              | The value is converted, as in step 4                        |
 | An object does not match its interface, type literal or class: parsed JSON without a property, an object from a package                                   | `continued` or `threw`   | It depends on the type. Where it goes on, a missing property reads `undefined` |
@@ -192,14 +217,15 @@ Tests do not see all the data that production sees. Build with `--aot-type-error
 | `x!` on `null` or `undefined`                                                                                                                             | `threw`                  | `TypeError`                                                 |
 | A write to a built-in object                                                                                                                              | `threw`                  | `TypeError`                                                 |
 
-To let an object in that does not match, the compiler gives up what it knows about that type, and about every type that can hold one. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. A line of the log has the id of its line in the report. The report does not list a method, a constructor or a setter that is called with `any` yet:
+To accept an object that does not match, the compiler has to discard what it knows about that type and about every type that can contain it. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. A line of the log has the id of its line in the report:
 
 ```txt
 [aot] type-check 4ef4a95ba9d7 enter-function app.ts:1:1 (double): parameter 1 of `double`, which is called as a value or with `any`: expected number, may get any; warning; this log build continues here; fix: give the untyped caller a wrapper that validates, or widen the parameter and narrow inside
-[aot] type-check 4d3156b73eaf enter-argument app.ts:6:13 (module): argument 1 of `double`: expected number, may get any; warning; this log build continues here; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
-[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; this log build throws here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check 4d3156b73eaf enter-argument app.ts:6:13 (module): argument 1 of `double`: expected number, may get any; warning; this log build continues here; value from JSON.parse(..) at app.ts:5:24; fix: validate the value once, where it enters the program, and build a typed value from it
+[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): a value that the cast let through is used as the type of the cast: expected number, may get object | number; warning; this log build throws here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; this log build converts here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
-[aot] type-check summary: 4 checks can fail when the program runs, 0 always fail; behind its line in the log, this build continues at 2, converts at 1 and still throws at 1
+[aot] type-check summary: 4 checks can fail when the program runs, 0 always fail; after logging, this build continues at 2, converts at 1 and still throws at 1
+[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on a parameter of a function that is called as a value or with `any`, 1 on an `any`
 ```
 
 <Tabs>
@@ -263,7 +289,7 @@ TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.c
 
 Unlike a line of the log, the message of the `TypeError` contains the value. If you send error messages to a service, it receives that data.
 
-The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the action `threw`. Most have the kind `type-mismatch`, and an id of their own: the report of step 2 prints it on the line of the same place, as `logged as 19df4e0e09b7`.
+The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the action `threw`. Most have the kind `type-mismatch` and their own id. The report from step 2 prints that id on the line for the same location, as `logged as 19df4e0e09b7`. A wrong argument for a function that is called as a value or through `any` has the kind `enter-function`: the line names the function, not the call, and has the id of the function's line in the report. The call comes first after `from`.
 
 ## Common fixes
 
@@ -291,7 +317,7 @@ if (typeof visits !== "number") throw new Error("visits must be a number"); // [
 double(visits); // [!code ++]
 ```
 
-**Very deep recursion.** Without `--aot`, a function that ends in `return f(x)` gives its stack frame to `f`. Compiled code keeps a frame for every call, as Node.js does, so `sum(1_000_000)` throws `RangeError: Maximum call stack size exceeded`. It does under the audit too. Write a loop.
+**Very deep recursion.** A strict-mode function that ends in `return f(x)` gives its stack frame to `f`, with or without `--aot`. The audit and an executable built with `--aot-type-errors=log` keep a frame for every call, as Node.js does, so a tail-recursive `sum(1_000_000)` throws `RangeError: Maximum call stack size exceeded` in those two steps. The final executable keeps the frame for `return f(x) as T` where `as` converts the result to another primitive type, because the conversion comes after the call. If your program recurses that deeply in one of these ways, write a loop.
 
 ```ts
 function sum(n: number, total = 0): number {

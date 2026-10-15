@@ -55,7 +55,7 @@ delete config.fallback
 seen.push(fromConfig(4).read(), fromFallback(4).read(), Object.keys(config).join())
 console.log(seen.join(" "))
 
-// One of two constructors, and what is not a constructor behind the signature.
+// One of two constructors, and a value with a construct signature that is not a constructor.
 function either(flag: boolean, level: number) { const C: typeof ClassGauge | typeof ResettableGauge = flag ? ClassGauge : ResettableGauge; return new C(level) }
 console.log(describe(either(true, 1)), describe(either(false, 2)))
 for (const bad of [() => 1, { kindName: "object" }, Math.max, undefined, null, async function () {}, function* () {}] as unknown[]) {

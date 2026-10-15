@@ -142,7 +142,7 @@ async function inspected(flags: string[]) {
 const isWarningAboutCompiledCode = (event: { method: string; params: any }) =>
   event.method === "Console.messageAdded" && event.params.message.level === "warning" && event.params.message.text.includes("compiled ahead of time");
 
-test("a debugger of an executable built without --aot is told nothing and sees the script", async () => {
+test("a debugger attached to an executable built without --aot gets no notice and sees the script", async () => {
   const session = await inspected([]);
   try {
     await session.send("Debugger.enable");
@@ -162,7 +162,7 @@ describe("the inspector on an executable built with --aot", () => {
   }, 60_000);
   afterAll(() => session.close());
 
-  test("a debugger is told that it cannot stop in compiled code", async () => {
+  test("a debugger is notified that it cannot pause in compiled code", async () => {
     await session.send("Debugger.enable");
     const warnings = session.events.filter(isWarningAboutCompiledCode);
     expect(warnings).toHaveLength(1);
@@ -207,7 +207,7 @@ describe("the inspector on an executable built with --aot", () => {
     expect(result.preview.properties.map((property: any) => property.value)).toEqual(["Account", "Account"]);
   });
 
-  test("an array without a prototype is handed over by value as an array", async () => {
+  test("an array without a prototype is returned by value as an array", async () => {
     const expression = "(() => { const array = [1, 2]; Object.setPrototypeOf(array, null); return array; })()";
     const { result } = await session.send("Runtime.evaluate", { expression, returnByValue: true });
     expect(result.value).toEqual([1, 2]);

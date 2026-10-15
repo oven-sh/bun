@@ -212,6 +212,7 @@ fn run(args: &[String]) {
                 constants.resolved = Some(it.resolved.clone());
                 constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
                 constants.without_side_effects = it.without_side_effects.iter().cloned().collect();
+                constants.lifted_commonjs = it.lifted_commonjs.iter().cloned().collect();
                 constants.statements = bun_aot::Constants::statements_by_file(it.statements.iter().cloned());
                 constants.texts = it.texts.iter().cloned().collect();
                 constants.assets = it.assets.iter().cloned().collect();
@@ -219,6 +220,7 @@ fn run(args: &[String]) {
             // `--test-globals`: as for `bun test --aot`.
             constants.has_test_globals = has("--test-globals");
             constants.logs_type_errors = has("--aot-type-errors=log");
+            constants.shortens_names = (has("--minify") || has("--minify-identifiers")) && !has("--keep-names");
             constants.notes_spans = args.iter().any(|a| a.starts_with("--audit-sites-out="));
             // `--own-paths`: as for `bun run --aot`, each module reports its own path.
             if has("--own-paths") || snapshot.as_ref().is_some_and(|it| it.preserve_source_paths) {
@@ -245,7 +247,7 @@ fn run(args: &[String]) {
             }
             // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
             constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 46] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--aot-type-errors", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--memory", "--min-tasks", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
+            const OWN_FLAGS: [&str; 49] = ["--agent", "--all", "--aot", "--aot-explain", "--aot-out", "--aot-type-errors", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--github", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
             const EXPLAINED: [&str; 16] = ["alterations", "builtins", "deferred", "errors", "fields", "foreign", "given", "integers", "progress", "react", "react-locations", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
                 let flag = text(&rejected.flag);
@@ -345,7 +347,7 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), alterations: has("--aot-explain=alterations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress"), deferred: has("--aot-explain=deferred") };
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), alterations: has("--aot-explain=alterations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -481,6 +483,9 @@ fn run(args: &[String]) {
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
                     let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write_releasing(&mut translated.program, in_parallel)).is_ok();
+                    if let Some(tokens) = &translated.tokens {
+                        let _ = std::fs::write(format!("{path}.map"), [&b"{\n  \"version\": 3,\n  \"sources\": [],\n  \"mappings\": \"\",\n  \"names\": [],\n  \"x_bun_aot\": "[..], tokens, b"\n}\n"].concat());
+                    }
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     let written_in = started.elapsed().as_secs_f64();
@@ -570,6 +575,9 @@ fn run(args: &[String]) {
                 refuses_broken_configurations: defaults.refuses_broken_configurations,
                 prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
                 shares_every_file: defaults.shares_every_file,
+                early_run: defaults.early_run,
+                early_parse_only: defaults.early_parse_only,
+                early_scan_only: defaults.early_scan_only,
                 only_the_globals: defaults.only_the_globals,
                 memory: defaults.memory,
             };
@@ -663,6 +671,7 @@ fn run(args: &[String]) {
                 ..Default::default()
             });
             if has("--aot") {
+                provided.build_constants = Some(constants.build_constants());
                 for &(name, text) in bun_aot::prelude::FILES {
                     provided.already_read.insert(bun_sema_driver::host::from_native(&bun_aot::prelude::path_of(cwd.as_bytes(), name)), text.as_bytes().to_vec());
                 }
@@ -754,7 +763,7 @@ fn run(args: &[String]) {
                 }
                 let why = why_errors_do_not_stand.lock();
                 for (d, why) in report.not_in_program.iter().zip(why.iter()).filter(|_| has("--aot-explain=errors")) {
-                    let message = d.text.split(|&byte| byte == b'\n').next().unwrap_or_default();
+                    let message = bun_core::strings::split(&d.text, b"\n").next().unwrap_or_default();
                     error_line!("aot: {}({},{}): error TS{}: {} [{why}]", text(&d.path), d.line, d.column, d.code, text(message));
                 }
                 let mut error_types = std::mem::take(&mut *error_types.lock());

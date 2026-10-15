@@ -150,6 +150,7 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     if (propertyName.isSymbol()) return;
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
+    Bun::noteThatRequireCacheIsRead(globalObject);
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);
     if (callData.type == JSC::CallData::Type::None) {
@@ -227,6 +228,12 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (loaderType != BunLoaderTypeJSON) {
+        bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, loaderType == BunLoaderTypeTS);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (hasRun)
+            return JSC::JSValue::encode(jsUndefined());
+    }
     BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();

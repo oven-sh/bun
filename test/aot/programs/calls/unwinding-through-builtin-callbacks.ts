@@ -22,7 +22,7 @@ row("a proxy whose get trap throws", () => table[1](new Proxy({ x: 1, y: 2 }, { 
 row("a proxy that is revoked", () => { const r = Proxy.revocable({ x: 1, y: 2 }, {}); r.revoke(); return table[1](r.proxy); });
 row("an iterator that throws", () => table[2]({ [Symbol.iterator](): never { throw new EvalError("iterator"); } }));
 row("an iterator whose next throws", () => table[2]({ [Symbol.iterator]() { return { next(): never { throw new URIError("next"); } }; } }));
-// A conversion that has done work when it fails: C++ goes through what is handed over, and throws from the middle of it.
+// A conversion that has done part of its work when it fails: C++ iterates over its argument and throws from the middle of it.
 row("a list of records, the second is a number", () => table[3]([{ x: 1, y: 2 }, 5]));
 row("a list of records, the last of 300 lacks a field", () => table[3](Array.from({ length: 300 }, (_, i) => i < 299 ? { x: i, y: i } : { x: i })));
 row("a list of records, right", () => table[3]([{ x: 1, y: 2 }, { x: 3, y: 4 }]));
@@ -42,7 +42,7 @@ row("then, twice", () => Promise.resolve(5).then(table[0]).catch(() => 6).then(t
 row("a replacer of String.prototype.replace", () => { let kept: unknown; const f = table[0]; "a".replace(/a/, ((m: string) => { kept = f(m); return ""; }) as any); return kept; });
 row("a comparator of sort", () => { let kept: unknown; const f = table[0]; [2, 1].sort((a, b) => { kept = f(a); return a - b; }); return kept; });
 row("a getter of a property, by Reflect.get", () => Reflect.get(Object.defineProperty({}, "p", { get: table[0] }), "p"));
-// What the caller has in its hands behind a call that is refused.
+// The caller's live values after a call that is rejected.
 function manyLive(f: any, n: number): string {
     let a = 1, b = 2.5, c = 3, d = 4.5, e = 5, g = 6.5, h = 7, i = 8.5, s = "s", o = { v: 9 }, l = [10], refused = 0;
     for (let k = 0; k < n; k++) {

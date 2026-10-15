@@ -712,6 +712,7 @@ writeIfNotChanged(
     ExportsObject = 8,
     ExportDefaultObject = 9,
     CommonJSCustomExtension = 10,
+    ExportDefaultOnly = 11,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
     InternalModuleRegistryFlag = 1 << 9,

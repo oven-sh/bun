@@ -4,13 +4,13 @@ class Box { constructor(public v: number, public w: string = "w") {} }
 class Trapped { private _v = 0; sets = 0; get v(): number { if (this._v > 2) throw new RangeError("get " + this._v); return this._v; } set v(n: number) { this.sets++; if (n < 0) throw new RangeError("set " + n); this._v = n; } }
 const log: string[] = [];
 function thrower(when: boolean, what: string): void { if (when) throw new Error(what); }
-// The store before the throw is seen by the handler, the one behind it is not made.
+// The handler sees the store before the throw; the store after it does not happen.
 function storesAroundAThrow(fail: boolean): string { const b = new Box(1); try { b.v = 2; thrower(fail, "t"); b.v = 3; return "end " + b.v; } catch (e) { return "caught " + b.v; } }
-// The store itself throws: the field keeps what it had, for the handler and behind it.
+// The store itself throws: the field keeps its old value, in the handler and after it.
 function storeThatThrows(n: number): string { const t = new Trapped(); let r = ""; try { t.v = 1; t.v = n; r = "stored " + t.v; } catch (e: any) { r = "caught " + e.message; } return r + " " + t.sets; }
 // The read itself throws.
 function readThatThrows(n: number): string { const t = new Trapped(); t.v = n; try { const a = t.v; const b = t.v; return "read " + a + b; } catch (e: any) { return "caught " + e.message; } }
-// A frozen object: the store throws in strict code, the read behind the handler sees the old value.
+// A frozen object: the store throws in strict code, and the read after the handler sees the old value.
 function frozen(freeze: boolean): string { const b = new Box(1); if (freeze) Object.freeze(b); try { b.v = 2; return "stored " + b.v; } catch (e: any) { return "caught " + e.constructor.name + " " + b.v; } }
 // null or undefined receivers.
 function nilReceiver(b: Box | undefined): string { try { const a = b!.v; const c = b!.v; return "read " + (a + c); } catch (e: any) { return "caught " + e.constructor.name; } }

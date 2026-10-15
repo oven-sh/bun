@@ -254,6 +254,7 @@ pub(crate) mod js_bundler {
         pub(crate) aot_explain: Vec<Box<[u8]>>,
         pub(crate) aot: bool,
         pub(crate) logs_type_errors: bool,
+        pub(crate) crash_if_interpreter_is_used: bool,
         pub(crate) function_source: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
@@ -283,6 +284,7 @@ pub(crate) mod js_bundler {
                 aot_explain: Vec::new(),
                 aot: false,
                 logs_type_errors: false,
+                crash_if_interpreter_is_used: false,
                 function_source: true,
                 jit_policy: 1.0,
                 bytecode_order: Vec::new(),
@@ -481,7 +483,7 @@ pub(crate) mod js_bundler {
                 while let Some((key, _)) = keys.next()? {
                     let key = key.to_owned_slice();
                     let known = crate::cli::aot::OPTIONS_OF_COMPILE;
-                    if key.starts_with(b"aot") && !known.contains(&&key[..]) {
+                    if key.starts_with(b"aot") && !known.contains(&&key[..]) && !crate::cli::aot::INTERNAL_OPTIONS_OF_COMPILE.contains(&&key[..]) {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "compile.{} is not an option.{} The options that start with aot are {}",
                             bstr::BStr::new(&key[..]),
@@ -538,8 +540,18 @@ pub(crate) mod js_bundler {
                 };
             }
 
+            if let Some(crash) = object.get_boolean_loose(global_this, "aotCrashIfInterpreterIsUsed")? {
+                this.crash_if_interpreter_is_used = crash;
+            }
+
             if !this.aot {
-                let needs_aot = if this.logs_type_errors { Some("aotTypeErrors") } else { (!this.aot_explain.is_empty()).then_some("aotExplain") };
+                let needs_aot = if this.logs_type_errors {
+                    Some("aotTypeErrors")
+                } else if this.crash_if_interpreter_is_used {
+                    Some("aotCrashIfInterpreterIsUsed")
+                } else {
+                    (!this.aot_explain.is_empty()).then_some("aotExplain")
+                };
                 if let Some(option) = needs_aot {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.{option} requires compile.aot: true")));
                 }
@@ -1480,6 +1492,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(compile) = this.compile.as_ref().filter(|compile| compile.aot) {
+                if jsc::virtual_machine::standalone_module_graph().is_some_and(|graph| !graph.aot_image().is_empty() && graph.sources_of_compiled_program().is_empty()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot is not available in an executable that was itself compiled with --aot. Run the build script with bun.")));
+                }
                 if let Some(why) = crate::cli::aot::why_unsupported(&compile.compile_target) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: {why}")));
                 }

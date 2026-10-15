@@ -1,1 +1,1 @@
-It reads error.stack in the form the jsc shell gives it. Expected: "sort: note < comparator < sort < outer < show < module". --aot prints: "sort: Error: < note < comparator < sort < <anonymous> < outer < <anonymous> < show < calls/stacks-fr".
+It reads error.stack in the form the jsc shell gives it, so only test/aot/shell/quick.py runs it.

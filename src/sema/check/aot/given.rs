@@ -88,6 +88,14 @@ pub fn stored_values_read(function: &NilFlowsInFunction, events: &[Vec<PlaceEven
     if blocks == 0 || events.iter().all(|events| !events.iter().any(|event| matches!(event, PlaceEvent::Read { .. }))) {
         return found;
     }
+    let mut has_event = vec![false; names.len()];
+    let place_of = |event: &PlaceEvent| match *event {
+        PlaceEvent::Read { place, .. } | PlaceEvent::Store { place, .. } => Some(place),
+        PlaceEvent::Anything => None,
+    };
+    if !events.iter().flatten().filter_map(place_of).any(|place| std::mem::replace(&mut has_event[place as usize], true)) {
+        return found;
+    }
     let (mut arriving, mut leaving): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
     for (index, jump) in function.jumps.iter().enumerate() {
         arriving[jump.to as usize].push(index as u32);
@@ -217,9 +225,67 @@ pub fn parameters_handed_elements(method: &[u8], is_array: bool) -> &'static [us
     }
 }
 
-pub fn add_nil_flows_in(function: &NilFlowsInFunction, found: &mut NilEdges) {
+pub fn add_nil_flows_in(function: &NilFlowsInFunction, found: &mut NilEdges, room: &mut RoomForFlows) {
     let NilEdges { edges, origins } = found;
-    add_edges_in(function, edges, &mut |node, nil| origins.push((node, nil)));
+    add_edges_in(function, edges, &mut |node, nil| origins.push((node, nil)), room);
+}
+
+#[derive(Default)]
+struct ListsByBlock {
+    first: Vec<u32>,
+    next: Vec<u32>,
+    items: Vec<u32>,
+}
+
+impl ListsByBlock {
+    fn lay(&mut self, blocks: usize, pairs: impl Iterator<Item = (u32, u32)> + Clone) {
+        self.first.clear();
+        self.first.resize(blocks + 1, 0);
+        for (block, _) in pairs.clone() {
+            self.first[block as usize + 1] += 1;
+        }
+        for block in 0..blocks {
+            self.first[block + 1] += self.first[block];
+        }
+        self.next.clear();
+        self.next.extend_from_slice(&self.first[..blocks]);
+        self.items.clear();
+        self.items.resize(self.first[blocks] as usize, 0);
+        for (block, item) in pairs {
+            self.items[self.next[block as usize] as usize] = item;
+            self.next[block as usize] += 1;
+        }
+    }
+
+    fn of(&self, block: usize) -> &[u32] {
+        &self.items[self.first[block] as usize..self.first[block + 1] as usize]
+    }
+}
+
+#[derive(Default)]
+pub struct RoomForFlows {
+    following: ListsByBlock,
+    preceding: ListsByBlock,
+    dominated: ListsByBlock,
+    uses_in: ListsByBlock,
+    origins_in: ListsByBlock,
+    only_jump: Vec<u32>,
+    jumps_to: Vec<u32>,
+    order: Vec<u32>,
+    is_seen: Vec<bool>,
+    stack: Vec<(u32, usize)>,
+    number: Vec<u32>,
+    dominator: Vec<u32>,
+    climbed_for: Vec<u32>,
+    shown: FxHashMap<u32, u8>,
+    taken_back: Vec<(u32, u8)>,
+    walk: Vec<(u32, usize, usize)>,
+    is_entered: Vec<bool>,
+}
+
+fn filled<T: Copy>(list: &mut Vec<T>, length: usize, with: T) {
+    list.clear();
+    list.resize(length, with);
 }
 
 pub struct EdgesByNode {
@@ -277,15 +343,15 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
         other: &'a mut [u32],
         nil: &'a mut [u8],
     }
-    let (mut first_left, mut other_left, mut nil_left, mut ahead) = (&mut first[..nodes as usize], &mut other[..], &mut nil[..], 0);
+    let (mut first_left, mut other_left, mut nullish_left, mut ahead) = (&mut first[..nodes as usize], &mut other[..], &mut nil[..], 0);
     let mut tasks: Vec<Run<'_>> = Vec::with_capacity(runs.len());
     for (number, &many) in many.iter().enumerate() {
         let (first, left) = first_left.split_at_mut((end_of(number) - runs[number]) as usize);
         first_left = left;
         let (other, left) = other_left.split_at_mut(many);
         other_left = left;
-        let (nil, left) = nil_left.split_at_mut(many);
-        nil_left = left;
+        let (nil, left) = nullish_left.split_at_mut(many);
+        nullish_left = left;
         tasks.push(Run { number, ahead, first, other, nil });
         ahead += many as u32;
     }
@@ -314,7 +380,29 @@ pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick
     EdgesByNode { first, other, nil }
 }
 
-pub fn nil_reaching(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins: impl Iterator<Item = (u32, u8)>, is_cut: impl Fn(u32, u32) -> bool) -> Vec<u8> {
+const EDGE_WALK_TASKS: usize = 64;
+
+fn split_into_tasks(pending: Vec<u32>) -> Vec<Vec<u32>> {
+    pending.chunks(pending.len().div_ceil(EDGE_WALK_TASKS).max(1)).map(<[u32]>::to_vec).collect()
+}
+
+pub fn reach_backward(entering: &EdgesByNode, is_reached: Vec<bool>, pending: Vec<u32>, in_parallel: InParallel<'_>) -> Vec<bool> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let is_reached: Vec<AtomicBool> = is_reached.into_iter().map(AtomicBool::new).collect();
+    for_each_mut(&mut split_into_tasks(pending), in_parallel, &|pending| {
+        while let Some(node) = pending.pop() {
+            for &from in &entering.other[entering.at(node)] {
+                if !is_reached[from as usize].load(Ordering::Relaxed) && !is_reached[from as usize].swap(true, Ordering::Relaxed) {
+                    pending.push(from);
+                }
+            }
+        }
+    });
+    is_reached.into_iter().map(AtomicBool::into_inner).collect()
+}
+
+pub fn nil_reaching(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins: impl Iterator<Item = (u32, u8)>, is_cut: impl Fn(u32, u32) -> bool + Sync, in_parallel: InParallel<'_>) -> Vec<u8> {
+    use std::sync::atomic::{AtomicU8, Ordering};
     let mut reaching = vec![0u8; leaving.first.len() - 1];
     let mut pending: Vec<u32> = Vec::new();
     for (node, nil) in origins {
@@ -323,27 +411,30 @@ pub fn nil_reaching(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins: imp
             pending.push(node);
         }
     }
-    let mut leaving_too: FxHashMap<u32, Vec<(u32, u8)>> = FxHashMap::default();
+    let mut leaving_too: FxHashMap<u32, smallvec::SmallVec<[(u32, u8); 2]>> = FxHashMap::default();
     for &(from, to, nil) in more {
         leaving_too.entry(from).or_default().push((to, nil));
     }
-    while let Some(node) = pending.pop() {
-        let here = reaching[node as usize];
-        let at = leaving.at(node);
-        let known = leaving.other[at.clone()].iter().copied().zip(leaving.nil[at].iter().copied()).filter(|edge| !is_cut(node, edge.0));
-        for (to, nil) in known.chain(leaving_too.get(&node).into_iter().flatten().copied()) {
-            let there = reaching[to as usize] | here & nil;
-            if there != reaching[to as usize] {
-                reaching[to as usize] = there;
-                pending.push(to);
+    let reaching: Vec<AtomicU8> = reaching.into_iter().map(AtomicU8::new).collect();
+    for_each_mut(&mut split_into_tasks(pending), in_parallel, &|pending| {
+        while let Some(node) = pending.pop() {
+            let here = reaching[node as usize].load(Ordering::Relaxed);
+            let at = leaving.at(node);
+            let known = leaving.other[at.clone()].iter().copied().zip(leaving.nil[at].iter().copied()).filter(|edge| !is_cut(node, edge.0));
+            for (to, nil) in known.chain(leaving_too.get(&node).into_iter().flatten().copied()) {
+                let (brought, there) = (here & nil, reaching[to as usize].load(Ordering::Relaxed));
+                if there | brought != there {
+                    reaching[to as usize].fetch_or(brought, Ordering::Relaxed);
+                    pending.push(to);
+                }
             }
         }
-    }
-    reaching
+    });
+    reaching.into_iter().map(AtomicU8::into_inner).collect()
 }
 
 /// The uses of the function as edges, each with what no test stops, and its origins.
-fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, originate: &mut impl FnMut(u32, u8)) {
+fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, originate: &mut impl FnMut(u32, u8), room: &mut RoomForFlows) {
     const NIL: u8 = UNDEFINED | NULL;
     const NONE: u32 = u32::MAX;
     let blocks = function.blocks as usize;
@@ -357,24 +448,25 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
         edges.extend(function.uses.iter().map(|used| (used.from, used.to, NIL | STRANGER)));
         return;
     }
-    let (mut following, mut preceding): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
+    let RoomForFlows { following, preceding, dominated, uses_in, origins_in, only_jump, jumps_to, order, is_seen, stack, number, dominator, climbed_for, shown, taken_back, walk, is_entered } = room;
+    following.lay(blocks, function.jumps.iter().map(|jump| (jump.from, jump.to)));
+    preceding.lay(blocks, function.jumps.iter().map(|jump| (jump.to, jump.from)));
     // The one jump that leads to the block. `NONE`: there is none, or there are more.
-    let mut only_jump = vec![NONE; blocks];
-    let mut jumps_to = vec![0u32; blocks];
+    filled(only_jump, blocks, NONE);
+    filled(jumps_to, blocks, 0);
     for (index, jump) in function.jumps.iter().enumerate() {
-        following[jump.from as usize].push(jump.to);
-        preceding[jump.to as usize].push(jump.from);
         jumps_to[jump.to as usize] += 1;
         only_jump[jump.to as usize] = if jumps_to[jump.to as usize] == 1 { index as u32 } else { NONE };
     }
     // Reverse postorder.
-    let mut order: Vec<u32> = Vec::with_capacity(blocks);
-    let mut is_seen = vec![false; blocks];
-    let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
+    order.clear();
+    filled(is_seen, blocks, false);
+    stack.clear();
+    stack.push((0, 0));
     is_seen[0] = true;
     while let Some(top) = stack.last_mut() {
         let block = top.0;
-        match following[block as usize].get(top.1) {
+        match following.of(block as usize).get(top.1) {
             Some(&next) => {
                 top.1 += 1;
                 if !std::mem::replace(&mut is_seen[next as usize], true) {
@@ -388,20 +480,21 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
         }
     }
     order.reverse();
-    let mut number = vec![NONE; blocks];
+    filled(number, blocks, NONE);
     for (index, &block) in order.iter().enumerate() {
         number[block as usize] = index as u32;
     }
     // The immediate dominators (Cooper, Harvey, Kennedy).
-    let mut dominator = vec![NONE; blocks];
+    filled(dominator, blocks, NONE);
     dominator[0] = 0;
-    let (mut climbed_for, mut findings) = (vec![0u32; blocks], 0u32);
+    filled(climbed_for, blocks, 0);
+    let mut findings = 0u32;
     loop {
         let mut has_changed = false;
         for &block in order.iter().skip(1) {
             let mut found = NONE;
             findings += 1;
-            for &before in &preceding[block as usize] {
+            for &before in preceding.of(block as usize) {
                 if dominator[before as usize] == NONE {
                     continue;
                 }
@@ -433,23 +526,16 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
             break;
         }
     }
-    let mut dominated: Vec<Vec<u32>> = vec![Vec::new(); blocks];
-    for &block in order.iter().skip(1) {
-        dominated[dominator[block as usize] as usize].push(block);
-    }
-    let (mut uses_in, mut origins_in): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (vec![Vec::new(); blocks], vec![Vec::new(); blocks]);
-    for (index, used) in function.uses.iter().enumerate() {
-        uses_in[used.block as usize].push(index as u32);
-    }
-    for (index, origin) in function.origins.iter().enumerate() {
-        origins_in[origin.block as usize].push(index as u32);
-    }
+    dominated.lay(blocks, order.iter().skip(1).map(|&block| (dominator[block as usize], block)));
+    uses_in.lay(blocks, function.uses.iter().enumerate().map(|(index, used)| (used.block, index as u32)));
+    origins_in.lay(blocks, function.origins.iter().enumerate().map(|(index, origin)| (origin.block, index as u32)));
     // Down the tree of dominators, with what is shown on the way, which is taken back on the way up.
-    let mut shown: FxHashMap<u32, u8> = FxHashMap::default();
-    let mut taken_back: Vec<(u32, u8)> = Vec::new();
+    shown.clear();
+    taken_back.clear();
     // A block, which of those it dominates comes next, and how much there was to take back when it was entered.
-    let mut walk: Vec<(u32, usize, usize)> = vec![(0, 0, 0)];
-    let mut is_entered = vec![false; blocks];
+    walk.clear();
+    walk.push((0, 0, 0));
+    filled(is_entered, blocks, false);
     while let Some(top) = walk.last_mut() {
         let block = top.0 as usize;
         if !std::mem::replace(&mut is_entered[block], true) {
@@ -460,13 +546,13 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
                     *known |= what;
                 }
             }
-            for &index in &origins_in[block] {
+            for &index in origins_in.of(block) {
                 let origin = &function.origins[index as usize];
                 if !origin.unless.iter().any(|&(value, what)| shown.get(&value).is_some_and(|&known| known & what == what)) {
                     originate(origin.node, origin.nil);
                 }
             }
-            for &index in &uses_in[block] {
+            for &index in uses_in.of(block) {
                 let used = &function.uses[index as usize];
                 let mut stopped = shown.get(&used.value).copied().unwrap_or(0);
                 if used.jump != NO_JUMP {
@@ -475,7 +561,7 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
                 edges.push((used.from, used.to, (NIL | STRANGER) & !stopped));
             }
         }
-        match dominated[block].get(top.1) {
+        match dominated.of(block).get(top.1) {
             Some(&next) => {
                 top.1 += 1;
                 let mark = taken_back.len();

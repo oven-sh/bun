@@ -18,7 +18,7 @@ try { console.log(wrapped.softly()); console.log("method on a proxy: no error") 
 function ownerOf(o: Owned): string { return o.owner + o.level }
 try { console.log(ownerOf(heir)); console.log("heir as an Owned: no error") } catch (e) { console.log("heir as an Owned:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(ownerOf(wrapped)); console.log("proxy as an Owned: no error") } catch (e) { console.log("proxy as an Owned:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// (Not `[v, heir]`: whether an element of a literal under a written-down `Owned[]` is held to Owned at the literal or at the read is open: triage/t2-a/bug_7.ts.)
+// (Not `[v, heir]`: whether an element of a literal with the annotation `Owned[]` is checked against Owned at the literal or at the read is not decided.)
 const owners: Owned[] = [v]; (owners as unknown[]).push(heir)
 try { console.log(owners.map(o => ownerOf(o)).join()); console.log("heir read from an Owned[]: no error") } catch (e) { console.log("heir read from an Owned[]:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(heir.owner, wrapped.level, ownerOf(v), v.softly())

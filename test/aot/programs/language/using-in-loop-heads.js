@@ -84,7 +84,7 @@ for (let failing = 1; failing <= 5; failing++) {
   say("five, the initializer of " + failing + " throws, every disposer too", () => { using a = at(1), b = at(2), c = at(3), d = at(4), e = at(5); log.push("body"); return "R"; });
 }
 
-// What is returned is worked out ahead of the disposal; a disposer's throw takes the place of every completion.
+// The returned value is computed before the disposal; a disposer's throw replaces every completion.
 say("the value returned is worked out first", () => { let v = 1; using a = { [Symbol.dispose]() { log.push("d"); v = 2; } }; return v; });
 say("the value returned is an object that the disposer changes", () => { const o = { toString() { return "o" + this.v; }, v: 1 }; const r = (() => { using a = { [Symbol.dispose]() { o.v = 2; } }; return o; })(); return String(r); });
 say("a disposer throws over a break", () => { L: { using a = thr("a"); break L; } return "after"; });

@@ -206,6 +206,53 @@ const requiredBesides: Record<string, string[]> = {
   "internal/promisify": ["node:timers/promises"],
   "node:worker_threads": ["internal/worker/stdio"],
   "node:child_process": ipc,
+  "node:repl": standardStream,
+};
+
+// What a builtin function requires is here or in `requiredBesides`, under what makes native code call the function.
+const triggers: Record<string, string[]> = {
+  "process.stdout": standardStream,
+  "process.stderr": standardStream,
+  "process.stdin": standardStream,
+  "process.openStdin": standardStream,
+  "process.channel": ["node:events"],
+  "process.send": ipc,
+  "process._rawDebug": ["node:util", "node:fs", "node:os"],
+  "process.loadEnvFile": ["internal/validators", "node:fs", "node:util"],
+  "console.Console": console_,
+  "Bun.spawn": ipc,
+  "Bun.sql": ["bun:sql"],
+  "Bun.SQL": ["bun:sql"],
+  "Bun.postgres": ["bun:sql"],
+};
+const namesInPatternsOf = (code: string, global: string) =>
+  [...code.matchAll(new RegExp(`\\{([^{}]*)\\}\\s*=\\s*${global}\\b(?!\\s*[.(\\[?])`, "g"))].flatMap(([, names]) =>
+    names.split(",").map(name => name.split(/[:=]/)[0].trim()),
+  );
+const hidesWhichPropertiesItReads = (code: string, global: string) =>
+  new RegExp(
+    `(?<![=!<>}]\\s*)(?:=|\\|\\|=|&&=|\\?\\?=)\\s*${global}\\s*(?:[;,)\\n]|$)|\\}\\s*\\}\\s*=\\s*${global}\\b|(?<![.\\w$])${global}\\s*(?:\\?\\.)?\\[`,
+    "m",
+  ).test(code);
+const modulesKnownToAlias: Record<string, string[]> = {
+  "node:repl": ["process"],
+  "node:worker_threads": ["process"],
+};
+const modulesTriggeredBy = (file: string) => {
+  const code = transpiler.transformSync(read(file));
+  for (const global of new Set(Object.keys(triggers).map(property => property.split(".")[0]))) {
+    if (hidesWhichPropertiesItReads(code, global) && !modulesKnownToAlias[specifierOf(file)]?.includes(global)) {
+      throw new Error(
+        `${file} aliases ${global}, reads it by a computed name or takes it apart in a nested pattern, so \`triggers\` cannot tell which of its properties the module reads. Write ${global}.<property>, or add the module to \`modulesKnownToAlias\` and what it needs to \`requiredBesides\`.`,
+      );
+    }
+  }
+  return Object.entries(triggers)
+    .filter(([trigger]) => {
+      const [global, property] = trigger.split(".");
+      return new RegExp(`\\b${global}\\??\\.${property}\\b`).test(code) || namesInPatternsOf(code, global).includes(property);
+    })
+    .flatMap(([, specifiers]) => specifiers);
 };
 
 for (const [id, file] of sourceFiles.entries()) {
@@ -216,6 +263,13 @@ for (const [id, file] of sourceFiles.entries()) {
     .concat(idsOf(requiredBesides[specifierOf(file)] ?? []))
     .filter(required => required !== id);
   if (required.length) lines.push(`requires\t${id}\t${[...new Set(required)].sort((a, b) => a - b).join("\t")}`);
+}
+for (const [specifier, besides] of Object.entries(requiredBesides)) {
+  lines.push(`besides\t${resolve(specifier, "")}\t${idsOf(besides).join("\t")}`);
+}
+for (const [id, file] of sourceFiles.entries()) {
+  const triggered = idsOf(modulesTriggeredBy(file)).filter(required => required !== id);
+  if (triggered.length) lines.push(`triggered\t${id}\t${[...new Set(triggered)].sort((a, b) => a - b).join("\t")}`);
 }
 
 // The queue of `process.nextTick`, which native code fills by itself.
@@ -247,22 +301,6 @@ for (const [key, id] of builtinFunctionIds(path.join(BASE, "builtins"))) {
   lines.push(`function\t${id}\tbuiltins/${key}`);
 }
 
-// What a builtin function requires is here or in `requiredBesides`, under what makes native code call the function.
-const triggers: Record<string, string[]> = {
-  "process.stdout": standardStream,
-  "process.stderr": standardStream,
-  "process.stdin": standardStream,
-  "process.openStdin": standardStream,
-  "process.channel": ["node:events"],
-  "process.send": ipc,
-  "process._rawDebug": ["node:util", "node:fs", "node:os"],
-  "process.loadEnvFile": ["internal/validators", "node:fs", "node:util"],
-  "console.Console": console_,
-  "Bun.spawn": ipc,
-  "Bun.sql": ["bun:sql"],
-  "Bun.SQL": ["bun:sql"],
-  "Bun.postgres": ["bun:sql"],
-};
 for (const [property, specifiers] of Object.entries(triggers)) {
   lines.push(`trigger\t${property}\t${idsOf(specifiers).join("\t")}`);
 }
@@ -311,7 +349,7 @@ if (archive) {
   const nameLength = 63;
   const recordLength = 1 + nameLength + 4 + 4;
   // By bytes, which is how they are searched. The names are ASCII.
-  const files = [...sourceFiles, ...functionFiles, "builtins.d.ts", "private.d.ts"].map(file => [
+  const files = [...sourceFiles, ...functionFiles, "builtins.d.ts", "private.d.ts"].map((file): [string, Buffer] => [
     file,
     fs.readFileSync(locate(file)),
   ]);
@@ -320,12 +358,13 @@ if (archive) {
   if (!table) throw new Error("src/aot/builtins_generated.rs has no BUILTINS_HASH");
   files.push([`table-${table[1]}`, Buffer.alloc(0)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
-  const frames = files.map(([, text]) =>
-    zstdCompressSync(text, {
+  const frames = files.map(([, text]) => {
+    const options = {
       pledgedSrcSize: text.length,
       params: { [constants.ZSTD_c_compressionLevel]: 19, [constants.ZSTD_c_contentSizeFlag]: 1 },
-    }),
-  );
+    };
+    return zstdCompressSync(text, options);
+  });
   const header = Buffer.alloc(4 + files.length * recordLength);
   header.writeUInt32LE(files.length, 0);
   let offset = header.length;

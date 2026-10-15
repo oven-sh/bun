@@ -39,7 +39,7 @@ const receivers: [string, any][] = [["plain", /a+/], ["global", /a+/g], ["sticky
 const values: any[] = [0, 1, 5, -1, -0, 1.5, NaN, Infinity, 2 ** 31, 2 ** 53, "2", "x", "", undefined, null, true, watched, {}, [3], Symbol.iterator, 4n, cat("1", "0")];
 for (const [name, re] of receivers) { let line = name + ": " + tried(() => read(re)); for (const v of values) line += " " + tried(() => store(re, v)); print(line + " then " + tried(() => read(re)) + " " + tried(() => bumped(re)) + " " + log.splice(0).join()); }
 for (const re of [/a+/, /a+/g, /a+/y, /a+|b/gy, /(?<n>\d+)|[a-z]+/y, new RegExp(String.fromCharCode(92) + "u65e5+", "gu"), new Mine("[ab]", "y")]) { print(re.source + "/" + re.flags + " " + tokens(re, "aab a1 22ba") + " " + tokensUntyped(re, "aab a1 22ba") + " " + tokens(re, cat("日日a", "a")) + " " + readTyped(re) + " " + storeTyped(re, 4) + " " + re.test("aaaaaaa") + " " + readTyped(re)); }
-// What is stored is what exec() converts, when it runs.
+// The stored value is converted by exec(), when it runs.
 { const re = /a/g; store(re, watched); print(log.join() + "|" + tried(() => re.exec("aaaa")?.index) + "|" + log.splice(0).join() + "|" + read(re)); store(re, "1"); print(tried(() => re.exec("aaaa")?.index) + " " + show(read(re))); store(re, { toString() { return "9"; } }); print(tried(() => re.exec("aaaa")) + " " + show(read(re))); }
 // A cell that is stored is kept.
 { const re: any = /a/g; for (let i = 0; i < 3; i++) { store(re, { tag: "t" + i, more: new Array(1000).fill(i) }); const garbage: unknown[] = []; for (let k = 0; k < 20000; k++) garbage.push({ k }); if (typeof (globalThis as any).gc === "function") (globalThis as any).gc(); print(read(re).tag + " " + read(re).more.length + " " + garbage.length); } }

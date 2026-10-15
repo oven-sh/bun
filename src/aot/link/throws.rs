@@ -1,8 +1,9 @@
 use super::nil::{before_casts, functions_called, targets_of};
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, NO_VARIABLE, Op, Prediction, Program, Target, Term, UnOp, Why, class_flags, field_flags, func_flags, method_flags};
-use bun_sema::check::{is_builtin_of_the_engine, is_locked_global_of_the_engine};
+use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, MethodKind, NO_VARIABLE, Op, Prediction, Program, Target, Term, UnOp, Why, class_flags, field_flags, func_flags, method_flags};
+use bun_sema::check::is_global_of_the_engine;
+use bun_sema::check::locked_builtins::{self, Builtin, Change, global_object};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -13,8 +14,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 const MOST_ROUNDS: usize = 24;
-const MOST_CHANGES_INSIDE: u8 = 16;
-const MOST_CHANGES_BETWEEN: u8 = 4;
+const MAX_CHANGES_INSIDE: u8 = 16;
+const MAX_CHANGES_BETWEEN: u8 = 4;
 const MOST_LISTED: usize = 200;
 const MOST_DOORS: usize = 40;
 const FUNCTIONS_OF_A_RUN: usize = 256;
@@ -138,19 +139,19 @@ impl Kind {
         match (self, verdict) {
             (Kind::As, Verdict::Wrong) => "write the conversion out (Number(x), String(x), Boolean(x)) or correct the type: `as` is not erased under --aot",
             (Kind::As, _) => "narrow instead of casting (typeof, a type guard), or write the conversion out",
-            (Kind::NonNull, Verdict::Wrong) => "the value is never there: remove the `!` and handle the missing value",
+            (Kind::NonNull, Verdict::Wrong) => "the value is always missing: remove the `!` and handle the missing value",
             (Kind::NonNull, _) => "test for null and undefined, or give a default with `??`",
-            (Kind::Integer, _) => "round on purpose (`| 0`, Math.trunc) or declare the place `number`",
+            (Kind::Integer, _) => "round explicitly (`| 0`, Math.trunc) or declare it as `number`",
             (Kind::Argument | Kind::Variable | Kind::Field | Kind::Return, Verdict::Wrong) => "the value never fits the declared type: correct the value or the type",
-            (Kind::Argument | Kind::Variable | Kind::Field | Kind::Return | Kind::Read | Kind::Result | Kind::Await, _) => "validate the value where it comes in, once, and build a typed value from it",
-            (Kind::Element, _) => "keep what is stored in the container to its element type: no store through `any` or through a wider view of it",
+            (Kind::Argument | Kind::Variable | Kind::Field | Kind::Return | Kind::Read | Kind::Result | Kind::Await, _) => "validate the value once, where it enters the program, and build a typed value from it",
+            (Kind::Element, _) => "store only values of the element type in the container: do not store through `any` or through a wider type",
             (Kind::Narrowing, _) => "read the value into a const before the test, so that nothing can change it between the test and the use",
-            (Kind::Arithmetic, _) => "the operands are not what their types say: remove the cast that hides it",
+            (Kind::Arithmetic, _) => "the operands do not match their types: remove the cast that hides this",
             (Kind::Parameter, _) => "give the untyped caller a wrapper that validates, or widen the parameter and narrow inside",
-            (Kind::BuiltinWrite, _) => "built-ins are locked under --aot: use a function or a subclass of your own",
-            (Kind::PrototypeWrite, _) => "declare the member in the class, or keep the function in a table of your own",
-            (Kind::Copy, _) => "build the typed object yourself from the outside one and use that alone: whoever keeps the outside object sees none of the writes",
-            (Kind::Caller, _) => "pass what is needed as an argument: `caller` and `arguments` of a function throw under --aot",
+            (Kind::BuiltinWrite, _) => "built-ins are locked under --aot: use your own function or subclass",
+            (Kind::PrototypeWrite, _) => "declare the member in the class, or keep the function in your own table",
+            (Kind::Copy, _) => "build the typed object from the external one yourself and use only the typed object: code that keeps the external object does not see later writes",
+            (Kind::Caller, _) => "pass the value as an argument: reading `caller` or `arguments` of a function throws under --aot",
             (Kind::Mutation, _) => "a typed object keeps its declared properties and their types: declare the property optional or wider, or build another object",
         }
     }
@@ -177,12 +178,80 @@ impl Tier {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Cause {
+    Cast,
+    NonNull,
+    BehindACast,
+    OnlyDeclared,
+    CalledAsAValue,
+    Any,
+    UnknownSource,
+    JavaScript,
+    Caught,
+    BuiltinWrite,
+    Rule,
+    Narrowing,
+    TypedCode,
+}
+
+impl Cause {
+    const ALL: [Cause; 13] = [Cause::Cast, Cause::NonNull, Cause::BehindACast, Cause::OnlyDeclared, Cause::CalledAsAValue, Cause::Any, Cause::UnknownSource, Cause::JavaScript, Cause::Caught, Cause::BuiltinWrite, Cause::Rule, Cause::Narrowing, Cause::TypedCode];
+
+    fn text(self) -> &'static str {
+        match self {
+            Cause::Cast => "as",
+            Cause::NonNull => "non-null",
+            Cause::BehindACast => "after-as",
+            Cause::OnlyDeclared => "declared-only",
+            Cause::CalledAsAValue => "called-as-a-value",
+            Cause::Any => "any",
+            Cause::UnknownSource => "unknown-source",
+            Cause::JavaScript => "javascript",
+            Cause::Caught => "caught",
+            Cause::BuiltinWrite => "builtin-write",
+            Cause::Rule => "rule",
+            Cause::Narrowing => "narrowing",
+            Cause::TypedCode => "typed-code",
+        }
+    }
+
+    fn in_words(self) -> &'static str {
+        match self {
+            Cause::Cast => "at an `as`",
+            Cause::NonNull => "at a `!`",
+            Cause::BehindACast => "where a value that an `as` let through is used",
+            Cause::OnlyDeclared => "on a value from code that has only a declaration",
+            Cause::CalledAsAValue => "on a parameter of a function that is called as a value or with `any`",
+            Cause::Any => "on an `any`",
+            Cause::UnknownSource => "on a value whose source is not known",
+            Cause::JavaScript => "on a value from a JavaScript file of the program",
+            Cause::Caught => "on a caught exception",
+            Cause::BuiltinWrite => "at a write to a built-in object",
+            Cause::Rule => "by another --aot rule",
+            Cause::Narrowing => "where a type is narrowed",
+            Cause::TypedCode => "within typed code",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(super) enum DoorKind {
+    OnlyDeclared,
+    JavaScript,
+    Caught,
+    Other,
+}
+
 pub(super) struct Site {
     pub(super) ordinal: Option<u32>,
+    pub(super) is_in_untyped_code: bool,
     pub(super) is_at_an_entry: bool,
     pub(super) call: Option<(u32, u32)>,
     pub(super) risk: &'static str,
     pub(super) door: String,
+    pub(super) door_kind: DoorKind,
+    pub(super) is_behind_cast: bool,
     pub(super) name: &'static str,
     pub(super) what: String,
     pub(super) function: String,
@@ -201,6 +270,29 @@ pub(super) struct Site {
 impl Site {
     fn shown(&self) -> &str {
         if self.value.is_empty() { &self.found } else { &self.value }
+    }
+
+    fn cause(&self) -> Cause {
+        match (self.tier, self.kind) {
+            (_, Kind::BuiltinWrite) => Cause::BuiltinWrite,
+            (_, Kind::Parameter) => Cause::CalledAsAValue,
+            (Tier::Rule, _) => Cause::Rule,
+            _ if matches!(self.name, "as-convert" | "as-refuse") => Cause::Cast,
+            (_, Kind::NonNull) => Cause::NonNull,
+            _ if self.name == "as-late-use" || self.is_behind_cast => Cause::BehindACast,
+            (Tier::Outside, _) if self.door_kind == DoorKind::OnlyDeclared => Cause::OnlyDeclared,
+            (Tier::Outside, _) if self.door_kind == DoorKind::JavaScript => Cause::JavaScript,
+            (Tier::Outside, _) if self.door_kind == DoorKind::Caught => Cause::Caught,
+            (Tier::Outside, _) if self.origin.is_none() => Cause::UnknownSource,
+            (Tier::Outside, _) => Cause::Any,
+            (Tier::Assertion, _) => Cause::BehindACast,
+            (Tier::Typed, Kind::Narrowing) => Cause::Narrowing,
+            (Tier::Typed, _) => Cause::TypedCode,
+        }
+    }
+
+    fn fix(&self) -> &'static str {
+        if self.is_behind_cast && self.tier == Tier::Assertion && self.verdict != Verdict::Wrong { Kind::As.fix(self.verdict) } else { self.kind.fix(self.verdict) }
     }
 
     pub(super) fn goes_on_when_logged(&self) -> bool {
@@ -316,7 +408,8 @@ const MANY: u32 = 1;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Identity {
-    Builtin(StrId, bool),
+    Builtin(u16),
+    BuiltinMember(u16, StrId),
     Function(FuncId),
     PrototypeOf(FuncId),
 }
@@ -361,7 +454,7 @@ impl Types<'_> {
     }
 }
 
-struct Setup {
+pub(super) struct Setup {
     never_return: Vec<bool>,
     is_open_global: Vec<bool>,
     store_to_constants: Vec<usize>,
@@ -369,24 +462,9 @@ struct Setup {
 
 impl Setup {
     fn new(program: &Program, is_whole: bool, in_parallel: InParallel<'_>) -> Setup {
-        let mut runs: Vec<(Range<usize>, Vec<u32>, Vec<usize>)> = runs_of(program).map(|run| (run, Vec::new(), Vec::new())).collect();
-        for_each_mut(&mut runs, in_parallel, &|(run, stored, storing)| {
-            for index in run.clone() {
-                let before = stored.len();
-                for value in &program.funcs[index].values {
-                    if let Def::Op(Op::GlobalSet(global, _)) = value.def
-                        && (is_whole || program.globals[global.idx()].initialization == Initialization::NeverSeenAndStoredOnce)
-                    {
-                        stored.push(global.0);
-                    }
-                }
-                if stored.len() != before {
-                    storing.push(index);
-                }
-            }
-        });
+        let (never_return, stored, store_to_constants) = functions_that_never_return(program, is_whole, in_parallel);
         let mut is_open_global = vec![true; program.globals.len()];
-        for &global in runs.iter().flat_map(|run| &run.1) {
+        for global in stored {
             is_open_global[global as usize] = false;
         }
         for layout in program.layouts.iter().filter(|layout| layout.environment.is_none()) {
@@ -396,7 +474,7 @@ impl Setup {
                 }
             }
         }
-        Setup { never_return: functions_that_never_return(program, in_parallel), is_open_global, store_to_constants: runs.into_iter().flat_map(|run| run.2).collect() }
+        Setup { never_return, is_open_global, store_to_constants }
     }
 }
 
@@ -472,7 +550,7 @@ struct Flow<'a> {
     pending: VecDeque<u32>,
     met: FxHashMap<(TyId, TyId), TyId>,
     joined: FxHashMap<(TyId, TyId), TyId>,
-    locked: FxHashMap<StrId, bool>,
+    locked: FxHashMap<StrId, (Option<u16>, bool)>,
     changes: Vec<u8>,
     resolved: FxHashMap<(u32, u32), SmallVec<[FuncId; 2]>>,
     orders: Vec<Option<(Rc<[usize]>, bool)>>,
@@ -682,17 +760,25 @@ impl<'a> Flow<'a> {
         if self.is_whole { self.resolved.get(&(index as u32, v.0)).cloned() } else { functions_called(self.program, func, v).map(|found| found.0) }
     }
 
-    fn is_locked(&mut self, name: StrId) -> bool {
+    fn lookup_global(&mut self, name: StrId) -> (Option<u16>, bool) {
         let program = self.program;
-        *self.locked.entry(name).or_insert_with(|| is_locked_global_of_the_engine(program.strs.get(name)))
+        *self.locked.entry(name).or_insert_with(|| {
+            let text = program.strs.get(name);
+            let found = global_object().object_at(text);
+            (found.map(Builtin::index), locked_builtins::is_locked_global(text) && is_global_of_the_engine(text))
+        })
+    }
+
+    fn is_locked(&mut self, name: StrId) -> bool {
+        self.lookup_global(name).1
     }
 
     fn join_into(&mut self, node: u32, ty: TyId, origin: u32) -> bool {
-        self.join_at_most(node, ty, origin, MOST_CHANGES_INSIDE, None)
+        self.join_at_most(node, ty, origin, MAX_CHANGES_INSIDE, None)
     }
 
     fn join_between(&mut self, node: u32, ty: TyId, origin: u32, top: TyId) -> bool {
-        self.join_at_most(node, ty, origin, MOST_CHANGES_BETWEEN, Some(top))
+        self.join_at_most(node, ty, origin, MAX_CHANGES_BETWEEN, Some(top))
     }
 
     fn join_at_most(&mut self, node: u32, ty: TyId, origin: u32, most: u8, top: Option<TyId>) -> bool {
@@ -784,13 +870,19 @@ impl<'a> Flow<'a> {
     fn identify(&mut self, index: usize, func: &Func, v: V) -> u32 {
         let Some(op) = func.op(v) else { return MANY };
         match *op {
-            Op::FreeGet { name, .. } if self.is_locked(name) => self.identity_id(Identity::Builtin(name, false)),
+            Op::FreeGet { name, .. } => match self.lookup_global(name).0 {
+                Some(found) => self.identity_id(Identity::Builtin(found)),
+                None => MANY,
+            },
             Op::FuncRef(named) | Op::Closure { func: named, .. } | Op::ClosureOnce { func: named, .. } => self.identity_id(Identity::Function(named)),
             Op::PropGet { obj, name } => {
                 let text = self.program.strs.get(name);
                 match self.identity_of(index, obj) {
-                    Some(Identity::Builtin(holder, false)) if text == b"prototype" => self.identity_id(Identity::Builtin(holder, true)),
-                    Some(Identity::Builtin(holder, false)) if self.program.strs.get(holder) == b"globalThis" && is_locked_global_of_the_engine(text) => self.identity_id(Identity::Builtin(name, false)),
+                    Some(Identity::Builtin(holder)) => match Builtin::at(holder).object_at(text) {
+                        Some(found) => self.identity_id(Identity::Builtin(found.index())),
+                        None if Builtin::at(holder).has(text) && Builtin::at(holder).known_value(text).is_some() => self.identity_id(Identity::BuiltinMember(holder, name)),
+                        None => MANY,
+                    },
                     Some(Identity::Function(named)) if text == b"prototype" => self.identity_id(Identity::PrototypeOf(named)),
                     _ if self.raw_identity(index, obj) == 0 => 0,
                     _ => MANY,
@@ -962,9 +1054,42 @@ impl<'a> Flow<'a> {
         matches!(func.op(before_casts(func, v)), Some(&Op::FreeGet { name: named, .. }) if self.program.strs.get(named) == name)
     }
 
-    fn holder_of(&self, index: usize, v: V) -> Option<(&'a [u8], bool)> {
+    fn holder_of(&self, index: usize, v: V) -> Option<&'static Builtin> {
         match self.identity_of(index, v)? {
-            Identity::Builtin(holder, is_prototype) => Some((self.program.strs.get(holder), is_prototype)),
+            Identity::Builtin(holder) => Some(Builtin::at(holder)),
+            _ => None,
+        }
+    }
+
+    fn is_vouched_holder(&self, index: usize, v: V) -> bool {
+        self.holder_of(index, v).is_some_and(|holder| holder.is_global_object() || is_global_of_the_engine(holder.name.split('.').next().unwrap_or_default().as_bytes()))
+    }
+
+    fn constant_key(&self, index: usize, func: &Func, key: V) -> Option<Vec<u8>> {
+        match func.op(before_casts(func, key))? {
+            &Op::Str(text) => Some(self.program.strs.get(text).to_vec()),
+            &Op::Int(number) if number >= 0 => Some(number.to_string().into_bytes()),
+            &Op::ToKey(of) => self.constant_key(index, func, of),
+            &Op::PropGet { obj, name } if self.holder_of(index, obj).is_some_and(|holder| holder.name == "Symbol" && holder.known_value(self.program.strs.get(name)).is_some_and(|held| held.type_of == "symbol")) => Some([b"@@", self.program.strs.get(name)].concat()),
+            _ => None,
+        }
+    }
+
+    fn type_of_known_value(&mut self, held: locked_builtins::KnownValue) -> Option<TyId> {
+        Some(match held.type_of {
+            "function" => self.common.function,
+            "object" if held.is_truthy => self.common.object,
+            "number" => self.common.number,
+            "string" => self.common.string,
+            "undefined" => self.common.undefined,
+            "symbol" => self.tys.intern(Declared::prims(prim::SYMBOL)),
+            _ => return None,
+        })
+    }
+
+    fn known_builtin_truthiness(&self, index: usize, func: &Func, v: V) -> Option<bool> {
+        match func.op(before_casts(func, v))? {
+            &Op::PropGet { obj, name } => Some(self.holder_of(index, obj)?.known_read_result(self.program.strs.get(name))?.is_truthy),
             _ => None,
         }
     }
@@ -981,7 +1106,7 @@ impl<'a> Flow<'a> {
         let text = self.program.strs.get(name);
         let wanted = self.get(self.declared(func, v)).clone();
         let names_types_of_the_program = wanted.parts.iter().any(|part| matches!(part, Part::Class(_)));
-        if self.holder_of(index, obj).is_some() {
+        if self.is_vouched_holder(index, obj) {
             return if is_call && (Flow::yields_what_it_holds(text) || names_types_of_the_program) { Natural::Unknown(Kind::Result) } else { Natural::Vouched };
         }
         let described = self.get(receiver).clone();
@@ -1018,22 +1143,17 @@ impl<'a> Flow<'a> {
         match op {
             &Op::PropGet { obj, name } => {
                 let receiver = self.val(index, func, facts, keys, obj, false);
-                if let Some((holder, is_prototype)) = self.holder_of(index, obj)
-                    && is_prototype
-                    && is_builtin_of_the_engine(holder, self.program.strs.get(name))
-                    && !matches!(self.program.strs.get(name), b"length" | b"size" | b"byteLength" | b"byteOffset" | b"buffer" | b"description" | b"flags" | b"source")
-                {
-                    return Natural::Is(self.common.function);
-                }
-                if let Some((holder, false)) = self.holder_of(index, obj)
-                    && is_builtin_of_the_engine(holder, self.program.strs.get(name))
-                {
-                    if self.says_something(func.ty(v)) {
-                        let there = Declared { prims: self.get(func.ty(v)).prims & !prim::NULLISH, ..self.get(func.ty(v)).clone() };
-                        return Natural::Is(self.tys.intern(there));
+                if let Some(holder) = self.holder_of(index, obj) {
+                    let text = self.program.strs.get(name);
+                    if let Some(held) = holder.known_read_result(text) {
+                        if holder.takes_new_properties && self.says_something(func.ty(v)) {
+                            let there = Declared { prims: self.get(func.ty(v)).prims & !prim::NULLISH, ..self.get(func.ty(v)).clone() };
+                            return Natural::Is(self.tys.intern(there));
+                        }
+                        if let Some(ty) = self.type_of_known_value(held) {
+                            return Natural::Is(ty);
+                        }
                     }
-                    let is_number = matches!(holder, b"Math" | b"Number") && self.program.strs.get(name).first().is_some_and(u8::is_ascii_uppercase);
-                    return Natural::Is(if is_number { self.common.number } else { self.tys.intern(Declared { prims: prim::SYMBOL, any_object: true, any_function: true, ..Declared::default() }) });
                 }
                 self.natural_of_member(index, func, v, obj, name, receiver, false)
             }
@@ -1065,7 +1185,7 @@ impl<'a> Flow<'a> {
                 self.natural_of_member(index, func, v, obj, name, receiver, true)
             }
             Op::Construct { callee, .. } => {
-                if matches!(self.identity_of(index, *callee), Some(Identity::Builtin(..) | Identity::Function(_))) { Natural::Vouched } else { Natural::Unknown(Kind::Result) }
+                if self.is_vouched_holder(index, *callee) || matches!(self.identity_of(index, *callee), Some(Identity::Function(_))) { Natural::Vouched } else { Natural::Unknown(Kind::Result) }
             }
             &Op::Await(awaited) => {
                 let value = self.val(index, func, facts, keys, awaited, false);
@@ -1222,7 +1342,7 @@ impl<'a> Flow<'a> {
             &(Op::Not(a) | Op::Truthy(a)) => {
                 let operand = self.val(index, func, facts, keys, a, false);
                 let is_not = matches!(op, Op::Not(_));
-                (match truthiness(self.get(operand)) {
+                (match self.known_builtin_truthiness(index, func, a).or_else(|| truthiness(self.get(operand))) {
                     Some(holds) if holds != is_not => self.common.yes,
                     Some(_) => self.common.no,
                     None => self.common.boolean,
@@ -1260,6 +1380,9 @@ impl<'a> Flow<'a> {
                         }, 0);
                     }
                 }
+                if let (Some(&Op::Str(x)), Some(&Op::Str(y))) = (func.op(before_casts(func, a)), func.op(before_casts(func, b))) {
+                    return (if self.program.strs.get(x) == self.program.strs.get(y) { self.common.yes } else { self.common.no }, 0);
+                }
                 let (x, y) = (self.val(index, func, facts, keys, a, false), self.val(index, func, facts, keys, b, false));
                 let (p, q) = (self.get(x), self.get(y));
                 let is_one_nil = |d: &Declared| d.prims & !prim::NULLISH == 0 && d.prims.count_ones() == 1 && d.ints.is_none() && !d.has_objects();
@@ -1273,7 +1396,8 @@ impl<'a> Flow<'a> {
                     self.common.boolean
                 }, 0)
             }
-            &Op::PropHas { obj, name } if self.holder_of(index, obj).is_some_and(|(holder, _)| is_builtin_of_the_engine(holder, self.program.strs.get(name))) => (self.common.yes, 0),
+            &Op::PropHas { obj, name } if self.holder_of(index, obj).is_some_and(|holder| holder.finds(self.program.strs.get(name))) => (self.common.yes, 0),
+            &Op::PropHas { obj, name } if self.holder_of(index, obj).is_some_and(|holder| !holder.finds(self.program.strs.get(name)) && holder.known_read_result(self.program.strs.get(name)).is_some()) => (self.common.no, 0),
             Op::Relational { .. } | Op::LooseEq { .. } | Op::InstanceOf { .. } | Op::IsInstance { .. } | Op::PropHas { .. } | Op::PropDelete { .. } | Op::ElemHas { .. } | Op::ElemDelete { .. } | Op::IterHas { .. } => (self.common.boolean, 0),
             Op::FreeSet { .. } | Op::PropSet { .. } | Op::ElemSet { .. } | Op::IterClose(_) | Op::IterCloseForThrow(_) | Op::Poll => (self.common.undefined, 0),
             &Op::FreeGet { name, .. } => match self.program.strs.get(name) {
@@ -1386,7 +1510,7 @@ impl<'a> Flow<'a> {
         let (order, has_loops): (Rc<[usize]>, bool) = if self.is_whole {
             self.orders[index].get_or_insert_with(|| { let (order, has_loops) = in_reverse_postorder(func); (order.into(), has_loops) }).clone()
         } else {
-            (straight_from_the_entry(self.never_return, func).into(), false)
+            (Rc::from([]), false)
         };
         let mut has_changed = self.has_changed;
         if !self.is_closed(index) {
@@ -1399,6 +1523,20 @@ impl<'a> Flow<'a> {
         }
         has_changed |= self.has_changed;
         reached[0] = Some(Vec::new());
+        let mut walked = 0;
+        while !self.is_whole {
+            let line = straight_from_the_entry(self.never_return, func, Some(&reached));
+            if line.len() <= walked {
+                break;
+            }
+            for &at in &line[walked..] {
+                if let Some(facts) = reached[at].clone() {
+                    self.step(index, func, &mut keys, &mut reached, at, &facts);
+                }
+            }
+            walked = line.len();
+        }
+        has_changed |= self.has_changed;
         for sweep in 0.. {
             (self.has_changed, self.has_moved) = (false, false);
             for &at in order.iter() {
@@ -1437,7 +1575,7 @@ impl<'a> Flow<'a> {
         match func.blocks[at].term.as_ref() {
             Some(Term::Branch { cond, then, otherwise }) => {
                 let tested = self.val(index, func, facts, keys, *cond, false);
-                let decided = truthiness(self.get(tested));
+                let decided = self.known_builtin_truthiness(index, func, *cond).or_else(|| truthiness(self.get(tested)));
                 for (target, sense) in [(then, true), (otherwise, false)] {
                     if decided == Some(!sense) {
                         continue;
@@ -1470,14 +1608,14 @@ fn comes_back(never_return: &[bool], func: &Func, v: V) -> bool {
     !matches!(func.op(v), Some(Op::CallDirect { func: called, .. }) if never_return[called.idx()])
 }
 
-fn can_return(never_return: &[bool], func: &Func, seen: &mut Vec<bool>, pending: &mut Vec<usize>) -> bool {
+fn can_return(never_return: Option<&[bool]>, func: &Func, seen: &mut Vec<bool>, pending: &mut Vec<usize>) -> bool {
     seen.clear();
     seen.resize(func.blocks.len(), false);
     seen[0] = true;
     pending.push(0);
     let mut returns = false;
     while let Some(at) = pending.pop() {
-        let goes_on = func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v));
+        let goes_on = never_return.is_none_or(|never_return| func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v)));
         let term = func.blocks[at].term.as_ref();
         returns |= goes_on && matches!(term, Some(Term::Return(_)));
         for (way, target) in targets_of(term).into_iter().enumerate() {
@@ -1490,34 +1628,58 @@ fn can_return(never_return: &[bool], func: &Func, seen: &mut Vec<bool>, pending:
     returns
 }
 
-fn functions_that_never_return(program: &Program, in_parallel: InParallel<'_>) -> Vec<bool> {
+fn functions_that_never_return(program: &Program, is_whole: bool, in_parallel: InParallel<'_>) -> (Vec<bool>, Vec<u32>, Vec<usize>) {
     let is_asked = |func: &Func| !func.blocks.is_empty() && !func.has(func_flags::ASYNC | func_flags::GENERATOR);
     let mut never_return = vec![false; program.funcs.len()];
-    let mut has_turned: Option<Vec<bool>> = None;
-    loop {
-        let mut runs: Vec<(Range<usize>, Vec<usize>)> = runs_of(program).map(|run| (run, Vec::new())).collect();
-        for_each_mut(&mut runs, in_parallel, &|(run, turned)| {
-            let (mut seen, mut pending) = (Vec::new(), Vec::new());
-            for index in run.clone() {
-                let func = &program.funcs[index];
-                let calls_one_that_turned = |turned: &[bool]| func.values.iter().any(|value| matches!(value.def, Def::Op(Op::CallDirect { func: called, .. }) if turned[called.idx()]));
-                if !never_return[index] && is_asked(func) && has_turned.as_deref().is_none_or(calls_one_that_turned) && !can_return(&never_return, func, &mut seen, &mut pending) {
+    let mut runs: Vec<(Range<usize>, Vec<usize>, Vec<u32>, Vec<u32>, (Vec<u32>, Vec<usize>))> = runs_of(program).map(|run| (run, Vec::new(), Vec::new(), Vec::new(), Default::default())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(run, turned, called, calls, (stored, storing))| {
+        let (mut seen, mut pending) = (Vec::new(), Vec::new());
+        for index in run.clone() {
+            let func = &program.funcs[index];
+            let (is_asked, before) = (is_asked(func), stored.len());
+            for value in &func.values {
+                match value.def {
+                    Def::Op(Op::CallDirect { func: callee, .. }) if is_asked => called.push(callee.0),
+                    Def::Op(Op::GlobalSet(global, _)) if is_whole || program.globals[global.idx()].initialization == Initialization::NeverSeenAndStoredOnce => stored.push(global.0),
+                    _ => {}
+                }
+            }
+            if stored.len() != before {
+                storing.push(index);
+            }
+            if is_asked && !can_return(None, func, &mut seen, &mut pending) {
+                turned.push(index);
+            }
+            calls.push(called.len() as u32);
+        }
+    });
+    let mut turned: Vec<usize> = runs.iter().flat_map(|run| run.1.iter().copied()).collect();
+    let (mut seen, mut pending) = (Vec::new(), Vec::new());
+    while !turned.is_empty() {
+        let mut now = vec![false; program.funcs.len()];
+        for index in turned.drain(..) {
+            (never_return[index], now[index]) = (true, true);
+        }
+        for (run, _, called, calls, _) in &runs {
+            let mut first = 0;
+            for (index, &end) in run.clone().zip(calls) {
+                let calls_one_that_turned = called[first..end as usize].iter().any(|&called| now[called as usize]);
+                first = end as usize;
+                if calls_one_that_turned && !never_return[index] && !can_return(Some(&never_return), &program.funcs[index], &mut seen, &mut pending) {
                     turned.push(index);
                 }
             }
-        });
-        let mut now = vec![false; program.funcs.len()];
-        for &index in runs.iter().flat_map(|run| &run.1) {
-            (never_return[index], now[index]) = (true, true);
         }
-        if runs.iter().all(|run| run.1.is_empty()) {
-            return never_return;
-        }
-        has_turned = Some(now);
     }
+    let (mut stored, mut storing) = (Vec::new(), Vec::new());
+    for (_, _, _, _, mut of_run) in runs {
+        stored.append(&mut of_run.0);
+        storing.append(&mut of_run.1);
+    }
+    (never_return, stored, storing)
 }
 
-fn straight_from_the_entry(never_return: &[bool], func: &Func) -> Vec<usize> {
+fn straight_from_the_entry(never_return: &[bool], func: &Func, reached: Option<&[Option<Facts>]>) -> Vec<usize> {
     let mut ways_in = vec![0u32; func.blocks.len()];
     for target in func.blocks.iter().flat_map(|block| targets_of(block.term.as_ref())) {
         ways_in[target.block.idx()] += 1;
@@ -1527,9 +1689,15 @@ fn straight_from_the_entry(never_return: &[bool], func: &Func) -> Vec<usize> {
     while let Some(at) = next.filter(|at| !order.contains(at)) {
         order.push(at);
         next = match func.blocks[at].term.as_ref() {
-            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => Some(target.block.idx()).filter(|&to| (ways_in[to] == 1 || func.blocks[to].params.is_empty()) && func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v))),
+            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => Some(target.block.idx()),
+            Some(Term::Branch { then, otherwise, .. }) => match reached.map(|reached| (reached[then.block.idx()].is_some(), reached[otherwise.block.idx()].is_some())) {
+                Some((true, false)) => Some(then.block.idx()),
+                Some((false, true)) => Some(otherwise.block.idx()),
+                _ => None,
+            },
             _ => None,
-        };
+        }
+        .filter(|&to| (ways_in[to] == 1 || func.blocks[to].params.is_empty()) && func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v)));
     }
     order
 }
@@ -1543,7 +1711,7 @@ fn surely_run(program: &Program, never_return: &[bool]) -> Vec<bool> {
         }
         let func = &program.funcs[index];
         let evaluates_a_module_once = func.kind == FuncKind::Module && func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES);
-        let blocks = if evaluates_a_module_once { (0..func.blocks.len()).collect() } else { straight_from_the_entry(never_return, func) };
+        let blocks = if evaluates_a_module_once { (0..func.blocks.len()).collect() } else { straight_from_the_entry(never_return, func, None) };
         for &at in &blocks {
             for &v in &func.blocks[at].ops {
                 if let Some(Op::CallDirect { func: called, .. }) = func.op(v) {
@@ -1667,6 +1835,8 @@ struct Report<'a, 'b> {
     call: Option<(u32, u32)>,
     is_at_an_entry: bool,
     has_an_entry_that_tests: &'b [bool],
+    class_of_second_body: &'b FxHashMap<FuncId, LayoutId>,
+    logs_type_errors: bool,
     ordinal: Option<u32>,
     handed_over: Option<(u32, u32, String)>,
 }
@@ -1675,6 +1845,33 @@ impl<'a> Report<'a, '_> {
     fn name_of_function(&self, func: &Func) -> String {
         let name = if func.name.is_some() { self.flow.program.strs.get(func.name) } else { b"" };
         if name.is_empty() { "a function".to_owned() } else { format!("`{}`", String::from_utf8_lossy(name)) }
+    }
+
+    fn origin_behind_call(&self, origin: u32) -> u32 {
+        let Some((index, v)) = origin.checked_sub(1).filter(|_| self.logs_type_errors).and_then(|node| self.locate(node)) else { return origin };
+        let func = &self.flow.program.funcs[index];
+        let Some(Op::Call { args, .. } | Op::CallMethod { args, .. }) = func.op(v) else { return origin };
+        args.iter()
+            .filter(|&&argument| !self.flow.says_something(func.ty(before_casts(func, argument))))
+            .map(|&argument| self.flow.origin_of(index, argument) & !CONTEXTUAL)
+            .find(|&found| found != 0)
+            .unwrap_or(origin)
+    }
+
+    fn is_deferred_cast(&self, func: &Func) -> bool {
+        if self.at.is_none() || self.at.idx() >= func.values.len() {
+            return false;
+        }
+        let Some(&Op::Coerce { value, why: Why::Cast, .. }) = func.op(self.at) else { return false };
+        let mut unpaired = 0u32;
+        for other in &func.values[..self.at.idx()] {
+            match other.def {
+                Def::Op(Op::Coerce { value: same, to, why: Why::Upcast }) if same == value && to == func.ty(value) => unpaired += 1,
+                Def::Op(Op::Coerce { value: same, why: Why::Cast, .. }) if same == value => unpaired = unpaired.saturating_sub(1),
+                _ => {}
+            }
+        }
+        unpaired != 0
     }
 
     fn locate(&self, node: u32) -> Option<(usize, V)> {
@@ -1713,16 +1910,16 @@ impl<'a> Report<'a, '_> {
             Def::Op(Op::Construct { callee, .. }) => format!("new {}(..)", self.describe_callee(func, *callee)),
             Def::Op(Op::PropGet { obj, name }) => format!("{}.{}", self.describe_callee(func, *obj), text(*name)),
             Def::Op(Op::ElemGet { obj, .. }) => format!("an element of {}", self.describe_callee(func, *obj)),
-            Def::Op(Op::IterGet { .. }) => "what a loop steps through".to_owned(),
+            Def::Op(Op::IterGet { .. }) => "a value that a loop iterates over".to_owned(),
             Def::Op(Op::FreeGet { name, .. }) => format!("the global {}", text(*name)),
             Def::Op(Op::GlobalGet(global)) => format!("the variable {}", text(self.flow.program.globals[global.idx()].name)),
             Def::Op(Op::Caught) => "a caught exception".to_owned(),
             Def::Op(Op::Coerce { to, .. }) => format!("`as {}`", text_of(self.flow.program, self.flow.program.tys.get(*to), 0)),
-            Def::Op(Op::Await(_)) => "what is awaited".to_owned(),
-            Def::Op(Op::Yield(_)) => "what the generator is resumed with".to_owned(),
+            Def::Op(Op::Await(_)) => "an awaited value".to_owned(),
+            Def::Op(Op::Yield(_)) => "the value that the generator is resumed with".to_owned(),
             Def::Op(Op::ExternalModule(specifier)) => format!("the module {}, which is not compiled with the program", quoted(strs.get(*specifier))),
             Def::Op(Op::Operation { name, .. }) => format!("the operation {}", text(*name)),
-            _ => "a value that nothing vouches for".to_owned(),
+            _ => "a value of unknown origin".to_owned(),
         };
         let pos = match func.values[v.idx()].def {
             Def::Param(..) => func.pos,
@@ -1742,8 +1939,8 @@ impl<'a> Report<'a, '_> {
         }
     }
 
-    fn door_of(&self, origin: u32) -> String {
-        let Some((index, v)) = origin.checked_sub(1).and_then(|node| self.locate(node)) else { return String::new() };
+    fn door_of(&self, origin: u32) -> (DoorKind, String) {
+        let Some((index, v)) = origin.checked_sub(1).and_then(|node| self.locate(node)) else { return (DoorKind::Other, String::new()) };
         let program = self.flow.program;
         let func = &program.funcs[index];
         let text = |name: StrId| if name.is_some() { String::from_utf8_lossy(program.strs.get(name)).into_owned() } else { "..".to_owned() };
@@ -1751,22 +1948,34 @@ impl<'a> Report<'a, '_> {
         if let Some((_, inside)) = path.rsplit_once("node_modules/") {
             let mut names = inside.split('/');
             let first = names.next().unwrap_or_default();
-            return format!("the package {}", if first.starts_with('@') { format!("{first}/{}", names.next().unwrap_or_default()) } else { first.to_owned() });
+            return (DoorKind::OnlyDeclared, format!("the package {}", if first.starts_with('@') { format!("{first}/{}", names.next().unwrap_or_default()) } else { first.to_owned() }));
         }
         if func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
-            return format!("the runtime's {path}");
+            return (DoorKind::OnlyDeclared, format!("the runtime's {path}"));
         }
         if !func.has(func_flags::IS_TYPED) {
-            return format!("untyped code: {path}");
+            return (DoorKind::JavaScript, format!("untyped code: {path}"));
+        }
+        let mut root = v;
+        for _ in 0..16 {
+            root = match func.op(root) {
+                Some(&(Op::PropGet { obj: of, .. } | Op::ElemGet { obj: of, .. } | Op::Await(of))) => of,
+                Some(Op::CallMethod { obj: of, .. } | Op::Call { callee: of, .. } | Op::Construct { callee: of, .. }) => *of,
+                _ => break,
+            };
+        }
+        if let Some(&Op::ExternalModule(specifier)) = func.op(root) {
+            return (DoorKind::OnlyDeclared, format!("the module {}", text(specifier)));
         }
         match &func.values[v.idx()].def {
-            Def::Op(Op::FreeGet { name, .. }) => format!("the global {}", text(*name)),
-            Def::Op(Op::ExternalModule(specifier)) => format!("the module {}", text(*specifier)),
-            Def::Op(Op::Caught | Op::CaughtException) => "caught exceptions".to_owned(),
-            Def::Op(Op::Coerce { .. }) => format!("`as` in {path}"),
-            Def::Op(Op::CallMethod { obj, name, .. }) if self.flow.holder_of(index, *obj).is_some() => format!("{}.{}", self.describe_callee(func, *obj), text(*name)),
-            Def::Param(..) => format!("parameters typed `any` in {path}"),
-            _ => format!("values typed `any` in {path}"),
+            Def::Op(Op::FreeGet { name, .. }) => (DoorKind::OnlyDeclared, format!("the global {}", text(*name))),
+            Def::Op(Op::ExternalModule(specifier)) => (DoorKind::OnlyDeclared, format!("the module {}", text(*specifier))),
+            Def::Op(Op::Caught | Op::CaughtException) => (DoorKind::Caught, "caught exceptions".to_owned()),
+            Def::Op(Op::Coerce { .. }) => (DoorKind::Other, format!("`as` in {path}")),
+            Def::Op(Op::CallMethod { obj, name, .. }) if self.flow.is_vouched_holder(index, *obj) => (DoorKind::Other, format!("{}.{}", self.describe_callee(func, *obj), text(*name))),
+            Def::Param(..) => (DoorKind::Other, format!("parameters typed `any` in {path}")),
+            Def::Op(Op::PropGet { obj, .. } | Op::CallMethod { obj, .. }) if self.flow.says_something(func.ty(*obj)) => (DoorKind::Other, format!("untyped objects used as {} in {path}", text_of(program, program.tys.get(func.ty(*obj)), 0))),
+            _ => (DoorKind::Other, format!("values typed `any` in {path}")),
         }
     }
 
@@ -1777,19 +1986,19 @@ impl<'a> Report<'a, '_> {
         let asserted = if matches!(kind, Kind::As | Kind::NonNull) { Tier::Assertion } else { Tier::Typed };
         let Some((index, v)) = origin.checked_sub(1).and_then(|node| self.locate(node)) else { return asserted };
         let func = &self.flow.program.funcs[index];
-        let is_typed = |v: V| func.has(func_flags::IS_TYPED) && self.flow.says_something(func.ty(v)) && !self.flow.program.tys.get(func.ty(v)).any_object;
+        let is_typed = |v: V| func.has(func_flags::IS_TYPED) && self.flow.says_something(func.ty(v)) && !may_hold_what_is_not_laid_out(self.flow.program, self.flow.program.tys.get(func.ty(v)));
         let by = |v: V| if is_typed(v) { asserted } else { Tier::Outside };
         match &func.values[v.idx()].def {
             Def::Op(Op::Coerce { .. }) => Tier::Assertion,
             Def::Op(Op::CallMethod { obj, .. } | Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } | Op::Await(obj) | Op::Construct { callee: obj, .. }) => {
-                if self.flow.holder_of(index, *obj).is_some() { Tier::Outside } else { by(*obj) }
+                if self.flow.is_vouched_holder(index, *obj) { Tier::Outside } else { by(*obj) }
             }
             Def::Op(Op::IterGet { iter, .. }) => match func.op(*iter) {
                 Some(&Op::IterOpen(of)) => by(of),
                 _ => Tier::Outside,
             },
             Def::Op(Op::Call { callee, .. }) => match func.op(before_casts(func, *callee)) {
-                Some(&Op::PropGet { obj, .. }) if self.flow.holder_of(index, obj).is_none() => by(obj),
+                Some(&Op::PropGet { obj, .. }) if !self.flow.is_vouched_holder(index, obj) => by(obj),
                 Some(Op::PropGet { .. }) => Tier::Outside,
                 _ => by(*callee),
             },
@@ -1872,7 +2081,7 @@ impl<'a> Report<'a, '_> {
 
     fn as_the_engine_reads(&self, ty: &Declared) -> Declared {
         let strs = &self.flow.program.strs;
-        let is_told_apart = |name: &[u8]| matches!(name, b"Map" | b"Set" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"Promise" | b"RegExp" | b"Date" | b"Error" | b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"FinalizationRegistry") || name.ends_with(b"Array") && name.len() > 5 && is_locked_global_of_the_engine(name);
+        let is_told_apart = |name: &[u8]| matches!(name, b"Map" | b"Set" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"Promise" | b"RegExp" | b"Date" | b"Error" | b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"FinalizationRegistry") || name.ends_with(b"Array") && name.len() > 5 && global_object().has_replaceable(name);
         if ty.parts.iter().all(|part| !matches!(part, Part::Global(name, _) if !is_told_apart(strs.get(*name)))) {
             return ty.clone();
         }
@@ -1975,6 +2184,15 @@ impl<'a> Report<'a, '_> {
         uses
     }
 
+    fn parameter_behind_the_entry(&self, entry: FuncId, number: u32) -> Option<TyId> {
+        let program = self.flow.program;
+        let behind = program.funcs[entry.idx()].values.iter().filter(|_| program.funcs[entry.idx()].has(func_flags::IS_GENERAL_ENTRY)).find_map(|value| match &value.def {
+            Def::Op(Op::CallDirect { func: typed, .. }) => Some(*typed),
+            _ => None,
+        })?;
+        program.parameters_as_written.get(&(behind.idx() as u32)).unwrap_or(&program.funcs[behind.idx()].params).get(number as usize).copied().filter(|&written| self.flow.says_something(written))
+    }
+
     fn text_of_use(&self, func: &Func, used: Use) -> String {
         let program = self.flow.program;
         let text = |name: StrId| if name.is_some() { String::from_utf8_lossy(program.strs.get(name)).into_owned() } else { String::new() };
@@ -2004,7 +2222,7 @@ impl<'a> Report<'a, '_> {
     fn add(&mut self, func: &Func, pos: u32, kind: Kind, verdict: Verdict, expected: String, found: String, detail: String, origin: u32) {
         let judged = verdict;
         let verdict = if origin & CONTEXTUAL != 0 || self.flow.has_used_a_test || self.is_behind_a_test || !self.is_surely_run && matches!(kind, Kind::BuiltinWrite | Kind::PrototypeWrite | Kind::Mutation | Kind::Caller) { verdict.min(Verdict::Unknown) } else { verdict };
-        let origin = origin & !CONTEXTUAL;
+        let origin = self.origin_behind_call(origin & !CONTEXTUAL);
         if verdict != Verdict::Wrong {
             self.passes_somewhere.insert((func.module.0, pos, kind));
         }
@@ -2018,7 +2236,8 @@ impl<'a> Report<'a, '_> {
             Tier::Assertion if self.name == Some("as-refuse") && !matches!(origin.checked_sub(1).and_then(|node| self.locate(node)), Some((of, cast)) if matches!(self.flow.program.funcs[of].op(cast), Some(Op::Coerce { .. }))) => Tier::Typed,
             Tier::Typed if judged == Verdict::Wrong || kind == Kind::Integer => Tier::Assertion,
             Tier::Typed if self.name == Some("construct-new-target") => Tier::Rule,
-            Tier::Typed if origin == 0 && matches!(func.op(self.at), Some(&Op::Coerce { value, .. }) if !self.flow.says_something(func.ty(value))) => Tier::Outside,
+            Tier::Typed if self.is_deferred_cast(func) => Tier::Assertion,
+            Tier::Typed if origin == 0 && (kind == Kind::Argument && found == "any" || matches!(func.op(self.at), Some(&Op::Coerce { value, .. }) if !self.flow.says_something(func.ty(value)))) => Tier::Outside,
             tier => tier,
         };
         let detail = match (judged, detail.is_empty()) {
@@ -2026,7 +2245,9 @@ impl<'a> Report<'a, '_> {
             (Verdict::Wrong, false) if verdict != Verdict::Wrong => format!("{detail}: it always fails if this line runs"),
             _ => detail,
         };
-        let door = self.door_of(origin);
+        let (door_kind, door) = self.door_of(origin);
+        let is_behind_cast = self.handed_over.is_none() && matches!(origin.checked_sub(1).and_then(|node| self.locate(node)), Some((of, cast)) if matches!(self.flow.program.funcs[of].op(cast), Some(Op::Coerce { .. })));
+        let is_behind_cast = is_behind_cast || tier == Tier::Assertion && self.is_deferred_cast(func);
         let door = if door.is_empty() && tier == Tier::Outside && func.module.is_some() { format!("values typed `any` in {}", String::from_utf8_lossy(self.flow.program.strs.get(self.flow.program.modules[func.module.idx()].display_path))) } else { door };
         let ordinal = self.ordinal.take();
         let origin = self.handed_over.take().or_else(|| self.origin(origin));
@@ -2036,6 +2257,7 @@ impl<'a> Report<'a, '_> {
                 Why::Cast | Why::CastFresh => "As",
                 Why::NonNull(_) => "NonNull",
                 Why::Claim => "Claim",
+                Why::ArgumentClaim(_) => "As",
                 Why::Flow => "Flow",
                 Why::Upcast | Why::Forced => "Upcast",
                 Why::Coerce | Why::CoerceFreshGraph => "Coerce",
@@ -2056,7 +2278,7 @@ impl<'a> Report<'a, '_> {
         let risk = std::mem::take(&mut self.risk);
         let call = self.call.take();
         let is_at_an_entry = std::mem::take(&mut self.is_at_an_entry);
-        self.sites.push(Site { ordinal, is_at_an_entry, call, risk, door, name, what, function, value, tier, module: func.module.0, pos, kind, verdict, expected, found, detail, origin });
+        self.sites.push(Site { ordinal, is_in_untyped_code: !func.has(func_flags::IS_TYPED), is_at_an_entry, call, risk, door, door_kind, is_behind_cast, name, what, function, value, tier, module: func.module.0, pos, kind, verdict, expected, found, detail, origin });
     }
 
     fn look_at(&mut self, index: usize, reached: &[Option<Facts>], keys: &mut Keys) {
@@ -2074,7 +2296,7 @@ impl<'a> Report<'a, '_> {
         }
         let held = if self.flow.is_whole { held_in(func) } else { Vec::new() };
         let mut is_always_run = vec![false; func.blocks.len()];
-        for at in straight_from_the_entry(self.flow.never_return, func) {
+        for at in straight_from_the_entry(self.flow.never_return, func, Some(reached)) {
             is_always_run[at] = true;
         }
         for (at, block) in func.blocks.iter().enumerate() {
@@ -2096,6 +2318,13 @@ impl<'a> Report<'a, '_> {
                 self.flow.has_used_a_test = false;
                 'checks: {
                 match op {
+                    &Op::Coerce { value, to, why: Why::ArgumentClaim(number) } => {
+                        let wanted = self.flow.get(to).clone();
+                        (self.ordinal, self.name, self.is_at_an_entry) = (Some(u32::from(number)), Some("enter-argument"), true);
+                        self.risk = "primitive";
+                        let origin = self.flow.origin_of(index, value);
+                        self.add(func, pos, Kind::Argument, Verdict::Unknown, text_of(program, &wanted, 0), "any".to_owned(), format!("argument {}: a string, a number or another primitive", u32::from(number) + 1), origin);
+                    }
                     &Op::Coerce { value, to, why } if !matches!(why, Why::Upcast | Why::Forced) => {
                         if !func.has(func_flags::IS_TYPED) && matches!(why, Why::Flow | Why::Store | Why::Claim) {
                             break 'checks;
@@ -2117,8 +2346,8 @@ impl<'a> Report<'a, '_> {
                             verdict = if is_within { Verdict::Fine } else { Verdict::Wrong };
                         }
                         if verdict != Verdict::Fine && !matches!(why, Why::Coerce | Why::CoerceFreshGraph) {
-                            let without_nil = Declared { prims: likely.prims & !prim::NULLISH, ..likely.clone() };
-                            if (matches!(why, Why::NonNull(_)) || self.fits(&without_nil, &wanted)) && is_dereferenced_next(func, at, place, v) {
+                            let without_nullish = Declared { prims: likely.prims & !prim::NULLISH, ..likely.clone() };
+                            if (matches!(why, Why::NonNull(_)) || self.fits(&without_nullish, &wanted)) && is_dereferenced_next(func, at, place, v) {
                                 self.throws_either_way += 1;
                                 self.passes_somewhere.insert((func.module.0, pos, if matches!(why, Why::NonNull(_)) { Kind::NonNull } else { Kind::Narrowing }));
                                 break 'checks;
@@ -2152,7 +2381,7 @@ impl<'a> Report<'a, '_> {
                         }
                         let detail = match (why, kind) {
                             (Why::NonNull(text), _) if text.is_some() => format!("`{}!`", String::from_utf8_lossy(program.strs.get(text))),
-                            (Why::Claim, Kind::As) => "what the cast let through is used as the type it names".to_owned(),
+                            (Why::Claim, Kind::As) => "a value that the cast let through is used as the type of the cast".to_owned(),
                             _ => self.text_of_use(func, used),
                         };
                         self.value = self.constant(func, value).unwrap_or_default();
@@ -2166,9 +2395,18 @@ impl<'a> Report<'a, '_> {
                         };
                         self.risk = self.risk_of(&wanted);
                         self.call = calls.get(&v).copied().filter(|call| call.0 != 0);
-                        self.add(func, pos, kind, verdict, text_of(program, &wanted, 0), found, detail, origin);
+                        let next_claim = func.blocks.iter().flat_map(|block| &block.ops).filter(|_| self.logs_type_errors && why == Why::Cast).find_map(|&later| match func.op(later) {
+                            Some(&Op::Coerce { value: held, to: claimed, why: Why::ArgumentClaim(_) }) if held == v => Some(claimed),
+                            _ => None,
+                        });
+                        let expected = match (next_claim, used) {
+                            (Some(claimed), _) => text_of(program, program.tys.get(claimed), 0),
+                            (None, Use::ArgumentOf(number, called)) if self.logs_type_errors => self.parameter_behind_the_entry(called, number).map_or_else(|| text_of(program, &wanted, 0), |written| text_of(program, program.tys.get(written), 0)),
+                            _ => text_of(program, &wanted, 0),
+                        };
+                        self.add(func, pos, kind, verdict, expected.clone(), found, detail, origin);
                         if holds_a_copy {
-                            self.add(func, pos, Kind::Copy, Verdict::Unknown, text_of(program, &wanted, 0), "untyped object".to_owned(), "an object that is not laid out may be copied here: writes go to the copy, and `===` with the original is false".to_owned(), origin);
+                            self.add(func, pos, Kind::Copy, Verdict::Unknown, expected, "untyped object".to_owned(), "an object from untyped code may be copied here: writes go to the copy, and `===` with the original is false".to_owned(), origin);
                         }
                     }
                     Op::PropGet { .. } | Op::ElemGet { .. } | Op::IterGet { .. } | Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Operation { .. } if self.flow.says_something(func.ty(v)) => {
@@ -2213,7 +2451,7 @@ impl<'a> Report<'a, '_> {
                 match op {
                     &Op::PropSet { obj, name, value } => self.look_at_store(index, func, facts, keys, pos, obj, Some(name), Some(value)),
                     &Op::PropDelete { obj, name } => self.look_at_store(index, func, facts, keys, pos, obj, Some(name), None),
-                    &Op::FreeSet { name, .. } if is_locked_global_of_the_engine(program.strs.get(name)) && !matches!(program.strs.get(name), b"undefined" | b"NaN" | b"Infinity") => {
+                    &Op::FreeSet { name, value } if global_object().refuses(program.strs.get(name), Change::Assign) && !self.is_current_value(index, global_object(), program.strs.get(name), value) => {
                         let shown = String::from_utf8_lossy(program.strs.get(name)).into_owned();
                         self.name = Some("global-binding-write");
                         self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` cannot be replaced"), 0);
@@ -2228,12 +2466,12 @@ impl<'a> Report<'a, '_> {
                                 self.look_at_reflection(index, func, facts, keys, pos, obj, name, args);
                                 Some(obj)
                             }
-                            Some(&Op::FreeGet { name, .. }) if is_locked_global_of_the_engine(program.strs.get(name)) => Some(*callee),
+                            Some(&Op::FreeGet { name, .. }) if self.flow.is_locked(name) => Some(*callee),
                             _ => None,
                         };
                         self.look_at_call(index, func, facts, keys, pos, v, receiver, args);
                     }
-                    Op::Construct { callee, args } => self.look_at_call(index, func, facts, keys, pos, v, self.flow.holder_of(index, *callee).map(|_| *callee), args),
+                    Op::Construct { callee, args } => self.look_at_call(index, func, facts, keys, pos, v, self.flow.is_vouched_holder(index, *callee).then_some(*callee), args),
                     Op::CallDirect { func: called, args } => {
                         let callee = &program.funcs[called.idx()];
                         if !callee.has(func_flags::IS_TYPED | func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
@@ -2244,8 +2482,11 @@ impl<'a> Report<'a, '_> {
                             let ahead = args.len().saturating_sub(callee.params.len());
                             let blind: Vec<usize> = (args.iter().skip(ahead).zip(&callee.params).enumerate()).filter(|(_, (argument, parameter))| self.flow.says_something(**parameter) && !self.flow.says_something(func.ty(**argument))).map(|(number, _)| number).collect();
                             if !blind.is_empty() {
-                                self.add_parameters_of(*called, &blind, (func.module.0, pos, "this call, which hands it `any`".to_owned()));
+                                self.add_parameters_of(*called, &blind, (func.module.0, pos, "this call, which passes `any`".to_owned()));
                             }
+                            let escaping: Vec<V> = args.iter().skip(ahead).zip(&callee.params).filter(|(_, parameter)| !self.flow.says_something(**parameter)).map(|(&argument, _)| argument).collect();
+                            let into = self.name_of_function(callee);
+                            self.look_at_functions_handed(index, func, pos, &escaping, &format!("{into}, which takes it as `any` or `unknown`"));
                         }
                         let behind_the_entry = callee.values.iter().filter(|_| callee.has(func_flags::IS_GENERAL_ENTRY)).find_map(|value| match &value.def {
                             Def::Op(Op::CallDirect { func: typed, .. }) => Some(*typed),
@@ -2268,12 +2509,20 @@ impl<'a> Report<'a, '_> {
                             }
                         }
                     }
+                    &Op::ElemSet { obj, key, value } if self.flow.holder_of(index, obj).is_some() => {
+                        let named = self.flow.constant_key(index, func, key);
+                        self.look_at_builtin_change(index, func, facts, keys, pos, obj, named.as_deref(), Change::Assign, Some(value));
+                    }
+                    &Op::ElemDelete { obj, key } if self.flow.holder_of(index, obj).is_some() => {
+                        let named = self.flow.constant_key(index, func, key);
+                        self.look_at_builtin_change(index, func, facts, keys, pos, obj, named.as_deref(), Change::Delete, None);
+                    }
                     &Op::ElemSet { obj, key, .. } => {
                         let is_iterator = matches!(func.op(before_casts(func, key)), Some(&Op::PropGet { obj: holder, name }) if program.strs.get(name) == b"iterator" && self.flow.names_global(func, holder, b"Symbol"));
                         let receiver = self.flow.val(index, func, facts, keys, obj, false);
                         if is_iterator && self.flow.get(receiver).parts.iter().any(|part| matches!(part, Part::Array(_))) {
                             self.name = Some("array-not-plain");
-                            self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), "an array is given an iterator of its own: a loop over it as `T[]` throws".to_owned(), 0);
+                            self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), "an array gets its own iterator: a loop over it as `T[]` throws".to_owned(), 0);
                         }
                     }
                     &Op::PropGet { obj, name } if matches!(program.strs.get(name), b"caller" | b"arguments") => {
@@ -2291,24 +2540,108 @@ impl<'a> Report<'a, '_> {
         }
     }
 
+    fn is_current_value(&self, index: usize, holder: &'static Builtin, name: &[u8], value: V) -> bool {
+        match self.flow.identity_of(index, value) {
+            Some(Identity::Builtin(stored)) => holder.object_at(name).is_some_and(|there| there.index() == stored),
+            Some(Identity::BuiltinMember(of, member)) => of == holder.index() && self.flow.program.strs.get(member) == name,
+            _ => false,
+        }
+    }
+
+    fn builtin_refusal(holder: &'static Builtin, name: Option<&[u8]>, change: Change) -> Option<(&'static str, String, String)> {
+        let kind = if holder.is_global_object() {
+            "global-binding-write"
+        } else if holder.takes_new_properties {
+            "builtin-member-replace"
+        } else {
+            "builtin-prototype-write"
+        };
+        let Some(name) = name else {
+            return (change == Change::Assign && !holder.takes_new_properties).then(|| (kind, format!("a property of `{}`", holder.name), "built-in prototypes are frozen".to_owned()));
+        };
+        if !holder.refuses(name, change) {
+            return None;
+        }
+        let shown = if holder.is_global_object() { format!("`globalThis.{}`", String::from_utf8_lossy(name)) } else { String::from_utf8_lossy(&locked_builtins::shown(holder, name)).into_owned() };
+        let why = match holder.would_shadow(name, change) {
+            _ if !holder.takes_new_properties => "built-in prototypes are frozen".to_owned(),
+            Some(inherited) => format!("it would hide {}, and built-ins cannot be replaced", String::from_utf8_lossy(&locked_builtins::shown(inherited, name))),
+            None => "built-ins cannot be replaced".to_owned(),
+        };
+        Some((kind, shown, why))
+    }
+
+    fn look_at_builtin_change(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, pos: u32, obj: V, name: Option<&[u8]>, change: Change, value: Option<V>) {
+        let Some(holder) = self.flow.holder_of(index, obj) else { return };
+        let context = self.flow.origin_of(index, obj) & CONTEXTUAL;
+        let verb = if change == Change::Delete { "deleted" } else { "assigned" };
+        if let (Some(b"__proto__"), Change::Assign, Some(value)) = (name, change, value) {
+            let stored = self.flow.val(index, func, facts, keys, value, false);
+            let stored = self.flow.get(stored).clone();
+            let is_unchanged = matches!(self.flow.identity_of(index, value), Some(Identity::Builtin(stored)) if Builtin::at(stored).name == holder.inherits);
+            if !holder.refuses_another_prototype() || is_unchanged || stored.is_never() || !stored.has_objects() && stored.prims & prim::NULL == 0 {
+                return;
+            }
+            let verdict = if stored.prims & !prim::NULL == 0 && stored.ints.is_none() { Verdict::Wrong } else { Verdict::Unknown };
+            self.name = Some(if holder.takes_new_properties { "builtin-member-replace" } else { "builtin-prototype-write" });
+            return self.add(func, pos, Kind::BuiltinWrite, verdict, String::new(), String::new(), format!("`{}.__proto__` is assigned: built-in objects keep their prototype", holder.name), context);
+        }
+        let Some((kind, shown, why)) = Self::builtin_refusal(holder, name, change) else { return };
+        if let (Some(name), Some(value)) = (name, value)
+            && self.is_current_value(index, holder, name, value)
+        {
+            return;
+        }
+        self.name = Some(kind);
+        self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("{shown} is {verb}: {why}"), context);
+    }
+
+    fn keys_of_literal(&self, func: &Func, literal: V) -> Option<Vec<Vec<u8>>> {
+        let program = self.flow.program;
+        let literal = before_casts(func, literal);
+        if !matches!(func.op(literal), Some(Op::NewObject)) {
+            return None;
+        }
+        Some(func.values.iter().filter_map(|value| match &value.def {
+            Def::Op(Op::Operation { name, args }) if program.strs.get(*name) == b"DefineField" && args.first() == Some(&literal) => match func.op(before_casts(func, *args.get(1)?)) {
+                Some(&Op::Str(key)) => Some(program.strs.get(key).to_vec()),
+                _ => None,
+            },
+            _ => None,
+        }).collect())
+    }
+
     fn look_at_store(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, pos: u32, obj: V, name: Option<StrId>, value: Option<V>) {
         let program = self.flow.program;
         let context = self.flow.origin_of(index, obj) & CONTEXTUAL;
         let shown = name.map_or_else(String::new, |name| String::from_utf8_lossy(program.strs.get(name)).into_owned());
         let verb = if value.is_some() { "assigned" } else { "deleted" };
-        if let Some((holder, is_prototype)) = self.flow.holder_of(index, obj) {
-            let holder_shown = String::from_utf8_lossy(holder).into_owned();
-            if is_prototype {
-                self.name = Some("builtin-prototype-write");
-                return self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{holder_shown}.prototype.{shown}` is {verb}: built-in prototypes are frozen"), context);
+        if let (Some(name), Some(value)) = (name, value) {
+            let static_setter = self.find_static_member(index, obj, name, MethodKind::Setter);
+            let known = self.flow.val(index, func, facts, keys, obj, false);
+            let known = self.flow.get(known).clone();
+            for setter in self.find_members(func, obj, &known, name, MethodKind::Setter).into_iter().chain(static_setter) {
+                self.add_parameters_handed_what_says_nothing(func, pos, setter, &[value], "this assignment");
             }
-            let is_global_object = holder == b"globalThis";
-            let is_locked = name.is_some_and(|name| if is_global_object { is_locked_global_of_the_engine(program.strs.get(name)) && !matches!(program.strs.get(name), b"undefined" | b"NaN" | b"Infinity") } else { is_builtin_of_the_engine(holder, program.strs.get(name)) || program.strs.get(name) == b"prototype" });
-            if is_locked {
-                self.name = Some(if is_global_object { "global-binding-write" } else { "builtin-member-replace" });
-                self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{holder_shown}.{shown}` is {verb}: what the language ships with cannot be replaced"), context);
+        }
+        if let (Some(name), Some(value), Some(Identity::Function(constructor))) = (name, value, self.flow.identity_of(index, obj)) {
+            let mut at = self.class_of.get(&constructor).copied().unwrap_or(LayoutId::NONE);
+            while at.is_some() {
+                let class = &program.layouts[at.idx()];
+                if let Some(&(_, declared)) = class.static_fields.iter().find(|field| field.0 == name && self.flow.says_something(field.1)) {
+                    let stored = self.flow.val(index, func, facts, keys, value, false);
+                    let (stored, wanted) = (self.flow.get(stored).clone(), self.flow.get(declared).clone());
+                    let verdict = self.judge(None, &stored, &stored, &wanted);
+                    let (found, origin, named) = (text_of(program, &stored, 0), self.flow.origin_of(index, value), self.name_of_function(&program.funcs[constructor.idx()]));
+                    self.name = Some("class-static-write");
+                    self.add(func, pos, Kind::Mutation, verdict, text_of(program, &wanted, 0), found, format!("the static property `{shown}` of the class {named} is assigned"), origin | context);
+                    break;
+                }
+                at = class.base;
             }
-            return;
+        }
+        if self.flow.holder_of(index, obj).is_some() {
+            return self.look_at_builtin_change(index, func, facts, keys, pos, obj, name.map(|name| program.strs.get(name)), if value.is_some() { Change::Assign } else { Change::Delete }, value);
         }
         if let Some(owner) = self.function_named(index, func, obj)
             && program.funcs[owner.idx()].has(func_flags::GENERATOR)
@@ -2327,8 +2660,9 @@ impl<'a> Report<'a, '_> {
             if let (Some(&class), Some(name)) = (self.class_of.get(&owner), name)
                 && program.layouts[class.idx()].class_flags & class_flags::IS_LAID_OUT != 0
                 && !self.declares_member(class, name)
+                && !(program.strs.get(name) == b"constructor" && program.layouts[class.idx()].class_flags & class_flags::CONSTRUCTOR_MAY_BE_REPLACED != 0)
             {
-                self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` is {verb} on the prototype of the class {named}, which does not declare it: class prototypes take no new members"), context);
+                self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` is {verb} on the prototype of the class {named}, which does not declare it: members cannot be added to class prototypes"), context);
             }
             return;
         }
@@ -2341,6 +2675,11 @@ impl<'a> Report<'a, '_> {
         }
         let receiver = self.flow.val(index, func, facts, keys, obj, false);
         let receiver = self.flow.get(receiver).clone();
+        let is_this = func.has(func_flags::HAS_THIS) && func.blocks.first().and_then(|entry| entry.params.get(func.captures.len())) == Some(&before_casts(func, obj));
+        let receiver = match self.class_of_second_body.get(&FuncId::new(index)) {
+            Some(&class) if is_this && (receiver.any_object || receiver.parts.is_empty()) => Declared::part(Part::Class(class)),
+            _ => receiver,
+        };
         if receiver.any_object || receiver.parts.is_empty() {
             return;
         }
@@ -2400,7 +2739,7 @@ impl<'a> Report<'a, '_> {
                 }
                 let (shown, through, made) = (String::from_utf8_lossy(program.strs.get(name)).into_owned(), text_of(program, &Declared::part(Part::Class(view)), 0), text_of(program, &Declared::part(Part::Class(member)), 0));
                 let found = text_of(program, &stored, 0);
-                self.add(func, pos, Kind::Field, verdict, text_of(program, &wanted, 0), found, format!("`{shown}` is stored through {through}, and the object may have been made as {made}, which declares it narrower"), 0);
+                self.add(func, pos, Kind::Field, verdict, text_of(program, &wanted, 0), found, format!("`{shown}` is stored through {through}, and the object may have been created as {made}, which declares a narrower type for it"), 0);
                 return;
             }
         }
@@ -2409,8 +2748,24 @@ impl<'a> Report<'a, '_> {
     fn function_named(&self, index: usize, func: &Func, v: V) -> Option<FuncId> {
         match (self.flow.identity_of(index, v), func.prediction(v)) {
             (Some(Identity::Function(named)), _) | (None, Prediction::Closure(named)) => Some(named),
-            _ => None,
+            _ => match func.op(before_casts(func, v)) {
+                Some(&Op::PropGet { obj, name }) => self.find_static_member(index, obj, name, MethodKind::Method),
+                _ => None,
+            },
         }
+    }
+
+    fn find_static_member(&self, index: usize, obj: V, name: StrId, kind: MethodKind) -> Option<FuncId> {
+        let Some(Identity::Function(constructor)) = self.flow.identity_of(index, obj) else { return None };
+        let mut at = *self.class_of.get(&constructor)?;
+        while at.is_some() {
+            let class = &self.flow.program.layouts[at.idx()];
+            if let Some(found) = class.methods.iter().find(|method| method.name == name && method.kind == kind && method.flags & method_flags::STATIC != 0) {
+                return Some(found.func);
+            }
+            at = class.base;
+        }
+        None
     }
 
     fn owner_of_prototype(&self, index: usize, v: V) -> Option<FuncId> {
@@ -2435,8 +2790,17 @@ impl<'a> Report<'a, '_> {
     fn look_at_functions_handed(&mut self, index: usize, func: &Func, pos: u32, args: &[V], into: &str) {
         for &argument in args {
             if let Some(handed) = self.function_named(index, func, argument) {
-                let all: Vec<usize> = (0..self.flow.program.funcs[handed.idx()].params.len()).collect();
-                self.add_parameters_of(handed, &all, (func.module.0, pos, format!("whoever calls it: it is handed to {into}")));
+                let mut at = self.class_of.get(&handed).copied().unwrap_or(LayoutId::NONE);
+                let mut handed_functions: SmallVec<[FuncId; 2]> = SmallVec::from_iter([handed]);
+                while at.is_some() {
+                    let class = &self.flow.program.layouts[at.idx()];
+                    handed_functions.extend(class.methods.iter().filter(|method| method.flags & method_flags::STATIC != 0 && method.kind != MethodKind::Getter).map(|method| method.func));
+                    at = class.base;
+                }
+                for handed in handed_functions {
+                    let all: Vec<usize> = (0..self.flow.program.funcs[handed.idx()].params.len()).collect();
+                    self.add_parameters_of(handed, &all, (func.module.0, pos, format!("its callers: it is passed to {into}")));
+                }
             }
         }
     }
@@ -2453,7 +2817,9 @@ impl<'a> Report<'a, '_> {
         if !self.has_an_entry_that_tests[handed.idx()] {
             let checked: Vec<String> = written[..one_by_one].iter().filter(|&&parameter| self.flow.says_something(parameter)).map(|&parameter| text_of(program, program.tys.get(parameter), 0)).collect();
             if !checked.is_empty() {
-                (self.ordinal, self.handed_over) = (Some(0), Some(from));
+                let ahead = usize::from(made.kind == FuncKind::Constructor && made.has(func_flags::HAS_NEW_TARGET));
+                let first = made.params.iter().position(|&parameter| self.flow.says_something(parameter)).map_or(0, |first| first.saturating_sub(ahead));
+                (self.ordinal, self.handed_over) = (Some(if self.logs_type_errors { first as u32 } else { 0 }), Some(from));
                 self.add(made, made.pos, Kind::Parameter, Verdict::Unknown, checked.join(", "), "any".to_owned(), format!("the parameters of {named}, which is called as a value or with `any`"), 0);
             }
             return;
@@ -2471,6 +2837,55 @@ impl<'a> Report<'a, '_> {
         }
     }
 
+    fn add_parameters_handed_what_says_nothing(&mut self, func: &Func, pos: u32, called: FuncId, handed: &[V], by: &str) {
+        let program = self.flow.program;
+        let callee = &program.funcs[called.idx()];
+        if !callee.has(func_flags::IS_TYPED) || callee.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+            return;
+        }
+        let ahead = usize::from(callee.kind == FuncKind::Constructor && callee.has(func_flags::HAS_NEW_TARGET));
+        let one_by_one = callee.params.len() - usize::from(callee.has(func_flags::HAS_REST) && !callee.params.is_empty());
+        let may_fail = |number: usize, parameter: TyId| {
+            let wanted = program.tys.get(parameter);
+            match handed.get(number - ahead) {
+                None => wanted.prims & prim::UNDEFINED == 0,
+                Some(&argument) if !self.flow.says_something(func.ty(argument)) => true,
+                Some(&argument) => {
+                    let given = program.tys.get(func.ty(argument));
+                    !(given.has_objects() && wanted.has_objects()) && self.judge(None, given, given, wanted) != Verdict::Fine
+                }
+            }
+        };
+        let blind: Vec<usize> = (callee.params[..one_by_one].iter().enumerate().skip(ahead)).filter(|&(number, &parameter)| self.flow.says_something(parameter) && may_fail(number, parameter)).map(|(number, _)| number).collect();
+        if blind.is_empty() {
+            return;
+        }
+        self.add_parameters_of(called, &blind, (func.module.0, pos, format!("{by}, which passes `any`")));
+    }
+
+    fn find_members(&self, func: &Func, obj: V, known: &Declared, name: StrId, kind: MethodKind) -> SmallVec<[FuncId; 2]> {
+        let program = self.flow.program;
+        let mut found: SmallVec<[FuncId; 2]> = SmallVec::new();
+        for part in program.tys.get(func.ty(obj)).parts.iter().chain(&known.parts) {
+            let &Part::Class(view) = part else { continue };
+            let looked_at = &program.layouts[view.idx()];
+            for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
+                let mut at = member;
+                while at.is_some() {
+                    let class = &program.layouts[at.idx()];
+                    if let Some(member) = class.methods.iter().find(|method| method.name == name && method.kind == kind && method.flags & method_flags::STATIC == 0) {
+                        if !found.contains(&member.func) {
+                            found.push(member.func);
+                        }
+                        break;
+                    }
+                    at = class.base;
+                }
+            }
+        }
+        found
+    }
+
     fn add_parameters_of_functions_that_have_an_entry(&mut self, logs_type_errors: bool) {
         let program = self.flow.program;
         for index in (0..program.funcs.len()).filter(|&index| if self.has_an_entry_that_tests[index] { logs_type_errors } else { program.may_be_handed_what_says_nothing.contains(&(index as u32)) }) {
@@ -2484,10 +2899,40 @@ impl<'a> Report<'a, '_> {
         let Some((found, handed)) = functions_called(program, func, v) else {
             let is_vouched = receiver_of_the_engine.is_some_and(|receiver| {
                 let known = self.flow.val(index, func, facts, keys, receiver, false);
-                self.flow.holder_of(index, receiver).is_some() || self.flow.is_of_the_engine_only(&self.flow.get(known).clone())
+                self.flow.is_vouched_holder(index, receiver) || self.flow.is_of_the_engine_only(&self.flow.get(known).clone())
             });
             if !is_vouched {
                 self.look_at_functions_handed(index, func, pos, args, "a function that the compiler does not see");
+            }
+            let (named, member) = match func.op(v) {
+                Some(&(Op::Call { callee, .. } | Op::Construct { callee, .. })) => (
+                    self.function_named(index, func, callee),
+                    match func.op(before_casts(func, callee)) {
+                        Some(&Op::PropGet { obj, name }) => Some((obj, name)),
+                        _ => None,
+                    },
+                ),
+                Some(&Op::CallMethod { obj, name, .. }) => (self.find_static_member(index, obj, name, MethodKind::Method), Some((obj, name))),
+                _ => (None, None),
+            };
+            let mut called: SmallVec<[FuncId; 2]> = SmallVec::new();
+            if let Some((obj, name)) = member {
+                let known = self.flow.val(index, func, facts, keys, obj, false);
+                let known = self.flow.get(known).clone();
+                called = self.find_members(func, obj, &known, name, MethodKind::Method);
+            }
+            called.extend(named.filter(|named| !called.contains(named)));
+            for called in called {
+                self.add_parameters_handed_what_says_nothing(func, pos, called, args, "this call");
+            }
+            if let Some((obj, name)) = member
+                && let Some(called) = self.function_named(index, func, obj)
+            {
+                match program.strs.get(name) {
+                    b"call" => self.add_parameters_handed_what_says_nothing(func, pos, called, args.get(1..).unwrap_or_default(), "this call"),
+                    b"apply" | b"bind" => self.look_at_functions_handed(index, func, pos, &[obj], &format!("`{}`", String::from_utf8_lossy(program.strs.get(name)))),
+                    _ => {}
+                }
             }
             return;
         };
@@ -2501,8 +2946,11 @@ impl<'a> Report<'a, '_> {
             let one_by_one = callee.params.len() - usize::from(callee.has(func_flags::HAS_REST) && !callee.params.is_empty());
             let blind: Vec<usize> = (callee.params[..one_by_one].iter().zip(handed).enumerate()).filter(|(_, (parameter, argument))| self.flow.says_something(**parameter) && !self.flow.says_something(func.ty(**argument))).map(|(number, _)| number).collect();
             if !blind.is_empty() && !callee.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
-                self.add_parameters_of(called, &blind, (func.module.0, pos, "this call, which hands it `any`".to_owned()));
+                self.add_parameters_of(called, &blind, (func.module.0, pos, "this call, which passes `any`".to_owned()));
             }
+            let escaping: Vec<V> = callee.params[..one_by_one].iter().zip(handed).filter(|(parameter, _)| !self.flow.says_something(**parameter)).map(|(_, &argument)| argument).collect();
+            let into = self.name_of_function(callee);
+            self.look_at_functions_handed(index, func, pos, &escaping, &format!("{into}, which takes it as `any` or `unknown`"));
             for (number, (&parameter, &argument)) in callee.params[..one_by_one].iter().zip(handed).enumerate() {
                 if !self.flow.says_something(parameter) {
                     continue;
@@ -2528,14 +2976,17 @@ impl<'a> Report<'a, '_> {
 
     fn look_at_reflection(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, pos: u32, obj: V, name: StrId, args: &[V]) {
         let program = self.flow.program;
-        let Some((holder, false)) = self.flow.holder_of(index, obj) else { return };
+        let Some(holder) = self.flow.holder_of(index, obj).map(|holder| holder.name.as_bytes()) else { return };
         if !matches!(holder, b"Object" | b"Reflect") {
             return;
         }
         let called = program.strs.get(name);
         if called == b"construct" && args.len() > 2 {
             self.name = Some("construct-new-target");
-            return self.add(func, pos, Kind::Result, Verdict::Unknown, String::new(), String::new(), "`Reflect.construct` with a new.target of its own: a constructor function in TypeScript code of the program takes none whose `prototype` is not that of such a function".to_owned(), 0);
+            return self.add(func, pos, Kind::Result, Verdict::Unknown, String::new(), String::new(), "`Reflect.construct` with a different new.target: a TypeScript constructor function accepts a new.target only if its `prototype` belongs to such a function".to_owned(), 0);
+        }
+        if holder == b"Reflect" && matches!(called, b"apply" | b"construct") {
+            return self.look_at_functions_handed(index, func, pos, args.get(..1).unwrap_or_default(), &format!("`Reflect.{}`", String::from_utf8_lossy(called)));
         }
         if !matches!(called, b"defineProperty" | b"defineProperties" | b"setPrototypeOf" | b"assign" | b"set" | b"deleteProperty") {
             return;
@@ -2543,12 +2994,31 @@ impl<'a> Report<'a, '_> {
         let Some(&target) = args.first() else { return };
         let context = self.flow.origin_of(index, target) & CONTEXTUAL;
         let shown = format!("{}.{}", String::from_utf8_lossy(holder), String::from_utf8_lossy(called));
-        if let Some((changed, is_prototype)) = self.flow.holder_of(index, target) {
-            let changed = String::from_utf8_lossy(changed).into_owned();
-            if is_prototype {
-                let what = if holder == b"Reflect" { "answers false where plain JavaScript answers true" } else { "throws" };
-                self.name = Some("builtin-prototype-write");
-                self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}({changed}.prototype, ..)` {what}: built-in prototypes are frozen"), context);
+        if let Some(changed) = self.flow.holder_of(index, target) {
+            let what = if holder == b"Reflect" { "returns false where plain JavaScript returns true" } else { "throws" };
+            let written = if changed.is_global_object() { "globalThis" } else { changed.name };
+            let key = args.get(1).and_then(|&key| self.flow.constant_key(index, func, key));
+            let one = |change: Change| if args.len() > 1 { Self::builtin_refusal(changed, key.as_deref(), change) } else { None };
+            let refusal = match called {
+                b"defineProperty" => one(Change::Define).or_else(|| if key.is_none() && args.len() > 1 { Self::builtin_refusal(changed, None, Change::Assign) } else { None }),
+                b"set" if args.len() <= 3 => one(Change::Assign).filter(|_| !matches!((&key, args.get(2)), (Some(name), Some(&value)) if self.is_current_value(index, changed, name, value))),
+                b"deleteProperty" => one(Change::Delete),
+                b"setPrototypeOf" => {
+                    let is_unchanged = args.get(1).is_some_and(|&parent| matches!(self.flow.identity_of(index, parent), Some(Identity::Builtin(parent)) if Builtin::at(parent).name == changed.inherits));
+                    (changed.refuses_another_prototype() && args.len() > 1 && !is_unchanged).then(|| (if changed.takes_new_properties { "builtin-member-replace" } else { "builtin-prototype-write" }, String::new(), "built-in objects keep their prototype".to_owned()))
+                }
+                b"defineProperties" | b"assign" if holder == b"Object" => {
+                    let change = if called == b"assign" { Change::Assign } else { Change::Define };
+                    args.iter().skip(1).find_map(|&source| match self.keys_of_literal(func, source) {
+                        Some(names) => names.iter().find_map(|name| Self::builtin_refusal(changed, Some(name.as_slice()), change)),
+                        None => Self::builtin_refusal(changed, None, Change::Assign),
+                    })
+                }
+                _ => None,
+            };
+            if let Some((kind, _, why)) = refusal {
+                self.name = Some(kind);
+                self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}({written}, ..)` {what}: {why}"), context);
             }
             return;
         }
@@ -2558,7 +3028,7 @@ impl<'a> Report<'a, '_> {
                 self.name = Some("generator-prototype-write");
                 self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` on the prototype of the generator function {named}, which is frozen"), context);
             } else if self.class_of.get(&owner).is_some_and(|class| program.layouts[class.idx()].class_flags & class_flags::IS_LAID_OUT != 0) {
-                self.add(func, pos, Kind::PrototypeWrite, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on the prototype of the class {named}: class prototypes take no new members"), context);
+                self.add(func, pos, Kind::PrototypeWrite, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on the prototype of the class {named}: members cannot be added to class prototypes"), context);
             }
             return;
         }
@@ -2595,7 +3065,7 @@ impl<'a> Report<'a, '_> {
                         self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on {owner}: declared properties stay writable, enumerable and configurable data properties"), context);
                     }
                 }
-                _ => self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on {owner}: what it stores is held to the declared types"), context),
+                _ => self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), format!("`{shown}` on {owner}: the stored values are checked against the declared types"), context),
             }
         }
     }
@@ -2710,26 +3180,38 @@ struct Asked {
     surely: Vec<bool>,
     class_of: FxHashMap<FuncId, LayoutId>,
     has_an_entry_that_tests: Vec<bool>,
+    class_of_second_body: FxHashMap<FuncId, LayoutId>,
+    logs_type_errors: bool,
 }
 
 impl Asked {
-    fn new(program: &Program, setup: &Setup) -> Asked {
+    fn new(program: &Program, setup: &Setup, logs_type_errors: bool) -> Asked {
         let mut has_an_entry_that_tests = vec![false; program.funcs.len()];
-        for entry in program.funcs.iter().filter(|func| func.has(func_flags::IS_GENERAL_ENTRY) && func.kind != FuncKind::Method) {
-            let first = entry.values.iter().find_map(|value| match &value.def {
+        let methods_of_classes: FxHashMap<FuncId, LayoutId> = (program.layouts.iter().enumerate()).filter(|(_, layout)| layout.kind == LayoutKind::Instance).flat_map(|(class, layout)| layout.methods.iter().filter(|method| method.flags & method_flags::STATIC == 0).map(move |method| (method.func, LayoutId::new(class)))).collect();
+        let static_methods_of_classes: FxHashSet<FuncId> = program.layouts.iter().filter(|layout| layout.kind == LayoutKind::Instance).flat_map(|layout| &layout.methods).filter(|method| method.flags & method_flags::STATIC != 0).map(|method| method.func).collect();
+        let mut class_of_second_body: FxHashMap<FuncId, LayoutId> = FxHashMap::default();
+        let is_ordinary_twin_entry = |func: &Func| logs_type_errors && func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES) && func.has(func_flags::IS_VALUE) && func.module.is_some() && func.values.iter().any(|value| matches!(value.def, Def::Op(Op::Caught)));
+        for entry in program.funcs.iter().filter(|func| func.has(func_flags::IS_GENERAL_ENTRY) || is_ordinary_twin_entry(func)) {
+            let mut called = entry.values.iter().filter_map(|value| match &value.def {
                 Def::Op(Op::CallDirect { func: called, .. }) => Some(*called),
                 _ => None,
             });
-            if let Some(called) = first {
-                has_an_entry_that_tests[called.idx()] = true;
+            let Some(first) = called.next().filter(|first| (program.funcs[first.idx()].module, program.funcs[first.idx()].pos) == (entry.module, entry.pos)) else { continue };
+            match (methods_of_classes.get(&first), called.next()) {
+                (Some(&class), Some(second)) => {
+                    class_of_second_body.insert(second, class);
+                }
+                (Some(_), None) => {}
+                (None, _) if static_methods_of_classes.contains(&first) => {}
+                (None, _) => has_an_entry_that_tests[first.idx()] = true,
             }
         }
         let class_of = program.layouts.iter().enumerate().filter(|(_, layout)| layout.constructor.is_some()).map(|(index, layout)| (layout.constructor, LayoutId::new(index))).collect();
-        Asked { surely: surely_run(program, &setup.never_return), class_of, has_an_entry_that_tests }
+        Asked { surely: surely_run(program, &setup.never_return), class_of, has_an_entry_that_tests, class_of_second_body, logs_type_errors }
     }
 
     fn report<'a, 'b>(&'b self, flow: &'b mut Flow<'a>) -> Report<'a, 'b> {
-        Report { flow, ordinal: None, handed_over: None, sites: Vec::new(), fine: FxHashMap::default(), class_of: &self.class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests: &self.has_an_entry_that_tests }
+        Report { flow, ordinal: None, handed_over: None, sites: Vec::new(), fine: FxHashMap::default(), class_of: &self.class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests: &self.has_an_entry_that_tests, class_of_second_body: &self.class_of_second_body, logs_type_errors: self.logs_type_errors }
     }
 
     fn look_at(&self, report: &mut Report<'_, '_>, run: Range<usize>) {
@@ -2765,9 +3247,12 @@ fn settle_the_sites(mut sites: Vec<Site>, passes_somewhere: &FxHashSet<(u32, u32
     sites
 }
 
-pub(super) fn always_fail(program: &Program, in_parallel: InParallel<'_>) -> Vec<Site> {
-    let setup = Setup::new(program, false, in_parallel);
-    let asked = Asked::new(program, &setup);
+pub(super) fn set_up(program: &Program, in_parallel: InParallel<'_>) -> Setup {
+    Setup::new(program, false, in_parallel)
+}
+
+pub(super) fn always_fail(program: &Program, setup: Setup, in_parallel: InParallel<'_>) -> Vec<Site> {
+    let asked = Asked::new(program, &setup, false);
     let mut first = Flow::new(program, &setup, false, None);
     for &index in setup.store_to_constants.iter().chain(&setup.store_to_constants) {
         first.run(index);
@@ -2792,7 +3277,7 @@ pub(super) fn always_fail(program: &Program, in_parallel: InParallel<'_>) -> Vec
 fn find(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind, usize)>, usize, usize, [f64; 3]) {
     let begun = Instant::now();
     let setup = Setup::new(program, true, in_parallel);
-    let asked = Asked::new(program, &setup);
+    let asked = Asked::new(program, &setup, logs_type_errors);
     let mut flow = Flow::new(program, &setup, true, None);
     let prepared = begun.elapsed().as_secs_f64();
     let mut rounds = 0;
@@ -2858,7 +3343,7 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
             id_of(line, column, "enter-argument", parameter as usize)
         });
         let is_named_by_the_table = site.name == "as-late-use" || matches!(site.kind, Kind::Argument | Kind::Variable | Kind::Field | Kind::Return | Kind::Integer | Kind::Read | Kind::Element | Kind::Result | Kind::Await | Kind::Arithmetic);
-        let logged_as = (!logs_type_errors && is_named_by_the_table).then(|| id_of(line, column, "type-mismatch", 0));
+        let logged_as = ((!logs_type_errors || site.is_in_untyped_code) && is_named_by_the_table).then(|| id_of(line, column, "type-mismatch", 0));
         if as_json {
             let mut text = format!("{{\"aot\":\"type-check\",\"id\":\"{}\",\"kind\":\"{}\",\"group\":\"{}\",\"what\":\"{}\",\"file\":\"{}\",\"line\":{line},\"col\":{column},\"fn\":\"{}\"", id, site.name, site.kind.text(), site.what, escaped(&shown_path), escaped(&site.function));
             for (key, value) in [("expected", &site.expected), ("got", &site.found), ("value", &site.value), ("detail", &site.detail)] {
@@ -2872,7 +3357,7 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
             if let Some(logged_as) = &logged_as {
                 let _ = write!(text, ",\"loggedAs\":\"{logged_as}\"");
             }
-            let _ = write!(text, ",\"action\":\"{verdict}\",\"category\":\"{}\"", site.tier.text());
+            let _ = write!(text, ",\"action\":\"{verdict}\",\"category\":\"{}\",\"cause\":\"{}\"", site.tier.text(), site.cause().text());
             if logs_type_errors {
                 let _ = write!(text, ",\"logBuild\":\"{}\"", site.in_a_log_build());
             }
@@ -2884,7 +3369,7 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
             if let Some((path, line, column, what)) = &from {
                 let _ = write!(text, ",\"origin\":{{\"what\":\"{}\",\"file\":\"{}\",\"line\":{line},\"col\":{column}}}", escaped(what), escaped(path));
             }
-            let _ = write!(text, ",\"fix\":\"{}\"}}", escaped(site.kind.fix(site.verdict)));
+            let _ = write!(text, ",\"fix\":\"{}\"}}", escaped(site.fix()));
             lines.push(text);
             continue;
         }
@@ -2908,7 +3393,7 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
         if let Some((path, line, column, what)) = &from {
             let _ = write!(text, "; value from {what} at {path}:{line}:{column}");
         }
-        let _ = write!(text, "; fix: {}", site.kind.fix(site.verdict));
+        let _ = write!(text, "; fix: {}", site.fix());
         lines.push(text);
     }
     if as_json {
@@ -2962,11 +3447,16 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
     if logs_type_errors {
         let listed = || sites.iter().filter(|site| site.verdict != Verdict::Wrong && (lists_all || site.tier != Tier::Typed));
         let count = |what: &str| listed().filter(|site| site.in_a_log_build() == what).count();
-        let _ = write!(summary, "; behind its line in the log, this build continues at {}, converts at {} and still throws at {}", count("continues"), count("converts"), count("throws"));
+        let _ = write!(summary, "; after logging, this build continues at {}, converts at {} and still throws at {}", count("continues"), count("converts"), count("throws"));
     }
     if counted != 0 {
         let _ = write!(summary, "; {counted} more fail only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists them)");
     }
     lines.push(summary);
+    let caused_by = |cause: Cause| sites.iter().filter(|site| site.verdict != Verdict::Wrong && (lists_all || site.tier != Tier::Typed) && site.cause() == cause).count();
+    let by_cause: Vec<String> = Cause::ALL.iter().map(|&cause| (caused_by(cause), cause)).filter(|found| found.0 != 0).map(|(count, cause)| format!("{count} {}", cause.in_words())).collect();
+    if !by_cause.is_empty() {
+        lines.push(format!("[aot] type-check summary: those that can fail: {}", by_cause.join(", ")));
+    }
     lines
 }

@@ -19,7 +19,7 @@ export class Tank { last?: Item; count = 0; take(item: Item): number { this.last
 export const kept = { id: 9, label: "kept", inner: { n: 1 } }
 export function keptText(): string { return kept.label + kept.id + kept.inner.n }
 export function isKeptInner(inner: { n: number }): boolean { return inner === kept.inner }
-// NOT IMPORTED BY UNTYPED TEXT, and of names of its own: it stays a fact.
+// Not imported by untyped code, and with unique property names: its types stay facts.
 export interface Private { secretNumber: number; secretText: string }
 export function makePrivate(n: number): Private { return { secretNumber: n, secretText: "s" + n } }
 export function sumPrivate(list: Private[]): number { let sum = 0; for (const p of list) sum += p.secretNumber; return sum }

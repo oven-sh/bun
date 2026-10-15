@@ -33,7 +33,7 @@ export function trimLeft_(s: string): string { return (s as any).trimLeft(); }
 export function trimRight_(s: string): string { return (s as any).trimRight(); }
 export function trimOfAnything(s: any): unknown { return s.trim(); }
 function all(s: () => string): string { return show(trim_(s())) + show(trimStart_(s())) + show(trimEnd_(s())) + show(trimLeft_(s())) + show(trimRight_(s())) + show(trimOfAnything(s())) + trim_(s()).length; }
-// Every code unit of the first 0x300 and the rest of what is white space, and its neighbours, on both sides of a letter, alone, and twice.
+// Every code unit below 0x300, every other white space character, and their neighbors, on both sides of a letter, alone, and twice.
 let white = "";
 for (const range of [[0, 0x300], [0x1680, 0x1681], [0x180e, 0x180f], [0x1fff, 0x2010], [0x2027, 0x2030], [0x205e, 0x2061], [0x2fff, 0x3002], [0xd800, 0xd801], [0xfefe, 0xff00], [0xfffe, 0x10000]]) {
     for (let c = range[0]; c < range[1]; c++) {
@@ -62,5 +62,5 @@ class Loud extends String { trim(): string { return "overridden"; } }
 for (const other of [new String("  boxed  "), new Loud("  x  "), { trim() { return "mine"; } }, 12, true])
     print(attempt(() => trimOfAnything(other)));
 print(attempt(() => String.prototype.trim.call(12)) + attempt(() => String.prototype.trim.call({ toString() { return "  object  "; } })) + attempt(() => String.prototype.trimEnd.call(null)) + attempt(() => String.prototype.trimStart.call(Symbol())));
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [trim_, trimStart_, trimEnd_, trimOfAnything]; console.log("number");

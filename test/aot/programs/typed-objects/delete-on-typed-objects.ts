@@ -31,13 +31,13 @@ const three = make(4)
 three.author = { nick: "again", age: 3 }
 three.refs = []
 console.log(show(three), three.author.age, delete three.author.age, String(three.author.age), Object.keys(three.author).join())
-// What is absent is looked for up the chain.
+// An absent property is looked up on the prototype chain.
 const five = make(6)
 delete five.title; delete five.pages
 console.log(String(five.title), String(five.pages), make(7).title, "title" in five, Object.hasOwn(five, "title"), (five.pages ?? 0) + 1, Object.keys(five).join())
 five.title = "own"
 console.log(five.title, String(five.pages), "pages" in five)
-// Everything optional goes, and comes back in another order.
+// Every optional property is deleted and added back in a different order.
 const six = make(8)
 for (const k of ["title", "pages", "draft", "editor"]) dropAny(six, k)
 console.log(JSON.stringify(six), Object.keys(six).length, String(six.title), String(six.editor))

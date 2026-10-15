@@ -1,5 +1,5 @@
 // A boolean or number that is live into one `catch` block is passed through a function taking `unknown` and tested after a second `catch` block.
-import { w3, w4 } from "./untyped-truth-tests-behind-two-handlers.js";
+import { w3, w4 } from "./untyped-truth-tests-after-two-handlers.js";
 declare const console: { log(...args: unknown[]): void }
 let n = 0
 export function yes(): boolean { let k = 0; for (let i = 0; i < 3; i++) k += ++n; return k > 0 }

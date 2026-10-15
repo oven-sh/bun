@@ -95,10 +95,10 @@
     "output": "before [2,2]\nexit code 1\nTypeError: Cannot assign to 'n' of { n, list }: expected number, got string \"poked\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
   },
   "esm.not_there.ts": {
-    "errors": "error: <folder>/esm.not_there.ts:7: --aot does not support an import of what the module does not export\n"
+    "errors": "error: <folder>/esm.not_there.ts:7: --aot does not support an import of a name that the module does not export\n"
   },
   "esm.not_there_fn.ts": {
-    "errors": "error: <folder>/esm.not_there_fn.ts:7: --aot does not support an import of what the module does not export\n"
+    "errors": "error: <folder>/esm.not_there_fn.ts:7: --aot does not support an import of a name that the module does not export\n"
   },
   "esm.ns_lits.ts": {
     "output": "x THROWS TypeError [--aot: expected number, got string]\n"
@@ -143,7 +143,7 @@
     "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'string' and always gets number.\n"
   },
   "esm.takes_arr.ts": {
-    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number | undefined, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
   },
   "esm.takes_obj.ts": {
     "output": "exit code 1\nTypeError: Cannot assign to 'a' of { a, b }: expected number, got string \"written by the package\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"

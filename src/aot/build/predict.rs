@@ -132,8 +132,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expect(fx, value, prediction)
     }
 
-    pub(crate) fn as_the_builtin_takes_them(&mut self, fx: &mut Fx, file: FileId, path: ExprId, mut args: Args) -> Args {
-        for (arg, is_number) in args.iter_mut().zip(self.c.is_number_taken_by_builtin_at(file, path)) {
+    pub(crate) fn converted_for_builtin(&mut self, fx: &mut Fx, file: FileId, path: ExprId, mut args: Args) -> Args {
+        for (arg, is_number) in args.iter_mut().zip(self.c.is_number_parameter_of_builtin_at(file, path)) {
             let Some(is_number) = is_number else { continue };
             if fx.b.func.prediction(*arg) == Prediction::None && self.takes_prediction(fx, *arg) {
                 let expected = if is_number { self.known.number } else { self.known.string };
@@ -149,7 +149,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !fx.is_typed || fx.b.func.op(callee).is_some() || fx.b.func.prediction(callee) != Prediction::None || !self.takes_prediction(fx, callee) {
             return callee;
         }
-        match self.c.function_yielded_by(fx.file, e) {
+        match self.c.function_produced_by(fx.file, e) {
             Some((file, func)) if self.shared.is_compiled(file) => {
                 let prediction = Prediction::Closure(self.name_function(file, func));
                 self.expect(fx, callee, prediction)
@@ -229,19 +229,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let ty = self.ty(fx, value);
         let so_far = fx.b.func.prediction(value);
         let tys = &self.out.tys;
-        let says_no_more_than_the_type = match prediction {
+        let adds_nothing_to_type = match prediction {
             Prediction::None => true,
             Prediction::Ty(expected) | Prediction::Field(expected) => tys.get(ty).is_described_within(tys.get(expected)),
             Prediction::Closure(_) | Prediction::ByKey(_) => false,
         };
-        if says_no_more_than_the_type || prediction == so_far {
+        if adds_nothing_to_type || prediction == so_far {
             return value;
         }
         // It has just been made, for the expression that this is expected of. Where the values of a variable meet, what is expected of the
         // variable stays, and so does what a value is looked at with.
-        let is_just_made = value.idx() + 1 == fx.b.func.values.len();
-        let is_made_for_it = !matches!(fx.b.func.op(value), None | Some(Op::Coerce { .. }));
-        if is_just_made && (so_far == Prediction::None || is_made_for_it) {
+        let is_just_created = value.idx() + 1 == fx.b.func.values.len();
+        let is_created_for_it = !matches!(fx.b.func.op(value), None | Some(Op::Coerce { .. }));
+        if is_just_created && (so_far == Prediction::None || is_created_for_it) {
             fx.b.func.values[value.idx()].prediction = prediction;
             return value;
         }
@@ -299,8 +299,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some((file, func)) = self.c.function_of_type(expected) {
             return Prediction::Closure(self.name_function(file, func));
         }
-        let described = self.describe_expected(expected);
-        let described = self.out.tys.intern(described);
+        let described = match self.expected_as_described.get(&expected) {
+            Some(&known) => known,
+            None => {
+                let described = self.describe_expected(expected);
+                let described = self.out.tys.intern(described);
+                self.expected_as_described.insert(expected, described);
+                described
+            }
+        };
         match self.prediction_of_description(described) {
             Prediction::Ty(ty) if self.out.tys.get(ty).prims & prim::NUMBER != 0 => {
                 let integers = integers(&mut *self.c);

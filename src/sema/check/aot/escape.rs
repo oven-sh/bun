@@ -71,19 +71,28 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn element_read_kept_unasserted(&mut self, file: FileId, pat: PatId) -> Option<ExprId> {
+        let PatParent::Var(d) = self.bound(file).pat_parent[pat.idx()] else { return None };
+        let init = self.hir(file)[d].init;
+        if init.is_none() {
+            return None;
+        }
+        let read = self.element_read_of_no_known_integers(file, init)?;
+        self.is_constant_used_only_where_undefined_has_an_answer(file, pat).then_some(read)
+    }
+
+    pub fn is_constant_used_only_where_undefined_has_an_answer(&mut self, file: FileId, pat: PatId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
+        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return false };
         let decl = &hir[d];
         if decl.kind != VarKind::Const || decl.ty.is_some() || decl.init.is_none() || decl.pat != pat || !matches!(hir[pat].kind, PatKind::Ident(_)) {
-            return None;
+            return false;
         }
-        let read = self.element_read_of_no_known_integers(file, decl.init)?;
         if self.enclosing_fn_of_expr(file, decl.init).is_none_or(|func| func.is_none()) || self.has_direct_eval(file) {
-            return None;
+            return false;
         }
-        let references = self.references_to(file, bound.pat_symbol[pat.idx()])?;
+        let Some(references) = self.references_to(file, bound.pat_symbol[pat.idx()]) else { return false };
         let mut known = FxHashMap::default();
-        references.iter().all(|&mention| self.is_used_where_undefined_has_an_answer(file, mention) || self.is_mentioned_where_it_is_shown_to_be_there(file, mention, &mut known)).then_some(read)
+        references.iter().all(|&mention| self.is_used_where_undefined_has_an_answer(file, mention) || self.is_mentioned_where_it_is_shown_to_be_there(file, mention, &mut known))
     }
 
     pub fn use_of_argument(&mut self, file: FileId, p: ParamId) -> u8 {
@@ -148,7 +157,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e => return 0,
                 ExprKind::Binary { op: BinOp::Comma, .. } => {}
                 ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq, left, right } => {
-                    return if self.is_nil_literal(file, if left == e { right } else { left }) { 0 } else { argument_use::OBSERVED };
+                    return if self.is_nullish_literal(file, if left == e { right } else { left }) { 0 } else { argument_use::OBSERVED };
                 }
                 ExprKind::Unary { op: UnOp::Not | UnOp::Typeof | UnOp::Void, .. } => return 0,
                 ExprKind::Call(call) if hir[call].callee == e => return 0,
@@ -159,7 +168,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_nil_literal(&self, file: FileId, e: ExprId) -> bool {
+    fn is_nullish_literal(&self, file: FileId, e: ExprId) -> bool {
         match self.hir(file)[e].kind {
             ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => true,
             ExprKind::Ident(name) => self.bound(file).expr_symbol[e.idx()].is_none() && self.atoms().bytes(name) == b"undefined",

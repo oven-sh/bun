@@ -712,26 +712,121 @@ pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) 
     check_for_build(checked, log, false)
 }
 
+struct Handed<T>(T);
+// SAFETY: this thread waits for the other one, so what is handed over is used by one thread at a time.
+unsafe impl<T> Send for Handed<T> {}
+impl<T> Handed<T> {
+    fn take(self) -> T {
+        self.0
+    }
+}
+
+struct EarlyAnalysis {
+    request_sender: std::sync::mpsc::Sender<Handed<(TypeChecked<'static, 'static>, &'static mut bun_ast::Log)>>,
+    result_receiver: std::sync::mpsc::Receiver<Handed<Option<bun_ast::type_tags::ProgramFacts>>>,
+    is_cancelled: std::sync::Arc<AtomicBool>,
+}
+
+impl Drop for EarlyAnalysis {
+    fn drop(&mut self) {
+        self.is_cancelled.store(true, Ordering::Relaxed);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_runtime_start_early_analysis(
+    cwd: &[u8],
+    tsconfig: Option<&[u8]>,
+    conditions: &[Box<[u8]>],
+    loaders: &bun_ast::LoaderHashTable,
+    entry_points: &[&[u8]],
+) -> (bun_bundler::options::EarlyAnalysis, std::sync::mpsc::Sender<Vec<u8>>) {
+    let (cwd, tsconfig, conditions) = (cwd.to_vec(), tsconfig.map(<[u8]>::to_vec), conditions.to_vec());
+    let by_extension = script_kinds_by_extension(loaders);
+    let paths: Vec<Vec<u8>> = entry_points.iter().filter(|path| has_types_with(&by_extension, path)).map(|path| path.to_vec()).collect();
+    let (request_sender, request_receiver) = std::sync::mpsc::channel::<Handed<(TypeChecked<'static, 'static>, &'static mut bun_ast::Log)>>();
+    let (result_sender, result_receiver) = std::sync::mpsc::channel();
+    let (path_sender, path_receiver) = std::sync::mpsc::channel::<Vec<u8>>();
+    let is_cancelled = std::sync::Arc::new(AtomicBool::new(false));
+    let early_parse_cancelled = Some(std::sync::Arc::clone(&is_cancelled));
+    let early_scan_cancelled = Some(std::sync::Arc::clone(&is_cancelled));
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
+            bun_sema_driver::with_early_run(|run| {
+                std::thread::scope(|scope| {
+                    let parse_early = || {
+                        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
+                        let entries = Paths::EntryPoints(Entries {
+                            paths: &paths,
+                            script_kinds: &[],
+                            script_kinds_by_extension: &by_extension,
+                            conditions: &conditions,
+                        });
+                        let request = Request {
+                            is_one_program: true,
+                            plan_options: bun_sema_driver::PlanOptions { early_run: Some(run), early_parse_only: true, ..Default::default() },
+                            ..request(&cwd, tsconfig.as_deref(), &entries, &[], 0, None)
+                        };
+                        bun_sema_driver::check_provided_then(&request, with_pages(&cwd, Provided { early_paths: Some(path_receiver), early_parse_cancelled, without_builtin_modules: true, ..Default::default() }), |_| ());
+                    };
+                    let early_parse = (!paths.is_empty()).then(|| {
+                        (std::thread::Builder::new().stack_size(64 << 20))
+                            .spawn_scoped(scope, parse_early)
+                            .expect("failed to spawn the early parse thread")
+                    });
+                    if !paths.is_empty() {
+                        let entries = Paths::EntryPoints(Entries {
+                            paths: &paths,
+                            script_kinds: &[],
+                            script_kinds_by_extension: &by_extension,
+                            conditions: &conditions,
+                        });
+                        let request = Request {
+                            is_one_program: true,
+                            plan_options: bun_sema_driver::PlanOptions { early_run: Some(run), early_scan_only: true, ..Default::default() },
+                            ..request(&cwd, tsconfig.as_deref(), &entries, &[], 0, None)
+                        };
+                        bun_sema_driver::check_provided_then(&request, with_pages(&cwd, Provided { early_parse_cancelled: early_scan_cancelled, without_builtin_modules: true, ..Default::default() }), |_| ());
+                    }
+                    if let Ok(handed) = request_receiver.recv() {
+                        let (checked, log) = handed.take();
+                        let early_parse = std::cell::Cell::new(early_parse);
+                        let wait_for_early_parse = || {
+                            if let Some(early_parse) = early_parse.take() {
+                                let _ = early_parse.join();
+                            }
+                        };
+                        let found = analyze_on_this_thread(checked, log, Some((run, &wait_for_early_parse)));
+                        bun_core::Output::flush();
+                        let _ = result_sender.send(Handed(found));
+                    }
+                });
+            });
+        })
+        .expect("failed to spawn the analysis thread");
+    (Box::new(EarlyAnalysis { request_sender, result_receiver, is_cancelled }), path_sender)
+}
+
 /// `BundleOptions::analyze` for `bun build --compile --aot`: the entry points are checked as `bun check` checks them, and the bundle is
 /// compiled by the types of that program. What is an error there, in code that is in the program, is an error of the build, and nothing
 /// is compiled: see `bun_aot::Translation::finish`. The checker
 /// resolves every import itself, for its types. What the bundler has resolved it to is the code, which only the compiler is told. It
 /// is the check of `--check` too, which the bundler does not run besides.
 pub(crate) fn analyze_for_build(
-    checked: TypeChecked,
+    mut checked: TypeChecked,
     log: &mut bun_ast::Log,
 ) -> Option<bun_ast::type_tags::ProgramFacts> {
+    if let Some(early) = checked.early_analysis.take().and_then(|early| early.downcast::<EarlyAnalysis>().ok()) {
+        let handed = unsafe { core::mem::transmute::<(TypeChecked<'_, '_>, &mut bun_ast::Log), (TypeChecked<'static, 'static>, &'static mut bun_ast::Log)>((checked, log)) };
+        early.is_cancelled.store(true, Ordering::Relaxed);
+        early.request_sender.send(Handed(handed)).ok().expect("the analysis thread exited early");
+        return early.result_receiver.recv().expect("the analysis thread exited without a result").take();
+    }
     // `Bun.build` bundles on a thread of its own, which has less stack than a task of the checker asks for.
     if bun_core::StackCheck::init().remaining() >= 8 << 20 {
-        return analyze_on_this_thread(checked, log);
-    }
-    struct Handed<T>(T);
-    // SAFETY: this thread waits for the other one, so what is handed over is used by one thread at a time.
-    unsafe impl<T> Send for Handed<T> {}
-    impl<T> Handed<T> {
-        fn take(self) -> T {
-            self.0
-        }
+        return analyze_on_this_thread(checked, log, None);
     }
     let handed = Handed((checked, log));
     let analyzed = std::thread::scope(|scope| {
@@ -740,7 +835,7 @@ pub(crate) fn analyze_for_build(
             .spawn_scoped(scope, move || {
                 bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Analyze"));
                 let (checked, log) = handed.take();
-                let found = analyze_on_this_thread(checked, log);
+                let found = analyze_on_this_thread(checked, log, None);
                 bun_core::Output::flush();
                 Handed(found)
             })
@@ -756,6 +851,7 @@ pub(crate) fn analyze_for_build(
 fn analyze_on_this_thread(
     checked: TypeChecked,
     log: &mut bun_ast::Log,
+    early: Option<(bun_sema_driver::EarlyRun, &dyn Fn())>,
 ) -> Option<bun_ast::type_tags::ProgramFacts> {
     use bun_sema_driver::host::from_native;
     let TypeChecked {
@@ -769,15 +865,18 @@ fn analyze_on_this_thread(
         imports,
         dropped_imports,
         without_side_effects,
+        lifted_commonjs,
         statements,
         texts,
         assets,
+        has_late_strings,
         defines,
         features,
         rewrite_jest_for_tests,
         ignore_dce_annotations,
         jsx_side_effects,
         minify_syntax,
+        shortens_names,
         preserve_source_paths,
         react_compiler_outputs,
         jsx,
@@ -785,32 +884,9 @@ fn analyze_on_this_thread(
         explain,
         explains_into_log,
         logs_type_errors,
+        early_analysis: _,
     } = checked;
     let file_url = |path: &[u8]| format!("{}", bun_url::file_url_from_string(&bun_core::String::from_bytes(path))).into_bytes();
-    let mut constants = bun_aot::Constants {
-        logs_type_errors,
-        notes_spans: false,
-        has_preloads: false,
-        own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
-        has_test_globals: rewrite_jest_for_tests,
-        ignores_dce_annotations: ignore_dce_annotations,
-        jsx_has_side_effects: jsx_side_effects,
-        minifies_syntax: minify_syntax || preserve_source_paths,
-        root: from_native(cwd),
-        defines: defines.iter().map(|(name, value)| (name.to_vec(), value.to_vec())).collect(),
-        features: features.map(<[u8]>::to_vec).collect(),
-        resolved: Some((imports.map(|(from, spec, to)| ((from_native(from), spec.to_vec()), from_native(to)))).collect()),
-        dropped_imports: dropped_imports.map(|(from, spec)| (from_native(from), spec.to_vec())).collect(),
-        without_side_effects: without_side_effects.map(from_native).collect(),
-        statements: bun_aot::Constants::statements_by_file(statements.map(|(path, start, verdict)| (from_native(path), start, verdict))),
-        texts: texts.map(|(path, text)| (from_native(path), text.to_vec())).collect(),
-        assets: assets.map(|(path, key)| (from_native(path), key.to_vec())).collect(),
-        function_texts: function_texts.map(|texts| {
-            (texts.iter())
-                .map(|(path, printed, ranges)| (from_native(path), (printed.to_vec(), ranges.iter().map(|it| (it.key as u32, it.start as u32, it.end as u32)).collect())))
-                .collect()
-        }),
-    };
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
     // `Request::code`
@@ -821,8 +897,72 @@ fn analyze_on_this_thread(
         code.push(path.to_vec());
         (path, text)
     });
+    let (imports, statements) = (Handed(imports), Handed(statements));
+    let (resolved, statements_by_file, texts_already_read) = std::thread::scope(|scope| {
+        let resolved = scope.spawn(move || {
+            let imports = imports.take();
+            let mut converted_paths: bun_sema_driver::FxHashMap<(*const u8, usize), Vec<u8>> = Default::default();
+            let mut from_native_once = |path: &[u8]| converted_paths.entry((path.as_ptr(), path.len())).or_insert_with(|| from_native(path)).clone();
+            let resolved: bun_sema_driver::FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>> = (imports.map(|(from, spec, to)| ((from_native_once(from), spec.to_vec()), from_native_once(to)))).collect();
+            resolved
+        });
+        let statements_by_file = scope.spawn(move || {
+            let statements = statements.take();
+            let mut statements_by_file: bun_sema_driver::FxHashMap<Vec<u8>, Vec<(u32, bool)>> = Default::default();
+            let mut statements_of_file: Option<(&[u8], Vec<(u32, bool)>)> = None;
+            for (path, start, verdict) in statements {
+                match &mut statements_of_file {
+                    Some((known, list)) if core::ptr::eq(*known, path) => list.push((start, verdict)),
+                    _ => {
+                        if let Some((known, mut list)) = statements_of_file.replace((path, vec![(start, verdict)])) {
+                            statements_by_file.entry(from_native(known)).or_default().append(&mut list);
+                        }
+                    }
+                }
+            }
+            if let Some((known, mut list)) = statements_of_file {
+                statements_by_file.entry(from_native(known)).or_default().append(&mut list);
+            }
+            statements_by_file
+        });
+        let texts_already_read = already_read(cwd, &mut sources);
+        let resolved = resolved.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        let statements_by_file = statements_by_file.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        (resolved, statements_by_file, texts_already_read)
+    });
+    let mut constants = bun_aot::Constants {
+        logs_type_errors,
+        notes_spans: false,
+        has_preloads: false,
+        own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
+        has_test_globals: rewrite_jest_for_tests,
+        ignores_dce_annotations: ignore_dce_annotations,
+        jsx_has_side_effects: jsx_side_effects,
+        minifies_syntax: minify_syntax || preserve_source_paths,
+        shortens_names,
+        root: from_native(cwd),
+        defines: defines.iter().map(|(name, value)| (name.to_vec(), value.to_vec())).collect(),
+        features: features.map(<[u8]>::to_vec).collect(),
+        resolved: Some(resolved),
+        dropped_imports: dropped_imports.map(|(from, spec)| (from_native(from), spec.to_vec())).collect(),
+        without_side_effects: without_side_effects.map(from_native).collect(),
+        lifted_commonjs: lifted_commonjs.map(from_native).collect(),
+        statements: statements_by_file,
+        texts: texts.map(|(path, text)| (from_native(path), text.to_vec())).collect(),
+        assets: assets.map(|(path, key)| (from_native(path), key.to_vec())).collect(),
+        function_texts: function_texts.map(|later| -> Box<dyn Fn() -> bun_aot::FunctionTexts + Send + Sync> {
+            let later = std::sync::Mutex::new(later);
+            Box::new(move || {
+                let later = later.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let texts: bun_aot::FunctionTexts = ((0..later.number_of_lists).filter_map(|_| later.printed.recv().ok()).flatten())
+                    .map(|(path, printed, ranges)| (from_native(&path), (printed.into_vec(), ranges.iter().map(|it| (it.key as u32, it.start as u32, it.end as u32)).collect())))
+                    .collect();
+                texts
+            })
+        }),
+    };
     let mut provided = Provided {
-        already_read: already_read(cwd, &mut sources),
+        already_read: texts_already_read,
         jsx_of_files: (jsx.map(|(path, of_file)| {
             let of_file = bun_sema_driver::host::JsxOfFile {
                 is_classic: of_file.is_classic,
@@ -835,6 +975,7 @@ fn analyze_on_this_thread(
         .collect(),
         ..Default::default()
     };
+    provided.build_constants = Some(constants.build_constants());
     provided.constants_of_imports = (constants.resolved.iter().flatten())
         .filter(|(_, to)| to.ends_with(b".text.json") || to.ends_with(b".file.json"))
         .map(|(import, to)| (import.clone(), to.clone()))
@@ -870,9 +1011,9 @@ declare module "vitest*" { export * from "bun:test"; }
         places_in_code.entry(known.clone()).or_default().push(place);
     }
     let mut known_paths: bun_sema_driver::FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
-    for (path, javascript) in react_compiler_outputs {
+    for (path, javascript) in react_compiler_outputs.wait() {
         let elsewhere = [path, b".js"].concat();
-        provided.already_read.insert(from_native(&elsewhere), javascript.to_vec());
+        provided.already_read.insert(from_native(&elsewhere), javascript.into_vec());
         if let Some(places) = places_in_code.remove(path) {
             for &place in &places {
                 code[place].clone_from(&elsewhere);
@@ -934,6 +1075,7 @@ declare module "vitest*" { export * from "bun:test"; }
             resolved: constants.resolved.clone().unwrap_or_default(),
             dropped_imports: constants.dropped_imports.iter().cloned().collect(),
             without_side_effects: constants.without_side_effects.iter().cloned().collect(),
+            lifted_commonjs: constants.lifted_commonjs.iter().cloned().collect(),
             statements: constants.statements.iter().flat_map(|(path, list)| list.iter().map(move |&(start, verdict)| (path.clone(), start, verdict))).collect(),
             texts: constants.texts.iter().map(|(path, text)| (path.clone(), text.clone())).collect(),
             assets: constants.assets.iter().map(|(path, key)| (path.clone(), key.clone())).collect(),
@@ -971,19 +1113,25 @@ declare module "vitest*" { export * from "bun:test"; }
         if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_FILE.get() {
             if let Ok(typed) = std::fs::read(String::from_utf8_lossy(path).as_ref()) {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
+                    engine: None,
                     typed: Some(typed.into_boxed_slice()),
                     entry_points: compiled_entry_points(),
+                    tokens: None,
                 });
             }
             return vec![false; errors.len()];
         }
-        let bun_aot::ForEngine { written: typed, errors_that_stand, explained: lines } = translation.finish_for_engine(program, in_parallel, errors);
+        let engine: bun_threading::Guarded<Option<bun_ast::type_tags::EarlyEngine>> = bun_threading::Guarded::new(None);
+        let on_written = |typed: &[u8]| *engine.lock() = Some(bun_jsc::cached_bytecode::start_typed_program(typed, has_late_strings));
+        let bun_aot::ForEngine { written: typed, errors_that_stand, explained: lines, tokens } = translation.finish_for_engine(program, in_parallel, errors, &on_written);
         *explained.lock() = lines;
         match typed {
             Ok(typed) => {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
-                    typed: Some(typed.into_boxed_slice()),
+                    engine: engine.lock().take(),
+                    typed: Some(typed),
                     entry_points: compiled_entry_points(),
+                    tokens,
                 });
             }
             Err(problems) => *not_compiled.lock() = problems,
@@ -1004,8 +1152,12 @@ declare module "vitest*" { export * from "bun:test"; }
         before_visits: Some(&note_file),
         all_visited_once: Some(&merge_notes),
         compile: Some(&analyze),
+        plan_options: bun_sema_driver::PlanOptions { early_run: early.map(|(run, _)| run), ..Default::default() },
         ..request(cwd, tsconfig, &entries, &[], 0, None)
     };
+    if let Some((_, wait_for_early_parse)) = early {
+        wait_for_early_parse();
+    }
     let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
     add_to_log(&report, log);
     if explains_into_log {
@@ -1056,15 +1208,18 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         imports: _,
         dropped_imports: _,
         without_side_effects: _,
+        lifted_commonjs: _,
         statements: _,
         texts: _,
         assets: _,
+        has_late_strings: _,
         defines: _,
         features: _,
         rewrite_jest_for_tests: _,
         ignore_dce_annotations: _,
         jsx_side_effects: _,
         minify_syntax: _,
+        shortens_names: _,
         preserve_source_paths: _,
         react_compiler_outputs: _,
         jsx: _,
@@ -1072,6 +1227,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         explain: _,
         explains_into_log: _,
         logs_type_errors: _,
+        early_analysis: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.

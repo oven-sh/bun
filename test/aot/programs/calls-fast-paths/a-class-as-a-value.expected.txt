@@ -3,6 +3,6 @@ declared: Function 0, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSe
 60 classes as values: Function 60, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 0
 C.prototype as a value: Function 60, NativeExecutable 0, Structure 61, PropertyTable 60, GetterSetter 0, Object 60
 new C through the value, instanceof: Function 1, NativeExecutable 0, Structure 63, PropertyTable 0, GetterSetter 0, Object 60
-30 of them looked at: Function 210, NativeExecutable 0, Structure 60, PropertyTable 60, GetterSetter 30, Object 0
-all looked at: Function 210, NativeExecutable 0, Structure 60, PropertyTable 60, GetterSetter 30, Object 0
+30 of them looked at: Function 30, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 0
+all looked at: Function 60, NativeExecutable 0, Structure 0, PropertyTable 0, GetterSetter 0, Object 0
 2475

@@ -13,12 +13,12 @@ try { console.log(JSON.stringify(three), three.author.nick, three.refs.length, t
 const six = make(8)
 try { for (const k of Object.keys(six)) dropAny(six, k); console.log("all keys: no error") } catch (e) { console.log("all keys:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(Object.keys(six).join()) } catch (e) { console.log("line 16:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// What is absent would be looked for up the chain: the prototype cannot be another.
+// An absent property would be looked up on the prototype chain: the prototype cannot be replaced.
 const shelf: { title?: string; pages?: number } = {}
 const five = make(6)
 try { Object.setPrototypeOf(five, shelf); console.log("setPrototypeOf: no error") } catch (e) { console.log("setPrototypeOf:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(Object.getPrototypeOf(five) === Object.prototype) } catch (e) { console.log("line 21:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// Below Object.create: that is no plain data, so the cast does not copy it, and lets it through as it is: the read goes up the chain. Exact.
+// Created with Object.create: that is not plain data, so the cast does not copy it and lets it through unchanged: the read goes up the chain. Same as plain Bun.
 const original = make(9)
 try { const derived = Object.create(original) as Doc; console.log(derived.id); console.log("Object.create as Doc: no error") } catch (e) { console.log("Object.create as Doc:", e instanceof TypeError ? "TypeError" : "other " + e) }
 // Classes: an own property in front of a method; the prototype gets properties by the names of fields.
@@ -29,6 +29,6 @@ try { (Page.prototype as any).note = "N"; console.log("property added to the pro
 try { dropAny(page, "num"); console.log("required field of an instance: no error") } catch (e) { console.log("required field of an instance:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { delete (Page.prototype as any).label; console.log("method deleted from the prototype: no error") } catch (e) { console.log("method deleted from the prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(page.label(), Object.keys(page).join(), Object.keys(Page.prototype).length) } catch (e) { console.log("line 32:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// A constructor function with `this: T`, constructed through any: the run time makes the object as the layout of `this`. Exact.
+// A constructor function with `this: T`, constructed through any: the runtime creates the object with the layout of `this`. Same as plain Bun.
 function Leaf(this: Author, nick: string) { this.nick = nick; this.age = 1 }
 try { const leaf: Author = new (Leaf as any)("leaf"); console.log(leaf.age); console.log("new (F as any)(): no error") } catch (e) { console.log("new (F as any)():", e instanceof TypeError ? "TypeError" : "other " + e) }

@@ -985,6 +985,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
+            if ctx.runtime_options.aot {
+                pretty_errorln!(
+                    "<r><red>error<r>: <b>--aot<r> does not apply to a shell script (<b>{}<r>). Run a JavaScript or TypeScript file.",
+                    bstr::BStr::new(&entry_path),
+                );
+                Global::exit(1);
+            }
             // It has no entry point to start from, like a script of a package.json.
             if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
                 Global::exit(1);
@@ -1207,6 +1214,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             use_aot: !bun_resolver::StandaloneModuleGraph::aot_image(&*graph).is_empty(),
+            crash_if_interpreter_is_used: graph.runtime_options.crash_if_interpreter_is_used,
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
@@ -1258,7 +1266,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(report) = ctx.runtime_options.aot_decode_crash_report.take() {
             let frames = bun_crash_handler::compiled_frames_of_report(&report);
             if frames.is_empty() {
-                Output::err_generic("--aot-decode-crash-report: there are no frames of this executable's compiled code in that report", ());
+                Output::err_generic("--aot-decode-crash-report: that report has no frames from this executable's compiled code", ());
                 Global::exit(1);
             }
             let _ = Output::writer().write_all(&frames);
@@ -1551,7 +1559,11 @@ impl Run<'_> {
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
+                    unsafe extern "C" {
+                        fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
+                    }
+                    // SAFETY: `global` valid for VM lifetime.
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs && !unsafe { JSC__AOT__entryPointIsCommonJS(global) };
                     // SAFETY: `global` valid for VM lifetime.
                     let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
@@ -2517,6 +2529,13 @@ impl RunCommand {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
+                        if ctx.runtime_options.aot {
+                            pretty_errorln!(
+                                "<r><red>error<r>: <b>--aot<r> does not apply to a package.json script (<b>{}<r>). Add it to the command inside the script, or run a file.",
+                                bstr::BStr::new(target_name),
+                            );
+                            Global::exit(1);
+                        }
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Found matching script `{}`",
@@ -2760,6 +2779,13 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    if ctx.runtime_options.aot {
+                        pretty_errorln!(
+                            "<r><red>error<r>: <b>--aot<r> does not apply to an executable (<b>{}<r>). Run a JavaScript or TypeScript file.",
+                            bstr::BStr::new(destination.as_bytes()),
+                        );
+                        Global::exit(1);
+                    }
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
                         && !crate::cli::check_command::check_project_before()

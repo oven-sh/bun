@@ -19,7 +19,7 @@ function make(): TransientSym { return { flags: 1, links: { check: 0 }, count: 0
 { const s: any = make(); s.label = "x"; delete s.label; log.push(s.label, "label" in s); }
 { const s = make(); s.count = 1; Object.defineProperty(s, "count", { value: 7, writable: true, enumerable: true, configurable: true }); log.push(s.count); }
 { const s = make(); s.count = 1; Object.freeze(s); try { s.count = 2; } catch (e) { log.push("frozen"); } log.push(s.count); }
-// Numbers come back as they went in.
+// Numbers are read back unchanged.
 { const s = make(); s.count = -0; log.push(Object.is(s.count, -0)); s.count = NaN; log.push(s.count); s.count = 2 ** 40; log.push(s.count); s.count = 1.5; log.push(s.count); }
 // The same object is read back: identity.
 { const s = make(); const l: Links = { check: 4 }; s.links = l; log.push(s.links === l); s.links.check = 8; log.push(l.check, s.links.check); }

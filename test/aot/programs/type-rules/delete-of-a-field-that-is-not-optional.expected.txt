@@ -5,5 +5,5 @@ the same by Reflect.deleteProperty: TypeError
 {"id":4,"title":"t4","refs":[4]} true
 all fields deleted: TypeError
 {"id":8,"title":"t8","author":{"nick":"a8"},"refs":[8]}
-own property named like a method: TypeError
-p1 true p1 num
+own property named like a method: no error
+own label true p1 num

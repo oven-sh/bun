@@ -897,6 +897,9 @@ impl<'p> Checker<'p, '_> {
         containing: TypeId,
         is_unchecked_js: bool,
     ) {
+        if self.is_behind_the_check() {
+            return;
+        }
         // `NodeCheckFlagsTypeChecked`: the error is already being built.
         if self
             .reporting_nonexistent

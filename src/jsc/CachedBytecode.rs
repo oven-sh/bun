@@ -124,6 +124,19 @@ unsafe extern "C" {
         replaced_strings: *const u8,
         replaced_strings_size: usize,
     ) -> bool;
+    fn Bun__AOT__readTypedProgram(program: *const u8, size: usize) -> *mut core::ffi::c_void;
+    fn Bun__AOT__optimizeTypedProgram(
+        prepared: *mut core::ffi::c_void,
+        replaced_strings: *const u8,
+        replaced_strings_size: usize,
+    );
+    fn Bun__AOT__discardTypedProgram(prepared: *mut core::ffi::c_void);
+    fn Bun__BytecodeLinkEncoder__setPreparedTypedProgram(
+        this: *mut BytecodeLinkEncoder,
+        prepared: *mut core::ffi::c_void,
+        modules: *const u32,
+        number_of_modules: usize,
+    ) -> bool;
     fn Bun__BytecodeLinkEncoder__finish(
         this: *mut BytecodeLinkEncoder,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -467,6 +480,43 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_set_typed_program(
 }
 
 #[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prepared_typed_program(
+    encoder: NonNull<BytecodeLinkEncoder>,
+    prepared: usize,
+    modules: &[u32],
+) -> bool {
+    unsafe {
+        Bun__BytecodeLinkEncoder__setPreparedTypedProgram(
+            encoder.as_ptr(),
+            prepared as *mut core::ffi::c_void,
+            modules.as_ptr(),
+            modules.len(),
+        )
+    }
+}
+
+pub fn start_typed_program(program: &[u8], waits_for_strings: bool) -> bun_ast::type_tags::EarlyEngine {
+    crate::initialize(crate::InitializeOptions::default());
+    let (address, size) = (program.as_ptr() as usize, program.len());
+    let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
+    let thread = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("AOT engine"));
+            let prepared = unsafe { Bun__AOT__readTypedProgram(address as *const u8, size) };
+            let strings = if waits_for_strings { receiver.recv().ok() } else { Some(Vec::new()) };
+            if let Some(strings) = strings {
+                unsafe { Bun__AOT__optimizeTypedProgram(prepared, strings.as_ptr(), strings.len()) };
+            }
+            prepared as usize
+        })
+        .expect("failed to spawn the AOT engine thread");
+    bun_ast::type_tags::EarlyEngine::new(thread, waits_for_strings.then_some(sender), |prepared| unsafe {
+        Bun__AOT__discardTypedProgram(prepared as *mut core::ffi::c_void)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
     encoder: NonNull<BytecodeLinkEncoder>,
     blob: &[u8],
@@ -651,7 +701,10 @@ pub(crate) fn __bun_jsc_build_program_data(
             return;
         }
         unsafe {
-            (*ctx.cast::<Vec<u8>>()).extend_from_slice(core::slice::from_raw_parts(bytes, size))
+            let out = &mut *ctx.cast::<Vec<u8>>();
+            out.reserve(size);
+            bun_core::copy_in_parallel(out.spare_capacity_mut().as_mut_ptr().cast::<u8>(), bytes, size);
+            out.set_len(out.len() + size);
         };
     }
     let mut out: Vec<u8> = Vec::new();

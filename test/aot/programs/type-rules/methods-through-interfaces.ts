@@ -17,7 +17,7 @@ const literalMethod: Speaker = { id: 1, speak(greeting) { return greeting + " me
 const literalArrow: Speaker = { id: 2, speak: greeting => greeting + " arrow", shout: () => "arrow shout" }
 attempt("an heir of a literal with the methods", () => { const inherited: Speaker = Object.assign(Object.create({ speak: sharedSpeak, shout(this: Speaker) { return "proto shout " + this.id } }), { id: 11 }); return talk(inherited) })
 attempt("an heir of a Speaker", () => talk(Object.create(literalMethod)))
-// A proxy is no object of the type of its target, and enters as it is.
+// A proxy does not have the type of its target, and is accepted unchanged.
 attempt("a proxy", () => { const proxied: Speaker = new Proxy<Speaker>({ id: 13, speak: sharedSpeak }, {}); return talk(proxied) })
 // A method of a class takes for `this` what was made as a type that is assignable to the class. A Speaker is a ClassSpeaker (typed-objects/methods-through-interfaces), and no LoudSpeaker: its `shout` is optional.
 attempt("a method of an extending class on a literal", () => new LoudSpeaker(5).speak.call(literalArrow, "d"))

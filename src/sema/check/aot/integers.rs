@@ -36,12 +36,12 @@ use std::rc::Rc;
 use super::OnceLock;
 
 /// Up to here a double stands for every integer.
-const MOST_EXACT: i64 = 1 << 53;
+const MAX_EXACT: i64 = 1 << 53;
 pub(super) const INT32: (i64, i64) = (i32::MIN as i64, i32::MAX as i64);
-const MOST_UINT32: i64 = u32::MAX as i64;
-/// A count does not pass `MOST_EXACT`: what is added to it or taken from it at a time is at most this. See `sum`.
-const MOST_STEP: i64 = 1024;
-/// What is computed in one go, and not counted up to, is an integer up to here: a literal, a product, a sum of two such. So nothing but counting gets near `MOST_EXACT`.
+const MAX_UINT32: i64 = u32::MAX as i64;
+/// A count does not pass `MAX_EXACT`: what is added to it or taken from it at a time is at most this. See `sum`.
+const MAX_STEP: i64 = 1024;
+/// What is computed in one go, and not counted up to, is an integer up to here: a literal, a product, a sum of two such. So nothing but counting gets near `MAX_EXACT`.
 const MOST_COMPUTED: i64 = 1 << 52;
 /// The engine makes no longer string.
 const MOST_STRING_LENGTH: i64 = i32::MAX as i64;
@@ -59,7 +59,7 @@ const ARRAYS_OF_INTEGERS: [(&[u8], i64, i64); 7] = [
     (b"Int16Array", i16::MIN as i64, i16::MAX as i64),
     (b"Uint16Array", 0, u16::MAX as i64),
     (b"Int32Array", INT32.0, INT32.1),
-    (b"Uint32Array", 0, MOST_UINT32),
+    (b"Uint32Array", 0, MAX_UINT32),
 ];
 
 
@@ -69,7 +69,7 @@ struct Numbers {
     least: i64,
     most: i64,
     nil: bool,
-    nil_left_out: bool,
+    nullish_left_out: bool,
 }
 
 /// `None`: it can be anything.
@@ -77,11 +77,11 @@ type Found = Option<Numbers>;
 
 impl Numbers {
     /// No value gets there.
-    const NOTHING: Numbers = Numbers { least: 1, most: 0, nil: false, nil_left_out: false };
-    const NIL: Numbers = Numbers { least: 1, most: 0, nil: true, nil_left_out: false };
+    const NOTHING: Numbers = Numbers { least: 1, most: 0, nil: false, nullish_left_out: false };
+    const NIL: Numbers = Numbers { least: 1, most: 0, nil: true, nullish_left_out: false };
 
     fn integers(least: i64, most: i64) -> Numbers {
-        if least > most { Numbers::NOTHING } else { Numbers { least, most, nil: false, nil_left_out: false } }
+        if least > most { Numbers::NOTHING } else { Numbers { least, most, nil: false, nullish_left_out: false } }
     }
 
     fn has_no_number(self) -> bool {
@@ -100,25 +100,25 @@ impl Numbers {
 
     /// The one or the other.
     fn or(self, other: Numbers) -> Numbers {
-        let (nil, nil_left_out) = (self.nil || other.nil, self.nil_left_out || other.nil_left_out);
+        let (nil, nullish_left_out) = (self.nil || other.nil, self.nullish_left_out || other.nullish_left_out);
         if self.has_no_number() {
-            return Numbers { nil, nil_left_out, ..other };
+            return Numbers { nil, nullish_left_out, ..other };
         }
         if other.has_no_number() {
-            return Numbers { nil, nil_left_out, ..self };
+            return Numbers { nil, nullish_left_out, ..self };
         }
-        Numbers { least: self.least.min(other.least), most: self.most.max(other.most), nil, nil_left_out }
+        Numbers { least: self.least.min(other.least), most: self.most.max(other.most), nil, nullish_left_out }
     }
 
     /// What is both.
     fn and(self, other: Numbers) -> Numbers {
-        let nil_left_out = self.nil_left_out || other.nil_left_out;
-        Numbers { nil: self.nil && other.nil || nil_left_out, nil_left_out, ..self.within(other.least, other.most) }
+        let nullish_left_out = self.nullish_left_out || other.nullish_left_out;
+        Numbers { nil: self.nil && other.nil || nullish_left_out, nullish_left_out, ..self.within(other.least, other.most) }
     }
 
     /// Without the numbers below `least` or above `most`.
     fn within(self, least: i64, most: i64) -> Numbers {
-        Numbers { nil: self.nil, nil_left_out: self.nil_left_out, ..Numbers::integers(self.least.max(least), self.most.min(most)) }
+        Numbers { nil: self.nil, nullish_left_out: self.nullish_left_out, ..Numbers::integers(self.least.max(least), self.most.min(most)) }
     }
 
     /// What is truthy of it. Zero in the middle of the range stays.
@@ -127,8 +127,8 @@ impl Numbers {
     }
 
     /// As an operator on 32 bits takes it: `undefined` and `null` become zero.
-    fn with_nil_as_zero(self) -> Numbers {
-        if self.nil { Numbers { nil: false, nil_left_out: false, ..self.or(Numbers::integers(0, 0)) } } else { self }
+    fn with_nullish_as_zero(self) -> Numbers {
+        if self.nil { Numbers { nil: false, nullish_left_out: false, ..self.or(Numbers::integers(0, 0)) } } else { self }
     }
 
     /// With the least and the most moved outward to one of a few numbers.
@@ -141,16 +141,16 @@ impl Numbers {
         } else if self.least >= INT32.0 {
             INT32.0
         } else {
-            -MOST_EXACT
+            -MAX_EXACT
         };
         let most = if self.most <= INT32.1 {
             INT32.1
-        } else if self.most <= MOST_UINT32 {
-            MOST_UINT32
+        } else if self.most <= MAX_UINT32 {
+            MAX_UINT32
         } else {
-            MOST_EXACT
+            MAX_EXACT
         };
-        Numbers { least, most, nil: self.nil, nil_left_out: self.nil_left_out }
+        Numbers { least, most, nil: self.nil, nullish_left_out: self.nullish_left_out }
     }
 }
 
@@ -295,14 +295,14 @@ fn integer(value: f64) -> Found {
 
 /// What `ToInt32` makes of it. `None`: any int32.
 fn to_int32(it: Numbers) -> Option<(i64, i64)> {
-    let (least, most) = it.with_nil_as_zero().range()?;
+    let (least, most) = it.with_nullish_as_zero().range()?;
     (least >= INT32.0 && most <= INT32.1).then_some((least, most))
 }
 
 /// The same for `ToUint32`.
 fn to_uint32(it: Numbers) -> Option<(i64, i64)> {
-    let (least, most) = it.with_nil_as_zero().range()?;
-    (least >= 0 && most <= MOST_UINT32).then_some((least, most))
+    let (least, most) = it.with_nullish_as_zero().range()?;
+    (least >= 0 && most <= MAX_UINT32).then_some((least, most))
 }
 
 /// The least number of the form 2^k - 1 that `value`, which is not negative, is not above.
@@ -315,12 +315,12 @@ fn ones(value: i64) -> i64 {
 /// where a double is rounded. An end of a range that lies at the limit is where a count was cut off, or moved outward to (`Numbers::rounded`).
 fn sum(a: (i64, i64), b: (i64, i64)) -> Option<(i64, i64)> {
     let (least, most) = (a.0 + b.0, a.1 + b.1);
-    let is_step = |it: (i64, i64)| it.0 >= -MOST_STEP && it.1 <= MOST_STEP;
+    let is_step = |it: (i64, i64)| it.0 >= -MAX_STEP && it.1 <= MAX_STEP;
     if is_step(a) || is_step(b) {
-        return Some((least.clamp(-MOST_EXACT, MOST_EXACT), most.clamp(-MOST_EXACT, MOST_EXACT)));
+        return Some((least.clamp(-MAX_EXACT, MAX_EXACT), most.clamp(-MAX_EXACT, MAX_EXACT)));
     }
-    let is_count = |it: (i64, i64)| it.0 == -MOST_EXACT || it.1 == MOST_EXACT;
-    let limit = if is_count(a) || is_count(b) { MOST_EXACT } else { MOST_COMPUTED };
+    let is_count = |it: (i64, i64)| it.0 == -MAX_EXACT || it.1 == MAX_EXACT;
+    let limit = if is_count(a) || is_count(b) { MAX_EXACT } else { MOST_COMPUTED };
     (least >= -limit && most <= limit).then_some((least, most))
 }
 
@@ -356,8 +356,8 @@ fn bitwise(op: BinOp, a: Found, b: Found) -> (i64, i64) {
         _ => match (a.and_then(to_uint32), count) {
             (Some(x), Some(count)) => (x.0 >> count, x.1 >> count),
             (Some(x), None) => (0, x.1),
-            (None, Some(count)) => (0, MOST_UINT32 >> count),
-            (None, None) => (0, MOST_UINT32),
+            (None, Some(count)) => (0, MAX_UINT32 >> count),
+            (None, None) => (0, MAX_UINT32),
         },
     }
 }
@@ -427,7 +427,7 @@ fn chosen(op: BinOp, a: Found, b: Found, view: View) -> Found {
         BinOp::And if view == View::Here => a.within(0, 0),
         BinOp::And => a,
         BinOp::Or if view == View::Here => a.truthy(),
-        _ => Numbers { nil: false, nil_left_out: false, ..a },
+        _ => Numbers { nil: false, nullish_left_out: false, ..a },
     };
     if op == BinOp::Nullish && !a.nil {
         return Some(stays);
@@ -584,7 +584,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the value of the expression is of the checker's type of it. Where nothing holds the program to the types of the file, no type is
     /// gone by: what an expression is, its text shows (`kinds.rs`) or nothing does.
-    fn goes_by_its_type(&mut self, file: FileId, e: ExprId) -> bool {
+    fn is_trusted_to_have_its_type(&mut self, file: FileId, e: ExprId) -> bool {
         !self.is_untyped_file(file) && self.has_declared_type(file, e)
     }
 
@@ -616,6 +616,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn most_length_of(&mut self, ty: TypeId) -> Option<i64> {
         let mut most = None;
         for &part in self.parts(ty) {
+            if part.is_undefined() || part.is_null() {
+                continue;
+            }
             let of_part = if self.is_string_like(part) {
                 MOST_STRING_LENGTH
             // Also what a class that extends `Array` makes. Not `any`, which is assignable to everything.
@@ -787,7 +790,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut found = self.numbers_by_syntax(file, e, view, basis);
         let kind = self.hir(file)[e].kind;
-        let has_type_of_its_own = matches!(
+        let has_own_type = matches!(
             kind,
             ExprKind::Ident(_)
                 | ExprKind::Dot { .. }
@@ -799,21 +802,21 @@ impl<'p, 's> Checker<'p, 's> {
                 | ExprKind::As { .. }
                 | ExprKind::NonNull(_)
         );
-        if has_type_of_its_own && self.goes_by_its_type(file, e) {
+        if has_own_type && self.is_trusted_to_have_its_type(file, e) {
             let (ty, may_be_undefined) = self.type_relied_on(file, e);
             let by_type = self.numbers_by_type(ty);
             if let ExprKind::Index { obj, index, .. } = kind {
                 // Outside the array, or where the object has no such key, it yields `undefined`, whatever the type says.
-                let nil_left_out = self.is_type_of_numbers(ty);
-                found = both(by_type, self.numbers_of_element(file, obj, index)).map(|it| Numbers { nil: true, nil_left_out, ..it });
+                let nullish_left_out = self.is_type_of_numbers(ty);
+                found = both(by_type, self.numbers_of_element(file, obj, index)).map(|it| Numbers { nil: true, nullish_left_out, ..it });
             } else {
                 let is_by_type_alone = found.is_none() && by_type.is_some() && !matches!(kind, ExprKind::NonNull(_));
                 let is_left_out = may_be_undefined || is_by_type_alone && !matches!(self.constant_value_of(file, e), Some(Primitive::Number(_)));
                 found = both(found, by_type);
                 if let Some(found) = &mut found {
                     if self.is_type_of_numbers(ty) {
-                        found.nil_left_out |= is_left_out;
-                        found.nil = found.nil_left_out;
+                        found.nullish_left_out |= is_left_out;
+                        found.nil = found.nullish_left_out;
                     } else {
                         found.nil |= may_be_undefined;
                     }
@@ -881,7 +884,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let stays_itself = operand == Numbers::NOTHING || self.says_nothing(target) || !operand.nil && self.some_type(target, |c, part| c.is_number_like(part));
                 stays_itself.then_some(operand)
             }
-            ExprKind::NonNull(expr) => self.numbers_in(file, expr, view, basis).map(|it| Numbers { nil: false, nil_left_out: false, ..it }),
+            ExprKind::NonNull(expr) => self.numbers_in(file, expr, view, basis).map(|it| Numbers { nil: false, nullish_left_out: false, ..it }),
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.numbers_of_property(file, e, obj, name, basis),
             ExprKind::Call(call) => self.numbers_of_call(file, e, call, basis),
             _ => None,
@@ -894,7 +897,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_untyped_file(file) {
             return self.kinds_yielded_by(file, e) == kind::NUMBER;
         }
-        if !self.goes_by_its_type(file, e) {
+        if !self.is_trusted_to_have_its_type(file, e) {
             return false;
         }
         let ty = self.type_of_expr(file, e);
@@ -1020,7 +1023,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
         }
-        if !self.goes_by_its_type(file, e) {
+        if !self.is_trusted_to_have_its_type(file, e) {
             return None;
         }
         let ty = self.type_relied_on(file, obj).0;
@@ -1058,7 +1061,7 @@ impl<'p, 's> Checker<'p, 's> {
             return self.numbers_of_math(file, name, call.args, basis);
         }
         let is_untyped = self.is_untyped_file(file);
-        if !matches!(name, b"indexOf" | b"lastIndexOf" | b"search" | b"codePointAt") || !is_untyped && !self.goes_by_its_type(file, e) {
+        if !matches!(name, b"indexOf" | b"lastIndexOf" | b"search" | b"codePointAt") || !is_untyped && !self.is_trusted_to_have_its_type(file, e) {
             return None;
         }
         let is_string = |c: &mut Self, e: ExprId| {
@@ -1072,7 +1075,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         match name {
-            b"codePointAt" => Some(Numbers { least: 0, most: 0x10FFFF, nil: true, nil_left_out: false }),
+            b"codePointAt" => Some(Numbers { least: 0, most: 0x10FFFF, nil: true, nullish_left_out: false }),
             // It hands over to `Symbol.search` of what it is given, which yields what it likes. A string is made a RegExp of the engine.
             b"search" if !hir.ids(call.args).next().is_some_and(|pattern| is_string(self, pattern)) => None,
             _ => Some(Numbers::integers(-1, MOST_STRING_LENGTH)),
@@ -1125,8 +1128,8 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         loop {
             parent = match parent {
-                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
-                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::Expr(e) if e.is_some() => self.way_up_from_expression(file, e),
+                Parent::Stmt(s) if s.is_some() => self.way_up_from_statement(file, s),
                 Parent::FnBody(func) => return Container::Fn(func),
                 Parent::ParamDefault(p) => return Container::Fn(bound.param_fn[p.idx()]),
                 Parent::MemberInit(member) => return Container::Member(member),
@@ -1236,7 +1239,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_eval = |call: &ExprId| matches!(hir[*call].kind, ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"eval"));
         uses.has_direct_eval = by_kind.of(ExprTag::Call).iter().any(is_eval);
         uses.stored_through_assertions.extend(self.variables_of_reified_namespaces(file));
-        uses.stored_through_assertions.extend((0..hir.pats.len()).filter_map(|pat| self.catch_parameter_named_again_by(file, crate::hir::PatId(pat as u32)).map(|caught| [caught, bound.pat_symbol[pat]])).flatten());
+        uses.stored_through_assertions.extend((0..hir.pats.len()).filter_map(|pat| self.catch_parameter_redeclared_by(file, crate::hir::PatId(pat as u32)).map(|caught| [caught, bound.pat_symbol[pat]])).flatten());
         for tag in [ExprTag::As, ExprTag::Satisfies] {
             for &e in by_kind.of(tag) {
                 if bound.get_assignment_target(hir, e).is_some() {
@@ -1294,7 +1297,11 @@ impl<'p, 's> Checker<'p, 's> {
         if self.files().module(file).is_module() {
             return true;
         }
-        let free_names = self.p.aot.integers.free_names.get_or_init(|| {
+        !self.free_names().contains(&name)
+    }
+
+    pub(super) fn free_names(&self) -> &'p FxHashSet<Atom> {
+        self.p.aot.integers.free_names.get_or_init(|| {
             let mut names = FxHashSet::default();
             for module in self.files().modules.iter().filter(|module| !module.is_opaque()) {
                 for &(e, _) in module.bound.free_idents.iter() {
@@ -1304,8 +1311,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             names
-        });
-        !free_names.contains(&name)
+        })
     }
 
     pub(super) fn place_of_integers(&mut self, at: Sym) -> Rc<Place> {
@@ -1582,13 +1588,13 @@ impl<'p, 's> Checker<'p, 's> {
         for (index, &store) in place.stores.iter().enumerate() {
             let stored = match (self.numbers_stored_by(at.file, store, View::Kept, Basis::Rough), by_type) {
                 (Some(stored), _) => stored,
-                (None, Some(_)) => Numbers { nil: true, nil_left_out: true, ..Numbers::NOTHING },
+                (None, Some(_)) => Numbers { nil: true, nullish_left_out: true, ..Numbers::NOTHING },
                 (None, None) => return None,
             };
-            all = all.or(if place.defaulted.contains(&index) { Numbers { nil_left_out: false, ..stored } } else { stored });
+            all = all.or(if place.defaulted.contains(&index) { Numbers { nullish_left_out: false, ..stored } } else { stored });
         }
         Some(match by_type {
-            Some(by_type) => Numbers { nil: by_type.nil || place.starts_nil || all.nil_left_out, nil_left_out: all.nil_left_out, ..by_type },
+            Some(by_type) => Numbers { nil: by_type.nil || place.starts_nil || all.nullish_left_out, nullish_left_out: all.nullish_left_out, ..by_type },
             None => all,
         })
     }
@@ -1623,7 +1629,7 @@ impl<'p, 's> Checker<'p, 's> {
                     break if walk.is_parameter { self.numbers_held_by(walk.at, walk.basis) } else { Some(Numbers::NIL) };
                 }
                 Flow::Assign { before, target } => match self.numbers_stored_at(walk, target) {
-                    Some(None) if walk.by_type.is_some() => break walk.by_type.map(|by_type| Numbers { nil: true, nil_left_out: true, ..by_type }),
+                    Some(None) if walk.by_type.is_some() => break walk.by_type.map(|by_type| Numbers { nil: true, nullish_left_out: true, ..by_type }),
                     Some(stored) => break both(stored, walk.by_type),
                     None => flow = before,
                 },
@@ -1843,21 +1849,33 @@ impl<'p, 's> Checker<'p, 's> {
             _ => return,
         };
         let names_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == at.id;
+        let term_beside_it = |e: ExprId| match hir[e].kind {
+            ExprKind::Binary { op: BinOp::Add, left, right } if names_it(left) && !names_it(right) => Some((left, right)),
+            ExprKind::Binary { op: BinOp::Add, left, right } if names_it(right) && !names_it(left) => Some((right, left)),
+            _ => None,
+        };
         // `other < name` is `name > other`.
-        let (name, other, op) = if names_it(left) {
-            (left, right, op)
+        let mirrored = match op {
+            BinOp::Lt => BinOp::Gt,
+            BinOp::Le => BinOp::Ge,
+            BinOp::Gt => BinOp::Lt,
+            BinOp::Ge => BinOp::Le,
+            op => op,
+        };
+        let (name, other, op, addend) = if names_it(left) {
+            (left, right, op, None)
         } else if names_it(right) {
-            let mirrored = match op {
-                BinOp::Lt => BinOp::Gt,
-                BinOp::Le => BinOp::Ge,
-                BinOp::Gt => BinOp::Lt,
-                BinOp::Ge => BinOp::Le,
-                op => op,
-            };
-            (right, left, mirrored)
+            (right, left, mirrored, None)
+        } else if let Some((name, addend)) = term_beside_it(left) {
+            (name, right, op, Some(addend))
+        } else if let Some((name, addend)) = term_beside_it(right) {
+            (name, left, mirrored, Some(addend))
         } else {
             return;
         };
+        if addend.is_some() && !(holds && matches!(op, BinOp::Lt | BinOp::Le)) {
+            return;
+        }
         if !matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::EqEqEq | BinOp::EqEq | BinOp::NotEqEq | BinOp::NotEq) {
             return;
         }
@@ -1868,7 +1886,15 @@ impl<'p, 's> Checker<'p, 's> {
             return tests.push(Test { at: flow, least: 1, most: 0 });
         }
         // With what is no number, `<` and the like are false either way.
-        let Some((low, high)) = other.numbers() else { return };
+        let Some((low, mut high)) = other.numbers() else { return };
+        if let Some(addend) = addend {
+            let Some(addend) = self.numbers_in(file, addend, View::Here, basis) else { return };
+            if addend == Numbers::NOTHING {
+                return tests.push(Test { at: flow, least: 1, most: 0 });
+            }
+            let Some((least_added, _)) = addend.numbers() else { return };
+            high = high.saturating_sub(least_added);
+        }
         let (least, most) = match (op, holds) {
             (BinOp::Lt, true) | (BinOp::Ge, false) => (i64::MIN, high - 1),
             (BinOp::Le, true) | (BinOp::Gt, false) => (i64::MIN, high),

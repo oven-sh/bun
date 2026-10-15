@@ -15,7 +15,7 @@ for (const key of [0, 1, 2, -1, 0.5, "0", "1", "length", "x", NaN, 4294967296, n
 const join = function (this: any) { return Array.prototype.join.call(arguments, "+"); };
 for (const list of lists) { show("appliesInLoop", join, ...list); show("spreadsThenReads", join, ...list); show("throwsBetween", () => { throw 1; }, ...list); show("throwsBetween", () => 1, ...list); }
 show("recursive", 6, "z"); show("recursive", 0);
-// Identity, and what is returned is an array like any other.
+// Identity, and the returned value is an array like any other.
 { const a = m.returned(1, 2); a.push(3); console.log(a.length, Array.isArray(a), m.returned() !== m.returned(), m.captured(1)() === m.captured(1)()); const c = m.captured(5, 6); console.log(c() === c(), c()[1]); }
 console.log(m.kept.length, m.kept.every((k: any) => Array.isArray(k)));
 { const a = m.argumentsEscape(1, 2); console.log(a.length, a[1], Object.prototype.toString.call(a)); }

@@ -40,7 +40,7 @@ print(String(texts("same", "x", "y") === "same") + " " + show(byRegExp("a1b22c33
 print(brief(() => byRegExp("abc", /b/, "x")) + " " + brief(() => byRegExp("abc", /b/y, "x")) + " " + brief(() => byRegExpAndFunction("abc", /b/, m => m)) + " " + brief(() => byAnything("abc", /b/, "x")));
 function brief(f: () => string): string { try { return show(f()); } catch (e) { return "throws " + (e as Error).name + ": " + (e as Error).message; } }
 print(show(byRegExpAndFunction("a1b22", /(\d)(\d)?/g, (m, p, q, at, whole) => `{${m}|${p}|${q}|${at}|${whole}}`)) + " " + show(byFunction("a;b;c", ";", (m, at, whole) => `(${m}${at}${whole.length})`)) + " " + show(byFunction("abc", "", (m, at) => String(at))));
-// lastIndex, before and behind; a RegExp that has been meddled with; one of a subclass; what only looks like one.
+// lastIndex, before and after; a RegExp that has been modified; an instance of a subclass; an object that only looks like a RegExp.
 { const r = /b/g; r.lastIndex = 2; print(show(byRegExp("abcabc", r, "x")) + r.lastIndex); }
 { const r = /b/g; (r as any).exec = () => null; print(show(byRegExp("abc", r, "x"))); }
 { const r = /b/g; Object.defineProperty(r, "flags", { value: "" }); print(brief(() => byRegExp("abc", r, "x"))); }

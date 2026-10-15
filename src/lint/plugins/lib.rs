@@ -14,6 +14,7 @@
 #![deny(clippy::iter_over_hash_type)]
 
 mod bun;
+mod bun_aot;
 mod import_export_map;
 mod import_export_record;
 mod import_minimatch;
@@ -27,6 +28,12 @@ mod oxlint;
 mod prettier;
 
 bun_lint::rules! {
+    bun_aot_cast_lacks_member::AotCastLacksMember,
+    bun_aot_locked_builtin_write::AotLockedBuiltinWrite,
+    bun_aot_no_any_to_typed::AotNoAnyToTyped,
+    bun_aot_non_null_escapes::AotNonNullEscapes,
+    bun_aot_outside_data::AotOutsideData,
+    bun_aot_spy_on_builtin::AotSpyOnBuiltin,
     bun_axios_no_unbounded_requests::AxiosNoUnboundedRequests,
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,
     bun_fast_check_no_unseeded_random::FastCheckNoUnseededRandom,

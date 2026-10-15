@@ -38,7 +38,7 @@ function plain(a: number[]): number { return a.length; }
 function plainReturnsPromise(a: number[]): Promise<number> { return Promise.resolve(a.length); }
 const k = new K(), d = new D();
 // Named at the call.
-// A value nobody knows.
+// A value of unknown type.
 const table: any[] = [takesArray, arrow, k.m, K.s, k.f, literal.m, awaitsFirst, takesTwo, generator, asyncGenerator, plain, plainReturnsPromise];
 const receivers: any[] = [undefined, undefined, k, K, undefined, literal, undefined, undefined, undefined, undefined, undefined, undefined];
 const names = ["a function", "an arrow", "a method", "a static method", "an arrow in a field", "a literal's method", "one that awaits first", "one of two parameters", "A GENERATOR", "AN ASYNC GENERATOR", "A PLAIN FUNCTION", "A PLAIN FUNCTION THAT RETURNS A PROMISE"];
@@ -59,7 +59,7 @@ row("Reflect.apply", () => Reflect.apply(takesArray as any, null, [5]));
 let held: any = takesArray; function callsHeld(x: unknown): unknown { return held(x); }
 // Handlers at the call.
 // Not async functions.
-// THE LINE BY THE LANGUAGE ITSELF: THE SAME IN BOTH RUNTIMES: an async function rejects; a generator, an async generator, a plain function throw to the caller.
+// The rule of the language itself, the same in both runtimes: an async function rejects; a generator, an async generator and a plain function throw to the caller.
 for (const [n, f] of [["an async function", asyncPattern], ["A GENERATOR", generatorPattern], ["AN ASYNC GENERATOR", asyncGeneratorPattern], ["A PLAIN FUNCTION", plainPattern]] as Array<[string, any]>) row("a pattern, through a value: " + n, () => f(5));
 let caught = "";
 table[0](5).catch((e: any) => { caught += e.constructor.name; });

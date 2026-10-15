@@ -24,7 +24,7 @@ new Repo().find(-1);
 ```
 
 ```bash terminal icon="terminal"
-bun build --compile --aot --minify ./app.ts --outfile app && ./app
+bun build --compile --aot ./app.ts --outfile app && ./app
 ```
 
 ```txt
@@ -37,10 +37,10 @@ RangeError: bad id -1
       at app.ts:7:12
 ```
 
-- **Names survive `--minify`.** A trace shows `find`, not `a`.
-- **`--sourcemap` adds nothing.** `bun build` prints a note, and any map that it writes is empty.
+- **`--minify` shortens names and paths**, as it does without `--aot`. See [Minified executables](#minified-executables).
+- **Without `--minify`, `--sourcemap` adds nothing.** `bun build` prints a note, and any map that it writes is empty.
 - **The source excerpt is read from disk.** Bun prints it when the file lies at the path in the frame, relative to the working directory. On a machine without your sources you get the frames alone.
-- **Inlined functions keep their frames**, and so do callers whose last act is a call. A build without `--aot` leaves those out, because it makes [tail calls](/bundler/executables#ahead-of-time-compilation).
+- **Inlined functions keep their frames.** A strict-mode function that ends in `return f(x)` makes a tail call, so it has no frame while `f` runs, with or without `--aot`.
 - `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `process.on("uncaughtException")` and `process.on("unhandledRejection")` work as they do without `--aot`.
 
 What differs:
@@ -48,10 +48,55 @@ What differs:
 | | without `--aot` | with `--aot` |
 | --- | --- | --- |
 | Reading a property of `null` | `null is not an object (evaluating 'a.b')` | `Cannot read properties of null (reading 'b')` |
-| Calling what is not a function | `a.b is not a function. (In 'a.b()', 'a.b' is undefined)` | `b is not a function, it is undefined` |
+| Calling a value that is not a function | `a.b is not a function. (In 'a.b()', 'a.b' is undefined)` | `b is not a function, it is undefined` |
 | Frames of `eval` and `new Function` | `file:///$bunfs/root/app:1:35` | `unknown:1:35` |
 
 If you group errors by message, in Sentry for example, expect new groups for the first two.
+
+### Minified executables
+
+With `--minify`, the names of functions, classes, variables and private members, the names of types in error messages and the paths of your source files become short tokens. The executable does not contain the originals. A name that a property or a string of your program also spells stays, as in any minified bundle, so a method keeps its name. Lines and columns stay those of your sources. `--keep-names` keeps everything.
+
+```txt
+RangeError: bad id -1
+      at find (bA:3:27)
+      at bA:7:12
+```
+
+To read such a trace, build with `--sourcemap=external`, or `sourcemap: "external"` in `Bun.build`. Bun writes `app.map` next to the executable. The executable contains nothing of that file, and your program does not read it. It is a source map without mappings, because the positions are already the original ones. Its `x_bun_aot.tokens` says what each token stands for:
+
+```json app.map icon="file-json"
+{
+  "version": 3,
+  "sources": [],
+  "mappings": "",
+  "names": [],
+  "x_bun_aot": {
+    "positions": "original",
+    "tokens": {
+      "aA": "Repo",
+      "bA": "app.ts"
+    },
+    "types": [{ "name": "aA", "at": "app.ts:1", "members": { "cache": "Map<number, string> | undefined" } }]
+  }
+}
+```
+
+A token is a lowercase letter followed by letters and digits, at least one of which is a capital. It is never a name that your program also uses. So you can replace every token in a text, whether the text is a stack trace or an error message:
+
+```ts restore.ts icon="/icons/typescript.svg"
+const { tokens } = (await Bun.file(process.argv[2]).json()).x_bun_aot;
+const restore = (text: string) => text.replace(/[a-z][A-Za-z0-9]*/g, word => (Object.hasOwn(tokens, word) ? tokens[word] : word));
+console.log(restore(await Bun.stdin.text()));
+```
+
+```bash terminal icon="terminal"
+./app 2>&1 | bun restore.ts app.map
+```
+
+The `TypeError` for a value that does not match its type names the type by its token and describes the types of its members by their structure. `x_bun_aot.types` has what the executable no longer holds: where each type is declared, and each member's type as your source spells it. `name` is what the message prints.
+
+Sentry finds the function names of minified JavaScript by parsing the minified file. An `--aot` executable has no such file, so uploading `app.map` as a source map does not restore them. Apply `restore` to `exception.values[].value` and to the `function`, `filename` and `abs_path` of each frame instead. Do that where you receive or forward the events, not in the program that you ship: the file holds the names that `--minify` took out.
 
 ## Crashes
 
@@ -74,6 +119,8 @@ Compiled JavaScript on the stack:
 ```
 
 These lines go to stderr only. The link holds offsets into your executable, and none of your names or paths.
+
+A function whose last act is a call, as in `return f(x)`, is not in these lines while `f` runs. It is not in a stack trace either, with or without `--aot`.
 
 If all you have is the link, give it back to the same executable. It prints the lines and exits without running your program:
 
@@ -136,7 +183,7 @@ BUN_OPTIONS="--heap-prof" ./app
 | Heap snapshots and garbage collection | `debugger` statements |
 | The CPU timeline | The list of sources |
 
-The console shows a warning that says so when a debugger attaches. Code that the build did not compile, such as `eval` and files loaded from disk at run time, can be debugged.
+The console shows a warning that says so when a debugger attaches. Code that the build did not compile, such as `eval` and files loaded from disk at run time, can be debugged. The part of Bun that serves the inspector is not compiled into your executable either: it loads only when the inspector starts, and Bun interprets it.
 
 To use breakpoints, run your program from its sources:
 
@@ -161,7 +208,9 @@ Libraries that trace by replacing functions, such as OpenTelemetry's instrumenta
 
 To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
 
-As in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`.
+In an executable, as in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`.
+
+`bun run --aot` and `bun test --aot` run next to your source files, so the CommonJS hooks apply to your own modules too: handlers in `require.extensions`, a replaced `Module.prototype.require` or `Module._resolveFilename`, and a changed `Module.wrapper`. `require.cache` lists your modules as it does without `--aot`, and a module you delete from it is evaluated again by the next `import()` or `require()`. One thing differs: a compiled ES module has a single set of top-level variables, so functions you kept from its earlier evaluation see the variables of the new one.
 
 In `bun test --aot`, `mock.module()`, `setSystemTime()` and fake timers work. `spyOn()` throws a `TypeError` for a method of a TypeScript class, on the prototype or on an instance. `--coverage` is ignored, and Bun prints a warning: compiled code is not counted. Measure coverage without `--aot`.
 

@@ -61,7 +61,7 @@ function swapped() {
   Object.setPrototypeOf(Swapped, Plain); out.push(attempt(() => new Swapped()));
   return out;
 }
-// new.target that is not the class: Reflect.construct, with closures of the program and with what is foreign.
+// new.target that is not the class: Reflect.construct, with closures of the program and with other functions.
 function targets() {
   return [attempt(() => Reflect.construct(FromPlain, [1, 2], Fn)), attempt(() => Reflect.construct(FromPlain, [1, 2], ThirdFromPlain)), attempt(() => Reflect.construct(FromPlain, [1, 2], Object)), attempt(() => Reflect.construct(FromPlain, [1, 2], new Proxy(Fn, {}))), attempt(() => Reflect.construct(FromPlain, [1, 2], Fn.bind(null))),
     attempt(() => Reflect.construct(FromBase, [1, 2], Fn)), attempt(() => Reflect.construct(FromBase, [1, 2], Third)), attempt(() => Reflect.construct(FromBase, [1, 2], Object)), attempt(() => Reflect.construct(FromBase, [1, 2], function () {}.bind(null))),

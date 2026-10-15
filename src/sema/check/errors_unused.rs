@@ -87,7 +87,7 @@ enum PropertyRead {
 impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
-        let is_held_to_them = !self.is_held_to_the_fixed_set(file);
+        let is_held_to_them = !self.is_restricted_to_fixed_set(file);
         let (locals, parameters) = (options.no_unused_locals && is_held_to_them, options.no_unused_parameters && is_held_to_them);
         let renamed = std::mem::take(&mut self.renamed_binding_elements_in_types);
         let (hir, bound) = (self.hir(file), self.bound(file));

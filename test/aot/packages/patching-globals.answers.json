@@ -1,12 +1,12 @@
 {
   "date-math-patch-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Date.now` is assigned: what the language ships with cannot be replaced.\nerror: TS100014: This always fails under --aot: `Math.random` is assigned: what the language ships with cannot be replaced.\nerror: TS100014: This always fails under --aot: `JSON.parse` is assigned: what the language ships with cannot be replaced.\n"
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
   },
   "date-math-patch-sloppy.require.cjs": {
     "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
   },
   "date-math-patch-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Date.now` is assigned: what the language ships with cannot be replaced.\nerror: TS100014: This always fails under --aot: `Math.random` is assigned: what the language ships with cannot be replaced.\nerror: TS100014: This always fails under --aot: `JSON.parse` is assigned: what the language ships with cannot be replaced.\n"
+    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
   },
   "date-math-patch-strict.require.cjs": {
     "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
@@ -52,7 +52,7 @@
   "hidden-require-strict.import.mjs": "compiled",
   "hidden-require-strict.require.cjs": "compiled",
   "new-proto-define-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\n"
+    "output": "ok \"TypeError\"\n"
   },
   "new-proto-define-sloppy.require.cjs": {
     "output": "ok \"TypeError\"\n"
@@ -70,19 +70,19 @@
     "output": "ok \"TypeError\"\n"
   },
   "new-proto-method-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `String.prototype.shout` is assigned: built-in prototypes are frozen.\n"
+    "output": "ok \"TypeError\"\n"
   },
   "new-proto-method-strict.require.cjs": {
     "output": "ok \"TypeError\"\n"
   },
   "replace-promise-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: what the language ships with cannot be replaced.\n"
+    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: built-ins cannot be replaced.\n"
   },
   "replace-promise-sloppy.require.cjs": {
     "output": "ok \"TypeError\"\n"
   },
   "replace-promise-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: what the language ships with cannot be replaced.\n"
+    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: built-ins cannot be replaced.\n"
   },
   "replace-promise-strict.require.cjs": {
     "output": "ok \"TypeError\"\n"

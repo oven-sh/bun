@@ -35,7 +35,7 @@ console.log("kind" in file, "value" in file, Object.hasOwn(leaf, "flags"), "skip
 BaseCtor.call(leaf, Kind.Leaf, 7, 9); show("again", leaf)
 SourceCtor.call(file, "b.ts", "yy"); show("as source", file); console.log(describe(file), width(file))
 
-// `new` expects nobody in particular.
+// `new` expects no particular callee.
 interface P { o: number[]; a: number; b: number }
 interface Q extends P { c: number }
 interface Wide { o: number[]; a: number }

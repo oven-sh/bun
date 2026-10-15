@@ -1407,7 +1407,9 @@ impl<'p, 's> Checker<'p, 's> {
             .symbol()
             .unwrap_or_else(|| files.module_value(module));
         // `getTypeWithSyntheticDefaultOnly`
-        if files.is_only_importable_as_default(file, module) {
+        if files.is_only_importable_as_default(file, module)
+            || files.options.one_name_is_one_binding && self.every_type(ty, Self::is_primitive)
+        {
             return Some(self.intern(TypeData::Anon {
                 origin: Origin::Namespace {
                     module: value,

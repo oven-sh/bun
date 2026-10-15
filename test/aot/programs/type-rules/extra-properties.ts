@@ -20,7 +20,7 @@ console.log(Object.keys(crowded).length, Object.keys(crowded).slice(0, 4).join()
 const ordered = make(5)
 ;(ordered as any).z = 1; ordered.opt = "o"; (ordered as any).y = 2
 console.log(Object.keys(ordered).join())
-// Throws: an own property by the name of a method of its class that the program is not seen to replace (the store goes through `any`).
+// Exact: an own property with the name of a method of its class, stored through a cast that the compiler sees through.
 class Widget { id = 1; render(): string { return "render" + this.id } get wide(): boolean { return this.id > 1 } }
 const widget = new Widget()
 try { (widget as any).render = function (this: Widget) { return "own" + this.id }; console.log("by the name of a method: no error") } catch (e) { console.log("by the name of a method:", e instanceof TypeError ? "TypeError" : "other " + e) }

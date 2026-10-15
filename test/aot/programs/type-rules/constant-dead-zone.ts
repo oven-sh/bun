@@ -1,4 +1,4 @@
-// A `const` initialized with a constant primitive expression is a compile-time constant: a read in its temporal dead zone yields the value, where plain JavaScript throws a ReferenceError.
+// A `const` initialized with a constant primitive expression is a compile-time constant: a read in its temporal dead zone returns the value, where plain JavaScript throws a ReferenceError.
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 enum Color { Red = 1, Green = 2 }
 function readNumber(): number { return earlyNumber }

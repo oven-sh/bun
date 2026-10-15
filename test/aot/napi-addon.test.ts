@@ -36,7 +36,7 @@ describe.skipIf(isWindows || !systemCC || !!unsupported)("compile/aot/napi-addon
     expect({ stderr: compile.stderr, exitCode: compile.exitCode }).toEqual({ stderr: expect.not.stringContaining("error"), exitCode: 0 });
   });
 
-  test.concurrent.each(["objects", "declared-interface", "made-by-the-addon", "held-by-the-addon", "classes-and-callbacks"])(
+  test.concurrent.each(["objects", "declared-interface", "created-by-the-addon", "referenced-by-the-addon", "classes-and-callbacks"])(
     "%s",
     name =>
       slot(async () => {

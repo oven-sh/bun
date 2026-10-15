@@ -33,9 +33,9 @@ for (let round = 0; round < 2; round++) {
   e._events = [m.first]; attempt(() => m.fireOnly(e, 20));
   e._events = "only"; attempt(() => m.fireOnly(e, 21));
   e._events = undefined; attempt(() => m.fireOnly(e, 22));
-  // A receiver that is no Emitter.
+  // A receiver that is not an Emitter.
   attempt(() => m.fireOnly({ emit: m.Emitter.prototype.emit, _events: { only: m.second } }, 23)); attempt(() => m.fireOnly({ emit: () => "own emit" }, 24));
-  // A key that is no constant.
+  // A key that is not a constant.
   const f = new m.Emitter().on("only", m.first).on("x", m.second); for (const type of ["only", "x", "y", "__proto__", "constructor", 0, Symbol.iterator]) attempt(() => m.fireComputed(f, type, 25));
 }
 console.log(out.join("\n"));

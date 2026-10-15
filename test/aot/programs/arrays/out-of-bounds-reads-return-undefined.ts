@@ -35,13 +35,13 @@ function orTen(n: number = 10): number { return n; }
 function not(b: boolean): boolean { return !b; }
 function passOn(n: number): number { return double(n); }
 show("parameters", double(weights["z"]), double(numbers[7]), orTen(numbers[7]), not(flags["z"]), passOn(weights["z"]));
-// A test stops it: what stands behind the test is what the type says.
+// A test catches it: after the test the value has its declared type.
 function tested(k: string): number { const w = weights[k]; if (w === undefined) return -1; const n: number = w; return n + 1; }
 function truthy(k: string): number { const w = weights[k]; return w ? w * 2 : -2; }
 function guarded(k: string): boolean { const f = flags[k]; return typeof f === "boolean" && f; }
 function later(k: string): () => number { const w = weights[k]; if (!w) return () => -3; return () => w; }
 show("tested", tested("a"), tested("z"), truthy("a"), truthy("z"), guarded("a"), guarded("z"), later("a")(), later("z")());
-// What is shown to hit stays what it is.
+// A read that is proven to be in bounds is unchanged.
 function sum(a: number[]): number { let s = 0; for (let i = 0; i < a.length; i++) { const n: number = a[i]; s += n; } for (let i = a.length - 1; i >= 0; i--) s += a[i]; for (const n of a) s += n; return s; }
 show("hits", sum(numbers), sum([]));
 // Holes, negative and fractional indices, a tuple, a string.

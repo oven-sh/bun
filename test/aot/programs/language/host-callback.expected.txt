@@ -9,4 +9,5 @@ boolean false
 stringnumber
 8seven5
 2,4,6
+string number
 TypeError

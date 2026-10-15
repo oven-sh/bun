@@ -187,7 +187,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn expr_named_by_key(&mut self, fx: &mut Fx, e: ExprId, written: ExprId, key: V) -> V {
         let hir = self.hir(fx.file);
-        match hir[self.what_takes_the_name(fx, e)].kind {
+        match hir[self.target_of_inferred_name(fx, e)].kind {
             ExprKind::Fn(function) if hir[function].name.is_none() => {
                 self.name_by_well_known_symbol(fx.file, function, written, b"");
                 self.name_by_key = key;
@@ -208,7 +208,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The same as what it goes straight to holds it to: see `expr_into`.
     pub(crate) fn expr_named_into(&mut self, fx: &mut Fx, e: ExprId, name: Atom, want: Ty, why: Why) -> V {
         // A function or a class, which is all that takes a name, is held to nothing.
-        if matches!(self.hir(fx.file)[self.what_takes_the_name(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
+        if matches!(self.hir(fx.file)[self.target_of_inferred_name(fx, e)].kind, ExprKind::Fn(_) | ExprKind::Class(_)) {
             let value = self.expr_named(fx, e, name);
             return self.fit(fx, value, want, why);
         }
@@ -227,7 +227,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn what_takes_the_name(&self, fx: &Fx, mut e: ExprId) -> ExprId {
+    fn target_of_inferred_name(&self, fx: &Fx, mut e: ExprId) -> ExprId {
         let hir = self.hir(fx.file);
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) | ExprKind::Instantiation { expr, .. } = hir[e].kind {
             e = expr;
@@ -237,7 +237,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn give_name(&mut self, fx: &Fx, e: ExprId, name: StrId) {
         let hir = self.hir(fx.file);
-        match hir[self.what_takes_the_name(fx, e)].kind {
+        match hir[self.target_of_inferred_name(fx, e)].kind {
             ExprKind::Fn(func) if hir[func].name.is_none() => {
                 self.given_function_names.entry((fx.file, func)).or_insert(name);
             }

@@ -16,7 +16,7 @@ out.push("given a property: " + callMany(named, 1000) + " " + named.displayName)
 const later: any = makeAdder(3);
 const before = callMany(later, 500); later.extra = { v: 1 }; later.more = 2;
 out.push("given properties between: " + before + " " + callMany(later, 500) + " " + Object.keys(later).join(","));
-// A property deleted again: the Structure does not come back.
+// A property that is deleted again: the original Structure does not come back.
 const back: any = makeAdder(4); back.p = 1; delete back.p;
 out.push("given and taken: " + callMany(back, 1000) + " " + Object.keys(back).length);
 // Its prototype changed; frozen; `name` and `length` redefined.
@@ -33,11 +33,11 @@ out.push("in a field: " + runMany(h1, 1000) + " " + runMany(h2, 1000) + " " + (h
 const mixed = [plain, named, later, back, reparented, frozen, renamed];
 let sum = 0; for (let r = 0; r < 300; r++) for (const f of mixed) sum += f(r);
 out.push("mixed: " + sum);
-// Another function of the same shape at the site; what is no function.
+// Another function of the same shape at the site; a value that is not a function.
 out.push("another function: " + callMany((x: number): number => x - 1, 1000));
 try { callMany({ call: 1 } as any, 1); } catch (e: any) { out.push("no function: " + e.constructor.name); }
 try { callMany(undefined as any, 1); } catch (e: any) { out.push("undefined: " + e.constructor.name); }
-// Async functions and generators have Structures of their own.
+// Async functions and generators have their own Structures.
 function makeAsync(k: number): (x: number) => Promise<number> { return async (x: number): Promise<number> => x + k; }
 function makeGenerator(k: number): (x: number) => Generator<number> { return function* (x: number): Generator<number> { yield x + k; }; }
 const a1 = makeAsync(1), a2: any = makeAsync(2); a2.p = 1;

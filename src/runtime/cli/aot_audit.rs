@@ -128,7 +128,7 @@ fn start_of_next_token(text: &[u8], mut at: usize) -> usize {
             Some([0xC2, 0xA0, ..]) => at += 2,
             Some([0xE2, 0x80, 0xA8 | 0xA9, ..]) | Some([0xEF, 0xBB, 0xBF, ..]) => at += 3,
             Some([b'/', b'/', rest @ ..]) => {
-                at += 2 + rest.iter().position(|&byte| byte == b'\n' || byte == b'\r').unwrap_or(rest.len());
+                at += 2 + bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
             }
             Some([b'/', b'*', rest @ ..]) => match rest.windows(2).position(|pair| pair == b"*/") {
                 Some(end) => at += 2 + end + 2,
@@ -737,7 +737,7 @@ fn look_for_another(is_for_tests: bool) {
     }
     let Some(fd) = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok().and_then(|it| it.parse::<i32>().ok()) else { return };
     let asked = read_whole(fd).unwrap_or_default();
-    let of_kind = |kind: u8| -> Vec<Vec<u8>> { asked.split(|&byte| byte == 0).filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
+    let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
     on_a_thread_of_its_own(|| look_at_the_whole(&entry_points, &code, is_for_tests, None, Audited::WholeInTheBackground));
     let bytes = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or_else(Vec::new, State::to_bytes);

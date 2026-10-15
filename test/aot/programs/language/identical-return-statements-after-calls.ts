@@ -3,7 +3,7 @@ declare const console: { log(...v: unknown[]): void };
 class N { constructor(public kind: number, public flags: number, public next: N | null) {} }
 const seen: number[] = [];
 function note(k: number): number { let s = 0; for (let i = 0; i < 3; i++) { seen.push(k + i); s += seen.length; } return s; }
-// Six times `return -1` behind calls: the function has a frame, each return an epilogue.
+// Six times `return -1` after calls: the function has a frame, and each return has an epilogue.
 function same(n: N, limit: number): number {
   let s = note(n.kind);
   if (n.kind === 1) { if (s > limit) return -1; s += note(1); }

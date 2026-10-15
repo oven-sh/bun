@@ -3,13 +3,13 @@ use crate::id::{FuncId, LayoutId, StrId, V};
 use crate::ir::{Field, FuncKind, Global, Initialization, LayoutKind, Op, Program, Term, class_flags, field_flags, func_flags};
 use smallvec::SmallVec;
 
-pub(super) fn mark_releases_of_environments(program: &mut Program, in_parallel: bun_sema::util::InParallel<'_>) -> usize {
+pub(super) fn mark_releases_of_environments(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) -> usize {
     const FUNCTIONS_OF_A_TASK: usize = 256;
     let is_candidate: Vec<bool> = program.layouts.iter().map(|layout| layout.kind == LayoutKind::Environment && layout.class_flags & class_flags::MAY_BE_REUSED != 0).collect();
     let mut births: Vec<SmallVec<[(usize, usize, V); 1]>> = vec![SmallVec::new(); program.layouts.len()];
     let mut tasks: Vec<(usize, &[crate::ir::Func], Vec<(LayoutId, usize, usize, V)>)> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_OF_A_TASK, funcs, Vec::new())).collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, found)| {
-        for (function, func) in funcs.iter().enumerate() {
+        for (function, func) in funcs.iter().enumerate().filter(|function| contents[*first + function.0] & super::has::NEW_OBJECTS != 0) {
             for (block, at) in func.blocks.iter().enumerate().flat_map(|(block, it)| it.ops.iter().map(move |&at| (block, at))) {
                 if let Some(&(Op::New(layout) | Op::NewWith { layout, .. })) = func.op(at)
                     && is_candidate[layout.idx()]

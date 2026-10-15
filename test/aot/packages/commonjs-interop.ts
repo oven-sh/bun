@@ -832,6 +832,7 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "thenable",
+    differs: "The bundler moves `exports.name = function () {}` to a variable `$name`, which names the function. Under --aot its name stays empty, as in `bun run`.",
     files: {
       ...pkg("i_thenable", {
         "index.js": `exports.then = function (resolve) { resolve("thenable resolved"); };

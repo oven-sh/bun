@@ -11,7 +11,7 @@ const computed = {
 // The target of the guard is a layout that has to be made: a literal is made as it.
 const withTypes: Options & { types: string[] } = { types: ["x", "y"], strict: false }
 function load(text: string): Options { const raws: Raw[] = JSON.parse("[" + text + "]"); return raws[0] }
-// Called as the benchmark calls them: by name, through a type that says `Options`. No upcast leads from `Options` to the `Pick`: the callback is entered from where its parameter's type is not known.
+// Called the way the benchmark calls them: by name, through a type that says `Options`. No upcast leads from `Options` to the `Pick`: the callback is entered from code that does not know its parameter's type.
 const byName = computed as unknown as Record<string, { computeValue(o: Options): unknown }>
 for (const text of ['{"strict":true}', '{"strict":true,"noImplicitAny":false}', '{}', '{"types":["a"],"target":5,"extra":1}']) {
     const options = load(text)
@@ -27,7 +27,7 @@ function setStrict(o: Pick<Options, "strict" | "noImplicitAny">) { (o as { stric
 const shared = load('{"strict":true}')
 setStrict(shared)
 console.log(shared.strict, JSON.stringify(shared), computed.noImplicitAny.computeValue(withTypes), last === withTypes, hasTypes(withTypes) && withTypes.types.length)
-// NEGATIVE: a type that nothing untyped reaches is told apart as before: the literal is laid out and the guard tells by the layout.
+// NEGATIVE: a type that nothing untyped reaches is still distinguished: the literal has a fixed layout and the guard tests the layout.
 interface Shape { kind?: string; size?: number }
 function isSized(s: Shape): s is Shape & { size: number } { return s.size !== undefined }
 const sized: Shape & { size: number } = { kind: "c", size: 3 }

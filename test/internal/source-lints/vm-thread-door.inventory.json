@@ -7,6 +7,9 @@
       "JsPoster"
     ]
   },
+  "src/jsc/CachedBytecode.rs": {
+    "thread spawn": 1
+  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [
@@ -92,6 +95,15 @@
   "src/runtime/bake/production.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"
+    ]
+  },
+  "src/runtime/cli/aot_audit.rs": {
+    "thread spawn": 4
+  },
+  "src/runtime/cli/check_command.rs": {
+    "thread spawn": 3,
+    "unsafe impl Send": [
+      "Handed<T>"
     ]
   },
   "src/runtime/cli/create_command.rs": {

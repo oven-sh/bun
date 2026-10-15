@@ -11,10 +11,11 @@ use crate::ir::{Func, Op, Program, Target, Term, Why, func_flags};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// The values of the block that are used, untested, as of a type that is given, each with that type and what it is used as.
-fn uses_in(program: &Program, func: &Func, block: usize) -> Vec<(V, TyId, &'static str)> {
-    let mut uses = Vec::new();
+fn uses_in(program: &Program, func: &Func, block: usize, uses: &mut Vec<(V, TyId, &'static str)>) {
+    uses.clear();
     for &v in &func.blocks[block].ops {
         match func.op(v) {
             Some(&Op::Coerce { value, to, why: Why::Upcast }) => uses.push((value, to, "the operand of an upcast")),
@@ -38,7 +39,6 @@ fn uses_in(program: &Program, func: &Func, block: usize) -> Vec<(V, TyId, &'stat
     for target in targets_of(func.blocks[block].term.as_ref()) {
         uses.extend(target.args.iter().zip(&func.blocks[target.block.idx()].params).map(|(&argument, &parameter)| (argument, func.ty(parameter), "the argument for a block parameter")));
     }
-    uses
 }
 
 /// A value that is used as of a type that its own is not within.
@@ -53,20 +53,26 @@ const FUNCTIONS_OF_A_TASK: usize = 1024;
 
 /// The first of them, at most `most`, each pair of types once, in the order of the program.
 pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParallel<'_>) -> Vec<UnsoundUse> {
-    let subtypes: Vec<Vec<LayoutId>> = (program.layouts.iter())
+    let subtypes: Vec<Cow<'_, [LayoutId]>> = (program.layouts.iter())
         .map(|layout| {
+            if layout.members.is_sorted() {
+                return Cow::Borrowed(&layout.members[..]);
+            }
             let mut sorted = layout.members.clone();
             sorted.sort_unstable();
-            sorted
+            Cow::Owned(sorted)
         })
         .collect();
     let mut slices: Vec<(usize, Vec<UnsoundUse>)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, Vec::new())).collect();
     for_each_mut(&mut slices, in_parallel, &|(first, found)| {
         let mut is_sound: FxHashMap<(TyId, TyId), bool> = FxHashMap::default();
+        let (mut is_reached, mut worklist, mut uses) = (Vec::new(), Vec::new(), Vec::new());
         for (index, func) in program.funcs.iter().enumerate().skip(*first).take(FUNCTIONS_OF_A_TASK) {
-            for block in reachable_blocks(func) {
+            find_reachable_blocks(func, &mut is_reached, &mut worklist);
+            for block in (0..func.blocks.len()).filter(|&block| is_reached[block]) {
+                uses_in(program, func, block, &mut uses);
                 // `return;`, a receiver that is not there.
-                for (argument, want, what) in uses_in(program, func, block).into_iter().filter(|used| used.0.is_some()) {
+                for &(argument, want, what) in uses.iter().filter(|used| used.0.is_some()) {
                     let have = func.ty(argument);
                     if have == want || have.is_none() || want.is_none() || is_sound.contains_key(&(have, want)) {
                         continue;
@@ -95,7 +101,7 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
 }
 
 /// A layout of `have` and the first of its subtypes that no layout of `want` has along with all the others.
-fn lost_subtype(program: &Program, subtypes: &[Vec<LayoutId>], have: TyId, want: TyId) -> Option<(LayoutId, LayoutId)> {
+fn lost_subtype(program: &Program, subtypes: &[Cow<'_, [LayoutId]>], have: TyId, want: TyId) -> Option<(LayoutId, LayoutId)> {
     // Any object is within either.
     if program.tys.get(want).any_object || layouts_in(program, want).any(|sup| program.layouts[sup.idx()].admits_foreign) {
         return None;
@@ -132,14 +138,15 @@ fn targets_of(term: Option<&Term>) -> SmallVec<[&Target; 2]> {
     }
 }
 
-/// Ascending. What nothing gets to is not lowered, and its types are not looked at.
-fn reachable_blocks(func: &Func) -> Vec<usize> {
+/// What nothing gets to is not lowered, and its types are not looked at.
+fn find_reachable_blocks(func: &Func, is_reached: &mut Vec<bool>, worklist: &mut Vec<usize>) {
+    is_reached.clear();
+    is_reached.resize(func.blocks.len(), false);
     if func.blocks.is_empty() {
-        return Vec::new();
+        return;
     }
-    let mut is_reached = vec![false; func.blocks.len()];
     is_reached[Func::ENTRY.idx()] = true;
-    let mut worklist = vec![Func::ENTRY.idx()];
+    worklist.push(Func::ENTRY.idx());
     while let Some(block) = worklist.pop() {
         for target in targets_of(func.blocks[block].term.as_ref()) {
             if !std::mem::replace(&mut is_reached[target.block.idx()], true) {
@@ -147,5 +154,4 @@ fn reachable_blocks(func: &Func) -> Vec<usize> {
             }
         }
     }
-    (0..func.blocks.len()).filter(|&block| is_reached[block]).collect()
 }

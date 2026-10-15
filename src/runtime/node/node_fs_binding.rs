@@ -45,6 +45,7 @@ where
         .node_fs
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
+        Err(_) if global.value_thrown_by_host_function_is_ignored() => Err(global.throw_value(JSValue::UNDEFINED)),
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
     }

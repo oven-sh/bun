@@ -16,7 +16,7 @@ console.log(nameInAMessage(undefined), nameInAMessage(null), nameInAMessage([]))
 const thenable = { then(resolve: (v: number) => void) { resolve(7) } }
 Promise.resolve(thenable).then(v => console.log("then", v))
 console.log([1, 2, 3].length, "abc".length, [1, 2, 3].slice(1).join(), "abcdef".slice(2))
-// The name of a function that is inlined stands in `name` and in a stack.
+// The name of an inlined function still appears in `name` and in stack traces.
 function inlinedAndNamed(): string { return new Error("e").stack!.split("\n").length > 0 ? "has a stack" : "none" }
 console.log(inlinedAndNamed(), inlinedAndNamed.name)
 class Kept { static label = "alive\x5fas_a_key"; #hidden = 1; get hidden() { return this.#hidden } method() { return "m" } }

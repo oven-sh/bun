@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
@@ -15,8 +15,12 @@ console.log(double(body.visits));
 console.log((body.visits as number) + 1);
 `;
 
+const folders: string[] = [];
+afterAll(() => folders.forEach(folder => rmSync(folder, { recursive: true, force: true })));
 function project(name: string, files: Record<string, string>) {
-  return String(tempDir(name, { "tsconfig.json": tsconfig, "package.json": JSON.stringify({ name: "app", type: "module" }), ...files }));
+  const folder = String(tempDir(name, { "tsconfig.json": tsconfig, "package.json": JSON.stringify({ name: "app", type: "module" }), ...files }));
+  folders.push(folder);
+  return folder;
 }
 async function spawned(cmd: string[], cwd: string, env: Record<string, string> = {}) {
   await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, NO_COLOR: "1", ...env }, stdout: "pipe", stderr: "pipe" });
@@ -57,7 +61,7 @@ const brief = (found: Line[]) => found.map(line => `${line.kind} ${line.place} $
 const compiles = (isMacOS && isArm64) || (isLinux && !isArm64);
 
 describe.concurrent("bun --aot-audit", () => {
-  test("the program runs as usual, and each difference is named", async () => {
+  test("the program runs as usual, and every difference is reported", async () => {
     const dir = project("aot-audit-run", { "app.ts": app });
     const plain = await bun(dir, "app.ts");
     const audited = await bun(dir, "--aot-audit", "app.ts");
@@ -67,7 +71,40 @@ describe.concurrent("bun --aot-audit", () => {
     expect(audited.exitCode).toBe(0);
   });
 
-  test("a program that keeps to its types has no line", async () => {
+  test("a false cast among the program's own types is named where the executable throws; what the executable accepts has no line", async () => {
+    const types = `interface Circle { kind: "circle"; radius: number }
+interface Square { kind: "square"; side: number }
+interface Label { kind: "label"; text: string }
+type Shape = Circle | Square;
+function make(kind: string): Circle | Square | Label {
+  if (kind === "circle") return { kind: "circle", radius: 1 };
+  if (kind === "square") return { kind: "square", side: 2 };
+  return { kind: "label", text: "three" };
+}
+function kindOf(shape: Shape): string { return shape.kind; }
+`;
+    const dir = project("aot-audit-false-cast", {
+      "false.ts": types + `for (const kind of ["circle", "square", "label"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
+      "any.ts": types + `for (const kind of ["circle", "square", "label"]) { const shape: any = make(kind); console.log(kindOf(shape)); }\n`,
+      "true.ts": types + `for (const kind of ["circle", "square", "circle"]) { const shape = make(kind) as Shape; console.log(kindOf(shape)); }\n`,
+    });
+    const audited = await bun(dir, "--aot-audit", "false.ts");
+    expect(audited.stdout).toBe("circle\nsquare\nlabel\n");
+    const named = lines(audited.stderr, "type-error");
+    expect(named.map(line => line.action)).toEqual(["would-throw"]);
+    expect(named[0].text).toContain(", got Label;");
+    expect((await bun(dir, "build", "--compile", "--aot", "false.ts", "--outfile", "false.exe")).exitCode).toBe(0);
+    const run = await spawned([join(dir, "false.exe")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+    expect(run.stdout).toBe("circle\nsquare\n");
+    const thrown = lines(run.stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+    expect(thrown.map(line => line.place)).toEqual([named[0].place]);
+    expect(await bun(dir, "--aot-audit", "any.ts")).toEqual({ stdout: "circle\nsquare\nlabel\n", stderr: "", exitCode: 0 });
+    expect((await bun(dir, "build", "--compile", "--aot", "any.ts", "--outfile", "any.exe")).exitCode).toBe(0);
+    expect((await spawned([join(dir, "any.exe")], dir)).stdout).toBe("circle\nsquare\nlabel\n");
+    expect(await bun(dir, "--aot-audit", "true.ts")).toEqual({ stdout: "circle\nsquare\ncircle\n", stderr: "", exitCode: 0 });
+  }, 240_000);
+
+  test("a program that respects its types logs nothing", async () => {
     const dir = project("aot-audit-clean", {
       "app.ts": `interface User { name: string; age: number }
 const users: User[] = [{ name: "Ada", age: 36 }];
@@ -79,7 +116,7 @@ console.log(total, users.map(user => user.name).join());
     expect(await bun(dir, "--aot-audit", "app.ts")).toEqual({ stdout: "36 Ada\n", stderr: "", exitCode: 0 });
   });
 
-  test("a line never holds a value", async () => {
+  test("a log line never contains a value from the program", async () => {
     const dir = project("aot-audit-values", {
       "app.ts": `const secret: any = JSON.parse('"hunter2"');\nconst n: number = secret;\nconsole.log(typeof n);\n`,
     });
@@ -121,7 +158,7 @@ new (Point as any)("1");
     expect(brief(lines(stderr, "type-error"))).toEqual(["builtin-member-replace app.ts:1:2 would-refuse"]);
   });
 
-  test("a place writes its 1st, 10th and 100th failure", async () => {
+  test("each location logs its 1st, 10th and 100th failure", async () => {
     const dir = project("aot-audit-counts", {
       "app.ts": `const raw: any = JSON.parse('"x"');\nfunction take(n: number) { return n; }\nconst loose: any = take;\nfor (let i = 0; i < 150; i++) loose(raw);\n`,
     });
@@ -172,7 +209,7 @@ test("half", () => {
     expect(mocked.stderr).toContain("1 pass");
   });
 
-  test("a value that `as` converts fails no later check", async () => {
+  test("a value converted by `as` passes later checks", async () => {
     const dir = project("aot-audit-converted", {
       "app.ts": `function double(n: number): number { return n * 2; }
 class Box { constructor(public n: number) {} }
@@ -248,7 +285,7 @@ console.log(n);
     expect(lines(stderr, "type-error")).toEqual([]);
   });
 
-  test("a file that calls eval() directly is not audited, and Bun says so", async () => {
+  test("a file that calls eval() directly is not audited, and Bun reports that", async () => {
     const dir = project("aot-audit-eval", { "app.ts": `const local = 3;\nconst n: number = JSON.parse('"y"');\nconsole.log(eval("local"), n);\n` });
     const { stdout, stderr } = await bun(dir, "--aot-audit", "app.ts");
     expect(stdout).toBe("3 y\n");
@@ -256,7 +293,7 @@ console.log(n);
     expect(stderr.trimEnd().split("\n")).toHaveLength(1);
   });
 
-  test("what the program prints of its own functions and stacks is unchanged", async () => {
+  test("the program's own function source text and stack traces are unchanged", async () => {
     const dir = project("aot-audit-text", {
       "app.ts": `const f = (x: any) => (x as any) ? ((x as number), (x as number)) : (x as string);
 function where(n: number) { return new Error("here").stack!.split("\\n").length; }
@@ -280,7 +317,7 @@ let later!: number;
 console.log(five, later);
 `;
 
-  test("what always fails is an error", async () => {
+  test("a check that always fails is an error", async () => {
     const dir = project("aot-check-errors", { "wrong.ts": wrong });
     const { stdout, stderr, exitCode } = await bun(dir, "check", "--aot", "wrong.ts");
     const codes = [...(stdout + stderr).matchAll(/TS1000\d\d/g)].map(match => match[0]);
@@ -294,12 +331,15 @@ console.log(five, later);
     expect((await bun(dir, "check", "wrong.ts")).exitCode).toBe(0);
   });
 
-  test("--aot-explain=throws lists what can fail, and one summary line", async () => {
+  test("--aot-explain=throws lists the checks that can fail, with counts and causes", async () => {
     const dir = project("aot-check-throws", { "app.ts": app });
     const { stderr, exitCode } = await bun(dir, "check", "--aot", "--aot-explain=throws", "app.ts");
     const said = stderr.split("\n").filter(line => line.startsWith("[aot]") || line.startsWith("aot:"));
     expect(brief(lines(stderr, "type-check"))).toEqual(["read-property app.ts:6:20 warning", "as-late-use app.ts:7:13 warning", "as-convert app.ts:7:14 warning"]);
-    expect(said.slice(3)).toEqual(["[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail"]);
+    expect(said.slice(3)).toEqual([
+      "[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail",
+      "[aot] type-check summary: those that can fail: 1 at an `as`, 1 where a value that an `as` let through is used, 1 on an `any`",
+    ]);
     expect(said[0]).toContain("; value from JSON.parse(..) at app.ts:5:24; fix: ");
     expect(exitCode).toBe(0);
   });
@@ -308,23 +348,23 @@ console.log(five, later);
     const dir = project("aot-check-json", { "app.ts": app });
     const { stdout } = await bun(dir, "check", "--aot", "--aot-explain=throws-json", "app.ts");
     const objects = stdout.split("\n").filter(line => line.startsWith("{")).map(line => JSON.parse(line));
-    expect(objects.map(it => [it.aot, it.kind, it.file, it.line, it.col, it.action, it.category])).toEqual([
-      ["type-check", "read-property", "app.ts", 6, 20, "warning", "untyped-input"],
-      ["type-check", "as-late-use", "app.ts", 7, 13, "warning", "untyped-input"],
-      ["type-check", "as-convert", "app.ts", 7, 14, "warning", "untyped-input"],
+    expect(objects.map(it => [it.aot, it.kind, it.file, it.line, it.col, it.action, it.category, it.cause])).toEqual([
+      ["type-check", "read-property", "app.ts", 6, 20, "warning", "untyped-input", "any"],
+      ["type-check", "as-late-use", "app.ts", 7, 13, "warning", "untyped-input", "after-as"],
+      ["type-check", "as-convert", "app.ts", 7, 14, "warning", "untyped-input", "as"],
     ]);
   });
 });
 
 describe.concurrent.skipIf(!compiles)("bun build --compile --aot", () => {
-  test("what always fails stops the build", async () => {
+  test("a check that always fails stops the build", async () => {
     const dir = project("aot-build-errors", { "wrong.ts": `function double(n: number) { return n * 2; }\nconsole.log(double("4" as any));\n` });
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "wrong.ts", "--outfile", "wrong");
     expect(stdout + stderr).toContain("TS100013");
     expect(exitCode).toBe(1);
   }, 120_000);
 
-  test("Bun.build: what always fails is in logs", async () => {
+  test("Bun.build: a check that always fails is in logs", async () => {
     const dir = project("aot-build-api-errors", {
       "wrong.ts": `function double(n: number) { return n * 2; }\nconsole.log(double("4" as any));\n`,
       "build.ts": `const result = await Bun.build({ entrypoints: ["./wrong.ts"], throw: false, compile: { outfile: "./wrong", aot: true } });
@@ -334,14 +374,14 @@ console.log(result.success, result.logs.filter(log => String(log.message).includ
     expect((await bun(dir, "build.ts")).stdout).toBe("false 1\n");
   }, 120_000);
 
-  test("a build that does not ask for a report prints none", async () => {
+  test("a build prints no report unless asked", async () => {
     const dir = project("aot-build-quiet", { "app.ts": app });
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "app");
     expect(stdout + stderr).not.toContain("type-check");
     expect(exitCode).toBe(0);
   }, 120_000);
 
-  test("an unknown report is an error that names the reports", async () => {
+  test("an unknown report name is an error that lists the valid names", async () => {
     const dir = project("aot-build-unknown", { "app.ts": app });
     const { stdout, stderr, exitCode } = await bun(dir, "build", "--compile", "--aot", "--aot-explain=nonsense", "app.ts", "--outfile", "app");
     expect(stdout + stderr).toContain("it is one of throws, throws-all, throws-json, throws-all-json");
@@ -356,11 +396,11 @@ console.log(JSON.stringify(result.logs.filter(log => log.level === "verbose").ma
 `,
     });
     const { stdout, exitCode } = await bun(dir, "build.ts");
-    expect(JSON.parse(stdout)).toEqual(["[aot] type-check", "[aot] type-check", "[aot] type-check", "[aot] type-check"]);
+    expect(JSON.parse(stdout)).toEqual(Array(5).fill("[aot] type-check"));
     expect(exitCode).toBe(0);
   }, 120_000);
 
-  test("Bun.build refuses aotTypeErrors and aotExplain without aot", async () => {
+  test("Bun.build rejects aotTypeErrors and aotExplain without aot", async () => {
     const dir = project("aot-build-refused", {
       "app.ts": app,
       "build.ts": `for (const compile of [{ aotTypeErrors: "log" }, { aotExplain: "throws" }] as const) {
@@ -397,7 +437,7 @@ console.log(JSON.stringify(result.logs.filter(log => log.level === "verbose").ma
       return dir;
     }
 
-    test("it has no type error that the default build does not have", async () => {
+    test("it reports no type error that the default build does not report", async () => {
       const dir = project("aot-log-same-errors", {
         "app.ts": `import { last } from "./retry";\nfunction twice(n: number) { return n * 2; }\nconsole.log(twice(4), last());\n`,
         "retry.ts": `import { Client, refresh } from "./client";
@@ -424,7 +464,7 @@ export function refresh(token?: string): void { if (token) console.log(token.len
       }
     }, 240_000);
 
-    test("the executable writes a line and goes on", async () => {
+    test("the executable logs a line and continues", async () => {
       const dir = await built("aot-log-run");
       const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe("6\n4\n");
@@ -470,6 +510,20 @@ try { unwrap(JSON.parse('{"name":"b","inner":{"n":"hunter2"}}')); } catch {}
       expect(stderr).not.toContain("hunter2");
     }, 120_000);
 
+    test("the reason logged at a function entry never contains a value from the program", async () => {
+      const dir = await built(
+        "aot-log-reason-entry",
+        `const handler: any = show;
+function show({ n }: { n: number }): string { return "n=" + n; }
+console.log(handler({ n: "hunter2" }));
+`,
+      );
+      const { stdout, stderr } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("n=hunter2\n");
+      expect(stderr).toContain("; reason property 'n': expected number, got string;");
+      expect(stderr).not.toContain("hunter2");
+    }, 120_000);
+
     const roads = `interface Ctx { cwd: string }
 interface Session { type: "session"; id: string; ctx: Ctx }
 function fresh(id: string): Session { return { type: "session", id, ctx: { cwd: "/" } }; }
@@ -483,7 +537,7 @@ show(4, () => { const list: Session[] = parse('[{"id":"y"}]'); return [list[0].i
 show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } return [idOf(parse('{"id":"y"}'))]; });
 `;
 
-    test("an object that does not match its type: a line, and the program goes on as plain Bun does", async () => {
+    test("an object that does not match its type is logged, and the program continues as in plain Bun", async () => {
       const dir = await built("aot-log-object", roads);
       const plain = await bun(dir, "app.ts");
       expect(plain.stdout).toBe("a\n1 y undefined\n2 y\n3 y undefined\n4 y\n5 2\n");
@@ -502,18 +556,18 @@ show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } re
       expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("a\n1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n");
     }, 240_000);
 
-    test("the report says where this build goes on", async () => {
+    test("the report says where this build continues", async () => {
       const dir = project("aot-log-report", { "app.ts": roads });
       const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
       const report = lines(build.stdout + build.stderr, "type-check").map(line => line.text);
-      expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(5);
-      expect(report.filter(text => text.includes("; this log build throws here")).map(text => /expected ([^,]+),/.exec(text)![1])).toEqual(["Session[]", "number"]);
-      expect(build.stdout + build.stderr).toContain("this build continues at 5, converts at 0 and still throws at 2");
+      expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(6);
+      expect(report.filter(text => text.includes("; this log build throws here")).map(text => /expected ([^,]+),/.exec(text)![1])).toEqual(["string", "string", "string", "string", "Session[]", "string", "number"]);
+      expect(build.stdout + build.stderr).toContain("this build continues at 6, converts at 0 and still throws at 7");
       const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "app");
       expect(other.stdout + other.stderr).not.toContain("log build");
     }, 240_000);
 
-    test("a record without its number, as an argument", async () => {
+    test("an argument whose number property is missing", async () => {
       const dir = await built(
         "aot-log-flat",
         `interface Row { id: string; n: number }
@@ -530,7 +584,7 @@ console.log(next(parse('{"id":"z","n":3}')));
       expect(exitCode).toBe(0);
     }, 120_000);
 
-    test("the shape of a server: a handler of one file, registered in another, called as a value", async () => {
+    test("a typical server: a handler defined in one file, registered in another, called indirectly", async () => {
       const dir = project("aot-log-server", {
         "handlers.ts": `export function forJavaScript(n: number): string { return "n=" + n; }
 export function forTypeScript(n: number): string { return "n=" + n; }
@@ -602,7 +656,251 @@ console.log(app.count);
       expect(exitCode).toBe(0);
     }, 120_000);
 
-    test("a valid program has no line: what the default build accepts, this build accepts in silence", async () => {
+    test("methods of an object literal: registered, through any, a setter, a trap of a Proxy, toJSON, async", async () => {
+      const dir = project("aot-log-literal", {
+        "app.ts": `const body: any = JSON.parse('{"n":"wrong","five":5}');
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+type Handlers = { message(n: number): string };
+const registered: Handlers[] = [];
+function register(handlers: Handlers): void { registered.push(handlers); }
+register({ message(n: number): string { return "registered " + n; } });
+const counter = { total: 0, add(n: number): string { return "add " + n + " " + ++this.total; }, set limit(n: number) { this.total = 10; } };
+const nested = { websocket: { async message(n: number): Promise<string> { await null; return "nested " + n; } } };
+const proxy: any = new Proxy({}, { get(target: object, key: string): string { return "get " + String(key); } });
+const json = { toJSON(key: number): string { return "key " + key; } };
+const untyped: any = counter;
+row(1, () => registered[0].message(body.n));
+row(2, () => untyped.add(body.n) + " | " + untyped.add(body.five));
+row(3, () => { untyped.limit = body.n; return counter.total; });
+row(4, () => proxy[Symbol.iterator]);
+row(5, () => JSON.stringify([json]));
+try { console.log(6, await (nested as any).websocket.message(body.n)); } catch { console.log(6, "thrown"); }
+`,
+      });
+      const plain = await bun(dir, "app.ts");
+      expect(plain.stdout).toBe('1 registered wrong\n2 add wrong 1 | add 5 2\n3 10\n4 get Symbol(Symbol.iterator)\n5 ["key 0"]\n6 nested wrong\n');
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(brief(logged)).toEqual(["6:12", "7:29", "7:97", "10:16", "8:31"].map(place => `enter-function app.ts:${place} continued`));
+      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("; this log build continues here"));
+      const ids = new Set(foretold.flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("a class that extends another: arrows in its constructor, and in a method that calls super", async () => {
+      const dir = await built(
+        "aot-log-derived",
+        `const body: any = JSON.parse('{"n":"wrong","five":5}');
+class Router { routes = new Map<string, (n: number) => string>(); get(path: string, handler: (n: number) => string): void { this.routes.set(path, handler); } run(path: string, from: any): string { return this.routes.get(path)!(from); } }
+class Base { router = new Router(); constructor(public name: string) {} describe(): string { return "base " + this.name; } }
+class App extends Base {
+  count = 0;
+  constructor() { super("app"); this.router.get("/c", (n: number) => this.name + " constructor " + n + " " + ++this.count); }
+  register(): void { const described = super.describe(); this.router.get("/m", (n: number) => described + " method " + n + " " + ++this.count); }
+}
+const app = new App(); app.register();
+for (const path of ["/c", "/m"]) console.log(app.router.run(path, body.n), "|", app.router.run(path, body.five));
+console.log(app.count);
+`,
+      );
+      const plain = await bun(dir, "app.ts");
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      expect(stdout).toBe("app constructor wrong 1 | app constructor 5 2\nbase app method wrong 3 | base app method 5 4\n4\n");
+      expect(brief(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")))).toEqual(["enter-function app.ts:6:55 continued", "enter-function app.ts:7:80 continued"]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("functions that escape typed code anonymously: returned, aliased, stored in a table of any, read as members by name", async () => {
+      const dir = project("aot-log-roads", {
+        "app.ts": `const body: any = JSON.parse('{"n":"wrong","five":5}');
+const untyped = (x: unknown) => x as any;
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+function returnsArrow() { return (a: number, b: number, c: number): string => "arrow " + a + b + c; }
+function aliased(a: number, b: string, c: number): string { return "aliased " + a + b + c; }
+const alias = aliased;
+function inATable(a: number, b: number, c: string): string { return "table " + a + b + c; }
+const table: Record<string, any> = { t: inATable };
+class Service {
+  prefix = "s";
+  field = (a: string, b: number, c: string): string => this.prefix + " field " + a + b + c;
+  makes() { return (a: string, b: number, c: number): string => this.prefix + " made " + a + b + c; }
+}
+const literal = { taken(a: number, b: string, c: string): string { return "taken " + a + b + c; } };
+row(1, () => untyped(returnsArrow())(body.n, 1, 2));
+row(2, () => untyped(alias)(body.n, "b", 2));
+row(3, () => table.t(body.n, 1, "c"));
+row(4, () => untyped(new Service()).field(body.five, 1, "c"));
+row(5, () => untyped(new Service().makes())(body.five, 1, 2));
+row(6, () => untyped(literal.taken)(body.n, "b", "c"));
+row(7, () => (function (a: boolean, b: number, c: number): string { return "stands " + a + b + c; })(body.n, 1, 2));
+`,
+      });
+      const plain = await bun(dir, "app.ts");
+      expect(plain.stdout).toBe("1 arrow wrong12\n2 aliased wrongb2\n3 table wrong1c\n4 s field 51c\n5 s made 512\n6 taken wrongbc\n7 stands wrong12\n");
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => line.action)).toEqual(Array(7).fill("continued"));
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("every TypeError in a run gets its own line that says threw, even if an earlier line for that location says continued", async () => {
+      const dir = project("aot-log-back", {
+        "app.ts": `interface Req { path: string; n: number }
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+const parse = (text: string): any => JSON.parse(text);
+function makes(n: number): Req { return { path: "/typed", n }; }
+const h = (r: Req): string => "h:" + r.path + r.n;
+function back(r: Req): Req { return r; }
+const table: { h: (r: Req) => string; back: (r: Req) => Req }[] = [{ h, back }];
+console.log(0, h(back(makes(1))));
+row(1, () => table[0].h(table[0].back(parse('"s"'))));
+row(2, () => h(table[0].back(parse('"s"'))));
+row(3, () => table[0].h(back(parse('"s"'))));
+row(4, () => h(back(parse('"s"'))));
+row(5, () => { const r: Req = back(parse('"s"')); return typeof r; });
+row(6, () => String(back(parse('"s"')).path));
+row(7, () => h(back(parse('{"path":"/p","n":1}'))));
+`,
+      });
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toStartWith("0 h:/typed1\n");
+      expect(stdout).toEndWith("7 h:/p1\n");
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.filter(line => line.action === "threw").length).toBe(stdout.split("thrown").length - 1);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("a string or a number passed where a parameter expects an object: called by name, from a table, as a typed parameter", async () => {
+      const dir = project("aot-log-objects", {
+        "app.ts": `interface Req { path: string; n: number }
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+const parse = (text: string): any => JSON.parse(text);
+function makes(n: number): Req { return { path: "/typed", n }; }
+const handler = (r: Req): string => "h:" + r.path + r.n;
+function declared(r: Req): string { return "d:" + r.path + r.n; }
+const table: { h: (r: Req) => string }[] = [{ h: handler }, { h: declared }];
+function calls(f: (r: Req) => string, v: any): string { return f(v); }
+console.log(0, handler(makes(1)), declared(makes(2)));
+for (const text of ['{"path":"/p","n":1}', '"no object"', "7"]) {
+  row(1, () => handler(parse(text)) + " " + declared(parse(text)));
+  row(2, () => table[0].h(parse(text)) + " " + table[1].h(parse(text)));
+  row(3, () => calls(handler, parse(text)) + " " + calls(declared, parse(text)));
+}
+`,
+      });
+      const plain = await bun(dir, "app.ts");
+      const wrong = "1 h:undefinedundefined d:undefinedundefined\n2 h:undefinedundefined d:undefinedundefined\n3 h:undefinedundefined d:undefinedundefined\n";
+      expect(plain.stdout).toBe("0 h:/typed1 d:/typed2\n1 h:/p1 d:/p1\n2 h:/p1 d:/p1\n3 h:/p1 d:/p1\n" + wrong + wrong);
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.length).toBeGreaterThan(0);
+      expect(logged.filter(line => line.action !== "continued").map(line => line.text)).toEqual([]);
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("closures that escape typed code inside another value keep running: array, generator, field, function argument, tuple, method, async function", async () => {
+      const dir = project("aot-log-closures", {
+        "app.ts": `const body: any = JSON.parse('{"n":"wrong"}');
+interface Mark { only: "here" }
+const sink: unknown[] = [];
+const letOut = (value: unknown): any => { sink.push(value); return sink[sink.length - 1]; };
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+function inAnArray() { const all: ((n: number, m?: Mark) => string)[] = []; for (let i = 0; i < 2; i++) all.push((n: number, m?: Mark) => i + ":" + n); return all; }
+async function resolved(k: number) { await null; return (n: number, k2: number, m?: Mark) => "resolved " + k + n; }
+function* yielded(k: number) { yield (n: number, a: string, m?: Mark) => "yielded " + k + n; }
+class Keeps { kept: (n: number, b: boolean, m?: Mark) => string; constructor() { this.kept = (n: number, b: boolean, m?: Mark) => "kept " + n; } }
+function passes(f: (n: number, m: Mark | null) => string) { return f; }
+function inATuple(k: number) { const f = (n: number, m: Mark | undefined, z?: Mark) => "tuple " + k + n; return [f, f] as const; }
+class Makes { base = "b"; make(k: number) { return (n: number, m?: Mark | string) => this.base + k + n; } }
+row(1, () => letOut(inAnArray()).map((f: any) => f(body.n)).join());
+row(2, () => letOut(yielded(1).next().value)(body.n, "a"));
+row(3, () => letOut(new Keeps().kept)(body.n, true));
+row(4, () => letOut(passes((n: number, m: Mark | null) => "passed " + n))(body.n, null));
+row(5, () => letOut(inATuple(1))[1](body.n));
+row(6, () => letOut(new Makes().make(1))(body.n));
+try { console.log(7, letOut(await resolved(1))(body.n, 2)); } catch { console.log(7, "thrown"); }
+`,
+      });
+      const plain = await bun(dir, "app.ts");
+      expect(plain.stdout).toBe("1 0:wrong,1:wrong\n2 yielded 1wrong\n3 kept wrong\n4 passed wrong\n5 tuple 1wrong\n6 b1wrong\n7 resolved 1wrong\n");
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => line.action)).toEqual(Array(7).fill("continued"));
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("the build continues where the report says it does: a closure captures a method parameter and another class has a method of the same name with no parameters", async () => {
+      const dir = project("aot-log-capture", {
+        "app.ts": `const body: any = JSON.parse('{"n":"wrong"}');
+const sink: unknown[] = [];
+const letOut = (value: unknown): any => { sink.push(value); return sink[sink.length - 1]; };
+class Other { make() { return "none"; } }
+class Makes { base = "b"; make(k: number) { return (n: number) => this.base + k + n; } }
+console.log(new Other().make());
+console.log(letOut(new Makes().make(1))(body.n));
+`,
+      });
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const row = lines(build.stdout + build.stderr, "type-check").find(line => line.place === "app.ts:5:52")!;
+      expect(row.text).toContain("; this log build continues here;");
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("none\nb1wrong\n");
+      expect(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")).map(line => `${line.id} ${line.action}`)).toEqual([row.id + " continued"]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("every logged line is in the report: stores to a variable, a property and a static property from a call that runs as plain JavaScript", async () => {
+      const dir = project("aot-log-stores", {
+        "app.ts": `const body: any = JSON.parse('{"n":"wrong"}');
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+let kept: number = 0;
+const box: { n: number } = { n: 0 };
+class Holder { n = 0; static total: number = 0; }
+const holder = new Holder();
+function inAVariable(p: number): string { kept = p; return "kept " + kept; }
+function inARecord(p: number): string { box.n = p; return "box " + box.n; }
+function inAnObject(p: number): string { holder.n = p; return "holder " + holder.n; }
+function inAStatic(p: number): string { Holder.total = p; return "static " + Holder.total; }
+const loose = (value: unknown) => value as any;
+row(1, () => loose(inAVariable)(body.n));
+row(2, () => loose(inARecord)(body.n));
+row(3, () => loose(inAnObject)(body.n));
+row(4, () => loose(inAStatic)(body.n));
+`,
+      });
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stderr } = await spawned([join(dir, "app")], dir);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => line.action)).toEqual(["continued", "threw", "continued", "threw", "continued", "threw", "continued", "threw"]);
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+    }, 120_000);
+
+    test("a valid program logs nothing: whatever the default build accepts, this build accepts silently", async () => {
       const dir = await built(
         "aot-log-valid",
         `interface Ctx { cwd: string }
@@ -630,6 +928,49 @@ const other = parse('{"name":"w"}'); other.a = new K(); console.log(showHolds(ot
       expect(exitCode).toBe(0);
     }, 120_000);
 
+    test("undefined that the default build accepts is not logged: an uninitialized field as an argument, a missing element passed to a callback", async () => {
+      const dir = await built(
+        "aot-log-undefined",
+        `const sink: any[] = [];
+function plusOne(n: number): number { return n + 1; }
+class Promised { count!: number; }
+function first<T>(list: readonly T[], test: (x: T, index: number) => boolean, from: number): boolean { return test(list[from], from); }
+const isEven = (x: number) => (x & 1) === 0;
+const isOdd = (x: number) => (x & 1) === 1;
+sink.push(plusOne, isEven, isOdd);
+console.log(plusOne(new Promised().count), first([1, 2], isEven, 5), first([1, 2], isOdd, 5));
+`,
+      );
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("NaN true false\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("every logged line is in the report: a wrong value returned by an indirectly called function", async () => {
+      const dir = project("aot-log-result", {
+        "app.ts": `interface Req { path: string; n: number }
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+const parse = (text: string): any => JSON.parse(text);
+function back(r: Req): Req { return r; }
+const table: { back: (r: Req) => Req }[] = [{ back }];
+const t = table[Number("0")];
+row(1, () => { const r = t.back(parse('"s"')); return typeof r; });
+row(2, () => { const r: Req = t.back(parse('"s"')); return typeof r; });
+row(3, () => String(t.back(parse('"s"')).path));
+row(4, () => t.back(parse('{"path":"/p","n":1}')).path);
+`,
+      });
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("1 thrown\n2 thrown\n3 thrown\n4 /p\n");
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.filter(line => line.action === "threw").map(line => line.kind)).toEqual(["call-result", "enter-variable", "call-result"]);
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+    }, 120_000);
+
     test("Bun.build: aotTypeErrors", async () => {
       const dir = project("aot-log-api", {
         "app.ts": app,
@@ -640,7 +981,137 @@ const other = parse('{"name":"w"}'); other.a = new K(); console.log(showHolds(ot
     }, 120_000);
   });
 
-  test("one place has one id in the audit, the report and the executable", async () => {
+  test("every line logged at run time is in the build's report: methods, a constructor, a setter, a static method, a function typed as any", async () => {
+    const dir = project("aot-report-members", {
+      "app.ts": `const body: any = JSON.parse('{"n":"wrong"}');
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+class Account {
+  total = 0;
+  constructor(public opening: number = 0) {}
+  add(n: number): string { return "add " + n; }
+  both(label: string, n: number): string { return label + n; }
+  set limit(n: number) { this.total = 1; }
+  static parse(n: number): string { return "parse " + n; }
+}
+function declared(n: number): string { return "declared " + n; }
+const held: any = declared;
+const account = new Account(1);
+row(1, () => account.add(body.n));
+row(2, () => account.both("b", body.n));
+row(3, () => new Account(body.n).total);
+row(4, () => { account.limit = body.n; return account.total; });
+row(5, () => Account.parse(body.n));
+row(6, () => held(body.n));
+`,
+    });
+    for (const mode of ["throw", "log"]) {
+      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.length).toBe(6);
+      const report = lines(build.stdout + build.stderr, "type-check");
+      const ids = new Set(report.flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+    }
+  }, 240_000);
+
+  test("a wrong argument is logged at the function whether or not the compiler resolves the call: helper, call(), new, static setter, static method, abstract method", async () => {
+    const dir = project("aot-report-one-id", {
+      "app.ts": `const body: any = JSON.parse('{"n":"wrong"}');
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+const loose = (value: unknown) => value as any;
+function declared(n: number): string { return "declared " + n; }
+function makes() { return (n: number): string => "made " + n; }
+function usesThis(this: { k: number }, n: number): string { return "this " + n + this.k; }
+function* steps(n: number): Generator<string> { yield "step " + n; }
+class Account {
+  static rate = 0;
+  constructor(public opening: number) {}
+  static set level(n: number) { Account.rate = 1; }
+  static parse(n: number): string { return "parse " + n; }
+  static scale(n: number): string { return "scale " + n; }
+}
+abstract class Shape { abstract area(n: number): string; describe(n: any): string { return this.area(n); } }
+class Square extends Shape { area(n: number): string { return "area " + n; } }
+row(1, () => loose(declared)(body.n));
+row(2, () => loose(declared)("text"));
+row(3, () => loose(makes())(body.n));
+row(4, () => loose(declared).call(undefined, body.n));
+row(5, () => loose(usesThis).call({ k: 1 }, body.n));
+row(6, () => [...loose(steps)(body.n)].join());
+row(7, () => new (loose(Account))(body.n).opening);
+row(8, () => { Account.level = body.n; return Account.rate; });
+row(9, () => { loose(Account).level = body.n; return Account.rate; });
+row(10, () => loose(Account.parse)(body.n));
+row(11, () => loose(Account).scale(body.n));
+row(12, () => new Square().describe(body.n));
+`,
+    });
+    for (const mode of ["throw", "log"]) {
+      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["declared", "anonymous", "usesThis", "steps", "Account", "level", "parse", "scale", "area"].map(name => "enter-function " + name));
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+    }
+  }, 240_000);
+
+  test("a setter assigned through any is in the report", async () => {
+    const dir = project("aot-report-setter", {
+      "app.ts": `const body: any = JSON.parse('{"n":"wrong","list":[]}');
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+class Gauge { level = 0; set size(n: number) { this.level = 1; } }
+const gauge = new Gauge(), loose: any = gauge;
+row(1, () => (Reflect.construct(Gauge, body.list) as Gauge).level);
+row(2, () => { loose.size = body.n; return gauge.level; });
+`,
+    });
+    for (const mode of ["throw", "log"]) {
+      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+      expect(stdout).toBe("1 0\n2 thrown\n");
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => `${line.kind} ${/\((.*?)\)/.exec(line.text)![1]}`)).toEqual(["enter-function size"]);
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").map(line => line.id));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+    }
+  }, 240_000);
+
+  test("a check behind an `as` is in the report when the cast value goes straight to an annotated parameter", async () => {
+    const dir = project("aot-report-behind-as", {
+      "app.ts": `interface Circle { kind: "circle"; radius: number }
+interface Square { kind: "square"; side: number }
+interface Label { kind: "label"; text: string }
+type Shape = Circle | Square;
+function make(kind: string): Circle | Square | Label {
+  if (kind === "circle") return { kind: "circle", radius: 1 };
+  if (kind === "square") return { kind: "square", side: 2 };
+  return { kind: "label", text: "three" };
+}
+function kindOf(shape: Shape): string { return shape.kind; }
+for (const kind of ["circle", "square", "label"]) {
+  try { const shape = make(kind) as Shape; console.log(kindOf(shape)); } catch { console.log("thrown"); }
+}
+`,
+    });
+    for (const mode of ["throw", "log"]) {
+      const build = await bun(dir, "build", "--compile", "--aot", `--aot-type-errors=${mode}`, "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr } = await spawned([join(dir, "app")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" });
+      expect(stdout).toBe("circle\nsquare\nthrown\n");
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => line.place)).toEqual(["app.ts:12:63"]);
+      const ids = new Set(lines(build.stdout + build.stderr, "type-check").flatMap(line => [line.id, line.call, /; logged as ([0-9a-f]{12})/.exec(line.text)?.[1]]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(build.stdout + build.stderr).toContain("those that can fail: 1 where a value that an `as` let through is used");
+    }
+  }, 240_000);
+
+  test("a location has the same id in the audit, the report and the executable", async () => {
     const dir = project("aot-one-story", { "app.ts": app });
     const audit = lines((await bun(dir, "--aot-audit", "app.ts")).stderr, "type-error");
     const report = lines((await bun(dir, "check", "--aot", "--aot-explain=throws", "app.ts")).stderr, "type-check");

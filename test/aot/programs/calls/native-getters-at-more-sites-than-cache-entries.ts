@@ -25,9 +25,9 @@ for (let round = 0; round < 6; round++) {
     if (round & 1) $vm.gc(); else $vm.edenGC()
     console.log("   and behind a collection, which empties the table:", victimsAreRight())
 }
-// THE COUNT OF A RECORD's FILLINGS OUTLIVES THE COLLECTION THAT EMPTIES THE RECORD. IF IT DID NOT, THE NUMBERS WOULD BEGIN ANEW: a site that learnt the first filling behind one collection would be served by the first filling behind the next, whoever's that is. Which record a pair falls on is not mine to choose: 128 fresh pairs fill a given record exactly once with a chance of 0.37: forty trials, three sites.
-// WHO LEARNS MUST BE WHO IS ASKED: victimsAreRight() BOTH TIMES: THE THREE SMALL FUNCTIONS ARE TAKEN INTO EACH CALLER: A CALL OF THEM FROM THE MODULE's OWN CODE IS ANOTHER SITE WITH ANOTHER SLOT, WHICH HAS LEARNT NOTHING (10:4x: x203z AND x203s PASSED THE SECOND AND THE THIRD FORM BY THAT).
-// THE HEIRS OF EVERY TRIAL ARE KEPT ALIVE: ELSE THE NEXT FULL COLLECTION FREES THEIR Structures AND THE NEXT TRIAL GETS THE SAME IDENTIFIERS, SO THE SAME RECORDS: FORTY TRIALS WERE ONE (10:3x: x203z PASSED THE FIRST FORM).
+// The fill count of a cache record must survive the collection that empties the record. Otherwise the numbering would restart, and a site that learned the first fill after one collection would be served by the first fill after the next, whoever made it. The test cannot choose which record a pair falls on: 128 fresh pairs fill a given record exactly once with a probability of 0.37, hence forty trials and three sites.
+// The site that learns must be the site that is tested, so victimsAreRight() is called both times: the three small functions are inlined into each caller, and a call to them from the module's own code would be a different site with a different slot, which has learned nothing.
+// The inheriting objects of every trial are kept alive. Otherwise the next full collection would free their Structures, the next trial would get the same identifiers and therefore the same records, and forty trials would count as one.
 let trialsRight = true, next = 100000; const keptAlive: unknown[] = []
 for (let trial = 0; trial < 40; trial++) {
     $vm.gc(); trialsRight = trialsRight && victimsAreRight()

@@ -8,5 +8,5 @@ method on a literal with the fields it reads: no error
 getter on a literal with the fields it reads: no error
 0.3125
 method borrowed by a literal: no error
-own property in place of a method: TypeError
-5 3 3 x,y
+own property in place of a method: no error
+999 3 3 x,y,len2

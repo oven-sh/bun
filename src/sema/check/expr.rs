@@ -1215,7 +1215,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.error_at(node, 2542, &[Arg::Type(printed)]);
             }
             if self.p.files.options.no_property_access_from_index_signature
-                && !self.is_held_to_the_fixed_set(file)
+                && !self.is_restricted_to_fixed_set(file)
                 && !bound.is_in_type_query(e)
             {
                 let right = self.place_of_right(file, name, name_pos);
@@ -2156,8 +2156,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getResolvedSymbol`: the symbol an identifier resolves to as a value. `None`: `unknownSymbol` or `argumentsSymbol`.
     pub fn symbol_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
-        let found = self.resolve_identifier(file, e, name, false).ok()??;
-        self.value_symbol_of_identifier(file, e, name, found)
+        if let Some(known) = self.symbol_kept_for(file, e, name) {
+            return known;
+        }
+        let found = match self.resolve_identifier(file, e, name, false) {
+            Ok(Some(found)) => self.value_symbol_of_identifier(file, e, name, found),
+            _ => None,
+        };
+        self.keep_symbol_for(file, e, name, found);
+        found
     }
 
     /// What the symbol tables have for `resolveName` with `SymbolFlagsValue`, for an identifier that is an expression: see

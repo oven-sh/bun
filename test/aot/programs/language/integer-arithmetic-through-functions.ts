@@ -24,7 +24,7 @@ function modLength8(s: string): number { return s.length % 8 }
 function modIndex(a: number[], s: string): number | undefined { return a[s.length % a.length] }
 function modLengthBy(s: string, j: number): number { return s.length % j }
 function modByLength(i: number, s: string): number { return i % s.length }
-// Each stays a function of its own in the image, whatever is copied to its calls: the test looks at its size.
+// Each stays a separate function in the image, even if it is also inlined at its calls: the test measures its size.
 ;(globalThis as any).kept = [and7, or0, xor, shl, shr, ushr, not, imul, trunc0, round0, mod8, mod1, mod10, mod2eq, mod, mod60, modLengths, modLength8, modIndex, modLengthBy, modByLength];
 for (const v of values) console.log(show(v), show(and7(v)), show(or0(v)), show(not(v)), show(trunc0(v)), show(round0(v)), show(mod8(v)), show(mod1(v)), show(mod10(v)), mod2eq(v), show(mod60(v)));
 let lines = 0, sum = "";

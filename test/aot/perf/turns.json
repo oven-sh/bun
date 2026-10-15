@@ -84,5 +84,21 @@
   "spread/one-then-object-in-a-function": 88576,
   "spread/two-objects-in-a-function": 81812,
   "text/charCodeAt-loop-in-a-function": 981996,
-  "text/index-loop-in-a-function": 1062000
+  "text/index-loop-in-a-function": 1062000,
+  "built-in/path-join": 400000,
+  "built-in/path-resolve": 400000,
+  "built-in/path-normalize": 400000,
+  "built-in/path-relative": 300000,
+  "built-in/path-dirname": 800000,
+  "built-in/path-basename": 800000,
+  "built-in/path-extname": 800000,
+  "built-in/path-isAbsolute": 2000000,
+  "built-in/events-emit": 1000000,
+  "built-in/events-on-off": 200000,
+  "built-in/buffer-read-integers": 1000000,
+  "built-in/buffer-write-integers": 1000000,
+  "built-in/path-of-untidy-paths": 100000,
+  "built-in/path-of-16-bit-paths": 100000,
+  "built-in/process-members": 1000000,
+  "built-in/process-argv": 1000000
 }

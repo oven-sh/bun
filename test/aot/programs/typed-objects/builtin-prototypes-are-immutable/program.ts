@@ -152,7 +152,7 @@ function restore(p: object, was: Shot) {
   for (let i = 0; i < was.keys.length; i++) Reflect.defineProperty(p, was.keys[i], was.descriptors[i])
 }
 
-// a. As programs write it: the receiver is named at the place of the attempt. Printed: the attempt, what an inheritor sees afterwards, the state of the prototype.
+// a. As programs write it: the receiver is named where the attempt is made. Printed: the attempt, what an inheriting object sees afterwards, the state of the prototype.
 function direct(label: string, p: object, f: () => unknown, seen: () => unknown) {
   const was = shoot(p)
   const result = attempt(f), after = attempt(seen), same = isAsShot(p, was)
@@ -312,8 +312,8 @@ console.log("d2", attempt(() => Object.setPrototypeOf(Array.prototype, Object.pr
 console.log("d3", attempt(() => Object.defineProperty(Array.prototype, "push", { value: Array.prototype.push }) === Array.prototype), attempt(() => Reflect.defineProperty(Object.prototype, "toString", {})), attempt(() => Reflect.deleteProperty(Object.prototype, "absent")), attempt(() => delete (Array.prototype as any)[1]))
 console.log("d4", Object.isSealed(Object.prototype), Object.isSealed(Array.prototype), JSON.stringify(Object.getOwnPropertyDescriptor(Array.prototype, "length")), JSON.stringify({ ...Object.getOwnPropertyDescriptor(Array.prototype, "push"), value: 0 }))
 
-// e. What the program owns is ordinary, right below a built-in prototype too: the same attempts all go through. But for the prototype object of a class whose objects are laid out (`Plain`): it is as immutable as
-// a built-in one. The classes that extend a built-in class are not laid out.
+// e. The program's own objects are ordinary, even directly below a built-in prototype: the same attempts all succeed. The exception is the prototype object
+// of a class whose instances have a fixed layout (`Plain`): it is as immutable as a built-in one. Classes that extend a built-in class have no fixed layout.
 class List extends Array<number> { sum() { return 0 } }
 class Failure extends Error { constructor(message: string) { super(message); this.name = "Failure" } describe() { return this.name } }
 class Table extends Map<string, number> { total() { return 0 } }
@@ -334,7 +334,7 @@ row("createdArray", Object.create(Array.prototype, { own: { value: 1, writable: 
 // An ordinary object. (A literal of the program is a compiled object, which keeps its fields, their types and its prototype: typed-objects/untyped-code-tampering-with-typed-objects.)
 row("literal", JSON.parse('{"own":1}'), "own")
 
-// f. An inheritor may have a property of its own by the name of a built-in one: an assignment is not stopped by the read-only property above.
+// f. An inheriting object may have an own property with the name of a built-in one: the read-only property above does not block the assignment.
 console.log("f1", attempt(() => { const o: any = {}; o.toString = () => "mine"; o.constructor = 1; o.hasOwnProperty = 2; return o + " " + Object.keys(o) }))
 console.log("f2", attempt(() => { const o: { v: number; toString?: () => string; valueOf?: () => unknown } = { v: 1 }; o.toString = () => "typed"; o.valueOf = () => 7; return `${o} ` + (+o + 1) + " " + Object.keys(o) }))
 console.log("f3", attempt(() => { const e = new Error("m"); e.name = "Mine"; e.message = "changed"; return e + " " + Object.keys(e) }))
@@ -346,7 +346,7 @@ console.log("f8", attempt(() => { const o = Object.create(Array.prototype); o.le
 console.log("f9", attempt(() => { const t = new Table(); (t as any).get = () => "own get"; (t as any).size = 5; return "stored" }), attempt(() => { const t: any = new Table(); t.get = () => "own get"; return t.get("k") }))
 console.log("f10", attempt(() => { function local() { return 1 } (local as any).toString = () => "own text"; (local as any).extra = 1; return local + " " + Object.keys(local) }))
 console.log("f11", attempt(() => Reflect.set(Object.prototype, "x", 1, bare) + " " + bare.x + " " + delete bare.x), attempt(() => Reflect.set(Object.prototype, "toString", 1, bare) + " " + typeof bare.toString + " " + delete bare.toString))
-// The same where the assignment passes through a compiled object on its way up: from an object created below one, from a Proxy around one, with a receiver of its own.
+// The same where the assignment passes through a compiled object on its way up: from an object created below one, from a Proxy around one, with a different receiver.
 interface Rec { e?: number }
 function make(flag: boolean): Rec { return flag ? { e: 1 } : { e: 2 } }
 console.log("f12", attempt(() => { const d = Object.create(make(true)); d.constructor = true; d.toString = () => "below"; return d + " " + Object.keys(d) }))

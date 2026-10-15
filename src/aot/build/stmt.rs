@@ -10,7 +10,7 @@ use crate::ir::{self, Op, Target, Term, Why, func_flags};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, Parent};
 use bun_sema::check::{Activation, DeclaredClosure};
-use bun_sema::hir::{Chain, ExprId, ExprKind, Flags, FnBody, IdList, ImportEqualsTarget, PatId, PatKind, PropKey, StmtId, StmtKind, VarDecl, VarKind};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnBody, IdList, ImportEqualsTarget, PatId, PatKind, PropKey, StmtId, StmtKind, VarDecl, VarKind};
 use bun_sema::program::Sym;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -46,13 +46,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.add_captures(fx);
         if has_this {
             fx.this = self.add_entry_param(fx, fx.this_type);
-            if f.kind != bun_sema::hir::FnKind::Arrow && self.c.looks_at_this(fx.file, fx.func) && self.c.is_sloppy_function(fx.file, fx.func) {
+            if f.kind != bun_sema::hir::FnKind::Arrow && self.c.inspects_this(fx.file, fx.func) && self.c.is_sloppy_function(fx.file, fx.func) {
                 fx.this = self.this_of_sloppy_code(fx, fx.this);
             }
         }
         let params = self.add_parameters(fx);
         self.open_activation(fx, Activation::Call(fx.func));
         self.bind_parameters(fx, &params);
+        self.note_type_predicate(fx);
         if self.out.funcs[fx.id.idx()].has(func_flags::STARTS_EAGERLY) {
             let undefined = self.emit(fx, Op::Undefined);
             self.emit_yield(fx, undefined, f.flags.contains(Flags::ASYNC));
@@ -62,9 +63,36 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             FnBody::None => {}
             FnBody::Block(stmts) => self.block_body(fx, stmts),
             FnBody::Expr(e) => {
+                if self.makes_tail_calls(fx) {
+                    self.note_calls_in_tail_position(fx, e);
+                }
                 let value = self.expr_returned(fx, e);
+                fx.calls_in_tail_position.clear();
                 self.terminate_with_return(fx, value);
             }
+        }
+    }
+
+    fn note_type_predicate(&mut self, fx: &Fx) {
+        if !fx.is_typed {
+            return;
+        }
+        let signature = self.c.sig_of_fn(fx.file, fx.func);
+        let Some(predicate) = self.c.sig_predicate(signature) else { return };
+        let Some(narrowed) = predicate.ty else { return };
+        let declared = match predicate.param {
+            Some(index) => match self.c.sig_params(signature).iter().nth(index) {
+                Some(param) => Ty { id: self.ty_of(param.ty), checked: param.ty },
+                None => return,
+            },
+            None => fx.this_type,
+        };
+        self.c.note_place(fx.file, self.out.funcs[fx.id.idx()].pos);
+        let described = self.ty_of(narrowed);
+        self.note_cast(declared, described, Why::Flow);
+        for (from, to) in self.c.type_pairs_narrowed_together(declared.checked, narrowed) {
+            let (have, want) = (self.ty_of(from), self.ty_of(to));
+            self.note_cast(Ty { id: have, checked: from }, want, Why::Flow);
         }
     }
 
@@ -94,7 +122,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if let Some(&p) = written.get(index)
                 && !self.entries_beside.values().any(|&entry| entry == fx.id)
             {
-                let (no_undefined, no_null, no_objects) = self.c.what_the_written_type_leaves_out(fx.file, p);
+                let (no_undefined, no_null, no_objects) = self.c.exclusions_of_annotation(fx.file, p);
                 let mut claimed = self.out.tys.get(to).clone();
                 if no_undefined {
                     claimed.prims &= !prim::UNDEFINED;
@@ -111,18 +139,63 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             held.push(self.emit_throwing(fx, Op::Coerce { value, to, why: Why::Claim }));
         }
         fx.handlers.pop();
+        let may_tail_call = !self.shared.constants.logs_type_errors && !self.out.funcs[fx.id.idx()].has(func_flags::ASYNC | func_flags::GENERATOR);
         let result = self.emit_direct_call(fx, typed, this_held, &held);
+        if may_tail_call {
+            self.mark_call_in_tail_position(fx, result);
+        }
         self.terminate_with_return(fx, result);
         fx.b.seal(misfit);
         fx.b.switch_to(misfit);
         self.emit(fx, Op::Caught);
         let result = self.emit_direct_call(fx, second, this_given, &given);
+        if may_tail_call {
+            self.mark_call_in_tail_position(fx, result);
+        }
         self.terminate_with_return(fx, result);
     }
 
     /// OrdinaryCallBindThis for a function that is not strict: the global object for `undefined` and `null`, an object for a primitive. One operation: an object passes a test in line.
     fn this_of_sloppy_code(&mut self, fx: &mut Fx, given: V) -> V {
         self.operation(fx, "SloppyThis", &[given])
+    }
+
+    fn makes_tail_calls(&self, fx: &Fx) -> bool {
+        let func = &self.out.funcs[fx.id.idx()];
+        fx.func.is_some()
+            && !self.shared.constants.logs_type_errors
+            && !fx.returns_this
+            && func.kind != ir::FuncKind::Constructor
+            && !func.has(func_flags::ASYNC | func_flags::GENERATOR | func_flags::IS_SLOPPY)
+            && fx.handlers.is_empty()
+            && fx.jumps.iter().all(|jump| jump.iter.is_none() && jump.finally_context.is_none())
+    }
+
+    fn returns_from_tail_position(&self, fx: &Fx, stmt: StmtId) -> bool {
+        let (hir, bound) = (self.hir(fx.file), self.c.bound(fx.file));
+        let mut at = stmt;
+        while let Parent::Stmt(parent) = bound.stmt_parent[at.idx()] {
+            match hir[parent].kind {
+                StmtKind::ForIn { .. } | StmtKind::ForOf { .. } => return false,
+                StmtKind::Try { block, handler, finalizer, .. } if at == block || at == handler && finalizer.is_some() => return false,
+                _ => {}
+            }
+            at = parent;
+        }
+        matches!(bound.stmt_parent[at.idx()], Parent::FnBody(_))
+    }
+
+    fn note_calls_in_tail_position(&self, fx: &mut Fx, e: ExprId) {
+        match self.hir(fx.file)[e].kind {
+            ExprKind::Call(_) | ExprKind::TaggedTemplate(_) | ExprKind::Jsx(_) => fx.calls_in_tail_position.push(e),
+            ExprKind::Cond { yes, no, .. } => {
+                self.note_calls_in_tail_position(fx, yes);
+                self.note_calls_in_tail_position(fx, no);
+            }
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, right, .. } => self.note_calls_in_tail_position(fx, right),
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::Instantiation { expr, .. } | ExprKind::AsConst(expr) | ExprKind::NonNull(expr) => self.note_calls_in_tail_position(fx, expr),
+            _ => {}
+        }
     }
 
     /// The value of the expression, which the function returns.
@@ -330,7 +403,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_variable = self.files.decls(sym).iter().any(|declared| matches!(declared.1, bun_sema::bind::Decl::Var(_) | bun_sema::bind::Decl::Param(_)));
             if is_variable {
                 function_bindings.push((func, sym));
-            } else if function_values.contains(&sym) && (self.is_assigned(sym) || self.c.declared_closure(fx.file, func) == Some(DeclaredClosure::MadeAtEntry)) {
+            } else if function_values.contains(&sym) && (self.is_assigned(sym) || self.c.declared_closure(fx.file, func) == Some(DeclaredClosure::CreatedAtEntry)) {
                 function_bindings.push((func, sym));
                 names.push(sym);
             }
@@ -367,6 +440,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         for (func, sym) in function_bindings {
+            if self.try_bind_hoisted_function(fx, sym, func) {
+                continue;
+            }
             let id = self.declare_function(fx.file, func, None);
             // Its `arguments` object shows it: it finds its closure in a scope of its own, as a function expression does.
             if let Some((activation, field)) = self.scope_of_function_expression(fx.file, func)
@@ -437,7 +513,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let s = &self.hir(fx.file)[stmt];
         // Control does not come here. What declares a name that other code may use is translated all the same.
         let declares = matches!(s.kind, StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Enum(_) | StmtKind::Module(_));
-        if fx.func.is_some() && !declares && fx.b.is_dead_here() {
+        if fx.func.is_some() && !declares && fx.b.is_dead_here() || self.files.is_cut_statement(fx.file, stmt) {
             return self.cut_stmt(fx, stmt);
         }
         let outer = fx.initialized_before_loops.len();
@@ -592,7 +668,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
             StmtKind::Return(e) => {
+                if e.is_some() && self.makes_tail_calls(fx) && self.returns_from_tail_position(fx, stmt) {
+                    self.note_calls_in_tail_position(fx, e);
+                }
                 let mut value = if e.is_some() { self.expr_returned(fx, e) } else { V::NONE };
+                fx.calls_in_tail_position.clear();
                 let flags = self.out.funcs[fx.id.idx()].flags;
                 if flags & func_flags::ASYNC != 0 && flags & func_flags::GENERATOR != 0 && value.is_some() {
                     // `return value` in an async generator awaits the value.
@@ -607,6 +687,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 // What a build leaves out is not translated.
                 if let Some(test) = self.constant(fx, test) {
                     let (taken, left_out) = if test.is_truthy() { (yes, no) } else { (no, yes) };
+                    self.cut_stmt(fx, left_out);
+                    return self.scoped_stmt(fx, taken);
+                }
+                if let Some(truthy) = self.known_truthiness(fx, test) {
+                    let (taken, left_out) = if truthy { (yes, no) } else { (no, yes) };
+                    self.expr_unused(fx, test);
                     self.cut_stmt(fx, left_out);
                     return self.scoped_stmt(fx, taken);
                 }
@@ -686,7 +772,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 } else {
                     self.stmt(fx, init);
                 }
-                if opened && self.c.is_captured_ahead_of_iterations(fx.file, stmt) {
+                if opened && self.c.is_captured_before_iterations(fx.file, stmt) {
                     self.copy_env(fx, &names);
                 }
                 let (header, inside, next, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
@@ -725,7 +811,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             StmtKind::ForOf { left, expr, body, is_await: false } => {
                 let label = self.take_label(fx);
-                fx.b.pos = self.pos_of_what_a_loop_binds(fx, left, expr);
+                fx.b.pos = self.pos_of_loop_binding(fx, left, expr);
                 let (iter, table) = self.open_loop_over_table(fx, stmt, expr);
                 let index = self.new_counter(fx, 0);
                 let (header, inside, next, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
@@ -1024,20 +1110,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(exit);
             }
             StmtKind::ImportEquals(import) => match hir[import].target {
-                // The name stands for what it is an alias of wherever it is used.
-                ImportEqualsTarget::Entity(_) => {
-                    if let Parent::Module(block) = self.c.bound(fx.file).stmt_parent[stmt.idx()] {
-                        let id = self.c.bound(fx.file).module_symbol[block.idx()];
-                        let namespace = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
-                        if let Some(sym) = self.files.export(namespace, hir[import].name) {
-                            self.export_from_namespace(fx, sym, s.start);
-                        }
-                    }
-                }
+                ImportEqualsTarget::Entity(_) => self.emit_entity_alias(fx, import, s.start),
                 ImportEqualsTarget::Require(specifier) => self.emit_import_by_require(fx, specifier, s.start),
             },
             // Of a name: whoever imports it refers to what the name stands for.
-            StmtKind::ExportDefault(e) if self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_as_good_as_binding(fx.file, e, sym)) => {
+            StmtKind::ExportDefault(e) if self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_equivalent_to_binding(fx.file, e, sym)) => {
                 if let Some(sym) = self.binding_exported_as_default(fx.file, e)
                     && self.value_declaration(sym).is_some_and(|(of, _)| of == fx.file)
                     && self.may_be_in_dead_zone(fx, sym, e)
@@ -1341,11 +1418,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// `try { body } finally { finalizer }`. The finalizer is emitted once. It is given the completion it interrupts: whether that is a
-    /// throw completion, and the completion value: what was thrown only if it `looks_at_what_is_thrown`. The exception itself is passed on.
+    /// throw completion, and the completion value: what was thrown only if it `inspects_thrown_value`. The exception itself is passed on.
     pub(crate) fn try_finally(
         &mut self,
         fx: &mut Fx,
-        looks_at_what_is_thrown: bool,
+        inspects_thrown_value: bool,
         body: impl FnOnce(&mut Self, &mut Fx),
         finalizer: impl FnOnce(&mut Self, &mut Fx, V, V),
     ) {
@@ -1373,7 +1450,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(thrown);
         fx.b.switch_to(thrown);
         let caught = self.emit(fx, Op::CaughtException);
-        let what_is_thrown = self.emit(fx, if looks_at_what_is_thrown { Op::Caught } else { Op::Undefined });
+        let what_is_thrown = self.emit(fx, if inspects_thrown_value { Op::Caught } else { Op::Undefined });
         let one = self.emit(fx, Op::Int(1));
         self.write(fx, completion_type, one);
         self.write(fx, value, what_is_thrown);
@@ -1427,7 +1504,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// `for await (left of iterable) body`
-    fn pos_of_what_a_loop_binds(&self, fx: &Fx, left: StmtId, iterable: ExprId) -> u32 {
+    fn pos_of_loop_binding(&self, fx: &Fx, left: StmtId, iterable: ExprId) -> u32 {
         let hir = self.hir(fx.file);
         match hir[left].kind {
             StmtKind::Var(decls) if !decls.is_empty() => self.last_pos_of_pat(fx, hir[decls.at(0)].pat),
@@ -1446,7 +1523,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let names = ["next", "return", "done", "value"].map(|name| self.out.strs.intern(name.as_bytes()));
         let [next_name, return_name, done_name, value_name] = names;
         let source = iterable;
-        fx.b.pos = self.pos_of_what_a_loop_binds(fx, left, source);
+        fx.b.pos = self.pos_of_loop_binding(fx, left, source);
         let iterable = self.iterated(fx, stmt, iterable);
         let iterator = self.operation(fx, if is_await { "GetAsyncIterator" } else { "GetIterator" }, &[iterable]);
         let next_method = if is_await { self.operation(fx, "GetAsyncIteratorNext", &[iterator]) } else { self.emit_throwing(fx, Op::PropGet { obj: iterator, name: next_name }) };
@@ -1712,7 +1789,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// What the `for-in` or `for-of` statement iterates over. A function made there that refers to what the statement binds has an environment
     /// of its own, which is left as it is born: in the dead zone.
     fn iterated(&mut self, fx: &mut Fx, stmt: StmtId, expr: ExprId) -> V {
-        let opened = self.c.is_captured_ahead_of_iterations(fx.file, stmt) && self.open_activation(fx, Activation::Iteration(stmt));
+        let opened = self.c.is_captured_before_iterations(fx.file, stmt) && self.open_activation(fx, Activation::Iteration(stmt));
         let value = self.expr(fx, expr);
         if opened {
             self.close_env(fx);
@@ -1780,7 +1857,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if id.is_none() {
                     return;
                 }
-                if let Some(caught) = self.c.catch_parameter_named_again_by(fx.file, pat) {
+                if let Some(caught) = self.c.catch_parameter_redeclared_by(fx.file, pat) {
                     let sym = self.files.sym(fx.file, caught);
                     self.write_sym(fx, sym, value, hir[pat].pos);
                     return;

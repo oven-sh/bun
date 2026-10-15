@@ -75,8 +75,14 @@ impl MachoFile {
     ) -> Result<Box<MachoFile>, MachoError> {
         let header = read_macho_header(obj_file)?;
 
-        let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
-        data.extend_from_slice(obj_file);
+        let size_with_blob = obj_file.len() + blob_to_embed_length;
+        let signature_room = MachoSigner::compute_signature_size(size_with_blob as u64) + (1 << 16);
+        let mut data: Vec<u8> = Vec::with_capacity(size_with_blob + signature_room);
+        // SAFETY: the capacity holds `obj_file.len()` bytes, all of which are written before the length says so.
+        unsafe {
+            bun_core::copy_in_parallel(data.as_mut_ptr(), obj_file.as_ptr(), obj_file.len());
+            data.set_len(obj_file.len());
+        }
 
         Ok(Box::new(MachoFile {
             header,
@@ -665,13 +671,11 @@ impl MachoFile {
     }
 
     // Returns the byte count written; callers writing over an existing file must truncate to it.
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
+    pub fn build_and_sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
-            let mut data: Vec<u8> = Vec::new();
-            self.build(&mut data)?;
-            let mut signer = MachoSigner::init(&data)?;
+            let mut signer = MachoSigner::init(core::mem::take(&mut self.data))?;
             signer.sign(writer)
         } else {
             self.build(writer)?;
@@ -726,7 +730,8 @@ struct MachoSigner {
 }
 
 impl MachoSigner {
-    fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    fn init(data: Vec<u8>) -> Result<Box<MachoSigner>, MachoError> {
+        let obj: &[u8] = &data;
         let header_size = size_of::<macho::mach_header_64>();
         let header = read_macho_header(obj)?;
 
@@ -792,9 +797,6 @@ impl MachoSigner {
         if linkedit_off == 0 || sig_off == 0 {
             return Err(MachoError::MissingRequiredSegment);
         }
-
-        let mut data: Vec<u8> = Vec::with_capacity(obj.len());
-        data.extend_from_slice(obj);
 
         let _ = (sig_sz, cs_cmd_off);
         Ok(Box::new(MachoSigner {
@@ -911,29 +913,23 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // reshaped for borrowck — index instead of slicing self.data while pushing.
-        let mut off: usize = 0;
-        let end = self.sig_off;
-        while end - off >= PAGE_SIZE {
-            let mut digest = [0u8; HASH_SIZE];
-            // SAFETY: range [off..off+PAGE_SIZE] is within the original len (sig_off).
-            let page =
-                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), PAGE_SIZE) };
-            sha256_hash(page, &mut digest);
-            self.data.extend_from_slice(&digest);
-            off += PAGE_SIZE;
-        }
-
-        if end - off > 0 {
-            let remaining_len = end - off;
-            // The last partial page is hashed unpadded, as codesign does.
-            let mut digest = [0u8; HASH_SIZE];
-            // SAFETY: range [off..end] is within the original len (sig_off).
-            let page =
-                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
-            sha256_hash(page, &mut digest);
-            self.data.extend_from_slice(&digest);
-        }
+        let hashes_start = self.data.len();
+        self.data.resize(hashes_start + hashes_size, 0);
+        let (hashed, hashes) = self.data.split_at_mut(hashes_start);
+        let pages_per_thread = total_pages.div_ceil(usize::from(bun_core::get_thread_count()).clamp(1, 16)).max(1024);
+        std::thread::scope(|scope| {
+            let runs_of_pages = hashed[..self.sig_off].chunks(pages_per_thread * PAGE_SIZE);
+            for (pages, hashes) in runs_of_pages.zip(hashes.chunks_mut(pages_per_thread * HASH_SIZE)) {
+                scope.spawn(move || {
+                    // The last partial page is hashed unpadded, as codesign does.
+                    for (page, hash) in pages.chunks(PAGE_SIZE).zip(hashes.chunks_exact_mut(HASH_SIZE)) {
+                        let mut digest = [0u8; HASH_SIZE];
+                        sha256_hash(page, &mut digest);
+                        hash.copy_from_slice(&digest);
+                    }
+                });
+            }
+        });
 
         // Finally, ensure that the length of data we write matches the total data expected
         let final_len = self

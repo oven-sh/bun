@@ -1,4 +1,4 @@
-// The first test of a function (a flag, a cached field, a null check) is inlined at its call sites; nobody can observe that it runs again inside the function.
+// The first test of a function (a flag, a cached field, a null check) is inlined at its call sites; it is not observable that it runs again inside the function.
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;
@@ -10,7 +10,7 @@ interface T { flags: number; cached: T | undefined; id: number }
 let made = 0;
 function reduced(t: T): T { if (!(t.flags & 4)) return t; return t.cached || (t.cached = { flags: t.flags & ~4, cached: undefined, id: ++made + pad(t.id) * 0 }); }
 function idOf(t: T | undefined): number { if (!t) return -1; if (t.id) return t.id; log.push("i"); t.id = ++made; return t.id + pad(1) * 0 + pad(2) * 0 + pad(3) * 0; }
-// A class with an accessor: the head reads it: once a call.
+// A class with an accessor that the first test reads: it must run once per call.
 class Counted { reads = 0; private _v = 1; get v(): number { this.reads++; return this._v; } set v(n: number) { this._v = n; } }
 function headWithAccessor(c: Counted): number { if (c.v > 1) return c.v; log.push("c"); c.v = c.v + 1; return pad(4) + pad(5) + pad(6); }
 // `as` and `!` in the head.

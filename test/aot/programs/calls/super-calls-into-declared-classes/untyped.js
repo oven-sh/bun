@@ -70,7 +70,7 @@ say("arguments", () => [new AQ(1).got, new AQ(1, 2, 3, 4).got, new AP().got, new
 class Many extends AB { constructor() { super(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); } }
 class Many2 extends Many { constructor() { super(); } }
 say("more arguments than registers", () => new Many2().got);
-// What is extended is no constant.
+// The `extends` expression is not a constant.
 const mixin = Base => class extends Base { constructor(...a) { super(...a); this.mixed = 1; } };
 class MQ extends mixin(mixin(B)) { constructor() { super(5); this.mq = 1; } }
 say("mixins", () => { const o = new MQ(); log.length = 0; return [Object.keys(o), o instanceof B]; });

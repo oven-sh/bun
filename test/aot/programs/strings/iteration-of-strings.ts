@@ -33,7 +33,7 @@ export function thrown(x: any): string { try { for (const c of x) if (c === "b")
 const strings = ["", "a", "ab", "abc", "café", "ÿĀ", "日本語", "\u{1f600}", "a\u{1f600}b", "\u{1f44d}\u{1f3fd}", "\ud83d", "\ude00", "\ud83d😀", "\ude00\ud83d", "x\ud83d", "\ud83dx", "é", cat("ab", "cd"), cat3("\u{1f600}", "b", "日"), cat("\ud83d", "\ude00"), part("xxabcdefxx", 2, 8), part("日\u{1f600}本", 1, 3), part("日\u{1f600}本", 2, 4), flattened(cat("ab", "\u{1f680}")), "a".repeat(300)];
 for (const s of strings) print(units(s).slice(0, 40) + ": " + (walk(s) === walkTyped(s) ? "same" : "TYPED DIFFERS") + " " + walk(s).slice(0, 90) + " " + firstTwo(s) + " " + spread(s).slice(0, 60) + " " + destructured(s) + " " + returned(s) + " " + thrown(s));
 print("nested " + nested("abcabc", "cab") + " " + nested("\u{1f600}\u{1f600}", "x\u{1f600}") + " " + nested("", "abc") + " " + nested(cat("ab", "ab"), part("zzabzz", 2, 4)));
-// A String object finds the same method, and is no string.
+// A String object finds the same method, but is not a string.
 print(walk(new String("a\u{1f600}")) + " " + walk(Object("xy")) + " " + attempt(() => walk(5)) + " " + attempt(() => walk(undefined)) + " " + attempt(() => walk({})) + " " + attempt(() => walk(Symbol.iterator)));
 // The string's own iterator, taken by hand and handed on half used.
 { const it = "ab\u{1f600}c"[Symbol.iterator](); const first = it.next(); print(units(first.value as string) + " " + first.done + " " + walk(it) + " " + JSON.stringify(it.next())); }

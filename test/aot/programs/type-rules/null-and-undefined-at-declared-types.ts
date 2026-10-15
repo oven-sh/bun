@@ -20,7 +20,7 @@ attempt("field, null as number", () => { rec.n = hide(null) })
 attempt("field, null as boolean", () => { rec.b = hide(null) })
 console.log(show(rec))
 attempt("field of a literal, undefined as number", () => { const made: Rec = { n: hide(undefined), s: hide(null), b: true }; return show(made) })
-// Nothing vouches for the elements of an array: the store is let through, the read is tested. By itself an element read is `T | undefined`, and undefined in arithmetic is NaN.
+// The elements of an array are not guaranteed: the store is accepted, the read is tested. By itself an element read is `T | undefined`, and undefined in arithmetic is NaN.
 const nums: number[] = [1.5, 2.5]
 attempt("element, store of undefined", () => { nums[1] = hide(undefined) })
 attempt("element, store of null", () => { nums[2] = hide(null) })

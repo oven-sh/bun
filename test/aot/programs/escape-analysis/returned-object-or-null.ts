@@ -15,7 +15,7 @@ function use7(x: number): number { const p = pos(x); assertNotAllocated(p); if (
 function use8(x: number): number { const r = find(x); assertNotAllocated(r); if (r !== undefined && r.a > 2) return r.b; return -4; }
 function use9(x: number): string { const r = find(x); assertNotAllocated(r); return (r === null) + "," + (r === undefined) + "," + (r == null) + "," + !r; }
 { let t = 0; for (let i = -2; i < 6; i++) { t += use1(i) + use2(i) + use3(i) + use4(i) + use5(i) + use6(i) + use7(i) + use8(i); } say("read", t, use9(-1), use9(2)); }
-// the same callees' shapes, with callers that want more: functions of their own, so that the sites above stay `removed`
+// the same shapes of callees, with callers that need more: separate functions, so that the sites above stay `removed`
 function find2(x: number): { a: number, b: number } | undefined { if (x < 0) return undefined; return { a: x, b: spin(x & 3) }; } //! heap
 function pos2(x: number): [number, number] | null { if (x < 0) return null; return [x, spin(x & 3)]; } //! heap
 function text(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } }

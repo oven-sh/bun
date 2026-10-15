@@ -63,7 +63,7 @@ maybes.forEach(complete)
 console.log(maybes.map(digest).join(" ; "))
 console.log(maybes.map(m => Object.keys(m).join("")).join())
 console.log(dump())
-// What an object was not made with goes away again. (What it was made with cannot: type-rules/overlapping-object-types.)
+// A property that an object was not created with can be removed again. (One that it was created with cannot: type-rules/overlapping-object-types.)
 const madeWith = ["ab", "bc", "cd", "de", "ea", "ace", "bd", "abcde", ""]
 maybes.forEach((m, i) => { if (!madeWith[i].includes("c")) delete m.c; if (!madeWith[i].includes("a")) delete m.a })
 for (const m of [cd, bc, ace, whole]) setC(m, "back")

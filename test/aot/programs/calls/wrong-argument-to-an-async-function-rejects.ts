@@ -64,7 +64,7 @@ row("named: a static method", () => (K as any).s(5));
 row("named: an arrow in a field", () => (k as any).f(5));
 row("named: an heir's method, refused at once", () => (d as any).m(5));
 row("named: a literal's method", () => (literal as any).m(5));
-// A value nobody knows.
+// A value of unknown type.
 const table: any[] = [takesArray, arrow, k.m, K.s, k.f, literal.m, awaitsFirst, takesTwo, generator, asyncGenerator, plain, plainReturnsPromise];
 const receivers: any[] = [undefined, undefined, k, K, undefined, literal, undefined, undefined, undefined, undefined, undefined, undefined];
 const names = ["a function", "an arrow", "a method", "a static method", "an arrow in a field", "a literal's method", "one that awaits first", "one of two parameters", "A GENERATOR", "AN ASYNC GENERATOR", "A PLAIN FUNCTION", "A PLAIN FUNCTION THAT RETURNS A PROMISE"];
@@ -97,7 +97,7 @@ row("named: A GENERATOR", () => (generator as any)(5));
 row("named: AN ASYNC GENERATOR", () => (asyncGenerator as any)(5));
 row("named: A PLAIN FUNCTION", () => (plain as any)(5));
 row("named: A PLAIN FUNCTION THAT RETURNS A PROMISE", () => (plainReturnsPromise as any)(5));
-// THE LINE BY THE LANGUAGE ITSELF: THE SAME IN BOTH RUNTIMES: an async function rejects; a generator, an async generator, a plain function throw to the caller.
+// The rule of the language itself, the same in both runtimes: an async function rejects; a generator, an async generator and a plain function throw to the caller.
 row("a pattern: an async function", () => (asyncPattern as any)(5));
 row("a pattern: an async function, nothing handed", () => (asyncPattern as any)());
 row("a pattern: an async arrow, null", () => (asyncArrowPattern as any)(null));

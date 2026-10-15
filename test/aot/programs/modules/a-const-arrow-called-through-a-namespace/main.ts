@@ -1,5 +1,5 @@
 // `export const f = () => ..` of another module, called through a namespace: `import * as ns`, or a folder's `export * as default from '.'`.
-// One of its parameters is a record of one function member, and what is handed in is a function that carries that member as a property.
+// One of its parameters is a record with one function member, and the argument is a function that has that member as a property.
 import Steps from './steps'
 import * as Direct from './steps/pass-on'
 import type { WithNext } from './steps'

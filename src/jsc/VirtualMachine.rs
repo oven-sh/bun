@@ -3546,7 +3546,7 @@ impl VirtualMachine {
 
         let is_compiled = self.is_compiled_entry_point(entry_path);
         self.has_loaded = is_compiled && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
-        self.main_is_compiled = self.preload.is_empty() && is_compiled;
+        self.main_is_compiled = is_compiled;
 
         if !self.main_is_html_entrypoint && !self.main_is_compiled {
             if let Some(hooks) = hooks {
@@ -3557,7 +3557,7 @@ impl VirtualMachine {
             }
         }
 
-        if !self.transpiler.options.disable_transpilation && !self.main_is_compiled {
+        if !self.transpiler.options.disable_transpilation {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
                     // SAFETY: hook contract.
@@ -3573,7 +3573,7 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, if self.main_is_compiled { self.main() } else { MAIN_FILE_NAME })?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3617,7 +3617,12 @@ impl VirtualMachine {
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
+            let promise = if self.main_is_compiled {
+                let main_str = bun_core::String::from_bytes(self.main());
+                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                    .map(NonNull::as_ptr)
+                    .ok_or(crate::CrateError::JSError)?
+            } else if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)

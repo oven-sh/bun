@@ -1,11 +1,11 @@
 // Rarely taken checks before calls: each block prints something else, or crashes, if the compiler leaves one of them out.
 declare const console: any;
-import { Base, Derived, Heir, DerivedOfClass, constructWith, ownCallOf, ownApplyOf, UntypedWithItsOwn, UntypedWithout, UntypedHeir, putOn, defineOn, inheritFrom, untypedFunction, callNamed } from "./untyped-classes-and-what-they-are-constructed-with.js";
+import { Base, Derived, Heir, DerivedOfClass, constructWith, ownCallOf, ownApplyOf, UntypedWithItsOwn, UntypedWithout, UntypedHeir, putOn, defineOn, inheritFrom, untypedFunction, callNamed } from "./untyped-classes-and-their-constructor-arguments.js";
 const said: string[] = [];
 function block(name: string, body: () => unknown) { try { said.push(name + ": " + body()); } catch (error) { said.push(name + ": THROWS " + (error as any)?.constructor?.name); } }
 function attempt(body: () => unknown): string { try { return String(body()); } catch (error) { return "THROWS " + (error as any)?.constructor?.name; } }
 
-// Calls.cpp getCallOrApply(): the closure is not callable: a class may declare `static call`, which does not show in its structure.
+// The closure is not callable: a class may declare `static call`, which does not show in its structure.
 class WithItsOwn { static call(..._: unknown[]) { return "the class's own call"; } static apply(..._: unknown[]) { return "the class's own apply"; } }
 class Without { x = 1; }
 function callOf(f: any): unknown { return f.call(null, 1); }
@@ -14,7 +14,7 @@ block("a class with a static call, of a value nobody knows", () => [attempt(() =
 block("the same, named", () => [attempt(() => (WithItsOwn as any).call(null, 1)), attempt(() => (WithItsOwn as any).apply(null, [1])), attempt(() => (Without as any).call(null, 1))].join(" | "));
 block("the same, from code without types", () => [attempt(() => ownCallOf(WithItsOwn)), attempt(() => ownApplyOf(WithItsOwn)), attempt(() => ownCallOf(Without))].join(" | "));
 
-// getCallOrApply(): a slim closure that has been given a property of its own.
+// A slim closure that has been given an own property.
 function slim(this: unknown, a?: number) { return "slim called " + a; }
 function slimToo(this: unknown, a?: number) { return "slimToo called " + a; }
 block("a function before it has its own call", () => [slim.call(null, 1), slim.apply(null, [2]), slimToo.call(null, 3)].join(" | "));
@@ -43,20 +43,20 @@ block("a class before it is given a call", () => attempt(() => callOf(Later)));
 putOn(Later, keys[0], function () { return "Later's own"; });
 block("a class that was given a call", () => [attempt(() => callOf(Later)), attempt(() => (Later as any).call(null, 1)), attempt(() => ownCallOf(Later))].join(" | "));
 
-// lowerApply(): Math.max.apply(null, list): the list is no cell.
+// Math.max.apply(null, list): the list is not a cell.
 function most(list: number[] | undefined | null): number { return Math.max.apply(null, list as any); }
 function least(list: number[] | undefined | null): number { return Math.min.apply(null, list as any); }
 function mostOfAnything(list: any): number { return Math.max.apply(null, list); }
 block("Math.max.apply of a list that is none", () => [most([1, 5, 3]), most(undefined), most(null), least([4, 2]), least(undefined), least(null), most([])].join());
 block("Math.max.apply of anything", () => [mostOfAnything([1, 9]), mostOfAnything(undefined), mostOfAnything(null), mostOfAnything({ length: 2, 0: 7, 1: 8 }), attempt(() => mostOfAnything(5)), attempt(() => mostOfAnything("ab")), attempt(() => mostOfAnything(true))].join());
 
-// lowerConstructSuper(): new.target is no closure of the program.
+// new.target is not a closure of the program.
 block("super(..) with new.target the class, an heir", () => [constructWith(Derived, Derived), constructWith(Derived, Heir), constructWith(Heir, Heir), constructWith(DerivedOfClass, DerivedOfClass)].join(" | "));
 block("super(..) with new.target a function of the engine", () => [constructWith(Derived, Array), constructWith(Derived, Object), constructWith(Derived, Map), constructWith(DerivedOfClass, Array)].join(" | "));
 block("super(..) with new.target a bound function, a proxy", () => [constructWith(Derived, Derived.bind(null)), constructWith(Derived, new Proxy(Derived, {})), constructWith(Derived, new Proxy(Base, {})), constructWith(DerivedOfClass, Base.bind(null))].join(" | "));
 block("super(..) with new.target an ordinary function of the program", () => [constructWith(Derived, Base), constructWith(DerivedOfClass, Base), constructWith(Derived, function () { })].join(" | "));
 
-// Checks.cpp fitBoxedToIntegerOrElse(): the small integer is within the type's range; what is no number where an integer is due.
+// The small integer is within the type's range; a value that is not a number where an integer is expected.
 type Small = 0 | 1 | 2;
 function take(x: Small): string { return "took " + x; }
 type Wide = 100000 | 200000 | -5;

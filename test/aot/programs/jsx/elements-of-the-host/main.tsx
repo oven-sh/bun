@@ -46,7 +46,7 @@ class Card { constructor(public props: { title: string }) {} render() { return "
 console.log(run(<Card title="c" />))
 console.log(run(<Card title="c" ref={(instance, index) => typeof instance + typeof index} />))
 
-// What the program's component declares is asserted, whoever calls it.
+// The declared props of the program's component are asserted, whoever calls it.
 const element = <Row id={3} onPick={(id, label) => typeof id + typeof label} />
 try { console.log(element.props.onPick("three", 3)) } catch (e) { console.log((e as Error).constructor.name) }
 export {}

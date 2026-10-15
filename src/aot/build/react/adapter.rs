@@ -209,7 +209,7 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             unbound: FxHashMap::default(),
             labels: FxHashMap::default(),
             private_names: FxHashMap::default(),
-            under_a_suppression: super::super::comments::functions_under_a_suppression_of_react_hooks(hir, bound),
+            under_a_suppression: super::super::comments::functions_with_react_hooks_suppression(hir, bound),
         }
     }
 
@@ -474,7 +474,7 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             ExprKind::BigInt(value) => Expr::init(E::BigInt { value: StoreStr::new(self.text(value)) }, loc),
             ExprKind::Regex => {
                 let text = &hir.text[hir[e].pos as usize..hir[e].end as usize];
-                let flags = text.iter().rposition(|&byte| byte == b'/').map_or(text.len(), |slash| slash + 1);
+                let flags = bun_core::strings::last_index_of_char(text, b'/').map_or(text.len(), |slash| slash + 1);
                 let flags_offset = if flags < text.len() { u16::try_from(flags).ok() } else { None };
                 Expr::init(E::RegExp { value: StoreStr::new(text), flags_offset }, loc)
             }

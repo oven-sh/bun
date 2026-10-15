@@ -53,7 +53,7 @@ const box = of(0x2502), wide = of(0x3000), thin = of(0x2009), mark = of(0xfeff),
 for (const s of [box, " " + box, box + " ", "  " + box + "  ", "\t\n" + box + "x" + box + "\r\n", wide + box + wide, thin + mark + line + box + line + mark + thin, box + " " + box, " a" + box + "b ", wide, wide + wide + thin, mark, " " + wide + " ",
     high + low, " " + high + low + " ", wide + high + wide, low + " ", " " + low, of(0x200b) + box + of(0x200b), of(0x180e) + box + of(0x180e), of(0x85) + box + of(0x85), of(0xa0) + box + of(0xa0), of(0x2060) + box, of(0x1680) + box + of(0x1680), of(0x202f, 0x205f) + box + of(0x205f, 0x202f)])
     print(codes(both(s)) + " | " + codes(start(s)) + " | " + codes(end(s)) + " | " + lengths(s));
-// What comes back where nothing is taken off is the string itself; ropes; parts of 16-bit strings; parts of parts.
+// Where nothing is removed the result is the string itself; ropes; substrings of 16-bit strings; substrings of substrings.
 print((both(box + "x") === box + "x") + " " + codes(both(cat("  " + box, box + "  "))) + " " + codes(end(cat(cat(" ", box), cat(" ", wide)))) + " " + codes(start(part("ab  " + box + "  cd", 2, 7))) + " " + codes(both(part(part("ab  " + box + "x  cd", 1, 9), 1, 7))));
 print(ofPieces(box + " one  " + box + "  \n" + box + "   \n\n   \n" + wide + "two" + wide + "\nplain  \n" + box));
 print(codes(both(" ".repeat(300) + box + " ".repeat(300))) + " " + both(wide.repeat(500)).length + " " + end(box.repeat(500) + wide.repeat(500)).length + " " + start(wide.repeat(500) + box.repeat(500)).length);

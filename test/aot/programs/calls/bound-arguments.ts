@@ -29,7 +29,7 @@ for (const [name, target] of targets) {
   }
 }
 console.log(lines.join("\n"));
-// What is bound is kept, not re-read; objects stay alive through the bound function alone; a bound function that was given a property; `new`.
+// Bound values are stored, not re-read; objects stay alive through the bound function alone; a bound function that was given a property; `new`.
 {
   const list = [1]; const f: any = rest.bind(list, list, { toString() { return "obj"; } }); list.push(2);
   console.log(f(3), f.name, f.length);

@@ -1,3 +1,4 @@
+use bun_lint::language::Twins;
 use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
@@ -76,7 +77,9 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
                 continue;
             };
             let argument_type = argument.ty();
-            if is_unsafe_assignment(argument_type, parameter_type, argument).is_some() {
+            if is_unsafe_assignment(argument_type, parameter_type, argument).is_some()
+                && !argument.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_ARGUMENT_LEAVES)
+            {
                 // tsgolint has a node for the parentheses around an argument, and reports that.
                 let report = match cx.language().is_oxlint {
                     true => cx.report(argument.outer_span(), UNSAFE_ARGUMENT),

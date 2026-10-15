@@ -303,6 +303,15 @@ impl<'s> Checker<'_, 's> {
         finished
     }
 
+    pub fn begin_trial_task(&mut self, index: u32, is_on_trial: &[bool]) {
+        self.begin_task(0, index, true);
+        for file in (0..self.files.modules.len() as u32).map(FileId) {
+            if is_on_trial[file.idx()] || self.is_untyped_file(file) {
+                self.task.begin_file(file, false);
+            }
+        }
+    }
+
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
     pub fn take_ran_out_of_stack(&mut self) -> bool {
         self.ran_out_of_stack.replace(false)
@@ -1626,6 +1635,10 @@ impl<'s> Checker<'_, 's> {
         let save_within_unreachable_code = self.within_unreachable_code;
         let mut node = s;
         loop {
+            if self.files().is_cut_statement(file, node) {
+                self.never_check(hir[node].start, hir[node].loc.end);
+                break;
+            }
             self.enter_source_element(CurrentNode::Node(file, hir.node(node)));
             if !self.within_unreachable_code
                 && self.p.files.options.allow_unreachable_code != Some(true)
@@ -1890,7 +1903,7 @@ impl<'s> Checker<'_, 's> {
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
                     if self.p.files.options.no_fallthrough_cases_in_switch
-                        && !self.is_held_to_the_fixed_set(file)
+                        && !self.is_restricted_to_fixed_set(file)
                         && fallthrough.is_some()
                         && self.is_reachable(file, fallthrough)
                     {
@@ -1924,7 +1937,7 @@ impl<'s> Checker<'_, 's> {
                     self.check_grammar_duplicate_label(file, s, label);
                 }
                 if self.p.files.options.allow_unused_labels == Some(false)
-                    && !self.is_held_to_the_fixed_set(file)
+                    && !self.is_restricted_to_fixed_set(file)
                     && bound.unused_labels.contains(&s)
                 {
                     self.error_at(self.place_of_token(file, hir[s].start), 7028, &[]);
@@ -2167,6 +2180,10 @@ impl<'s> Checker<'_, 's> {
                     if std::mem::take(&mut is_innermost) {
                         self.check_expression(file, left);
                     }
+                    if self.files().cut_operand(file, e) == Some(right) {
+                        self.never_check(self.start_of(file, right), self.end_of_expr(file, right));
+                        continue;
+                    }
                     self.check_expression(file, right);
                     match op {
                         BinOp::And | BinOp::Or | BinOp::Nullish => {
@@ -2197,6 +2214,10 @@ impl<'s> Checker<'_, 's> {
             }
             ExprKind::Cond { test, yes, no } => {
                 self.check_expression(file, test);
+                if let Some(cut) = self.files().cut_operand(file, e) {
+                    self.never_check(self.start_of(file, cut), self.end_of_expr(file, cut));
+                    return self.check_expression(file, if cut == yes { no } else { yes });
+                }
                 let body = Parent::Expr(yes);
                 self.check_testing_known_truthy_callable_or_awaitable_or_enum_member_type(
                     file, test, body,

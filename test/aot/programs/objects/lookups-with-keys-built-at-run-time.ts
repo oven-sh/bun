@@ -6,7 +6,7 @@ function make(by: number): Layout {
 }
 const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
 const texts = 'narrow wide tails heads masks empty space words tabs none1 none2 none3';
-// A string of its own each time: never one of the program's constants.
+// A new string each time: never one of the program's constants.
 function key(i: number): string {
   return texts.split(' ')[i]!.split('').join('');
 }
@@ -44,9 +44,9 @@ count('alone: Object.hasOwn', 40, j => Object.hasOwn(record, key(j)) === (j < 9)
 count('alone: in', 40, j => (key(j) in record) === (j < 9));
 count('alone: Reflect.has', 40, j => Reflect.has(record, key(j)) === (j < 9));
 count('alone: propertyIsEnumerable', 40, j => Object.prototype.propertyIsEnumerable.call(record, key(j)) === (j < 9));
-// ───── WRITES. What the object holds afterwards is read BY THE PROGRAM's OWN NAMES, through the type, and held to a model.
+// ───── WRITES. The contents of the object afterwards are read BY THE PROGRAM's OWN NAMES, through the type, and compared with a model.
 function read(l: Layout): (number | undefined)[] { return [l.narrow, l.wide, l.tails, l.heads, l.masks, l.empty, l.space, l.words, l.tabs]; }
-// Names of their own for what is no field here: `o.other1` keeps that name alive for good, and none1 .. none3 above have to die for the questions about "has" to show anything.
+// Separate names for the properties that are not fields here: `o.other1` keeps that name alive forever, and none1 .. none3 above have to die for the "has" tests to show anything.
 function extras(o: any): unknown[] { return [o.other1, o.other2, o.other3]; }
 const written = 'narrow wide tails heads masks empty space words tabs other1 other2 other3';
 const keyWritten = (i: number): string => written.split(' ')[i]!.split('').join('');
@@ -79,5 +79,5 @@ const readLoose = (l: Loose): (number | undefined)[] => [l.narrow, l.wide, l.tai
   }
   console.log('delete', wrong);
 }
-// stale, and that costs a transition, not an answer; a name that dies with no collection between (a host's `Identifier::fromString(vm, "narrow")`; Instance::ownPropertyPlaces): no program can make one: a string's name lives until its JSString is swept.
+// Not tested: a name that dies without a collection in between (native code's `Identifier::fromString(vm, "narrow")`). No program can create one: a string's name lives until its JSString is swept.
 export {};

@@ -25,6 +25,11 @@ Checked against the regular expressions compiled into the image (the X lines of 
     // KNOWN <word> <source>           the source is known at build time, so its code is in the image
     // PARTLY <word> <source>          the same, for the flags that were predicted
     // UNKNOWN <source>                its code is not in the image
+Checked against the thunks of the image (the T lines of the map file), on every platform:
+    // THUNKS< <n>                     fewer than n thunks that name an operation for a stub are in the image
+Checked against the size of the data that describes the program to the run time (the Z line of the map file), on every platform:
+    // DATA< <bytes>                   it is smaller than that
+    // MESSAGE-DATA< <n>               fewer than n layouts carry what only the text of a type error reads
 Not read here: // CODE (a disassembly) and // JSCALLS (CALLS for the same program without type annotations).
 
 Prints one line per program, `ok <program>: <n> expectations` or `FAIL <program>: <what is not met>`, then a summary line.
@@ -40,7 +45,7 @@ WORK = os.environ.get('WORK') or tempfile.mkdtemp(prefix='aot-expectations-')
 os.makedirs(WORK, exist_ok=True)
 os.environ.setdefault('BUN_SEMA_TS_LIB', os.path.realpath(HERE + '/../../../node_modules/typescript/lib'))
 os.environ.update(NO_COLOR='1', BUN_ENABLE_CRASH_REPORTING='0')
-LINE = re.compile(r'^// (IR\+|IR-|IR=|IRT=|IRM=|REMARK\+|REMARK-|CALLS\+|CALLS-|SIZE<|KNOWN|PARTLY|UNKNOWN) (.*)$', re.M)
+LINE = re.compile(r'^// (IR\+|IR-|IR=|IRT=|IRM=|REMARK\+|REMARK-|CALLS\+|CALLS-|SIZE<|KNOWN|PARTLY|UNKNOWN|THUNKS<|DATA<|MESSAGE-DATA<) (.*)$', re.M)
 ARM64 = platform.machine() in ('arm64', 'aarch64')
 
 
@@ -159,13 +164,15 @@ def one(name):
     remarks = run(JSC, '--useDollarVM=1', HERE + '/dump.js', '--', room + '.bin', 'string-builders').stdout if kinds & {'REMARK+', 'REMARK-'} else ''
     called, sizes = {}, {}
     expressions = set()
-    if kinds & {'CALLS+', 'CALLS-', 'SIZE<'} and ARM64 or kinds & {'KNOWN', 'PARTLY', 'UNKNOWN'}:
+    thunks = None
+    if kinds & {'CALLS+', 'CALLS-', 'SIZE<'} and ARM64 or kinds & {'KNOWN', 'PARTLY', 'UNKNOWN', 'THUNKS<', 'DATA<', 'MESSAGE-DATA<'}:
         run(JSC, '--useDollarVM=1', '--aotMapFilePath=' + room + '.map', HERE + '/image.js', '--', room + '.bin', room + '.img', HERE + '/stub.js')
         if not os.path.isfile(room + '.img'): bad.append(('', 'not compiled'))
         else:
             if ARM64: called, sizes = calls(room + '.img', room + '.map')
             # The map writes a backslash twice.
             expressions = {line.rstrip('\n').split('\t')[5].replace('\\\\', '\\') for line in open(room + '.map', errors='replace') if line.startswith('X') and line.count('\t') >= 5}
+            thunks = sum(1 for line in open(room + '.map', errors='replace') if line.startswith('T\t') and ' to operation' in line and not line.endswith(' with arguments\n'))
     whole = bad
     for kind, rest in lines:
         bad = Failures(whole, '// %s %s' % (kind, rest))
@@ -190,6 +197,14 @@ def one(name):
             if rest.split(' ', 1)[1] not in expressions: bad.append('not in the image: %s' % rest[:70])
         elif kind == 'UNKNOWN':
             if rest in expressions: bad.append('in the image, and not known: %s' % rest[:70])
+        elif kind == 'MESSAGE-DATA<':
+            counts = [int(line.split('\t')[2]) for line in open(room + '.map', errors='replace') if line.startswith('Z\t') and line.count('\t') > 1] if os.path.isfile(room + '.map') else []
+            if not (counts and counts[0] < int(rest)): bad.append('%s layouts carry what only a message reads, not under %s' % (counts[0] if counts else '?', rest))
+        elif kind == 'DATA<':
+            sizes_of_data = [int(line.split('\t')[1]) for line in open(room + '.map', errors='replace') if line.startswith('Z\t')] if os.path.isfile(room + '.map') else []
+            if not (sizes_of_data and 0 < sizes_of_data[0] < int(rest)): bad.append('the data is %s bytes, not under %s' % (sizes_of_data[0] if sizes_of_data else '?', rest))
+        elif kind == 'THUNKS<':
+            if thunks is None or not 0 < thunks < int(rest): bad.append('%s thunks name an operation, not between 1 and %s' % (thunks, rest))
         elif not ARM64: skipped += 1
         elif kind == 'SIZE<':
             fn, limit = rest.split()

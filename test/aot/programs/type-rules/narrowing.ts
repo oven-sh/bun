@@ -11,7 +11,7 @@ attempt("guard, an object as a number", () => { const v = hide({}); if (isNumber
 function assertString(v: unknown): asserts v is string {}
 attempt("assertion function, a number as a string, length", () => { const v = hide(5); assertString(v); return v.length })
 attempt("assertion function, a number as a string, +", () => { const v = hide(5); assertString(v); return v + "!" })
-// A generic function of the program: in it `T` names no kind; what the call is instantiated with is tested at the call.
+// A generic function of the program: inside it `T` names no kind; the type that the call substitutes is tested at the call.
 function cast<T>(v: unknown): T { return v as T }
 function first<T>(items: T[]): T { return items[0] }
 attempt("generic cast", () => cast<number>("s") + 1)

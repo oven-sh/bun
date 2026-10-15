@@ -1,3 +1,4 @@
+use bun_lint::language::Twins;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
     CompilerOption, is_intrinsic_error_type, is_strict_compiler_option_enabled,
@@ -347,6 +348,9 @@ fn report_any_assignment<'a>(
     target: Span,
     compares: bool,
 ) {
+    if sender_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_ASSIGNMENT_LEAVES) {
+        return;
+    }
     let options = cx.file().type_checker().compiler_options();
     // `var foo = this`
     let any_this = get_this_expression(sender_node)
@@ -420,6 +424,9 @@ fn report_unsafe_assignment<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
+    if sender_node.ts_node().is_left_to_aot_no_any_to_typed(Twins::NO_UNSAFE_ASSIGNMENT_LEAVES) {
+        return true;
+    }
     let place = if cx.language().is_oxlint {
         sender_span(sender_node)
     } else {

@@ -121,8 +121,8 @@ fn few<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
 /// What a source of the runtime is.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
-    /// A module, by its id in the registry.
-    Module(u32),
+    /// A module, by its registry id. The flag marks a reachability root: native code or the program can load it by name, including a name computed at run time.
+    Module(u32, bool),
     /// Functions that native code and the other sources call by name.
     Functions,
 }
@@ -132,6 +132,8 @@ pub struct Module<'s> {
     pub path: Path<'s>,
     pub hir: hir::File<'s>,
     pub bound: Bound<'s>,
+    pub decisions: &'s [(hir::ExprId, crate::fold::Decision)],
+    pub cut: &'s [(u32, u32)],
     /// Lives as long as `bound`. Whether an alias resolves to the symbol synthesized for it can
     /// only be decided from types.
     transient_symbols: ArenaVec<'s, TransientSymbol>,
@@ -290,7 +292,7 @@ impl Module<'_> {
         self.hir.is_js || self.hir.check_directive == Some(false) || self.is_held_untyped.load(Ordering::Relaxed) || self.builtin.is_some() && self.hir.check_directive != Some(true)
     }
 
-    pub fn is_held_to_the_fixed_set(&self) -> bool {
+    pub fn is_restricted_to_fixed_set(&self) -> bool {
         self.is_only_code && !self.hir.is_js && matches!(self.hir.kind, FileKind::Ts | FileKind::Tsx) && self.builtin.is_none() && self.path.text.windows(14).any(|part| part == b"/node_modules/")
     }
 
@@ -780,7 +782,8 @@ pub struct Run<'u> {
     session: &'u Session,
     atoms: Interner<'u>,
     /// By path.
-    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>)>>>,
+    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, (usize, u64), &'u Parse<'u>)>>>,
+    is_early: bool,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
     /// Programs run at the same time.
@@ -795,10 +798,18 @@ impl<'u> Run<'u> {
             session,
             atoms: Interner::new_in(session),
             parsed: ShardedMap::default(),
+            is_early: false,
             provided,
             overlaps: false,
             parses: AtomicUsize::new(0),
             bytes: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn early(session: &'u Session) -> Run<'u> {
+        Run {
+            is_early: true,
+            ..Run::new(session, FxHashSet::default())
         }
     }
 
@@ -828,7 +839,7 @@ impl<'u> Run<'u> {
 
     /// Whether `parse` may answer for `path` without its text.
     fn has(&self, path: &[u8]) -> bool {
-        self.parsed.get_ref(path).is_some()
+        !self.is_early && self.parsed.get_ref(path).is_some()
     }
 
     fn parse(
@@ -844,15 +855,23 @@ impl<'u> Run<'u> {
                 .parsed
                 .insert_ref(path.to_vec(), Guarded::new(Vec::new())),
         };
+        let text = match text {
+            None if self.is_early => Some(host.read_source(path)),
+            text => text,
+        };
+        let text_key = match &text {
+            Some(text) if self.is_early => Self::length_and_hash(text),
+            _ => (0, 0),
+        };
         // Until the file is parsed: a program that comes to it at the same time waits for that.
         let mut of_path = of_path.lock();
-        if let Some(found) = of_path.iter().find(|it| it.0 == key) {
-            return found.1;
+        if let Some(found) = of_path.iter().find(|it| it.0 == key && it.1 == text_key) {
+            return found.2;
         }
         self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
         // Only this thread allocates in it.
-        let before = arena.allocated_bytes();
+        let before = (!self.is_early).then(|| arena.allocated_bytes());
         let (mut hir, bound) = Files::parse_and_bind(
             arena,
             host,
@@ -863,7 +882,9 @@ impl<'u> Run<'u> {
             key.specifies_esm,
             text.unwrap_or_else(|| host.read_source(path)),
         );
-        rename_private_names(&mut hir, &bound, &self.atoms, path);
+        if !self.is_early {
+            rename_private_names(&mut hir, &bound, &self.atoms, path);
+        }
         // Nothing drops it.
         keep_list(self.session, &mut hir.text);
         keep_list(self.session, &mut hir.diagnostics);
@@ -872,12 +893,35 @@ impl<'u> Run<'u> {
         let parse: &'u Parse<'u> = arena.alloc(Parse {
             hir,
             bound,
-            is_renamed: true,
+            is_renamed: !self.is_early,
         });
-        of_path.push((key, parse));
-        let more = arena.allocated_bytes().saturating_sub(before);
-        self.bytes.fetch_add(more, Ordering::Relaxed);
+        of_path.push((key, text_key, parse));
+        if let Some(before) = before {
+            let more = arena.allocated_bytes().saturating_sub(before);
+            self.bytes.fetch_add(more, Ordering::Relaxed);
+        }
         parse
+    }
+
+    fn length_and_hash(text: &[u8]) -> (usize, u64) {
+        use std::hash::Hasher;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        hasher.write(text);
+        (text.len(), hasher.finish())
+    }
+
+    fn take_parsed<'s>(&self, host: &dyn Host, path: &[u8], key: ParseKey, text: &[u8]) -> Option<Parse<'s>>
+    where
+        'u: 's,
+    {
+        if !host.uses_default_parse_settings(path) {
+            return None;
+        }
+        let mut of_path = self.parsed.get_ref(path)?.lock();
+        let text_key = Self::length_and_hash(text);
+        let at = of_path.iter().position(|it| it.0 == key && it.1 == text_key && (it.2.hir.text.is_empty() || *it.2.hir.text == *text))?;
+        let parse: &'u Parse<'u> = of_path.swap_remove(at).2;
+        Some(unsafe { std::mem::transmute::<Parse<'u>, Parse<'s>>(std::ptr::read(parse)) })
     }
 }
 
@@ -4400,7 +4444,7 @@ impl<'s> Files<'s> {
         // Called when all files are read, and no thread allocates in `session` but this one, with the bytes of what is freed
         // when the program is loaded.
         files_are_found: &dyn Fn(usize),
-    ) -> Files<'s> {
+    ) -> Option<Files<'s>> {
         let arena = session.arena();
         // Nothing drops `Files`.
         let options: &'s Options = session.keep(options);
@@ -4644,7 +4688,25 @@ impl<'s> Files<'s> {
                 true => Default::default(),
                 false => Self::load_ahead(session, run, host, &resolver, options, None, true, &atoms, seeds, &mut seen_ahead),
             };
+        if options.early_parse_only {
+            while !host.is_early_parse_cancelled()
+                && let Some(more) = host.next_early_paths()
+            {
+                let seeds: Vec<(&[u8], bool)> = (more.iter())
+                    .filter(|path| !seen_ahead.contains(&path[..]))
+                    .map(|path| (&*slice_in(path, resolving.arena()), false))
+                    .collect();
+                if !seeds.is_empty() {
+                    Self::load_ahead(session, run, host, &resolver, options, None, false, &atoms, seeds, &mut seen_ahead);
+                }
+            }
+            return None;
+        }
         files_are_found(resolving.allocated_bytes());
+        let expected = ahead.len() + roots.len();
+        modules.reserve(expected);
+        depths.reserve(expected);
+        all_found.files.reserve(expected);
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -4741,10 +4803,9 @@ impl<'s> Files<'s> {
                         };
                         ahead.extend(Self::load_ahead(session, run, host, &resolver, options, as_code, false, &atoms, seeds, &mut seen_ahead).0);
                     }
-                    let Some(loaded) = ahead.remove(path) else {
+                    let Some(mut loaded) = ahead.remove(path) else {
                         continue;
                     };
-                    let mut loaded = *loaded;
                     let _linking = Spent::on(host, Phase::Link);
                     sub_tasks.clear();
                     for &(path, is_lib, increases_depth, package_id) in &loaded.references {
@@ -5587,7 +5648,7 @@ impl<'s> Files<'s> {
             .filter_map(|name| files.global_type_symbol(name))
             .any(|array| files.members_in_table(array).iter().any(begins_with_digit));
         files.arrays_have_numeric_members = arrays_have_numeric_members;
-        files
+        Some(files)
     }
 
     /// Loads `seeds` (path, whether it is a lib) and every file that can be predicted from them to
@@ -5673,6 +5734,13 @@ impl<'s> Files<'s> {
             let mut arena = None;
             let mut state = shared.lock();
             loop {
+                if options.early_parse_only && host.is_early_parse_cancelled() && !(state.ready.is_empty() && state.to_read.is_empty()) {
+                    state.in_progress -= state.ready.len();
+                    state.ready.clear();
+                    state.to_read.clear();
+                    has_changed.notify_all();
+                    has_to_read.notify_all();
+                }
                 if reads && !state.to_read.is_empty() && state.ready.len() <= AHEAD {
                     let count = state.to_read.len().min(RUN);
                     let some: Vec<_> = state.to_read.drain(..count).collect();
@@ -5686,7 +5754,10 @@ impl<'s> Files<'s> {
                         has_changed.notify_one();
                     }
                     state = shared.lock();
-                } else if processes && let Some((file, text)) = state.ready.pop() {
+                } else if processes
+                    && let Some(largest) = (0..state.ready.len()).max_by_key(|&at| state.ready[at].1.as_ref().map_or(0, |text| text.len()))
+                {
+                    let (file, text) = state.ready.swap_remove(largest);
                     if state.ready.len() == AHEAD {
                         has_to_read.notify_all();
                     }
@@ -5744,7 +5815,7 @@ impl<'s> Files<'s> {
                         }
                         (Some(_), None) => {
                             let text = text.unwrap_or_default();
-                            let parse = match run.filter(|run| run.has_file(host, path)) {
+                            let parse = match run.filter(|run| (!run.is_early || options.early_parse_only) && run.has_file(host, path)) {
                                 Some(run) => {
                                     let key = ParseKey {
                                         options: options.for_parsing(),
@@ -5760,20 +5831,31 @@ impl<'s> Files<'s> {
                                     }
                                 }
                                 None => {
-                                    let (hir, bound) = Self::parse_and_bind(
-                                        arena,
-                                        host,
-                                        options.for_parsing(),
-                                        atoms,
-                                        path,
+                                    let key = ParseKey {
+                                        options: options.for_parsing(),
+                                        script_kind: host.script_kind(path),
                                         is_lib,
                                         specifies_esm,
-                                        text,
-                                    );
-                                    Parse {
-                                        hir,
-                                        bound,
-                                        is_renamed: false,
+                                    };
+                                    match run.filter(|run| run.is_early).and_then(|run| run.take_parsed(host, path, key, &text)) {
+                                        Some(parse) => parse,
+                                        None => {
+                                            let (hir, bound) = Self::parse_and_bind(
+                                                arena,
+                                                host,
+                                                options.for_parsing(),
+                                                atoms,
+                                                path,
+                                                is_lib,
+                                                specifies_esm,
+                                                text,
+                                            );
+                                            Parse {
+                                                hir,
+                                                bound,
+                                                is_renamed: false,
+                                            }
+                                        }
                                     }
                                 }
                             };
@@ -5867,7 +5949,10 @@ impl<'s> Files<'s> {
                 }
             }
         };
-        let threads = host.threads();
+        let threads = match options.early_parse_only {
+            true => host.threads().div_ceil(2),
+            false => host.threads(),
+        };
         match host.io_pool() {
             Some(io) => {
                 let _alone = WAITS_ACROSS_POOLS.lock();
@@ -6021,6 +6106,21 @@ impl<'s> Files<'s> {
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
         let (hir, bound) = match run.filter(|run| run.has_file(host, path)) {
+            Some(run) if run.is_early && !options.early_parse_only => {
+                let key = ParseKey {
+                    options: as_code.unwrap_or(options).for_parsing(),
+                    script_kind: host.script_kind(path),
+                    is_lib,
+                    specifies_esm,
+                };
+                let text = text.unwrap_or_else(|| host.read_source(path));
+                let (mut hir, bound) = match run.take_parsed(host, path, key, &text) {
+                    Some(parse) => (parse.hir, parse.bound),
+                    None => Self::parse_and_bind(arena, host, key.options, atoms, path, is_lib, specifies_esm, text),
+                };
+                rename_private_names(&mut hir, &bound, atoms, path);
+                (hir, bound)
+            }
             Some(run) => {
                 let key = ParseKey {
                     options: as_code.unwrap_or(options).for_parsing(),
@@ -6409,6 +6509,8 @@ impl<'s> Files<'s> {
         let module = Module {
             hir: hir::File::empty_in(arena, hir.lazy.session),
             bound: Bound::empty_in(arena),
+            decisions: &[],
+            cut: &[],
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),

@@ -43,7 +43,7 @@ function patchOwn(r: Runner): number { (r as any).go = () => "own"; return 5 }
 function patchClass(): number { Runner.prototype.go = function () { return "class" }; return 6 }
 const r2 = new Runner(), r3 = new Runner()
 console.log(r2.go(patchOwn(r2)), r3.go(patchClass()), r2.go(0), r3.go(0), new Runner().go(0), Object.keys(r2).join())
-// Object.assign hands back its first argument, with a property that the type lacks.
+// Object.assign returns its first argument, with a property that the type lacks.
 const assigned = cell()
 Object.assign(assigned, { w: 100, extra: 1 })
 console.log(JSON.stringify(assigned), assigned.w)

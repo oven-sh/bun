@@ -8,8 +8,8 @@
 //! - An object type: its subtypes.
 //! - A type parameter: all that enters a place of it, at a call or in an instantiation, through other type parameters. At
 //!   `seal({ a: 1 })` with `function seal<T extends object>(value: T) { return Object.freeze(value); }` that is the type of the literal.
-//! - A type that says nothing, `any`, `unknown`, `object`: every layout that has escaped, see `escape_closure`. An object gets to such a place
-//!   in no other way.
+//! - A type that says nothing, `any`, `unknown`, `object`: every layout. What `escape_closure` finds to have escaped is not all that gets to
+//!   such a place.
 //! - `Readonly<T>`, `Partial<T>`, `T & {}`: as `T`.
 //! - Any other type that depends on a type parameter: as what it is bounded by, `Events[E]` as `Events[keyof Events]`. Bounded by nothing, `T[K]`: every layout.
 //!
@@ -18,8 +18,8 @@
 //! - A place of another function type, `list.forEach(Object.freeze)`: as an operand of the type of the first parameter.
 //! - A place that says nothing: as an operand of which nothing is said.
 //!
-//! What is noted is sets and sums: it is absorbed in any order. It is closed where the subtype sets are begun, but for what rests on the
-//! escape closure, which `Subtypes::finish` adds.
+//! What is noted is sets and sums: it is absorbed in any order. It is closed where the subtype sets are begun, but for "every layout",
+//! which `Subtypes::finish` adds.
 
 use std::hash::Hash;
 use std::rc::Rc;
@@ -27,7 +27,7 @@ use std::rc::Rc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::escape_closure::TypeParameter;
-use super::flows::{Membership, Place};
+use super::flows::{Membership, NoteKind, ParameterNote, ParameterNoteKind, Place};
 use crate::atom::Atom;
 use crate::check::Checker;
 use crate::bind::Decl;
@@ -41,6 +41,7 @@ pub(super) enum Alteration {
     IntegrityLevel,
     /// `Object.setPrototypeOf`, `Reflect.setPrototypeOf`, a store to `__proto__`. Not to `null`, which the run time lets any record go to.
     Prototype,
+    Redefinition,
 }
 
 impl Alteration {
@@ -97,8 +98,8 @@ pub(crate) struct Alterations<T = TypeId> {
     anything_enters: FxHashSet<TypeParameter>,
     instances_let_out: FxHashSet<T>,
     parameters_let_out: FxHashSet<TypeParameter>,
-    instances_entered_by_strangers: FxHashSet<T>,
-    parameters_entered_by_strangers: FxHashSet<TypeParameter>,
+    instances_entered_by_foreign_objects: FxHashSet<T>,
+    parameters_entered_by_foreign_objects: FxHashSet<TypeParameter>,
     instances_entered_if_let_out: FxHashSet<T>,
     parameters_entered_if_let_out: FxHashSet<TypeParameter>,
     views_let_out: FxHashSet<T>,
@@ -125,8 +126,8 @@ impl<T> Default for Alterations<T> {
             anything_enters: FxHashSet::default(),
             instances_let_out: FxHashSet::default(),
             parameters_let_out: FxHashSet::default(),
-            instances_entered_by_strangers: FxHashSet::default(),
-            parameters_entered_by_strangers: FxHashSet::default(),
+            instances_entered_by_foreign_objects: FxHashSet::default(),
+            parameters_entered_by_foreign_objects: FxHashSet::default(),
             instances_entered_if_let_out: FxHashSet::default(),
             parameters_entered_if_let_out: FxHashSet::default(),
             views_let_out: FxHashSet::default(),
@@ -144,7 +145,7 @@ impl<T> Default for Alterations<T> {
 pub(super) struct Altered<T> {
     /// In no order.
     pub(super) types: Vec<T>,
-    /// Every layout that has escaped as well.
+    /// Every layout: nothing is said of an operand.
     pub(super) is_untyped: bool,
     /// Every layout.
     pub(super) is_anything: bool,
@@ -165,8 +166,8 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
         self.anything_enters.extend(other.anything_enters);
         self.instances_let_out.extend(other.instances_let_out);
         self.parameters_let_out.extend(other.parameters_let_out);
-        self.instances_entered_by_strangers.extend(other.instances_entered_by_strangers);
-        self.parameters_entered_by_strangers.extend(other.parameters_entered_by_strangers);
+        self.instances_entered_by_foreign_objects.extend(other.instances_entered_by_foreign_objects);
+        self.parameters_entered_by_foreign_objects.extend(other.parameters_entered_by_foreign_objects);
         self.instances_entered_if_let_out.extend(other.instances_entered_if_let_out);
         self.parameters_entered_if_let_out.extend(other.parameters_entered_if_let_out);
         self.views_let_out.extend(other.views_let_out);
@@ -202,8 +203,8 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
             anything_enters: self.anything_enters,
             instances_let_out: self.instances_let_out.into_iter().filter_map(&mut *rename).collect(),
             parameters_let_out: self.parameters_let_out,
-            instances_entered_by_strangers: self.instances_entered_by_strangers.into_iter().filter_map(&mut *rename).collect(),
-            parameters_entered_by_strangers: self.parameters_entered_by_strangers,
+            instances_entered_by_foreign_objects: self.instances_entered_by_foreign_objects.into_iter().filter_map(&mut *rename).collect(),
+            parameters_entered_by_foreign_objects: self.parameters_entered_by_foreign_objects,
             instances_entered_if_let_out: self.instances_entered_if_let_out.into_iter().filter_map(&mut *rename).collect(),
             parameters_entered_if_let_out: self.parameters_entered_if_let_out,
             views_let_out: self.views_let_out.into_iter().filter_map(&mut *rename).collect(),
@@ -216,13 +217,63 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
         }
     }
 
+    pub(super) fn add_note(&mut self, kind: NoteKind, first: T, second: T, at: Place) {
+        match kind {
+            NoteKind::EntersParameter => {
+                self.enters.insert(((at.file, crate::hir::TypeParamId(at.pos)), first));
+            }
+            NoteKind::InstanceLetOut => {
+                self.instances_let_out.insert(first);
+            }
+            NoteKind::InstanceEnteredByForeignObjects => {
+                self.instances_entered_by_foreign_objects.insert(first);
+            }
+            NoteKind::InstanceEnteredIfLetOut => {
+                self.instances_entered_if_let_out.insert(first);
+            }
+            NoteKind::ViewLetOut => {
+                self.views_let_out.insert(first);
+            }
+            NoteKind::EnteringView => {
+                self.entering_views.insert((first, second));
+            }
+            NoteKind::InstanceEnteringViews => {
+                self.instances_entering_views.insert(first);
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn add_parameter_note(&mut self, (kind, first, second): ParameterNote) {
+        match kind {
+            ParameterNoteKind::Enters => {
+                self.parameter_enters.insert((first, second));
+            }
+            ParameterNoteKind::LetOut => {
+                self.parameters_let_out.insert(first);
+            }
+            ParameterNoteKind::EnteredByForeignObjects => {
+                self.parameters_entered_by_foreign_objects.insert(first);
+            }
+            ParameterNoteKind::EnteredIfLetOut => {
+                self.parameters_entered_if_let_out.insert(first);
+            }
+            ParameterNoteKind::UntypedEnters => {
+                self.untyped_enters.insert(first);
+            }
+            ParameterNoteKind::AnythingEnters => {
+                self.anything_enters.insert(first);
+            }
+        }
+    }
+
     pub(super) fn absorb_evidence_of_strangers(&mut self, other: &Alterations<T>) {
         self.enters.extend(other.enters.iter().copied());
         self.parameter_enters.extend(other.parameter_enters.iter().copied());
         self.instances_let_out.extend(other.instances_let_out.iter().copied());
         self.parameters_let_out.extend(other.parameters_let_out.iter().copied());
-        self.instances_entered_by_strangers.extend(other.instances_entered_by_strangers.iter().copied());
-        self.parameters_entered_by_strangers.extend(other.parameters_entered_by_strangers.iter().copied());
+        self.instances_entered_by_foreign_objects.extend(other.instances_entered_by_foreign_objects.iter().copied());
+        self.parameters_entered_by_foreign_objects.extend(other.parameters_entered_by_foreign_objects.iter().copied());
         self.instances_entered_if_let_out.extend(other.instances_entered_if_let_out.iter().copied());
         self.parameters_entered_if_let_out.extend(other.parameters_entered_if_let_out.iter().copied());
         self.views_let_out.extend(other.views_let_out.iter().copied());
@@ -230,14 +281,14 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
         self.instances_entering_views.extend(other.instances_entering_views.iter().copied());
     }
 
-    pub(super) fn all_with_evidence_of_strangers(&self) -> Vec<T> {
-        let instances: FxHashSet<T> = self.instances_let_out.iter().chain(&self.instances_entered_by_strangers).chain(&self.instances_entered_if_let_out).chain(&self.instances_entering_views).copied().collect();
-        let parameters: FxHashSet<TypeParameter> = self.parameters_let_out.iter().chain(&self.parameters_entered_by_strangers).chain(&self.parameters_entered_if_let_out).copied().collect();
+    pub(super) fn all_with_evidence_of_foreign_objects(&self) -> Vec<T> {
+        let instances: FxHashSet<T> = self.instances_let_out.iter().chain(&self.instances_entered_by_foreign_objects).chain(&self.instances_entered_if_let_out).chain(&self.instances_entering_views).copied().collect();
+        let parameters: FxHashSet<TypeParameter> = self.parameters_let_out.iter().chain(&self.parameters_entered_by_foreign_objects).chain(&self.parameters_entered_if_let_out).copied().collect();
         self.closed_over(&instances, &parameters)
     }
 
     pub(super) fn entered_by_strangers(&self) -> Vec<T> {
-        self.closed_over(&self.instances_entered_by_strangers, &self.parameters_entered_by_strangers)
+        self.closed_over(&self.instances_entered_by_foreign_objects, &self.parameters_entered_by_foreign_objects)
     }
 
     pub(super) fn entered_if_let_out(&self) -> Vec<T> {
@@ -297,8 +348,8 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
         let of_types = self.of_types.iter().filter(|altered| altered.0 == alteration).map(|altered| altered.1);
         Altered {
             types: of_types.chain(self.enters.iter().filter(|enters| reached.contains(&enters.0)).map(|enters| enters.1)).collect(),
-            is_untyped: self.of_untyped[alteration as usize] || reached.iter().any(|parameter| self.untyped_enters.contains(parameter)),
-            is_anything: self.of_anything[alteration as usize] || reached.iter().any(|parameter| self.anything_enters.contains(parameter)),
+            is_untyped: self.of_untyped.get(alteration as usize).copied().unwrap_or(false) || reached.iter().any(|parameter| self.untyped_enters.contains(parameter)),
+            is_anything: self.of_anything.get(alteration as usize).copied().unwrap_or(false) || reached.iter().any(|parameter| self.anything_enters.contains(parameter)),
         }
     }
 }
@@ -397,7 +448,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    pub(super) fn note_what_a_stranger_may_enter(&mut self, target: TypeId, only_if_let_out: bool) {
+    pub(super) fn note_type_admits_foreign_objects(&mut self, target: TypeId, only_if_let_out: bool) {
         let mut found = ObjectsOf::default();
         self.add_objects_of(target, &mut found);
         let types = std::mem::take(&mut found.types);
@@ -405,19 +456,18 @@ impl<'p, 's> Checker<'p, 's> {
         if instances.is_empty() && found.parameters.is_empty() {
             return;
         }
-        let noted = self.alterations_noted();
-        if only_if_let_out {
-            noted.instances_entered_if_let_out.extend(instances);
-            noted.parameters_entered_if_let_out.extend(found.parameters);
-        } else {
-            noted.instances_entered_by_strangers.extend(instances);
-            noted.parameters_entered_by_strangers.extend(found.parameters);
-        }
+        let (of_instances, of_parameters) = match only_if_let_out {
+            true => (NoteKind::InstanceEnteredIfLetOut, ParameterNoteKind::EnteredIfLetOut),
+            false => (NoteKind::InstanceEnteredByForeignObjects, ParameterNoteKind::EnteredByForeignObjects),
+        };
+        let noted = self.notes();
+        noted.add_all(of_instances, &instances);
+        noted.add_parameters(of_parameters, &found.parameters);
     }
 
     pub(super) fn note_view_let_out(&mut self, view: TypeId) {
         let view = self.laid_out_as(view);
-        self.alterations_noted().views_let_out.insert(view);
+        self.notes().add_all(NoteKind::ViewLetOut, &[view]);
     }
 
     pub(super) fn note_instances_entering_views(&mut self, own: TypeId, target: TypeId) {
@@ -435,10 +485,12 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let instances: Vec<TypeId> = from.types.iter().copied().filter(|&ty| self.is_type_of_instances(ty)).collect();
-        let noted = self.alterations_noted();
-        noted.instances_entering_views.extend(instances);
+        let noted = self.notes();
+        noted.add_all(NoteKind::InstanceEnteringViews, &instances);
         for &entering in &from.types {
-            noted.entering_views.extend(views.iter().filter(|&&view| view != entering).map(|&view| (view, entering)));
+            for &view in views.iter().filter(|&&view| view != entering) {
+                noted.add_pair(NoteKind::EnteringView, view, entering);
+            }
         }
     }
 
@@ -457,9 +509,9 @@ impl<'p, 's> Checker<'p, 's> {
         if instances.is_empty() && found.parameters.is_empty() {
             return;
         }
-        let noted = self.alterations_noted();
-        noted.instances_let_out.extend(instances);
-        noted.parameters_let_out.extend(found.parameters);
+        let noted = self.notes();
+        noted.add_all(NoteKind::InstanceLetOut, &instances);
+        noted.add_parameters(ParameterNoteKind::LetOut, &found.parameters);
     }
 
     /// A value of type `source` enters a place of type `target`, which may be one of a type parameter.
@@ -474,15 +526,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut from = ObjectsOf::default();
         self.add_objects_of(source, &mut from);
-        let noted = self.alterations_noted();
+        let noted = self.notes();
         for parameter in into.parameters {
-            noted.enters.extend(from.types.iter().map(|&ty| (parameter, ty)));
-            noted.parameter_enters.extend(from.parameters.iter().filter(|&&other| other != parameter).map(|&other| (parameter, other)));
+            noted.add_entering_parameter(parameter, &from.types);
+            for &other in from.parameters.iter().filter(|&&other| other != parameter) {
+                noted.add_parameter_pair(ParameterNoteKind::Enters, parameter, other);
+            }
             if from.is_untyped {
-                noted.untyped_enters.insert(parameter);
+                noted.add_parameters(ParameterNoteKind::UntypedEnters, &[parameter]);
             }
             if from.depends_on_type_parameter {
-                noted.anything_enters.insert(parameter);
+                noted.add_parameters(ParameterNoteKind::AnythingEnters, &[parameter]);
             }
         }
     }
@@ -524,7 +578,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.alterations_noted().untyped_places[alteration as usize][language][form][around] += 1;
     }
 
-    fn made_where_it_stands(&self, file: FileId, mut operand: ExprId) -> Option<ExprId> {
+    fn created_in_place(&self, file: FileId, mut operand: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         while let ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::AsConst(inner) = hir[operand].kind {
             operand = inner;
@@ -549,7 +603,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             self.add_objects_of(ty, &mut operand);
         }
-        if let Some(made) = self.made_where_it_stands(file, of_operand) {
+        if let Some(made) = self.created_in_place(file, of_operand) {
             let hir = self.hir(file);
             let mut layer = of_operand;
             while layer != made {
@@ -618,6 +672,35 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         self.alteration_named(hir[func].name)
+    }
+
+    fn redefines_members(&self, signature: SigId) -> Option<bool> {
+        let (declared_in, func, _) = self.sig_decl(signature)?;
+        let hir = self.hir(declared_in);
+        if hir.kind != FileKind::Declaration || hir[func].name.is_none() {
+            return None;
+        }
+        match self.atoms().bytes(hir[func].name) {
+            b"defineProperty" => Some(false),
+            b"defineProperties" => Some(true),
+            _ => None,
+        }
+    }
+
+    fn is_carried_by_a_field(&self, file: FileId, descriptor: ExprId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Object(members) = hir[descriptor].kind else { return false };
+        members.iter().all(|member| {
+            let member = &hir[member];
+            match member.key {
+                PropKey::Name(name) if member.kind == PropKind::Init => match self.atoms().bytes(name) {
+                    b"value" => true,
+                    b"writable" | b"enumerable" | b"configurable" => matches!(hir[member.value].kind, ExprKind::True),
+                    _ => false,
+                },
+                _ => false,
+            }
+        })
     }
 
     /// `Object.freeze.call(undefined, o)`, `Object.freeze.apply(undefined, [o])`: what the built-in does, and whether the arguments are in a list.
@@ -781,6 +864,45 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Call(call) => {
                 let through = self.built_in_called_through(file, hir[call].callee);
                 let signature = if through.is_some() { None } else { self.resolved_signature(file, e).sig };
+                if let Some(is_of_several) = signature.and_then(|signature| self.redefines_members(signature)) {
+                    let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+                    let Some((&operand, rest)) = arguments.split_first() else { return };
+                    let (mut names, mut is_any_name): (Vec<Atom>, bool) = (Vec::new(), false);
+                    match (is_of_several, rest) {
+                        (false, &[key, descriptor, ..]) => {
+                            if !self.is_carried_by_a_field(file, descriptor) {
+                                names = self.names_of_key(file, key);
+                                is_any_name = names.is_empty();
+                            }
+                        }
+                        (true, &[descriptors, ..]) => match hir[descriptors].kind {
+                            ExprKind::Object(members) => {
+                                for member in members.iter() {
+                                    let member = &hir[member];
+                                    match member.key {
+                                        PropKey::Name(name) if member.kind == PropKind::Init => {
+                                            if !self.is_carried_by_a_field(file, member.value) {
+                                                names.push(name);
+                                            }
+                                        }
+                                        _ => is_any_name = true,
+                                    }
+                                }
+                            }
+                            _ => is_any_name = true,
+                        },
+                        _ => is_any_name = true,
+                    }
+                    if names.is_empty() && !is_any_name {
+                        return;
+                    }
+                    let of_operand = self.type_of_expr(file, operand);
+                    let mut objects = ObjectsOf::default();
+                    self.add_objects_of(of_operand, &mut objects);
+                    let noted = self.alterations_noted();
+                    noted.of_parameters.extend(objects.parameters.into_iter().map(|parameter| (Alteration::Redefinition, parameter)));
+                    return;
+                }
                 let Some(alteration) = (match (through, signature) {
                     (Some((alteration, _)), _) => Some(alteration),
                     (None, Some(signature)) => self.alteration_by_signature(signature),
@@ -864,7 +986,7 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(alteration) = self.alteration_named_by(file, hir[call].callee) {
                 called.insert(hir[call].callee);
                 let operand = hir.ids(hir[call].args).next();
-                if operand.is_some_and(|operand| self.made_where_it_stands(file, operand).is_some() || alteration == Alteration::Prototype && self.is_this_in_the_constructor_of_a_class(file, operand)) {
+                if operand.is_some_and(|operand| self.created_in_place(file, operand).is_some() || alteration == Alteration::Prototype && self.is_this_in_the_constructor_of_a_class(file, operand)) {
                     without_layout.insert(hir[call].callee);
                     self.alterations_noted().sites[alteration as usize][Operand::NoLayout as usize] += 1;
                     continue;
@@ -910,12 +1032,12 @@ impl<'p, 's> Checker<'p, 's> {
                 "alterations: {what}: places by the type of the operand: an object type {object_type}, a type parameter {type_parameter}, nothing said {untyped}, another type that depends on a type parameter or a spread {depends}, no layout {no_layout}; the built-in as a value {as_value}; to null {to_null}"
             ));
             let marked = allocated.iter().filter(|reach| if alteration == Alteration::IntegrityLevel { reach.may_be_frozen } else { reach.may_have_other_prototype }).count();
-            let [by_types, in_all, is_anything] = membership.altered_by[alteration as usize];
+            let [by_types, in_all, marks_every_layout] = membership.altered_by[alteration as usize];
             for (language, places) in ["TypeScript", "JavaScript"].into_iter().zip(membership.untyped_alterations[alteration as usize]) {
                 let by_form: Vec<String> = FORMS.iter().zip(places).filter(|of_form| of_form.1 != [0; AROUND.len()]).map(|(form, by_around)| format!("{form} {by_around:?}")).collect();
                 lines.push(format!("alterations: {what}: nothing said, {language}, by the form of the operand, each {AROUND:?}: {}", by_form.join(", ")));
             }
-            lines.push(format!("alterations: {what}: {marked} allocated layouts are marked: {by_types} by types and type parameters, {in_all} in all, every layout: {}", is_anything != 0));
+            lines.push(format!("alterations: {what}: {marked} allocated layouts are marked: {by_types} by types and type parameters, {in_all} in all, every layout: because an operand depends on a type parameter: {}, because nothing is said of an operand: {}", marks_every_layout & 1 != 0, marks_every_layout & 2 != 0));
             for (which, first) in ["every layout, nothing being said of the operand", "every layout"].into_iter().zip(membership.widest_alterations[alteration as usize]) {
                 if let Some(first) = first {
                     lines.push(format!("alterations: {what}: where: the first place that marks {which}: {}", self.place_for_people(first)));

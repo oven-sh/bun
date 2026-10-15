@@ -19,7 +19,7 @@ async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: 
 const ofBuild = "--aot, --aot-explain, --aot-type-errors";
 const ofRun = "--aot, --aot-audit, --aot-type-errors";
 
-describe.concurrent("a flag that starts with --aot and does not exist is an error", () => {
+describe.concurrent("an unknown flag that starts with --aot is an error", () => {
   test.each([
     [["build", "--compile", "--aot", "--aot-type-error=log", "app.ts", "--outfile", "out"], "--aot-type-error", "--aot-type-errors", ofBuild],
     [["build", "--compile", "--aot", "--aot-type-errors-log", "app.ts", "--outfile", "out"], "--aot-type-errors-log", "--aot-type-errors", ofBuild],
@@ -39,7 +39,7 @@ describe.concurrent("a flag that starts with --aot and does not exist is an erro
     const { stdout, stderr, exitCode } = await bun(String(dir), ...args);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: `error: ${meant?.startsWith("bun ") ? `${written} is a flag of ${meant}.` : `unknown flag ${written}.${meant ? ` Did you mean ${meant}?` : ""}`} The flags that start with --aot here are ${all}\n`,
+      stderr: `error: ${meant?.startsWith("bun ") ? `${written} is only valid with ${meant}.` : `unknown flag ${written}.${meant ? ` Did you mean ${meant}?` : ""}`} The --aot flags available here are ${all}\n`,
       exitCode: 1,
     });
     expect(existsSync(join(String(dir), isWindows ? "out.exe" : "out"))).toBe(false);
@@ -56,26 +56,26 @@ describe.concurrent("a flag that starts with --aot and does not exist is an erro
     expect({ passed: JSON.parse(stdout).filter((arg: string) => arg !== "--"), exitCode }).toEqual({ passed: ["--aot-mine", "--aott=1"], exitCode: 0 });
   });
 
-  test("the arguments of a compiled executable are the program's", async () => {
+  test("a compiled executable's arguments belong to the program", async () => {
     using dir = tempDir("aot-flags-of-the-executable", files);
     expect((await bun(String(dir), "build", "--compile", "app.ts", "--outfile", "out")).exitCode).toBe(0);
     await using proc = Bun.spawn({ cmd: [join(String(dir), isWindows ? "out.exe" : "out"), "--aot-mine", "--aott=1"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     expect([await proc.stdout.text(), await proc.exited]).toEqual(['["--aot-mine","--aott=1"]\n', 0]);
   }, 60_000);
 
-  test("BUN_OPTIONS is read by every command: a flag of another command is passed over, a flag of none is not", async () => {
+  test("BUN_OPTIONS is read by every command: a flag of another command is ignored, a flag of no command is an error", async () => {
     using dir = tempDir("aot-flags-in-bun-options", files);
     const cwd = String(dir);
     expect((await bun({ cwd, BUN_OPTIONS: "--aot-explain=throws" }, "app.ts")).stdout).toBe("[]\n");
     expect((await bun({ cwd, BUN_OPTIONS: "--aot-audit" }, "build", "app.ts", "--outfile", "out.js")).exitCode).toBe(0);
     expect(await bun({ cwd, BUN_OPTIONS: "--aott" }, "app.ts")).toEqual({
       stdout: "",
-      stderr: `error: unknown flag --aott. Did you mean --aot? The flags that start with --aot here are ${ofRun}\n`,
+      stderr: `error: unknown flag --aott. Did you mean --aot? The --aot flags available here are ${ofRun}\n`,
       exitCode: 1,
     });
   });
 
-  test("another unknown flag is skipped, as before", async () => {
+  test("other unknown flags are still ignored", async () => {
     using dir = tempDir("aot-other-unknown-flags", files);
     expect(await bun(String(dir), "--never-a-flag", "app.ts")).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
   });

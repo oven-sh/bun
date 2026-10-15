@@ -279,6 +279,37 @@ type Task = Vec<usize>;
 /// text. See `PlanOptions::split_files`.
 type Ahead = Option<(u32, u32)>;
 
+struct ScannedFile {
+    times: [i64; 4],
+    may_declare_a_global: bool,
+    imports: Vec<Vec<u8>>,
+}
+
+type ScannedFiles = Guarded<FxHashMap<Vec<u8>, ScannedFile>>;
+
+#[derive(Clone, Copy)]
+pub struct EarlyRun(*const core::ffi::c_void, *const ScannedFiles);
+
+unsafe impl Send for EarlyRun {}
+unsafe impl Sync for EarlyRun {}
+
+impl EarlyRun {
+    unsafe fn get<'a, 'u>(self) -> &'a Run<'u> {
+        unsafe { &*self.0.cast::<Run<'u>>() }
+    }
+
+    unsafe fn scanned_files<'a>(self) -> &'a ScannedFiles {
+        unsafe { &*self.1 }
+    }
+}
+
+pub fn with_early_run<R>(then: impl FnOnce(EarlyRun) -> R) -> R {
+    let session = Session::new();
+    let run = Run::early(&session);
+    let scanned_files = ScannedFiles::new(FxHashMap::default());
+    then(EarlyRun((&raw const run).cast(), &raw const scanned_files))
+}
+
 /// The constants of a `Plan`. They are options while they are still being tuned: the standalone
 /// command line sets them.
 #[derive(Clone, Copy)]
@@ -370,6 +401,9 @@ pub struct PlanOptions {
     /// loaded. On, `bun lint`: every file, sources too, by reference (`program::Run`): a run with types over a monorepo loads
     /// the same sources for a hundred programs. It keeps all of them to the end, and programs that overlap copy the names.
     pub shares_every_file: bool,
+    pub early_run: Option<EarlyRun>,
+    pub early_parse_only: bool,
+    pub early_scan_only: bool,
     /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
     /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
     /// what they import only what declaration files import. A file of `Request::paths` without a configuration file above
@@ -411,6 +445,9 @@ impl Default for PlanOptions {
             refuses_broken_configurations: false,
             prefers_the_library_of_the_project: false,
             shares_every_file: false,
+            early_run: None,
+            early_parse_only: false,
+            early_scan_only: false,
             only_the_globals: false,
             memory: 0,
         }
@@ -1305,10 +1342,19 @@ fn default_compiler_options() -> Json {
 fn package_holding(path: &[u8]) -> Option<(&[u8], &[u8])> {
     const INSTALLED: &[u8] = b"/node_modules/";
     let at = path.windows(INSTALLED.len()).rposition(|window| window == INSTALLED)? + INSTALLED.len();
-    let mut parts = path[at..].split(|&byte| byte == b'/');
+    let mut parts = strings::split(&path[at..], b"/");
     let first = parts.next()?;
     let length = if first.starts_with(b"@") { first.len() + 1 + parts.next()?.len() } else { first.len() };
     Some((&path[..at + length], &path[at..at + length]))
+}
+
+fn is_installed_declaration_file(path: &[u8]) -> bool {
+    package_holding(path).is_some() && [&b".d.ts"[..], b".d.mts", b".d.cts"].iter().any(|end| path.ends_with(end))
+}
+
+fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
+    const PREFIX: &[u8] = b"Cannot find type definition file for '";
+    reported.code == 2688 && reported.text.strip_prefix(PREFIX).and_then(|rest| strings::split(rest, b"'").next()).is_some_and(|name| [&b"bun-types"[..], b"bun", b"node"].contains(&name))
 }
 
 fn what_falls_with<'s>(module: &bun_sema::program::Module<'s>) -> (&'s [u8], &'s [u8]) {
@@ -1354,13 +1400,13 @@ fn is_about_what_the_run_time_brings(reported: &Diagnostic) -> bool {
     ];
     match reported.code {
         2580 | 2582 | 2584 | 2591 | 2593 | 2867 | 2868 => true,
-        2304 | 2552 => reported.text.strip_prefix(b"Cannot find name '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()).is_some_and(|name| GLOBALS.contains(&name)),
-        2307 => match reported.text.strip_prefix(b"Cannot find module '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()) {
+        2304 | 2552 => reported.text.strip_prefix(b"Cannot find name '").and_then(|rest| strings::split(rest, b"'").next()).is_some_and(|name| GLOBALS.contains(&name)),
+        2307 => match reported.text.strip_prefix(b"Cannot find module '").and_then(|rest| strings::split(rest, b"'").next()) {
             Some(name) => {
                 name == b"bun"
                     || name.starts_with(b"bun:")
                     || name.starts_with(b"node:")
-                    || OF_NODE.contains(&name.split(|&byte| byte == b'/').next().unwrap_or(name))
+                    || OF_NODE.contains(&strings::split(name, b"/").next().unwrap_or(name))
                     || [&b".txt"[..], b".toml", b".yaml", b".yml", b".jsonc", b".json5", b".xml", b".html", b"/bun.lock"].iter().any(|end| name.ends_with(end))
             }
             None => false,
@@ -1581,6 +1627,9 @@ pub fn check_provided_then<R>(
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     disk.constants_of_imports = provided.constants_of_imports.into_iter().collect();
+    disk.build_constants = provided.build_constants;
+    disk.early_paths = provided.early_paths.map(std::sync::Mutex::new);
+    disk.early_parse_cancelled = provided.early_parse_cancelled;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -1599,6 +1648,9 @@ pub fn check_provided_then<R>(
     let result = then(report);
     drop(lent);
     disk.caches.idle.lock().clear();
+    if request.plan_options.early_parse_only || request.plan_options.early_scan_only {
+        return result;
+    }
     // The process continues, so the free pages are returned to the system.
     THREADS_STILL_TO_RELEASE.fetch_add(1, Ordering::AcqRel);
     release_free_pages_of(pool_of_regions());
@@ -2101,7 +2153,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             config: owner.as_deref(),
             named: Some((Extent::Project, paths.as_slice())),
             elsewhere: None,
-            run: None,
+            run: request.plan_options.early_run.map(|it| unsafe { it.get() }),
             place: None,
         };
         let projects = Guarded::new(projects);
@@ -2580,7 +2632,57 @@ fn check_project_of(
             .map(|path| to_path(&host::from_argument(&cwd, path), is_case_sensitive).into_owned())
             .collect();
         let by_name: FxHashSet<Vec<u8>> = (project.options.file_specs.iter()).map(|named| to_path(&named.1, is_case_sensitive).into_owned()).collect();
-        project.files.retain(|file| is_declaration_file_name(file) || of_bundle.contains(&*to_path(file, is_case_sensitive)) || by_name.contains(&*to_path(file, is_case_sensitive)));
+        let is_kept = |file: &Vec<u8>| is_declaration_file_name(file) || of_bundle.contains(&*to_path(file, is_case_sensitive)) || by_name.contains(&*to_path(file, is_case_sensitive));
+        let names_its_files = !project.options.is_default_include_spec && !request.plan_options.early_parse_only;
+        let others: Vec<&Vec<u8>> = project.files.iter().filter(|file| names_its_files && !is_kept(file)).collect();
+        let declares_globals: Vec<AtomicBool> = others.iter().map(|_| AtomicBool::new(false)).collect();
+        let imported: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
+        let scanned_early = request.plan_options.early_run.map(|it| unsafe { it.scanned_files() });
+        if let (true, Some(scanned_early)) = (request.plan_options.early_scan_only, scanned_early) {
+            disk.parallel(others.len(), &|at| {
+                if disk.is_early_parse_cancelled() {
+                    return;
+                }
+                let Some(times) = host::Disk::times_of(others[at]) else {
+                    return;
+                };
+                let imports = RefCell::new(Vec::new());
+                let may_declare_a_global = may_declare_a_global(disk, others[at], true, true, &|name| imports.borrow_mut().push(name.to_vec()));
+                scanned_early.lock().insert(others[at].clone(), ScannedFile { times, may_declare_a_global, imports: imports.into_inner() });
+            });
+            return report;
+        }
+        disk.parallel(others.len(), &|at| {
+            let imports = |name: &[u8]| imported.lock().push((name.to_vec(), at));
+            let scanned = scanned_early.filter(|_| !disk.has_already_read(others[at])).and_then(|scanned_early| scanned_early.lock().remove(others[at]));
+            let scanned = scanned.filter(|scanned| host::Disk::times_of(others[at]) == Some(scanned.times));
+            let may = match scanned {
+                Some(scanned) => {
+                    scanned.imports.iter().for_each(|name| imports(name));
+                    scanned.may_declare_a_global
+                }
+                None => may_declare_a_global(disk, others[at], true, true, &imports),
+            };
+            declares_globals[at].store(may, Ordering::Relaxed);
+        });
+        let mut imported = std::mem::take(&mut *imported.lock());
+        imported.shared_sort_unstable();
+        imported.dedup_by(|a, b| a.0 == b.0);
+        let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), package_named_by(name))).collect();
+        places.shared_sort_unstable();
+        places.dedup();
+        let mut of_packages: Vec<Vec<u8>> = (places.into_iter())
+            .filter_map(|(directory, package)| global_declarations_of_package(disk, directory, package))
+            .collect();
+        of_packages.shared_sort_unstable();
+        of_packages.dedup();
+        let sources: FxHashSet<Vec<u8>> = (others.iter().zip(&declares_globals))
+            .filter(|(_, declares)| declares.load(Ordering::Relaxed))
+            .map(|(file, _)| (*file).clone())
+            .collect();
+        project.files.retain(|file| is_kept(file) || sources.contains(file));
+        of_packages.retain(|file| !project.files.contains(file));
+        project.files.extend(of_packages);
     }
     let named = of.named.map(|(extent, named)| {
         if extent == Extent::Project && !request.plan_options.only_the_globals {
@@ -2979,6 +3081,9 @@ impl Host for WithOutputs<'_> {
     }
     fn stays_loaded(&self) {
         self.disk.stays_loaded();
+    }
+    fn build_constants(&self) -> Option<Arc<bun_sema::fold::BuildConstants>> {
+        self.disk.build_constants()
     }
     fn shared_file(
         &self,
@@ -3729,6 +3834,7 @@ fn may_declare_a_global(
     host: &dyn Host,
     path: &[u8],
     every_file_is_a_module: bool,
+    counts_every_import: bool,
     imports: &dyn Fn(&[u8]),
 ) -> bool {
     if is_declaration_file_name(path) {
@@ -3763,10 +3869,49 @@ fn may_declare_a_global(
             imports(&name[..end]);
         }
     }
+    let mut from = if counts_every_import { 0 } else { text.len() };
+    while let Some(found) = strings::index_of(&text[from..], b"from") {
+        from += found + b"from".len();
+        if let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
+            && let Some(end) = strings::index_of_char_usize(name, *quote)
+            && !is_relative(&name[..end])
+        {
+            imports(&name[..end]);
+        }
+    }
     !every_file_is_a_module
         && !has_import
         && !has(b"export")
         && !(is_javascript(path) && has(b"require"))
+}
+
+fn package_named_by(specifier: &[u8]) -> &[u8] {
+    let slashes = if specifier.starts_with(b"@") { 1 } else { 0 };
+    let end = (specifier.iter().enumerate().filter(|it| *it.1 == b'/')).nth(slashes).map_or(specifier.len(), |it| it.0);
+    &specifier[..end]
+}
+
+fn global_declarations_of_package(host: &dyn Host, importing_directory: &[u8], package: &[u8]) -> Option<Vec<u8>> {
+    let typed = [&b"@types/"[..], &package.strip_prefix(b"@").unwrap_or(package).replace(b"/", b"__")].concat();
+    for directory in ancestors(importing_directory) {
+        let packages = inside(directory, b"node_modules");
+        for name in [package, &typed[..]] {
+            let root = inside(&packages, name);
+            let Some(manifest) = host.read(&inside(&root, b"package.json")) else {
+                continue;
+            };
+            let fields = host.parse_package_json(Session::new().arena(), &manifest);
+            let written = fields.as_ref().and_then(|it| it.get(b"types").or_else(|| it.get(b"typings"))?.as_str());
+            let written = written.unwrap_or(b"index.d.ts");
+            let entry = inside(&root, written.strip_prefix(b"./").unwrap_or(written));
+            let Some(text) = host.read(&entry).filter(|_| is_declaration_file_name(&entry)) else {
+                continue;
+            };
+            let words = [&b"export as namespace"[..], b"declare global", b"<reference "];
+            return words.iter().any(|word| strings::contains(&text, word)).then(|| host.realpath(&entry));
+        }
+    }
+    None
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
@@ -3879,7 +4024,7 @@ fn check_named_files(
         let for_their_effects: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
         host.parallel(roots.len(), &|at| {
             let imports = |name: &[u8]| for_their_effects.lock().push((name.to_vec(), at));
-            let may = may_declare_a_global(host, &roots[at], is_module, &imports);
+            let may = may_declare_a_global(host, &roots[at], is_module, false, &imports);
             is_kept[at].store(may, Ordering::Relaxed);
         });
         // One file for each name brings the package in: the first.
@@ -3904,6 +4049,8 @@ fn check_named_files(
     project.options.names_make_commonjs = request.is_one_program;
     project.options.one_name_is_one_binding = request.is_one_program;
     project.options.undefined_properties_name_nobody = request.is_one_program;
+    project.options.build_constants = host.build_constants().filter(|_| request.is_one_program);
+    project.options.early_parse_only = request.plan_options.early_parse_only;
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
@@ -3913,14 +4060,17 @@ fn check_named_files(
             place.has_found_its_files(session.allocated_bytes() + until_it_is_loaded);
         }
     };
-    let files = Files::load(
+    let Some(mut files) = Files::load(
         &session,
         run,
         host,
         project.options,
         &project.files,
         &files_are_found,
-    );
+    ) else {
+        return report;
+    };
+    files.fold_constants(&session, &|count, work| host.parallel(count, work));
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
@@ -3955,7 +4105,7 @@ fn check_named_files(
     for (i, phase) in report.load_phases.iter_mut().enumerate() {
         *phase = after[i] - before[i];
     }
-    if let Some(loaded) = request.loaded {
+    if let Some(loaded) = request.loaded.filter(|_| !request.is_one_program) {
         loaded(program, &|count, work| host.parallel(count, work));
     }
     let explains_files = is_true(b"explainFiles");
@@ -4065,7 +4215,16 @@ fn check_named_files(
             .filter(|&i| (is_left_out[i] || modules[i].is_only_code) && !modules[i].is_untyped() && modules[i].builtin.is_none() && !strings::contains(modules[i].path.text, b"/.bun-aot-prelude/"))
             .filter(|&i| matches!(modules[i].hir.kind, FileKind::Ts | FileKind::Tsx))
             .collect();
-        let mut fallen: Vec<(&[u8], &[u8], usize, Vec<u8>)> = Vec::new();
+        let mut fallen: Vec<(&[u8], &[u8], usize, Vec<u8>, Option<Diagnostic>, Option<Vec<u8>>)> = Vec::new();
+        if let Some(loaded) = request.loaded.filter(|_| on_trial.is_empty()) {
+            loaded(program, &|count, work| host.parallel(count, work));
+        }
+        let publishes_the_trial = request.plan_options.checkers == 0;
+        let mut finished: Vec<Finished<'_>> = Vec::new();
+        let mut is_on_trial = vec![false; modules.len()];
+        for &i in &on_trial {
+            is_on_trial[i] = true;
+        }
         if !on_trial.is_empty() {
             program.outside_the_report(|| {
                 const RUNS_OF_THE_TRIAL: usize = 8;
@@ -4081,47 +4240,97 @@ fn check_named_files(
                     }
                 }
                 let tried: Vec<Guarded<Vec<_>>> = runs.iter().map(|_| Guarded::new(Vec::new())).collect();
-                host.parallel(runs.len(), &|run| {
-                    let mut checker = program.checker();
-                    checker.set_requested(Requested::All);
-                    checker.begin_stack_budget();
-                    let mut tried = tried[run].lock();
-                    for &i in runs[run] {
-                        let checked = checker.check_file(FileId(i as u32));
-                        tried.push((checked, checker.take_ran_out_of_stack()));
+                let ended: Vec<Guarded<Option<Finished<'_>>>> = runs.iter().map(|_| Guarded::new(None)).collect();
+                std::thread::scope(|scope| {
+                    if let Some(loaded) = request.loaded {
+                        std::thread::Builder::new()
+                            .stack_size(STACK_OF_A_WORKER as usize)
+                            .spawn_scoped(scope, move || {
+                                bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
+                                loaded(program, &|count, work| host.parallel(count, work));
+                            })
+                            .expect("a thread");
                     }
+                    host.parallel(runs.len(), &|run| {
+                        let mut checker = program.checker();
+                        checker.set_requested(Requested::All);
+                        checker.begin_stack_budget();
+                        if publishes_the_trial {
+                            checker.begin_trial_task(run as u32, &is_on_trial);
+                        }
+                        let mut tried = tried[run].lock();
+                        for &i in runs[run] {
+                            let checked = checker.check_file(FileId(i as u32));
+                            tried.push((checked, checker.take_ran_out_of_stack()));
+                        }
+                        if publishes_the_trial {
+                            *ended[run].lock() = Some(checker.end_task());
+                        }
+                    });
                 });
+                finished.extend(ended.iter().filter_map(|ended| ended.lock().take()));
+                for finished in &mut finished {
+                    program.report_trial_diagnostics(finished, &is_on_trial);
+                }
                 let tried = tried.iter().flat_map(|of_run| std::mem::take(&mut *of_run.lock()));
                 for (&i, (checked, is_cut_short)) in on_trial.iter().zip(tried) {
                     let file = FileId(i as u32);
                     let found = program.finish_file(file, checked);
-                    let is_held_to_the_fixed_set = modules[i].is_held_to_the_fixed_set();
-                    let mut errors = found.iter().filter(|it| it.category == Category::Error && !says_nothing_about_a_value(it.code) && !(is_held_to_the_fixed_set && says_that_the_host_declares_no_such_name(it.code)));
+                    let is_restricted_to_fixed_set = modules[i].is_restricted_to_fixed_set();
+                    let mut errors = found.iter().filter(|it| it.category == Category::Error && !says_nothing_about_a_value(it.code) && !(is_restricted_to_fixed_set && says_that_the_host_declares_no_such_name(it.code)));
                     let first = errors.next();
                     if first.is_none() && !is_cut_short {
                         continue;
                     }
                     let (count, (directory, name)) = (1 + errors.count(), what_falls_with(&modules[i]));
-                    match fallen.iter_mut().find(|known| known.0 == directory) {
-                        Some(known) => known.2 += count,
-                        None => {
-                            let text = &modules[i].hir.text;
-                            let (line, character) = line_and_character(text, &compute_ecma_line_starts(text), first.map_or(0, |first| first.start), &Counted::default());
-                            let place = [displayed_path(modules[i].file_name()).as_ref(), format!(":{}:{}", line + 1, character + 1).as_bytes()].concat();
-                            fallen.push((directory, name, count, place));
+                    let text = &modules[i].hir.text;
+                    let typed_version = first.and_then(|_| typed_packages::typed_version_that_lays(request.cwd, host::to_native(directory), name, host::to_native(modules[i].path.text), text));
+                    let known = fallen.iter().position(|known| known.0 == directory);
+                    if let Some(known) = known {
+                        fallen[known].2 += count;
+                        if fallen[known].5.is_some() || typed_version.is_none() {
+                            continue;
                         }
+                    }
+                    let starts = compute_ecma_line_starts(text);
+                    let (line, character) = line_and_character(text, &starts, first.map_or(0, |first| first.start), &Counted::default());
+                    let place = [displayed_path(modules[i].file_name()).as_ref(), format!(":{}:{}", line + 1, character + 1).as_bytes()].concat();
+                    let first = first.map(|first| {
+                        let reported = Diagnostic { code: first.code, category: first.category, text: first.text.clone(), ..global(0, &[""; 0]) };
+                        located(modules[i].file_name(), text, &starts, first.start, first.end, reported)
+                    });
+                    match known {
+                        Some(known) => (fallen[known].3, fallen[known].4, fallen[known].5) = (place, first, typed_version),
+                        None => fallen.push((directory, name, count, place, first, typed_version)),
                     }
                 }
             });
+        }
+        if program.is_given_up() {
+            fallen.clear();
+            finished.clear();
+        }
+        if !finished.is_empty() {
+            let is_invalid = program.validate(&finished, true);
+            let mut at = is_invalid.iter();
+            finished.retain(|_| !*at.next().unwrap());
+            let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| host.parallel(count, work);
+            program.link(&mut finished, &in_parallel);
+            program.publish(&mut finished, &in_parallel, request.digests);
         }
         for &i in &on_trial {
             if fallen.iter().any(|known| known.0 == what_falls_with(&modules[i]).0) {
                 modules[i].is_held_untyped.store(true, Ordering::Relaxed);
             }
         }
-        compiled_untyped.extend(fallen.iter().map(|(directory, name, count, place)| match package_holding(directory) {
-            Some(_) => global(100009, &[name.to_vec(), count.to_string().into_bytes(), place.clone()]),
-            None => global(100010, &[displayed_path(name).into_owned(), count.to_string().into_bytes(), place.clone()]),
+        compiled_untyped.extend(fallen.into_iter().map(|(directory, name, count, place, first, typed_version)| {
+            let count = count.to_string().into_bytes();
+            let reported = match (typed_version, package_holding(directory)) {
+                (Some(typed_version), _) => global(100021, &[name.to_vec(), typed_version, count, place]),
+                (None, Some(_)) => global(100009, &[name.to_vec(), count, place]),
+                (None, None) => global(100010, &[displayed_path(name).into_owned(), count, place]),
+            };
+            Diagnostic { related: first.into_iter().collect(), ..reported }
         }));
     }
     let lists_files_only = is_true(b"listFilesOnly") && request.stops_like_tsc;
@@ -4281,7 +4490,7 @@ fn check_named_files(
         obstacles: u8,
     }
     let more_stack_for = |files: &[FileId]| match visits_in_tasks {
-        true => program.stack_beyond_that_of_a_task(files),
+        true => program.extra_stack_beyond_task(files),
         false => 0,
     };
     let free_trees = |files: Vec<FileId>| {
@@ -4988,7 +5197,8 @@ fn check_named_files(
         }
         if stops {
             report.diagnostics.extend(global_errors());
-            if report.diagnostics.len() > always_reported {
+            let tolerated = if request.is_one_program { report.diagnostics.iter().filter(|reported| is_missing_runtime_type_library(reported)).count() } else { 0 };
+            if report.diagnostics.len() - tolerated > always_reported {
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
@@ -5091,7 +5301,7 @@ fn check_named_files(
                         false => 1,
                     };
                     let indices = (0..to_visit.len()).collect();
-                    let options = PlanOptions { min_tasks: 512, ..request.plan_options };
+                    let options = PlanOptions { min_tasks: 128, ..request.plan_options };
                     let tasks = Plan::cut(indices, &weight_of, &options);
                     let tasks: Vec<Vec<FileId>> = (tasks.iter())
                         .map(|task| task.iter().map(|&index| to_visit[index]).collect())
@@ -5163,6 +5373,23 @@ fn check_named_files(
             }
             reported.category = Category::Warning;
             std::mem::take(&mut is_first)
+        });
+    }
+    if request.is_one_program {
+        let mut is_first_in_a_package = true;
+        report.diagnostics.retain_mut(|reported| {
+            if reported.category != Category::Error {
+                return true;
+            }
+            if reported.code == 2578 || is_missing_runtime_type_library(reported) {
+                reported.category = Category::Warning;
+                return true;
+            }
+            if !is_installed_declaration_file(&reported.path) {
+                return true;
+            }
+            reported.category = Category::Warning;
+            std::mem::take(&mut is_first_in_a_package)
         });
     }
     if request.is_one_program && program.files.options.check_js.is_none() {

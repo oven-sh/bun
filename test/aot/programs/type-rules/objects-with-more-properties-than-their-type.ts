@@ -12,7 +12,7 @@ console.log(keysOf(row), keysOf(copy(row)), json({ ...(row as Narrow), id: -1 })
 function build(id: number): Narrow { const made = { id, secret: "s" + id, at: [id] }; return made }
 const more = { ...build(1), extra: 1 }
 console.log(keysOf(more), json(more))
-// Nothing becomes an object of a class but by its constructor. The copy is an object of type Narrow: the cast lets it through as it is, and `owner` is the extra property it has. As in ECMAScript.
+// Only a constructor creates an instance of a class. The copy is an object of type Narrow: the cast lets it through unchanged, and `owner` is its extra property. As in ECMAScript.
 const copiedRow = copy(row)
 try { console.log((copiedRow as Row).owner); console.log("a copy cast to the class: no error") } catch (e) { console.log("a copy cast to the class:", e instanceof TypeError ? "TypeError" : "other " + e) }
 // No error, but unlike plain JavaScript: `Object.assign({}, x)` makes a fresh object, which is made one of the written result type: the field first. ECMAScript: {"owner":"r","id":2,"cells":["a"]}.

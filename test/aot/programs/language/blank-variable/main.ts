@@ -16,6 +16,6 @@ function all() { show(direct(), conditional(true), conditional(false), and(true)
 all()
 var n = 7, s = "s", b = true
 all()
-// In a loop the second round finds what the first has stored.
+// In a loop the second iteration finds what the first has stored.
 function rounds() { const seen = []; for (let i = 0; i < 2; i++) { seen.push(peek()); var round = i + 1 } return seen; function peek() { return round } }
 show(...rounds())

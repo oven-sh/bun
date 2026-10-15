@@ -47,6 +47,7 @@ impl<T: Copy + Eq + Hash> Escapes<T> {
 }
 
 /// Where the value of an expression goes.
+#[derive(Copy, Clone)]
 enum Entered {
     /// It is used up where it stands: tested, converted, called, read from.
     Nowhere,
@@ -73,10 +74,12 @@ enum CalleeKind {
 pub(super) struct State {
     /// The pairs of types between which a flow has been noted.
     flows: FxHashSet<(TypeId, TypeId)>,
+    entered_by_any: FxHashSet<TypeId>,
+    parameters_among_carried: Vec<u32>,
     /// The same for `note_entering_type_parameters`.
     pub(super) entered: FxHashSet<(TypeId, TypeId)>,
     pub(super) entered_views: FxHashSet<(TypeId, TypeId)>,
-    pub(super) entered_places_that_say_nothing: FxHashSet<(TypeId, Option<TypeId>)>,
+    pub(super) entered_untyped_places: FxHashSet<(TypeId, Option<TypeId>)>,
     /// The instantiations and the signatures whose type arguments have been noted.
     bound: FxHashSet<TypeId>,
     bound_at_calls: FxHashSet<SigId>,
@@ -84,6 +87,7 @@ pub(super) struct State {
     callees: FxHashMap<ExprId, CalleeKind>,
     uses: FxHashMap<CallId, Option<(u16, Rc<[u16]>)>>,
     untyped_callbacks: FxHashMap<CallId, bool>,
+    entered_by_literals: FxHashMap<ExprId, Entered>,
 }
 
 /// The entries of `BUILTIN_ENTRIES` for the holder and the name, of whatever kind: those of one built-in are adjacent.
@@ -109,7 +113,7 @@ fn holder_named(text: &[u8]) -> Option<&'static str> {
 const MOST_NESTED_FLOWS: u32 = 3;
 
 /// As many pairs of parts of two unions are looked at one by one.
-const MOST_PAIRS_OF_PARTS: usize = 64;
+const MAX_PAIRS_OF_PARTS: usize = 64;
 
 impl<'p, 's> Checker<'p, 's> {
     /// A value of type `source` enters a place of type `target`.
@@ -119,6 +123,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `depth`: how many flows carry this one within them.
     fn note_flow_within(&mut self, source: TypeId, target: TypeId, depth: u32) {
+        self.note_carried_flow(source, target, depth, false);
+    }
+
+    fn note_carried_flow(&mut self, source: TypeId, target: TypeId, depth: u32, is_parameter_without_second_body: bool) {
+        if is_parameter_without_second_body && !target.is_never() && self.is_any_like(source) && self.aot.escape_closure.entered_by_any.insert(target) {
+            self.note_any_inflow_into_records_in(target);
+        }
         // There is no value of type `never`: the elements of `[]`.
         if source == target || source.is_never() || target.is_never() || !self.aot.escape_closure.flows.insert((source, target)) {
             return;
@@ -128,8 +139,11 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let carried = self.flows_carried_by(source, target);
-        for &(held, held_as) in carried.iter() {
-            self.note_flow_within(held, held_as, depth + 1);
+        let number_of_parameters = carried.last().map_or(0, |&(_, number)| number.0 as usize);
+        let number_of_flows = carried.len() - 1 - number_of_parameters;
+        for (index, &(held, held_as)) in carried[..number_of_flows].iter().enumerate() {
+            let is_parameter = carried[number_of_flows..carried.len() - 1].iter().any(|&(_, parameter)| parameter.0 as usize == index);
+            self.note_carried_flow(held, held_as, depth + 1, is_parameter);
         }
     }
 
@@ -140,7 +154,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
         let mut carried = Vec::new();
+        let of_outer_flow = std::mem::take(&mut self.aot.escape_closure.parameters_among_carried);
         self.add_carried_flows(source, target, &mut carried);
+        let parameters = std::mem::replace(&mut self.aot.escape_closure.parameters_among_carried, of_outer_flow);
+        let number_of_parameters = parameters.len() as u32;
+        carried.extend(parameters.into_iter().map(|index| (TypeId::NEVER, TypeId(index))));
+        carried.push((TypeId::NEVER, TypeId(number_of_parameters)));
         let carried: Rc<[(TypeId, TypeId)]> = carried.into();
         if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
             self.aot.flows.carried.insert((source, target), Rc::clone(&carried));
@@ -183,7 +202,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A part that both have stays in a place of its own type: what is left of a union that has been narrowed.
         let in_target: FxHashSet<TypeId> = to_parts.iter().copied().collect();
         let from_parts: Vec<TypeId> = self.parts(source).iter().copied().filter(|part| !self.has_primitive_flag(*part) && !in_target.contains(part)).collect();
-        if from_parts.len() * to_parts.len() <= MOST_PAIRS_OF_PARTS {
+        if from_parts.len() * to_parts.len() <= MAX_PAIRS_OF_PARTS {
             for &from in &from_parts {
                 for &to in &to_parts {
                     self.add_carried_between(from, to, carried);
@@ -232,13 +251,17 @@ impl<'p, 's> Checker<'p, 's> {
                 let arguments = self.sig_params(called_as);
                 for &declared_as in &declared_as_all {
                     let parameters = self.sig_params(declared_as);
+                    let is_served = self.is_served_by_a_second_body(declared_as);
                     for index in 0..parameters.len() {
                         if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
+                            if !is_served {
+                                self.aot.escape_closure.parameters_among_carried.push(carried.len() as u32);
+                            }
                             carried.push((argument, parameter));
                         }
                     }
-                    let (yielded, yielded_as) = (self.sig_return(declared_as), self.sig_return(called_as));
-                    carried.push((yielded, yielded_as));
+                    let (yielded, produced_as) = (self.sig_return(declared_as), self.sig_return(called_as));
+                    carried.push((yielded, produced_as));
                 }
             }
         }
@@ -339,9 +362,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub fn are_escapes_noted_of(&self, file: FileId) -> bool {
+        self.hir(file).kind != FileKind::Declaration && !self.files.module(file).is_opaque() && !self.is_untyped_file(file)
+    }
+
     pub fn code_whose_escapes_are_noted(&mut self, file: FileId) -> Vec<(RunBy, Vec<ExprId>)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.kind == FileKind::Declaration || self.files.module(file).is_opaque() || self.is_untyped_file(file) {
+        if !self.are_escapes_noted_of(file) {
             return Vec::new();
         }
         let rank = |by: RunBy| match by {
@@ -349,7 +376,25 @@ impl<'p, 's> Checker<'p, 's> {
             RunBy::Function(func) => (1, func.0),
             RunBy::ConstructorOf(class) => (2, class.0),
         };
-        let mut all: Vec<(RunBy, ExprId)> = (0..hir.exprs.len() as u32).map(ExprId).map(|e| (self.code_evaluating(file, bound.expr_parent[e.idx()]), e)).collect();
+        let mut run_by: Vec<Option<RunBy>> = vec![None; hir.exprs.len()];
+        let mut on_the_way: Vec<ExprId> = Vec::new();
+        for e in (0..hir.exprs.len() as u32).map(ExprId) {
+            let mut at = e;
+            let found = loop {
+                if let Some(known) = run_by[at.idx()] {
+                    break known;
+                }
+                on_the_way.push(at);
+                match bound.expr_parent[at.idx()] {
+                    Parent::Expr(around) if around.is_some() => at = around,
+                    parent => break self.code_evaluating(file, parent),
+                }
+            };
+            for passed in on_the_way.drain(..) {
+                run_by[passed.idx()] = Some(found);
+            }
+        }
+        let mut all: Vec<(RunBy, ExprId)> = run_by.into_iter().enumerate().filter_map(|(e, by)| Some((by?, ExprId(e as u32)))).collect();
         all.sort_by_key(|&(by, _)| rank(by));
         all.chunk_by(|one, other| one.0 == other.0).map(|group| (group[0].0, group.iter().map(|it| it.1).collect())).collect()
     }
@@ -369,12 +414,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.note_alteration_by(file, e);
         self.note_method_as_value(file, e, parent);
-        self.note_what_instanceof_asks(file, e);
-        if self.gives_its_prototype_away(file, e, parent) {
+        self.note_instanceof_operands(file, e);
+        if self.leaks_its_prototype(file, e, parent) {
             let shown = self.type_shown_by(file, e, 0);
             self.note_what_is_let_out(shown, None);
         }
-        let entered = self.place_entered_by(file, e, parent);
+        let entered = if matches!(self.hir(file)[e].kind, ExprKind::Object(_)) { self.place_entered_by_literal(file, e, parent) } else { self.place_entered_by(file, e, parent) };
         match entered {
             Entered::Nowhere => {}
             Entered::Typed(target) => self.note_built_in_as_value(file, e, Some(target)),
@@ -386,30 +431,51 @@ impl<'p, 's> Checker<'p, 's> {
                 self.note_built_in_as_value(file, e, Some(target));
             }
         }
+        if let Parent::Prop(prop) = parent
+            && !matches!(entered, Entered::Nowhere)
+        {
+            let held = self.type_of_expr(file, e);
+            let mut literal = bound.prop_owner[prop.idx()];
+            for _ in 0..8 {
+                let of_literal = self.type_of_expr(file, literal);
+                if self.says_nothing(of_literal) {
+                    self.note_what_enters_a_place_that_says_nothing(held, None);
+                    break;
+                }
+                let around = bound.expr_parent[literal.idx()];
+                match self.place_entered_by_literal(file, literal, around) {
+                    Entered::Untyped => self.note_what_enters_a_place_that_says_nothing(held, None),
+                    Entered::Typed(target) => self.note_what_enters_a_place_that_says_nothing(held, Some(target)),
+                    Entered::Nowhere | Entered::WithParent => {}
+                }
+                let Parent::Prop(above) = around else { break };
+                literal = bound.prop_owner[above.idx()];
+            }
+        }
         if matches!(entered, Entered::Nowhere | Entered::WithParent) {
             return;
         }
         let own = self.type_of_expr(file, e);
         self.note_what_enters_a_place_that_says_nothing(own, if let Entered::Typed(target) = entered { Some(target) } else { None });
         let is_handed_over = matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }));
-        if is_handed_over && matches!(entered, Entered::Untyped) && !self.is_this_of_a_method_of_its_class(file, e, parent) {
+        if is_handed_over && matches!(entered, Entered::Untyped) && !self.is_this_in_method_of_own_class(file, e, parent) {
             let shown = self.type_shown_by(file, e, 0);
             self.note_what_is_let_out(shown, None);
-            self.note_what_a_function_takes(file, e, shown);
+            self.note_function_parameter_types(file, e, shown);
         }
         if let Entered::Typed(target) = entered
             && self.says_nothing(own)
             && self.origin_of_data(file, e).is_some()
         {
             self.note_what_is_let_out(target, None);
-            self.note_what_a_stranger_may_enter(target, false);
+            self.note_type_admits_foreign_objects(target, false);
         }
         if let Entered::Typed(target) = entered
             && !self.says_nothing(own)
             && self.parts(target).iter().any(|&part| self.is_type_of_instances(part) || matches!(*self.data(part), TypeData::TypeParam(..)))
             && self.is_predicted(file, e)
         {
-            self.note_what_a_stranger_may_enter(target, true);
+            self.note_type_admits_foreign_objects(target, true);
         }
         self.note_type_arguments_in(own);
         if let Entered::Typed(target) = entered {
@@ -419,7 +485,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn note_what_instanceof_asks(&mut self, file: FileId, e: ExprId) {
+    fn note_instanceof_operands(&mut self, file: FileId, e: ExprId) {
         let ExprKind::Binary { op: BinOp::Instanceof, left, right } = self.hir(file)[e].kind else { return };
         let asked = self.type_of_expr(file, left);
         let asked = self.non_nullable(asked);
@@ -430,11 +496,11 @@ impl<'p, 's> Checker<'p, 's> {
         let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
         for signature in signatures {
             let made = self.sig_return(signature);
-            self.note_what_a_stranger_may_enter(made, true);
+            self.note_type_admits_foreign_objects(made, true);
         }
     }
 
-    fn note_what_a_function_takes(&mut self, file: FileId, e: ExprId, shown: TypeId) {
+    fn note_function_parameter_types(&mut self, file: FileId, e: ExprId, shown: TypeId) {
         let is_tested_at_the_entry = matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.has_second_body(file, func));
         let mut seen: FxHashSet<TypeId> = FxHashSet::default();
         for part in self.parts(shown).to_vec() {
@@ -453,7 +519,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         if !is_tested {
-            self.note_what_a_stranger_may_enter(ty, true);
+            self.note_type_admits_foreign_objects(ty, true);
         }
         for part in self.parts(ty).to_vec() {
             if self.is_type_of_instances(part) {
@@ -473,7 +539,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn gives_its_prototype_away(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
+    fn leaks_its_prototype(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
         let hir = self.hir(file);
         let Parent::Expr(around) = parent else { return false };
         let (ExprKind::Call(call) | ExprKind::New(call)) = hir[around].kind else { return false };
@@ -592,7 +658,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.parts(given).to_vec().into_iter().all(|of| self.is_type_of_instances(of)) && self.is_assignable(given, class)
     }
 
-    fn is_this_of_a_method_of_its_class(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
+    fn is_this_in_method_of_own_class(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
         let hir = self.hir(file);
         let Parent::Expr(user) = parent else { return false };
         let ExprKind::Call(call) = hir[user].kind else { return false };
@@ -628,6 +694,15 @@ impl<'p, 's> Checker<'p, 's> {
             Some(target) => Entered::Typed(target),
             None => Entered::WithParent,
         }
+    }
+
+    fn place_entered_by_literal(&mut self, file: FileId, literal: ExprId, parent: Parent) -> Entered {
+        if let Some(&known) = self.aot.escape_closure.entered_by_literals.get(&literal) {
+            return known;
+        }
+        let found = self.place_entered_by(file, literal, parent);
+        self.aot.escape_closure.entered_by_literals.insert(literal, found);
+        found
     }
 
     fn place_entered_by(&mut self, file: FileId, e: ExprId, parent: Parent) -> Entered {
@@ -894,7 +969,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let index = hir.ids(hir[call].args).position(|argument| argument == e).unwrap_or(usize::MAX);
                 let is_constructed = matches!(hir[call_expr].kind, ExprKind::New(_));
                 let used = self.uses_by_built_in(file, call, holder, name, is_constructed).map_or(uses::EVERYTHING, |found| found.1.get(index).copied().unwrap_or(uses::EVERYTHING));
-                self.place_of_operand_of_built_in(file, call_expr, call, e, used)
+                self.entry_of_builtin_operand(file, call_expr, call, e, used)
             }
         }
     }
@@ -1041,7 +1116,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: the receiver or an argument of a call of a built-in, which may do `used` with it.
-    fn place_of_operand_of_built_in(&mut self, file: FileId, call_expr: ExprId, call: CallId, e: ExprId, used: u16) -> Entered {
+    fn entry_of_builtin_operand(&mut self, file: FileId, call_expr: ExprId, call: CallId, e: ExprId, used: u16) -> Entered {
         if used == uses::EVERYTHING {
             return Entered::Untyped;
         }
@@ -1087,7 +1162,7 @@ impl<'p, 's> Checker<'p, 's> {
             CalleeKind::Typed => Entered::Nowhere,
             CalleeKind::BuiltIn(holder, name) => {
                 let used = self.uses_by_built_in(file, call, holder, name, false).map_or(uses::EVERYTHING, |found| found.0);
-                self.place_of_operand_of_built_in(file, call_expr, call, e, used)
+                self.entry_of_builtin_operand(file, call_expr, call, e, used)
             }
         }
     }

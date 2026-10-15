@@ -14,7 +14,7 @@ const closedUp: Settings = Object.preventExtensions(fresh("p"))
 console.log(applyTo(frozen, 7), show(frozen))
 console.log(applyTo(sealed, 8), show(sealed))
 console.log(applyTo(closedUp, 9), show(closedUp), attempt(() => delete closedUp.muted), Object.isFrozen(frozen), Object.isSealed(sealed), Object.isExtensible(closedUp))
-// Parsed text behind the type.
+// Parsed JSON used as the type.
 const text = '{"volume":1,"theme":"j","limits":{"max":1}}'
 const parsed: Settings = JSON.parse(text)
 console.log(applyTo(parsed, 3), show(parsed))

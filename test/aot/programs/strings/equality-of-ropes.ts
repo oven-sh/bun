@@ -55,13 +55,13 @@ for (let i = 0; i < texts.length; i++) {
     mix(bySwitch(makers[p]!(texts[i]!), makers[(p + 1) % makers.length]!(texts[(i + 1) % texts.length]!), makers[(p + 2) % makers.length]!(texts[i]!)));
   }
 }
-// A rope is as it was behind a comparison: what is made of it, and what it yields, is the same.
+// A rope is unchanged after a comparison: strings built from it, and its contents, are the same.
 const kept = split(texts[0]!, 7), other = split(texts[0]!, 3);
 mix(any(kept, other)); mix(typed(kept, other)); mix(any(kept, narrow(texts[0]!)));
 console.log(kept, other, kept.length, kept.charCodeAt(8), (kept + other).length, kept + "|" + other, new Map([[kept, 1]]).get(other), [kept].includes(other), [kept].indexOf(other), new Set([kept, other]).size);
 // Deep: ten thousand pieces on each side, leaning to the left and to the right.
 const long = "0123456789".repeat(1000);
 console.log(any(byOne(long), byOneFromTheRight(long)), typed(byOne(long), byOneFromTheRight(long)), any(byOne(long), byOne(long.slice(0, -1) + "x")), typed(byOneFromTheRight("x" + long.slice(1)), byOne(long)));
-// What is no string.
+// Values that are not strings.
 console.log(any(split("12", 1), 12), any(split("ab", 1), null), any(undefined, split("ab", 1)), nil(split("ab", 1), null), nil(null, undefined), nil(null, null), any(10n ** 30n, 10n ** 30n), any(10n ** 30n, 10n ** 30n + 1n), any(split("ab", 1), new String("ab")), any(NaN, NaN), any(0, -0), any(1.5, 1.5));
 console.log(pairs, equal, sum);

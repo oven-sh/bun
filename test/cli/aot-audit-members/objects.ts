@@ -62,7 +62,7 @@ t(() => { const v: R4 = anyv(Object.assign(json(G), { [Symbol("q")]: 1 })); retu
 t(() => { const v: R5 = anyv(Object.assign(json(G), { 0: 1 })); return typeof v; }); // indexKey
 t(() => { const v: R6 = anyv(Object.defineProperty(json(G), "id", { value: "y", writable: false, enumerable: true, configurable: true })); return typeof v; }); // readOnly
 t(() => { const v: R7 = anyv(Object.defineProperty(json(G), "id", { value: "y", writable: true, enumerable: true, configurable: false })); return typeof v; }); // fixed
-t(() => { const v: R8 = anyv(Object.defineProperty(json(G), "id", { value: "y", writable: true, enumerable: false, configurable: true })); return typeof v; }); // hidden // silent: a hidden property of its own: the audit sees its tag by the bit a Structure keeps for one
+t(() => { const v: R8 = anyv(Object.defineProperty(json(G), "id", { value: "y", writable: true, enumerable: false, configurable: true })); return typeof v; }); // hidden
 t(() => { const v: R9 = anyv(Object.defineProperty(json(G), "extra", { get() { return 1; }, enumerable: true, configurable: true })); return typeof v; }); // extraGetter
 t(() => { const v: R10 = anyv(Object.defineProperty(json(G), "id", { get() { return "y"; }, enumerable: true, configurable: true })); return typeof v; }); // getter
 t(() => { const v: R11 = anyv(Object.setPrototypeOf(json(G), { z: 1 })); return typeof v; }); // otherProto // silent: another prototype and not native: `new` on a class or a function of the program may have made it

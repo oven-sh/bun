@@ -37,14 +37,14 @@ export function spread(s: string, re: RegExp): string { return [...s.matchAll(re
 print(all("a1b22c333", /\d+/g) + " " + all("", /x/g) + "|" + all("abc", /x/g) + "|" + all("abc", /(?:)/g) + " " + all("😀x", /(?:)/g) + " " + all("😀x", /(?:)/gu) + " " + all("aXbx", /x/gi) + " " + all("ab\nab", /^a/gm) + " " + all("aaa", /a/gy) + " " + all("baa", /a/gy) + "|");
 print(groups("k1=v1,k2=v2", /(?<key>\w+)=(?<value>\w+)/g) + " " + pattern("k1=v1,k2=v2", /(\w+)=\w+/g) + " " + untyped("a1b22", /\d+/g) + " " + untyped("a.b.c", ".") + " " + untyped("a1b1", 1) + " " + untyped("xundefinedx", undefined));
 print(attempt(() => all("abc", /b/)) + " " + attempt(() => untyped("abc", /b/y)) + " " + attempt(() => all(undefined as any, /b/g)) + " " + attempt(() => untyped(null, /b/g)) + " " + attempt(() => untyped("anullb", null)));
-// lastIndex: the iterator has a RegExp of its own, started where the given one stands; the given one is left alone.
+// lastIndex: the iterator has its own RegExp, which starts at the lastIndex of the original; the original is left unchanged.
 { const re = /a/g; re.lastIndex = 2; print(all("aaaa", re) + re.lastIndex + " " + all("aaaa", re)); }
 { const re = /a/g; let out = ""; for (const m of "aaaa".matchAll(re)) { re.lastIndex = 3; out += m.index; } print(out + " " + re.lastIndex); }
 // An iterator that is held: fresh, after a step, used up, twice.
 { const it = "a1b2c3".matchAll(/\d/g); print(held(it) + "|" + held(it) + "|" + JSON.stringify(it.next())); }
 { const it = "a1b2c3".matchAll(/\d/g); it.next(); print(held(it)); }
 { const it: any = "a1b2c3".matchAll(/\d/g); let out = ""; for (const m of it) { out += m[0]; out += it.next().value?.[0] ?? "-"; } print(out); }
-// Somebody can tell: properties of its own, another prototype, a RegExp with an exec of its own, a subclass, Symbol.matchAll of one's own.
+// The difference is observable: own properties, a different prototype, a RegExp with its own exec, a subclass, a custom Symbol.matchAll.
 { const it: any = "a1b2".matchAll(/\d/g); it.next = () => { log.push("own next"); return { done: true, value: undefined }; }; print(held(it) + "|" + log.splice(0).join()); }
 { const it: any = "a1b2".matchAll(/\d/g); it.return = () => { log.push("own return"); return {}; }; let out = ""; for (const m of it) { out += m[0]; break; } print(out + log.splice(0).join()); }
 { const it: any = "a1b2".matchAll(/\d/g); let out = ""; for (const m of it) { out += m[0]; it.return = () => { log.push("late return"); return {}; }; break; } print(out + log.splice(0).join()); }

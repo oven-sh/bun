@@ -53,6 +53,7 @@ console.log("seen", JSON.stringify(globalThis.__seen ?? null), JSON.stringify(gl
   },
   {
     name: "plain",
+    differs: "The bundler moves `exports.name = function () {}` to a variable `$name`, which names the function. Under --aot its name stays empty, as in `bun run`.",
     files: {
       ...pkg("s_plain", {
         "index.js": `exports.a = 1;
@@ -322,6 +323,7 @@ console.log("seen", JSON.stringify(globalThis.__seen ?? null), JSON.stringify(gl
   },
   {
     name: "assign",
+    differs: "The bundle reads `ns.A` as undefined when `Object.assign(module.exports, { A })` adds it, and lists `late` first. --aot reads the property, as `bun run` does.",
     files: {
       ...pkg("s_assign", {
         "index.js": `class A { who() { return "A"; } }

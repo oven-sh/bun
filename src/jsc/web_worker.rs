@@ -902,7 +902,10 @@ impl WebWorker {
                 // Same rule as the main thread (run_command): a CJS worker
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
+                unsafe extern "C" {
+                    fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
+                }
+                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs && !JSC__AOT__entryPointIsCommonJS(vm.global());
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),

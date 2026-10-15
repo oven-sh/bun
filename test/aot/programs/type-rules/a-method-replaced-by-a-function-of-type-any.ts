@@ -1,5 +1,5 @@
-// A method that the program replaces by a function of type `any`: what that function returns is held to the method's return type by
-// what it holds, like what a variable of the function's type returns.
+// A method that the program replaces with a function of type `any`: the result of that function is checked
+// against the method's return type, like the result of a function stored in a variable of the method's type.
 type Answer = { ok: true; value: string } | { ok: false; error: string }
 class Client {
   constructor(readonly base: string) {}

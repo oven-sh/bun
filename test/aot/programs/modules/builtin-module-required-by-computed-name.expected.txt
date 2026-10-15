@@ -1,0 +1,14 @@
+function abc
+string function
+a=1&b=x%20y
+function
+{
+  a: [ 1, {
+      b: 2,
+    } ],
+  c: Map(1) {
+    1: 2,
+  },
+}
+tick
+done

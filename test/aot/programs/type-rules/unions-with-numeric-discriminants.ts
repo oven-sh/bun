@@ -12,8 +12,8 @@ function make(flags: Has): Flagged {
   return made
 }
 const all = make(Has.Label | Has.Count | Has.Child), none = make(Has.None)
-// An object made as a type in which the fields are optional is cast to one in which a field is required. It is no member of that type (not assignable), and that type lacks fields it has, so it cannot become one where it is: the cast
-// lets it through as it is. The field is read where it is there, and is undefined where it is not. As in ECMAScript.
+// An object created as a type in which the fields are optional is cast to a type in which a field is required. It does not have that type (not assignable), and that type lacks
+// fields it has, so it cannot be converted in place: the cast lets it through unchanged. The field is read where it is present, and is undefined where it is not. As in ECMAScript.
 try { console.log((all as WithLabel).label); console.log("cast to the interface the flags promise: no error") } catch (e) { console.log("cast to the interface the flags promise:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log((all as WithCount).count); console.log("to the second: no error") } catch (e) { console.log("to the second:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log((all as WithChild).child.flags); console.log("to the third: no error") } catch (e) { console.log("to the third:", e instanceof TypeError ? "TypeError" : "other " + e) }

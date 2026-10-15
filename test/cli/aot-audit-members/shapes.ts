@@ -27,7 +27,7 @@ t(() => { const s: Session = json('{"type":"session","id":"y","ctx":{"cwd":"/"},
 t(() => { const s: Session = json('{"type":"session","id":"y","ctx":{"cwd":"/","more":1}}'); return s.id; });
 t(() => { const s: Session = json('{"ctx":{"cwd":"/"},"id":"y","type":"session"}'); return s.id; });
 t(() => { const s: Session = anyv({ type: "session", id: "y", ctx: { cwd: "/" } }); return s.id; });
-t(() => { const s: Session = anyv({ type: "session", id: "y" }); return s.id; }); // silent: what typed code has made goes by its layout in a build, which the audit does not know
+t(() => { const s: Session = anyv({ type: "session", id: "y" }); return s.id; });
 t(() => { const s: Session = anyv(Object.create({ type: "session", id: "y", ctx: { cwd: "/" } })); return s.id; }); // silent: another prototype and not native: `new` on a class or a function of the program may have made it
 t(() => { const s: Session = anyv(Object.assign(Object.create(null), { type: "session", id: "y", ctx: { cwd: "/" } })); return s.id; });
 t(() => { const s: Session = anyv(Object.freeze({ type: "session", id: "y", ctx: { cwd: "/" } })); return s.id; });

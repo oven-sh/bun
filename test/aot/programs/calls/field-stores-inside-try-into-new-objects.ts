@@ -3,7 +3,7 @@ declare const console: any;
 class C { x: number; y: string; z = 0; w?: number; constructor(x: number, y: string) { this.x = x; this.y = y; } }
 class S { _v = 0; sets = 0; set v(n: number) { this.sets++; if (n < 0) throw new RangeError("negative"); this._v = n; } get v(): number { return this._v; } }
 class D extends C { d: number; constructor(x: number) { super(x, "d"); this.d = x; } }
-// The checker has to see what is frozen, trapped and given another prototype: the run time refuses it for a type that typed code never hands to these.
+// The checker has to see which objects are frozen, wrapped in a proxy or given a different prototype: the runtime rejects that for a type that typed code never passes to these functions.
 const O = Object; const kept: C[] = [];
 function freeze(o: C): void { O.freeze(o); }
 function trap(o: C, name: string): void { O.defineProperty(o, name, { set(v: unknown) { throw new EvalError("trap " + name + " " + v); }, get() { return -1; }, configurable: true }); }
@@ -26,7 +26,7 @@ function inTheHandler(a: number): string { const c = new C(a, "h"); try { freeze
 function derived(a: number): string { try { const d = new D(a); freeze(d); d.d = a + 1; return "stored " + d.d; } catch (e) { return name(e); } }
 function seenByTheConstructor(a: number): string { class K { v = 0; constructor() { O.freeze(this); } } try { const k = new K(); k.v = a; return "stored " + k.v; } catch (e) { return name(e); } }
 function wrongType(a: unknown): string { try { const c = new C(1, "w"); c.z = a as number; return "stored " + typeof c.z; } catch (e) { return name(e); } }
-// Nobody has seen these: the stores are plain.
+// Nothing else has seen these objects: the stores are plain stores.
 function unseen(a: number): string { try { const c = new C(a, "u"); nothing(a); c.z = a; c.w = a + 1; const d = new D(a); d.z = c.z + 1; return "stored " + c.z + c.w + d.z + d.d + O.keys(c).join("") + O.keys(d).join(""); } catch (e) { return name(e); } }
 for (let round = 0; round < 3; round++) {
   const frozen = new C(0, "frozen"); freeze(frozen);

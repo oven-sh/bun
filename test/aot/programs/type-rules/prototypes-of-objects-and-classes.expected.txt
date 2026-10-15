@@ -9,7 +9,7 @@ the objects | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,t
 the prototype of a class, that of another class: TypeError
 the prototype of a class, null: TypeError
 the prototype of a class, a literal: TypeError
-by Reflect: false
+line 42: TypeError
 the prototypes | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,true,false,legs | dog>animal4,walk,DA4,4,true,true,legs+tricks | false false true
 the class, another class: TypeError
 by Reflect: false true

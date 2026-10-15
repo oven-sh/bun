@@ -9,6 +9,7 @@ use crate::id::{LayoutId, StrId, TyId, V};
 use crate::ir::{Def, Func, Layout, LayoutKind, Op, Prediction, Program, Strs, Why, class_flags, field_flags};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const FUNCTIONS_OF_A_SLICE: usize = 256;
 const KEYS_OF_A_SLICE: usize = 16;
@@ -67,8 +68,9 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
     let mut described: FxHashMap<(LayoutId, StrId), Option<Declared>> = FxHashMap::default();
     {
         let (tys, layouts, strs) = (&*tys, &layouts[..], &*strs);
-        let mut stores: Vec<(&[Func], FxHashSet<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, FxHashSet::default())).collect();
-        for_each_mut(&mut stores, in_parallel, &|(funcs, stored_through)| {
+        let mut stores: Vec<(&[Func], FxHashSet<(LayoutId, StrId)>, Vec<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, FxHashSet::default(), Vec::new())).collect();
+        for_each_mut(&mut stores, in_parallel, &|(funcs, stored_through, keys)| {
+            let mut seen = FxHashSet::default();
             for func in funcs.iter() {
                 let mut note = |obj: V, name: StrId| {
                     if func.ty(obj).is_some() {
@@ -86,34 +88,25 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                                 }
                             }
                         }
+                        &Def::Op(Op::PropGet { obj, name }) if value.ty == tys.anything || value.prediction != Prediction::None => {
+                            let receiver = func.ty(obj);
+                            if let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None })
+                                && seen.insert((view, name))
+                            {
+                                keys.push((view, name));
+                            }
+                        }
                         _ => {}
                     }
                 }
             }
         });
+        let mut seen = FxHashSet::default();
+        let mut all: Vec<(LayoutId, StrId)> = Vec::new();
         for slice in stores {
             stored_through.extend(slice.1);
+            all.extend(slice.2.into_iter().filter(|&key| seen.insert(key)));
         }
-        let mut asked: Vec<(&[Func], Vec<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, Vec::new())).collect();
-        for_each_mut(&mut asked, in_parallel, &|(funcs, keys)| {
-            let mut seen = FxHashSet::default();
-            for func in funcs.iter() {
-                for value in &func.values {
-                    let Def::Op(Op::PropGet { obj, name }) = value.def else { continue };
-                    if value.ty != tys.anything && value.prediction == Prediction::None {
-                        continue;
-                    }
-                    let receiver = func.ty(obj);
-                    if let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None })
-                        && seen.insert((view, name))
-                    {
-                        keys.push((view, name));
-                    }
-                }
-            }
-        });
-        let mut seen = FxHashSet::default();
-        let all: Vec<(LayoutId, StrId)> = asked.into_iter().flat_map(|slice| slice.1).filter(|&key| seen.insert(key)).collect();
         let mut made: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_OF_A_SLICE).map(|keys| (keys, Vec::new())).collect();
         for_each_mut(&mut made, in_parallel, &|(keys, found)| {
             found.extend(keys.iter().map(|&(view, name)| described_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name))));
@@ -122,79 +115,89 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
             described.extend(keys.iter().copied().zip(found));
         }
     }
-    let mut known: FxHashMap<(LayoutId, StrId), TyId> = FxHashMap::default();
-    let (mut reads, mut coercions) = (0, 0);
-    for func in funcs.iter_mut() {
-        for number in 0..func.values.len() {
-            match func.values[number].def {
-                Def::Op(Op::PropGet { obj, name }) if func.values[number].ty == tys.anything || func.values[number].prediction != Prediction::None => {
-                    let receiver = func.ty(obj);
-                    let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None }) else { continue };
-                    let held = match known.get(&(view, name)) {
-                        Some(&held) => held,
-                        None => {
-                            let held = match described.remove(&(view, name)) {
-                                Some(held) => held,
-                                None => described_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name)),
-                            };
-                            let held = held.map_or(TyId::NONE, |held| tys.intern(held));
-                            known.insert((view, name), held);
-                            held
+    let (all_reads, all_coercions) = (AtomicUsize::new(0), AtomicUsize::new(0));
+    let (layouts, strs) = (&layouts[..], &*strs);
+    let mut unused = vec![false; funcs.len()];
+    super::nil::for_each_slice(tys, funcs, &mut unused, in_parallel, &|super::nil::Slice { funcs, tys, .. }| {
+        let mut known: FxHashMap<(LayoutId, StrId), TyId> = FxHashMap::default();
+        let (mut reads, mut coercions) = (0, 0);
+        for func in funcs.iter_mut() {
+            for number in 0..func.values.len() {
+                match func.values[number].def {
+                    Def::Op(Op::PropGet { obj, name }) if func.values[number].ty == tys.anything || func.values[number].prediction != Prediction::None => {
+                        let receiver = func.ty(obj);
+                        let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None }) else { continue };
+                        let held = match known.get(&(view, name)) {
+                            Some(&held) => held,
+                            None => {
+                                let held = match described.get(&(view, name)) {
+                                    Some(held) => held.clone(),
+                                    None => described_by_the_members(tys.known(), layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name)),
+                                };
+                                let held = held.map_or(TyId::NONE, |held| tys.intern(held));
+                                known.insert((view, name), held);
+                                held
+                            }
+                        };
+                        // A read that is only looked at is left wider than the field, with a prediction: through such a view there is nothing to predict.
+                        let own = func.values[number].ty;
+                        if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_described_within(tys.get(own))) {
+                            func.values[number].ty = held;
+                            func.values[number].prediction = Prediction::None;
+                            reads += 1;
                         }
-                    };
-                    // A read that is only looked at is left wider than the field, with a prediction: through such a view there is nothing to predict.
-                    let own = func.values[number].ty;
-                    if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_described_within(tys.get(own))) {
-                        func.values[number].ty = held;
-                        func.values[number].prediction = Prediction::None;
-                        reads += 1;
                     }
-                }
-                // Values are numbered as they are made: the operand has its type by now.
-                Def::Op(Op::Coerce { value, to, why: Why::Coerce }) => {
-                    let have = func.ty(value);
-                    if value.idx() < number && have.is_some() && have != tys.anything && to.is_some() && tys.get(have).is_described_within(tys.get(to)) {
-                        func.values[number].def = Def::Op(Op::Coerce { value, to: have, why: Why::Upcast });
-                        func.values[number].ty = have;
-                        coercions += 1;
+                    // Values are numbered as they are made: the operand has its type by now.
+                    Def::Op(Op::Coerce { value, to, why: Why::Coerce }) => {
+                        let have = func.ty(value);
+                        if value.idx() < number && have.is_some() && have != tys.anything && to.is_some() && tys.get(have).is_described_within(tys.get(to)) {
+                            func.values[number].def = Def::Op(Op::Coerce { value, to: have, why: Why::Upcast });
+                            func.values[number].ty = have;
+                            coercions += 1;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
+            coercions += defer_to_following_cast(tys, func);
         }
-    }
-    let tys = &*tys;
-    let mut left: Vec<(&mut Func, usize)> = funcs.iter_mut().map(|func| (func, 0)).collect();
-    for_each_mut(&mut left, in_parallel, &|(func, left)| *left = leave_it_to_the_cast_behind(tys, func));
-    coercions += left.iter().map(|it| it.1).sum::<usize>();
-    (reads, coercions)
+        all_reads.fetch_add(reads, Ordering::Relaxed);
+        all_coercions.fetch_add(coercions, Ordering::Relaxed);
+    });
+    (all_reads.into_inner(), all_coercions.into_inner())
 }
 
 /// `take(node as SourceFile)`, where the parameter is written `SourceFile`: a coercion, and what it yields goes nowhere but to a cast to the same objects, which makes of an object what the coercion
 /// makes of it and then makes sure. So the cast takes the operand itself. Of an operand that is objects of the program and nil alone: a primitive is converted by the coercion only.
-fn leave_it_to_the_cast_behind(tys: &DeclaredTable, func: &mut Func) -> usize {
-    let mut uses: Vec<u32> = vec![0; func.values.len()];
-    for block in &func.blocks {
-        let mut count = |v: V| {
-            if v.is_some() {
-                uses[v.idx()] += 1;
-            }
-        };
-        for &v in &block.ops {
-            if let Some(op) = func.op(v) {
-                op.for_each_operand(&mut count);
-            }
-        }
-        if let Some(term) = &block.term {
-            term.for_each_operand(&mut count);
-        }
-    }
+fn defer_to_following_cast(tys: &super::nil::Overlay<'_>, func: &mut Func) -> usize {
+    let mut uses: Vec<u32> = Vec::new();
     let mut left = 0;
     for number in 0..func.values.len() {
         let Def::Op(Op::Coerce { value: coerced, to, why: Why::Cast }) = func.values[number].def else { continue };
         let Some(&Op::Coerce { value, to: tried, why: Why::Coerce }) = func.op(coerced) else { continue };
         let have = func.ty(value);
-        if uses[coerced.idx()] != 1 || have.is_none() || have == tys.anything || tried.is_none() || to.is_none() {
+        if have.is_none() || have == tys.anything || tried.is_none() || to.is_none() {
+            continue;
+        }
+        if uses.is_empty() {
+            uses.resize(func.values.len(), 0);
+            for block in &func.blocks {
+                let mut count = |v: V| {
+                    if v.is_some() {
+                        uses[v.idx()] += 1;
+                    }
+                };
+                for &v in &block.ops {
+                    if let Some(op) = func.op(v) {
+                        op.for_each_operand(&mut count);
+                    }
+                }
+                if let Some(term) = &block.term {
+                    term.for_each_operand(&mut count);
+                }
+            }
+        }
+        if uses[coerced.idx()] != 1 {
             continue;
         }
         let (had, tried, written) = (tys.get(have), tys.get(tried), tys.get(to));

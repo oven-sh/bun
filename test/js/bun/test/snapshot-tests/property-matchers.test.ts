@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-test("the received object stays as it is", () => {
+test("the received object is not modified", () => {
   const received = { j: 2, a: "any", below: { when: new Date(0), list: [{ n: 1 }, { n: 2 }], other: { kept: true } } };
   const { below } = received;
   const { list, other } = below;
@@ -36,7 +36,7 @@ test("the received object stays as it is", () => {
   expect(Object.keys(received)).toEqual(["j", "a", "below"]);
 });
 
-test("an instance of a class is printed under its name", () => {
+test("a class instance is printed with its class name", () => {
   class Point {
     constructor(
       public x: number,
@@ -71,7 +71,7 @@ test("a frozen object can be matched", () => {
   expect(frozen.id).toBe(7);
 });
 
-test("the matchers stay as they are", () => {
+test("the matchers are not modified", () => {
   const matchers = { j: 5, below: { k: "s" } };
   const { below } = matchers;
   expect({ j: expect.any(Number), below: { k: expect.any(String) } }).toMatchInlineSnapshot(
@@ -90,7 +90,7 @@ test("the matchers stay as they are", () => {
   expect(below.k).toBe("s");
 });
 
-test("a failing toMatchObject leaves out what its matchers have passed, and changes nothing", () => {
+test("a failing toMatchObject omits the properties whose matchers passed, and modifies nothing", () => {
   const received = { j: 2, k: "s", below: { n: 1, m: "x" } };
   const expected = { j: expect.any(Number), k: expect.any(Number), below: { n: expect.any(Number), m: "y" } };
   let message = "";

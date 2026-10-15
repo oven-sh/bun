@@ -20,7 +20,7 @@ u.n = 0.5; console.log(u.n++, u.n, --u.n, u.n--, u.n)
 u.n = 2147483647; console.log(u.n++, u.n, u.n--, u.n)
 u.n = -0; console.log(Object.is(u.n++, -0), u.n, Object.is(u.n - 1, 0))
 
-// Logical assignment on absent, undefined, falsy and truthy fields: whether it stores, what it yields, where the key lands.
+// Logical assignment on absent, undefined, falsy and truthy fields: whether it stores, what it evaluates to, where the key ends up.
 const l = acc()
 console.log(l.opt ??= 5, l.opt ??= 6, show(l))
 console.log(l.word ||= "w", l.word ||= "v", l.flag &&= true, "flag" in l, show(l))
@@ -51,7 +51,7 @@ console.log(box.n, trace.join())
 trace.length = 0; box.n = 5
 console.log(recv().n++ + rhs(), box.n, trace.join())
 
-// The right side changes what the receiver is: it freezes it or deletes the field. (It makes it an accessor: type-rules/compound-assignments.)
+// The right side changes the receiver: it freezes it or deletes the field. (It turns the field into an accessor: type-rules/compound-assignments.)
 const g1 = acc(), g2 = acc(), g4 = acc()
 g2.opt = 1
 console.log(attempt(() => { g1.n = (Object.freeze(g1), 5) }), g1.n, attempt(() => { g1.n += 1 }), g1.n)

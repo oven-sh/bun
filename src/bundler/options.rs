@@ -1240,6 +1240,7 @@ pub struct TypeChecked<'a, 'i> {
     /// of types only, and what a barrel file re-exports and nothing asks it for.
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     pub without_side_effects: &'i mut dyn Iterator<Item = &'a [u8]>,
+    pub lifted_commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
     /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
     pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
@@ -1248,6 +1249,7 @@ pub struct TypeChecked<'a, 'i> {
     /// The path of each file that is copied next to the bundle, or into the executable, and what stands for its final path until that
     /// is known (`unique_key_for_additional_file`).
     pub assets: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    pub has_late_strings: bool,
     /// `Define::user_inputs`
     pub defines: &'a [(Box<[u8]>, Box<[u8]>)],
     /// The flags for which `feature()` of `bun:bundle` is true.
@@ -1257,17 +1259,48 @@ pub struct TypeChecked<'a, 'i> {
     pub ignore_dce_annotations: bool,
     pub jsx_side_effects: bool,
     pub minify_syntax: bool,
+    pub shortens_names: bool,
     /// `BundleOptions::preserve_source_paths`
     pub preserve_source_paths: bool,
     /// The path of each of `sources` in which the React Compiler has given a function a cache, and the module as it leaves it, as
     /// JavaScript: the code that runs in the place of what is written. The types are those of what is written.
-    pub react_compiler_outputs: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    pub react_compiler_outputs: ReactCompilerOutputsLater<'a>,
     /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
     pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], JsxOfFile<'a>)>,
-    pub function_texts: Option<&'a [(&'a [u8], Box<[u8]>, Vec<bun_js_printer::FunctionText>)]>,
+    pub function_texts: Option<FunctionTextsLater>,
     pub explain: &'a [Box<[u8]>],
     pub explains_into_log: bool,
     pub logs_type_errors: bool,
+    pub early_analysis: Option<EarlyAnalysis>,
+}
+
+pub type EarlyAnalysis = Box<dyn core::any::Any + Send>;
+
+pub type FunctionTextsOfFiles = Vec<(Box<[u8]>, Box<[u8]>, Vec<bun_js_printer::FunctionText>)>;
+
+pub struct FunctionTextsLater {
+    pub printed: std::sync::mpsc::Receiver<FunctionTextsOfFiles>,
+    pub number_of_lists: usize,
+}
+
+pub struct ReactCompilerOutputsLater<'a> {
+    pub printed: std::sync::mpsc::Receiver<(usize, Option<Box<[u8]>>)>,
+    pub paths: Vec<&'a [u8]>,
+}
+
+impl<'a> ReactCompilerOutputsLater<'a> {
+    pub fn none() -> Self {
+        Self { printed: std::sync::mpsc::channel().1, paths: Vec::new() }
+    }
+
+    pub fn wait(self) -> Vec<(&'a [u8], Box<[u8]>)> {
+        let mut outputs: Vec<Option<Box<[u8]>>> = self.paths.iter().map(|_| None).collect();
+        for _ in 0..outputs.len() {
+            let Ok((number, printed)) = self.printed.recv() else { break };
+            outputs[number] = printed;
+        }
+        self.paths.into_iter().zip(outputs).filter_map(|(path, printed)| Some((path, printed?))).collect()
+    }
 }
 
 /// `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource` as they hold for a file.
@@ -1533,7 +1566,7 @@ pub(crate) fn environment_names_of_aot_without_effect() -> impl Iterator<Item = 
     bun_sys::environ().iter().filter_map(|&entry| {
         // SAFETY: environ entries are NUL-terminated C strings from the OS
         let entry: &'static [u8] = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
-        let name = entry.split(|&byte| byte == b'=').next().unwrap_or(entry);
+        let name = bun_core::strings::split(entry, b"=").next().unwrap_or(entry);
         let is_of_aot = FAMILIES_OF_ENVIRONMENT_NAMES_OF_AOT.iter().any(|family| name.starts_with(family));
         (is_of_aot && !ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT.contains(&name)).then_some(name)
     })

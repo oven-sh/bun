@@ -10,7 +10,7 @@ let missingBox: Box | undefined
 function unset(): void { missingArray = undefined; missingText = null; missingBox = undefined }
 unset()
 console.log(attempt(() => missingArray!.push(note("a", 1))), attempt(() => missingText!.charAt(note("b", 1))), attempt(() => missingBox!.get(note("c", 1))), "[" + flush() + "]")
-// What is not callable: the arguments are evaluated, then the call throws.
+// A value that is not callable: the arguments are evaluated, then the call throws.
 const notCallable: { f: any } = { f: 1 }
 console.log(attempt(() => notCallable.f(note("d", 1))), flush())
 // A getter runs before the arguments.
@@ -18,11 +18,11 @@ const withGetter = { get f() { log.push("get"); return (x: number) => x * 2 } }
 console.log(withGetter.f(note("arg", 4)), flush())
 class Getting { get f(): (x: number) => number { log.push("get"); return x => x * 3 } }
 console.log(new Getting().f(note("arg", 4)), flush())
-// What is claimed to be an array, a map or a function and is none: type-rules/wrong-casts-and-own-property-named-like-a-method.
+// A value that is cast to an array, a map or a function but is not one: type-rules/wrong-casts-and-own-property-named-like-a-method.
 function pushTo(a: number[]): unknown { return a.push(note("arg", 7)) }
 function getFrom(m: Map<string, string>): unknown { return m.get(((m as any).get = () => "new", "k")) }
 console.log(pushTo([1, 2]), flush(), getFrom(new Map([["k", "real"]]) ) === "real" || "patched")
-// Several classes behind one type.
+// Several classes with one common type.
 abstract class Shape { abstract area(scale: number): string }
 class Square extends Shape { area(scale: number): string { return "square" + scale } }
 class Circle extends Shape { area(scale: number): string { return "circle" + scale } }

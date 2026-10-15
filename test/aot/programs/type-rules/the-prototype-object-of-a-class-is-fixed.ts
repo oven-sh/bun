@@ -14,7 +14,7 @@ try { refused("method deleted", () => { delete proto.method }) } catch (e) { con
 try { refused("its prototype changed", () => Object.setPrototypeOf(proto, { n: 7 })) } catch (e) { console.log("line 14:", e instanceof TypeError ? "TypeError" : "other " + e) }
 // By Reflect: false, as for any object that is not extensible and whose properties are not configurable.
 try { console.log(Reflect.set(proto, "tag", 1), Reflect.defineProperty(proto, "tag", { value: 1 }), Reflect.deleteProperty(proto, "method"), Reflect.setPrototypeOf(proto, null)) } catch (e) { console.log("line 16:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// What is not there is deleted without an error, as in ES.
+// Deleting an absent property is not an error, as in ECMAScript.
 try { console.log(delete proto.tag, delete proto.n) } catch (e) { console.log("line 18:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { list[0].tag = "stored" } catch (e) { console.log("line 19:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(list.map(read).join(" "), read(new C()), "[" + log.join() + "]", list[0].method(), Object.getOwnPropertyNames(proto).join(), Object.isExtensible(proto)) } catch (e) { console.log("line 20:", e instanceof TypeError ? "TypeError" : "other " + e) }

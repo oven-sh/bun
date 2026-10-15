@@ -32,7 +32,7 @@ function sum(p: Plain): number { let s = 0; for (const x of p) { if (x > 50) bre
 function either(p: Plain | Range): number { let s = 0; for (const x of p) s += x; return s; }
 console.log("plain", sum(new Plain(4)), sum(new Twice(4)), sum(new Plain(0)), either(new Plain(3))); log = []; console.log("either", either(new Range(3)), log.length); log = [];
 { const p = new Plain(5); let first = 0; for (const x of p) { first = x; if (x === 1) break; } let rest = 0; for (const x of p) rest += x; console.log("resumed", first, rest); }
-// THE TYPE IS A PREDICTION: which method is found is decided by the object. A stranger behind an interface; an inheriting object that overrides and hands out something else; `next` an accessor; `next` read once off a stranger.
+// The type is only a prediction: the object decides which method is found. An object from untyped code used as an interface; an inheriting object that overrides the method and returns something else; `next` as an accessor; `next` read once from an object from untyped code.
 interface Walkable { [Symbol.iterator](): Plain }
 function walk(w: Walkable): number { let s = 0; for (const x of w) { if (x > 50) break; s += x; } return s; }
 // It has all that a Plain has, and is none: no object of the class.
@@ -51,7 +51,7 @@ console.log("record", bag(new Bag(4)), bag(new Bag(0)));
 class Swapping { it: { next: () => { value: number, done: boolean } }; constructor(n: number) { let i = 0; this.it = { next: () => i < n ? { value: i++, done: false } : { value: 0, done: true } }; } [Symbol.iterator](): { next: () => { value: number, done: boolean } } { return this.it; } }
 function swapped(w: Swapping): number { let s = 0; for (const x of w) { w.it.next = () => ({ value: 1000, done: true }); s += x; } return s; }
 console.log("next stored to in the loop", swapped(new Swapping(3)));
-// What the head may be; a binding of its own for every turn; nested; in a generator and in an async function.
+// The forms of the loop head; a fresh binding for every iteration; nested; in a generator and in an async function.
 class Pairs { constructor(public n: number) {} [Symbol.iterator](): PairSteps { return new PairSteps(this.n); } }
 class PairSteps { i = 0; constructor(public n: number) {} next(): { value: [number, string], done: boolean } { const at = this.i++; return { value: [at, "s" + at], done: at >= this.n }; } }
 { let t = ""; for (const [a, b] of new Pairs(2)) t += a + b; const o = { p: 0 }; for (o.p of new Plain(3)) t += o.p; var v = 0; for (v of new Plain(2)) t += v; const fs: (() => number)[] = []; for (const x of new Plain(3)) fs.push(() => x); t += fs.map(f => f()).join(); for (const x of new Plain(2)) for (const y of new Plain(2)) t += "" + x + y; console.log("heads", t, v); }

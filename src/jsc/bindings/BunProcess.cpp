@@ -15,6 +15,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "JSCommonJSModule.h"
+#include "JSBuffer.h"
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
@@ -83,6 +84,10 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
+#include <limits.h>
+#include <poll.h>
+#include <sys/select.h>
+#include <sys/stat.h>
 #else
 #include <uv.h>
 #include <io.h>
@@ -1756,6 +1761,98 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
+#if !OS(WINDOWS)
+static bool takesBytesWithoutWaiting(int descriptor)
+{
+    struct pollfd polled = { descriptor, POLLOUT, 0 };
+    int ready;
+    do {
+        ready = ::poll(&polled, 1, 0);
+    } while (ready < 0 && errno == EINTR);
+    bool mayBeDeviceThatPollDoesNotSupport = ready == 1 && polled.revents == POLLNVAL;
+    if (!mayBeDeviceThatPollDoesNotSupport)
+        return ready == 1 && polled.revents == POLLOUT;
+    do {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(descriptor, &writable);
+        struct timeval noWait = { 0, 0 };
+        ready = ::select(descriptor + 1, nullptr, &writable, nullptr, &noWait);
+    } while (ready < 0 && errno == EINTR);
+    return ready == 1;
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionAppendToWarningsFile, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto path = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto message = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int descriptor = ::open(byteCast<char>(path.utf8().data()), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0666);
+    if (descriptor < 0)
+        return JSValue::encode(jsBoolean(false));
+    auto bytes = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    const char* next = byteCast<char>(bytes.data());
+    size_t remaining = bytes.length();
+    while (remaining) {
+        ssize_t written = ::write(descriptor, next, remaining);
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            break;
+        next += written;
+        remaining -= static_cast<size_t>(written);
+    }
+    ::close(descriptor);
+    return JSValue::encode(jsBoolean(!remaining));
+}
+#endif
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(lexicalGlobalObject);
+    return JSValue::encode(callFrame->argument(0));
+#else
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    if (globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || process->getDirect(vm, Identifier::fromString(vm, "stderr"_s)))
+        return JSValue::encode(callFrame->argument(0));
+    auto message = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto bytes = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    const char* next = byteCast<char>(bytes.data());
+    size_t remaining = bytes.length();
+    struct stat status;
+    bool isRegularFile = !::fstat(STDERR_FILENO, &status) && S_ISREG(status.st_mode);
+#if OS(DARWIN)
+    bool raisedNoSIGPIPEBefore = ::fcntl(STDERR_FILENO, F_GETNOSIGPIPE) > 0;
+    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, 1);
+#endif
+    while (remaining && takesBytesWithoutWaiting(STDERR_FILENO)) {
+        ssize_t written = ::write(STDERR_FILENO, next, isRegularFile ? remaining : std::min<size_t>(remaining, PIPE_BUF));
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            break;
+        next += written;
+        remaining -= static_cast<size_t>(written);
+    }
+#if OS(DARWIN)
+    ::fcntl(STDERR_FILENO, F_SETNOSIGPIPE, raisedNoSIGPIPEBefore ? 1 : 0);
+#endif
+    if (!remaining)
+        return JSValue::encode(jsUndefined());
+    if (remaining == bytes.length())
+        return JSValue::encode(callFrame->argument(0));
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(next), remaining)));
+#endif
+}
+
 JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
 {
     if (auto* onWarning = m_onWarning.get())
@@ -1797,6 +1894,13 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         disabled = array;
     }
     args.append(disabled);
+    args.append(JSFunction::create(vm, globalObject, 1, ""_s, Process_functionWriteToUntouchedStderr, JSC::ImplementationVisibility::Private));
+#if !OS(WINDOWS)
+    JSValue nodeFS = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::NodeFS).get();
+    bool isNodeFSLoaded = nodeFS && !nodeFS.isUndefined();
+    if (!isNodeFSLoaded)
+        args.append(JSFunction::create(vm, globalObject, 2, ""_s, Process_functionAppendToWarningsFile, JSC::ImplementationVisibility::Private));
+#endif
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));
@@ -2281,7 +2385,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
             return jsUndefined();
     }
 
-    if (!type.isNull() && type.isObject() && !isJSArray(type)) {
+    if (!type.isNull() && type.isObject() && !dynamicDowncast<JSArray>(type)) {
         ctor = type.get(globalObject, Identifier::fromString(vm, "ctor"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -4613,12 +4717,15 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     return mainModule;
 }
 
+extern "C" void Bun__didCreateNextTickQueue(JSC::VM*);
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
         globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
+        Bun__didCreateNextTickQueue(&vm);
     } else {
         nextTickQueueObject = globalObject->m_nextTickQueue.get();
     }

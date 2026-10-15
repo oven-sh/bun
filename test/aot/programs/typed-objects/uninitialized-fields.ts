@@ -57,7 +57,7 @@ console.log(sink.s + "", words[1] === undefined, (words as (string | undefined)[
 sink.n = 2; sink.s = "t"; sink.b = true
 console.log(sink.n + 1, sink.s.length, sink.b)
 
-// Some paths assign, some do not: what is looked at is what was stored.
+// Some paths assign, some do not: the read sees what was stored.
 class Sometimes {
   x!: number; y!: number
   constructor(mode: number) { if (mode > 0) this.x = mode; if (mode > 1) this.y = mode * 2; if (mode < 0) { this.y = -1; return } }

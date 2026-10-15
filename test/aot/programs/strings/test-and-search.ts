@@ -31,7 +31,7 @@ const statics = (): string => [RegExp.$1, RegExp.$2, RegExp.lastMatch, RegExp.la
 // The legacy statics after a hit, after a miss (unchanged), after the other of the two.
 print(tested(/b(c)(d)?/, "abcde") + " " + statics()); print(tested(/zz/, "abcde") + " " + statics()); print(searched2("xxhello", /h(e)l/) + " " + statics()); print(searched2("xx", /h(e)l/) + " " + statics());
 print(testedUntyped(/(\d+)-(\d+)/, "on 12-34.") + " " + statics() + " " + searchedUntyped("on 56-78.", /(\d+)-(\d+)/) + " " + statics());
-// `lastIndex` of every kind: neither global nor sticky: it is read (and made a number of) and plays no part, and is not written.
+// `lastIndex` of every kind, with neither the global nor the sticky flag: it is read (and converted to a number), has no effect, and is not written.
 for (const flags of ["", "i", "m", "s", "u", "v", "d", "g", "y", "gy", "gi"]) {
     let out = flags + ":";
     for (const index of [0, 1, 2, 5, 99, -1, 1.5, -0, NaN, Infinity, 4294967295, 4294967296, "1", "x", null, undefined, true, { valueOf() { log.push("valueOf"); return 1; } }, { toString() { log.push("toString"); return "2"; } }]) {
@@ -44,7 +44,7 @@ print(attempt(() => { const r = /b/; (r as any).lastIndex = { valueOf() { throw 
 { const frozen = Object.freeze(/b/); const frozenGlobal = Object.freeze(/b/g); print(tested(frozen, "abc") + " " + searched2("abc", frozen) + " " + attempt(() => tested(frozenGlobal, "abc")) + " " + attempt(() => searched2("abc", frozenGlobal))); }
 // Subjects: ropes, substrings, 16 bits, empty, long; shorter than the least a match needs.
 { const left = "left of the rope ", right = "and its right " + String(Date.length); const rope = left + right; print(tested(/rope and/, rope) + " " + searched2(left + right + left, /right 7left/) + " " + tested(/^$/, "") + " " + tested(/abc/, "ab") + " " + searched2("", /x?/) + " " + tested(/日本/, "in 日本語") + " " + searched2("café 😀!", /\p{Emoji_Presentation}/u) + " " + searched2("a😀", /\ude00/) + " " + searched2("a😀", /\ude00/u) + " " + tested(/x$/, "y".repeat(5000) + "x") + " " + searched2("abcdef".slice(2), /e/)); }
-// The receiver is something else, or has something of its own.
+// The receiver is something else, or has own properties.
 { class Mine extends RegExp { exec(s: string): RegExpExecArray | null { log.push("exec of mine"); return super.exec(s); } } print(testedUntyped(new Mine("b"), "abc") + " " + searchedUntyped("abc", new Mine("c")) + " " + log.splice(0).join()); const own: any = /b/; own.exec = () => { log.push("own exec"); return null; }; print(testedUntyped(own, "abc") + " " + searchedUntyped("abc", own) + " " + log.splice(0).join()); print(testedUntyped({ test: () => "no RegExp" }, "") + " " + attempt(() => RegExp.prototype.test.call({}, "a")) + " " + attempt(() => testedUntyped(/a/, Symbol.iterator)) + " " + testedUntyped(/null/, null) + testedUntyped(/undefined/, undefined) + testedUntyped(/12/, 3127) + " " + searchedUntyped("a1b", 1) + searchedUntyped("a.b", ".") + searchedUntyped("abc", undefined) + " " + searchedUntyped("abc", { [Symbol.search]: () => "mine" })); }
 { const r = /a/; r.compile("c"); print(tested(r, "abc") + " " + searched2("abc", r) + " " + attempt(() => tested(new RegExp("("), "a"))); }
 // Backtracking that gives up on the stack or runs long enough to matter; many groups (more than the short way's 32 words hold).

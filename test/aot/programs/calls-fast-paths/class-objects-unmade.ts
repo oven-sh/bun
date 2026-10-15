@@ -1,5 +1,5 @@
-// Counts heap cells to show that a class object nobody has inspected takes a single cell.
-// ENV JSC_seedOfVMRandomForFuzzer=4194303
+// Counts heap cells to show that a class object that nothing has inspected takes a single cell.
+// ENV JSC_seedOfVMRandomForFuzzer=1
 declare const console: any; declare function memoryUsageStatistics(): any;
 const holders: any[] = [];
 const kinds = ["Function", "Structure", "PropertyTable", "Object"];

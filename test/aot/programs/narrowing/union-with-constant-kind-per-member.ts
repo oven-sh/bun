@@ -19,7 +19,7 @@ function pick(s: Shape): number { return s.kind === "circle" ? s.r : s.kind === 
 function byswitch(s: Shape): number { switch (s.kind) { case "circle": return s.r; case "square": return s.w; default: return s.a * s.b; } }
 function isCircle(s: Shape): boolean { return s.kind === "circle"; }
 function notSquare(s: Shape): boolean { return s.kind !== "square"; }
-// The value is wanted, or compared with what is no constant: read as ever.
+// The value itself is used, or compared with something that is not a constant: an ordinary read.
 function kindOf(s: Shape): string { return s.kind; }
 function sameKind(s: Shape, t: Shape): boolean { return s.kind === t.kind; }
 // A view with a member that is not pinned: `kind: string`.
@@ -29,7 +29,7 @@ function makeCircle(r: number): Circle { return { kind: "circle", r }; }
 class Round { readonly kind = "round"; constructor(public r: number) {} }
 function makeRound(r: number): Round { return new Round(r); }
 function isRound(s: Round | Square): boolean { return s.kind === "round"; }
-// The constant it is pinned to, stored again: nothing to guard. Anything else: the byte.
+// Storing the constant that it is pinned to again: nothing to guard. Anything else: the byte.
 function restate(c: Circle): void { c.kind = "circle"; }
 function storeGiven(c: Circle, k: "circle"): void { c.kind = k; }
 function makeGiven(k: "circle", r: number): Circle { return { kind: k, r }; }

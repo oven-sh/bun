@@ -1,4 +1,4 @@
-// `length` of what is declared `any` or `unknown` is whatever the object has by that name.
+// `length` of a value declared `any` or `unknown` is whatever the object has under that name.
 function last(list: any): number { for (let i = list.length - 1; i >= 0; i--) return i; return -1 }
 function count(list: any) { let n = list.length; n++; return n }
 function half(list: any) { const n = list.length >> 1; return n }

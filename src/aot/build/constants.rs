@@ -7,172 +7,15 @@ use crate::ir::Op;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, SymFlags};
 use bun_sema::check::Primitive;
+use bun_sema::check::locked_builtins::{Builtin, KnownValue, global_object};
 use bun_sema::hir::{self, ExprId, ExprKind, StmtId};
 use bun_sema::program::FileId;
 
-#[derive(Clone, PartialEq, Debug)]
-pub(crate) enum Constant {
-    Undefined,
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(Vec<u8>),
-    /// A literal: each place it is put in makes an object of its own.
-    Object(Vec<(Vec<u8>, Constant)>),
-    Array(Vec<Constant>),
-}
+pub(crate) use bun_sema::fold::Constant;
 
-/// Reads the text of a define: JSON, and what else a primitive may be written as.
-struct Reader<'a>(&'a [u8]);
-
-impl Reader<'_> {
-    fn skip_space(&mut self) {
-        self.0 = self.0.trim_ascii_start();
-    }
-
-    fn take(&mut self, byte: u8) -> bool {
-        self.skip_space();
-        let found = self.0.first() == Some(&byte);
-        if found {
-            self.0 = &self.0[1..];
-        }
-        found
-    }
-
-    fn code_unit(&mut self) -> Option<u32> {
-        let digits = std::str::from_utf8(self.0.get(..4)?).ok()?;
-        self.0 = &self.0[4..];
-        u32::from_str_radix(digits, 16).ok()
-    }
-
-    fn string(&mut self) -> Option<Vec<u8>> {
-        self.skip_space();
-        let (&quote, rest) = self.0.split_first()?;
-        if quote != b'"' && quote != b'\'' {
-            return None;
-        }
-        self.0 = rest;
-        let mut value = Vec::new();
-        loop {
-            let (&byte, rest) = self.0.split_first()?;
-            self.0 = rest;
-            if byte == quote {
-                return std::str::from_utf8(&value).is_ok().then_some(value);
-            }
-            if byte != b'\\' {
-                value.push(byte);
-                continue;
-            }
-            let (&escaped, rest) = self.0.split_first()?;
-            self.0 = rest;
-            match escaped {
-                b'n' => value.push(b'\n'),
-                b't' => value.push(b'\t'),
-                b'r' => value.push(b'\r'),
-                b'b' => value.push(8),
-                b'f' => value.push(12),
-                b'"' | b'\'' | b'\\' | b'/' => value.push(escaped),
-                b'u' => {
-                    let mut code = self.code_unit()?;
-                    if (0xD800..0xDC00).contains(&code) && self.0.starts_with(b"\\u") {
-                        self.0 = &self.0[2..];
-                        let low = self.code_unit()?;
-                        code = 0x10000 + ((code - 0xD800) << 10) + low.checked_sub(0xDC00)?;
-                    }
-                    value.extend_from_slice(char::from_u32(code)?.encode_utf8(&mut [0; 4]).as_bytes());
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    fn value(&mut self) -> Option<Constant> {
-        self.skip_space();
-        match *self.0.first()? {
-            b'"' | b'\'' => self.string().map(Constant::String),
-            b'{' => {
-                self.0 = &self.0[1..];
-                let mut members = Vec::new();
-                if self.take(b'}') {
-                    return Some(Constant::Object(members));
-                }
-                loop {
-                    let name = self.string()?;
-                    if !self.take(b':') {
-                        return None;
-                    }
-                    members.push((name, self.value()?));
-                    if self.take(b'}') {
-                        return Some(Constant::Object(members));
-                    }
-                    if !self.take(b',') {
-                        return None;
-                    }
-                }
-            }
-            b'[' => {
-                self.0 = &self.0[1..];
-                let mut elements = Vec::new();
-                if self.take(b']') {
-                    return Some(Constant::Array(elements));
-                }
-                loop {
-                    elements.push(self.value()?);
-                    if self.take(b']') {
-                        return Some(Constant::Array(elements));
-                    }
-                    if !self.take(b',') {
-                        return None;
-                    }
-                }
-            }
-            _ => {
-                let end = self.0.iter().position(|byte| matches!(byte, b',' | b'}' | b']') || byte.is_ascii_whitespace()).unwrap_or(self.0.len());
-                let (word, rest) = self.0.split_at(end);
-                self.0 = rest;
-                Some(match word {
-                    b"undefined" => Constant::Undefined,
-                    b"null" => Constant::Null,
-                    b"true" => Constant::Bool(true),
-                    b"false" => Constant::Bool(false),
-                    _ => Constant::Number(std::str::from_utf8(word).ok()?.parse().ok()?),
-                })
-            }
-        }
-    }
-}
-
-impl Constant {
-    /// The JavaScript text of the value of a define. `None`: it is neither a primitive nor a literal made of such.
-    pub(crate) fn parse(text: &[u8]) -> Option<Constant> {
-        let mut reader = Reader(text);
-        let value = reader.value()?;
-        reader.skip_space();
-        reader.0.is_empty().then_some(value)
-    }
-
-    pub(crate) fn is_truthy(&self) -> bool {
-        match self {
-            Constant::Undefined | Constant::Null => false,
-            Constant::Bool(value) => *value,
-            Constant::Number(value) => *value != 0.0 && !value.is_nan(),
-            Constant::String(value) => !value.is_empty(),
-            Constant::Object(_) | Constant::Array(_) => true,
-        }
-    }
-
-    pub(crate) fn is_primitive(&self) -> bool {
-        !matches!(self, Constant::Object(_) | Constant::Array(_))
-    }
-
-    /// Two such are strictly equal where they are equal here.
-    pub(crate) fn is_primitive_but_nan(&self) -> bool {
-        self.is_primitive() && !matches!(self, Constant::Number(value) if value.is_nan())
-    }
-
-    fn is_nullish(&self) -> bool {
-        matches!(self, Constant::Undefined | Constant::Null)
-    }
+pub(crate) struct DecidedOperand {
+    pub(crate) yields: ExprId,
+    pub(crate) is_left_of_cut: bool,
 }
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
@@ -228,7 +71,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     ExprKind::Template { exprs } if exprs.is_empty() => hir.id_at(hir.template_texts(exprs), 0),
                     _ => return None,
                 };
-                if self.c.atoms().bytes(name).contains(&b'.') {
+                if bun_core::strings::contains_char(self.c.atoms().bytes(name), b'.') {
                     return None;
                 }
                 let mut path = self.global_path(file, obj)?;
@@ -237,6 +80,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some(path)
             }
             ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.global_path(file, expr),
+            _ => None,
+        }
+    }
+
+    /// The value an expression always has because built-in objects are immutable: a global that cannot be replaced, or a property of a built-in object.
+    fn known_builtin_value(&mut self, file: FileId, e: ExprId) -> Option<KnownValue> {
+        if self.is_builtin_file(file) {
+            return None;
+        }
+        let (holder, name) = match self.hir(file)[e].kind {
+            ExprKind::Ident(name) if self.is_free_in(file, e, name) => (global_object(), name),
+            ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => (self.resolve_locked_builtin(file, obj)?, name),
+            _ => return None,
+        };
+        holder.known_read_result(self.c.atoms().bytes(name))
+    }
+
+    fn resolve_locked_builtin(&mut self, file: FileId, e: ExprId) -> Option<&'static Builtin> {
+        match self.hir(file)[e].kind {
+            ExprKind::Ident(name) if self.is_free_in(file, e, name) => global_object().object_at(self.c.atoms().bytes(name)),
+            ExprKind::Dot { obj, name, chain: hir::Chain::No, .. } => self.resolve_locked_builtin(file, obj)?.object_at(self.c.atoms().bytes(name)),
             _ => None,
         }
     }
@@ -362,6 +226,79 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(self.constant_of(value))
     }
 
+    pub(crate) fn is_chain_short_circuited(&mut self, fx: &mut Fx, e: ExprId) -> bool {
+        let Some(ended_by) = self.files.short_circuiting_root(fx.file, e) else { return false };
+        self.expr_unused(fx, ended_by);
+        if !self.only_asks {
+            let hir = self.hir(fx.file);
+            self.cut.push((hir[ended_by].end, hir[e].end));
+        }
+        true
+    }
+
+    pub(crate) fn is_operand_decided(&self, fx: &Fx, e: ExprId) -> bool {
+        match self.hir(fx.file)[e].kind {
+            ExprKind::Cond { test: deciding, .. } | ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or, left: deciding, .. } => self.files.decision(fx.file, deciding).is_some(),
+            ExprKind::Binary { op: hir::BinOp::Nullish, left, .. } => self.files.decision(fx.file, left).is_some_and(|decision| decision.is_nullish.is_some()),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn emit_decided_operand(&mut self, fx: &mut Fx, e: ExprId) -> Option<DecidedOperand> {
+        let decision = |deciding: ExprId| self.files.decision(fx.file, deciding);
+        let (for_effect, yields, cut) = match self.hir(fx.file)[e].kind {
+            ExprKind::Cond { test, yes, no } => match decision(test)?.is_truthy {
+                true => (test, yes, no),
+                false => (test, no, yes),
+            },
+            ExprKind::Binary { op: op @ (hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish), left, right } => {
+                let takes_right = match op {
+                    hir::BinOp::And => decision(left)?.is_truthy,
+                    hir::BinOp::Or => !decision(left)?.is_truthy,
+                    _ => decision(left)?.is_nullish?,
+                };
+                if takes_right { (left, right, ExprId::NONE) } else { (ExprId::NONE, left, right) }
+            }
+            _ => return None,
+        };
+        if for_effect.is_some() {
+            self.expr_unused(fx, for_effect);
+        }
+        self.cut_expr(fx, cut);
+        Some(DecidedOperand { yields, is_left_of_cut: for_effect.is_none() })
+    }
+
+    /// Whether the expression always yields something truthy, or always something falsy, though it may have to be evaluated for what it does: `live && false`.
+    pub(crate) fn known_truthiness(&mut self, fx: &Fx, e: ExprId) -> Option<bool> {
+        let outer = std::mem::replace(&mut self.only_asks, true);
+        let found = self.known_truthiness_in(fx.file, e);
+        self.only_asks = outer;
+        found
+    }
+
+    fn known_truthiness_in(&mut self, file: FileId, e: ExprId) -> Option<bool> {
+        if let Some(decision) = self.files.decision(file, e) {
+            return Some(decision.is_truthy);
+        }
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Binary { op: op @ (hir::BinOp::And | hir::BinOp::Or), left, right } => {
+                let deciding = op == hir::BinOp::Or;
+                let (left, right) = (self.known_truthiness_in(file, left), self.known_truthiness_in(file, right));
+                if left == Some(deciding) || right == Some(deciding) {
+                    Some(deciding)
+                } else if left == Some(!deciding) && right == Some(!deciding) {
+                    Some(!deciding)
+                } else {
+                    None
+                }
+            }
+            ExprKind::Binary { op: hir::BinOp::Comma, right, .. } => self.known_truthiness_in(file, right),
+            ExprKind::Unary { op: hir::UnOp::Not, operand } => self.known_truthiness_in(file, operand).map(|truthy| !truthy),
+            _ => self.constant_in(file, e).map(|constant| constant.is_truthy()),
+        }
+    }
+
     /// The value of an expression made of literals, of constants of the program and of what the bundler replaces.
     pub(crate) fn constant(&mut self, fx: &Fx, e: ExprId) -> Option<Constant> {
         self.constant_in(fx.file, e)
@@ -375,12 +312,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::False => Some(Constant::Bool(false)),
             ExprKind::Number(index) => Some(Constant::Number(hir.numbers[index as usize])),
             ExprKind::String(value) => Some(Constant::String(self.c.atoms().bytes(value).to_vec())),
-            ExprKind::Ident(name) => self.replacement_in(file, e).or_else(|| self.constant_named(file, e, name)),
+            ExprKind::Ident(name) => (self.replacement_in(file, e))
+                .or_else(|| self.constant_named(file, e, name))
+                .or_else(|| (self.c.atoms().bytes(name) == b"undefined" && self.is_free_in(file, e, name)).then_some(Constant::Undefined)),
             ExprKind::Dot { .. } | ExprKind::Call(_) => self.replacement_in(file, e).or_else(|| self.constant_of_the_checker(file, e)),
-            ExprKind::Unary { op: hir::UnOp::Not, operand } => Some(Constant::Bool(!self.constant_in(file, operand)?.is_truthy())),
+            ExprKind::Unary { op: hir::UnOp::Not, operand } => match self.constant_in(file, operand) {
+                Some(constant) => Some(Constant::Bool(!constant.is_truthy())),
+                None => {
+                    let held = self.known_builtin_value(file, operand)?;
+                    self.cut_expr_in(file, operand);
+                    Some(Constant::Bool(!held.is_truthy))
+                }
+            },
             // `typeof NAME`, where the bundler replaces the name.
             ExprKind::Unary { op: hir::UnOp::Typeof, operand } if matches!(hir[operand].kind, ExprKind::Ident(_) | ExprKind::Dot { .. }) => {
-                let kind: &[u8] = match self.replacement_in(file, operand)? {
+                let Some(replaced) = self.replacement_in(file, operand) else {
+                    let held = self.known_builtin_value(file, operand)?;
+                    self.cut_expr_in(file, operand);
+                    return Some(Constant::String(held.type_of.as_bytes().to_vec()));
+                };
+                let kind: &[u8] = match replaced {
                     Constant::Undefined => b"undefined",
                     Constant::Bool(_) => b"boolean",
                     Constant::Number(_) => b"number",

@@ -16,7 +16,7 @@ function prototypeReplaced(a: number): string { const q = new QC(a); const x = s
 function readsAround(a: number): string { const before = g; const q = new QC(a); const during = g; q.b = during; g++; const after = g; q.c = after; return show(q) + " " + (before === during) + " " + (after - before); }
 function eachOther(a: number): string { const q = new QC(a); const r = new QC(a + 1); q.b = 1; r.b = 2; q.c = r; r.c = 5; return JSON.stringify(q) + " " + (q.c === r); }
 function wrongType(a: number, v: any): string { const before = g; try { const q = new QC(a); q.b = v; const x = bump(); q.c = x; return show(q) + " " + (g - before); } catch (e: any) { return "caught " + e.constructor.name + " " + (g - before); } }
-// A store into the fresh object that is not plain: the name is found on the prototype, with a setter, which changes what is read next. 44 passed over such a store and took the read from behind it to before it (found by reading; 52 ends the scan there).
+// A store into the fresh object that is not a plain store: the name is found on the prototype, with a setter, which changes what is read next. The read after such a store must not be moved before it.
 interface S { a: number; x: number; y: number }
 function S(this: S, a: number) { this.a = a; }
 Object.defineProperty((S as any).prototype, "x", { set(v: number) { g = v; log.push("setter " + v); }, get() { return -1; }, configurable: true });

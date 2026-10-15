@@ -33,7 +33,7 @@ export function* switchYielded(s: string): Generator<string> { switch (s) { case
 // late1: a constant that is looked for without its cell.
 export function searchCaught(s: string): string { let out = ""; try { if (s.startsWith("li")) out += boom(s.includes("!"), "L"); if (s.endsWith("x")) return out + "X"; } catch (e) { out += s.startsWith("lit") ? "lit" : s.includes("!") ? "bang" : "?"; } finally { out += s.indexOf("t") + ""; log.push(out); } return out; }
 export async function searchAwaited(s: string): Promise<string> { const a = s.startsWith("li"); await null; const b = s.includes("!"); await null; return a + "," + b + "," + s.endsWith("x") + "," + (await Promise.resolve(s.indexOf("t"))); }
-// regexp2: an expression made of a constant.
+// regexp2: an expression built from a constant.
 export function madeCaught(s: string, bad: boolean): string { try { const re = new RegExp("ma+de", bad ? "gg" : "g"); return String(re.test(s)) + re.lastIndex; } catch (e) { return (e as Error).name + new RegExp("ma+de").test(s); } finally { log.push(String(new RegExp("ma+de", "i").test(s))); } }
 // open1, sum2: a string that a loop reads.
 export function loopLabelled(s: string, t: string): number { let h = 0; outer: for (let i = 0; i < s.length; i++) { for (let j = 0; j < t.length; j++) { const c = t.charCodeAt(j); if (c === 45) continue outer; if (c === 33) break outer; if (c === 63) return -h; h = (h + s.charCodeAt(i) + c) | 0; } h = (h * 31) | 0; } return h; }
@@ -50,7 +50,7 @@ export function* lastIndexYielded(re: RegExp, s: string): Generator<string> { fo
 export function untypedCaught(s: any, i: any, j: any): string { let out = ""; try { out += s.charCodeAt(i); out += "," + s.slice(i, j); out += "," + s.includes(j); out += "," + s.indexOf(j, i); out += "," + s.at(i); } catch (e) { out += "!" + ((e as Error).name === "Error" ? (e as Error).message : (e as Error).name); } finally { out += ";"; } return out; }
 export async function untypedAwaited(s: any, i: any): Promise<string> { return s.charCodeAt(await i) + "," + (await s).slice(await i, (await i) + 2) + "," + s.at(await Promise.resolve(i)); }
 export function* untypedYielded(s: any): Generator<any, string, any> { const i = yield s.length; const j = yield s.charCodeAt(i); return s.slice(i, j) + s.includes(yield "?"); }
-// cat4: a key made of numbers.
+// cat4: a key built from numbers.
 export function keyCaught(m: Map<string, number>, a: T, b: T): string { try { const found = m.get(a.id + "," + b.id); if (found === undefined) throw new Error("none " + a.id + ":" + b.id); return "f" + found; } catch (e) { m.set(a.id + "," + b.id, m.size); return (e as Error).message; } finally { log.push(String(m.has(b.id + "," + a.id))); } }
 export async function keyAwaited(m: Map<string, number>, a: T, b: T): Promise<string> { const had = m.has(a.id + ":" + b.id); await null; m.set(a.id + ":" + (await Promise.resolve(b.id)), 1); return had + "," + m.has(a.id + ":" + b.id) + "," + m.get(`${a.id}:${b.id}`); }
 export function* keyYielded(m: Map<string, number>, list: T[]): Generator<number | undefined> { outer: for (const a of list) for (const b of list) { if (a.id === 3) continue outer; if (b.id === 4) break outer; yield m.get(a.id + "," + b.id); m.set(a.id + "," + b.id, a.id * 10 + b.id); } }

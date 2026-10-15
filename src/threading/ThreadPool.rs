@@ -576,6 +576,20 @@ impl ThreadPool {
         self.each_impl(ctx, ByPtr(run_fn), values, || {});
     }
 
+    pub fn each_ptr_while<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByPtr(run_fn), values, on_calling_thread);
+    }
+
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,

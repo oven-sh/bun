@@ -697,6 +697,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
     }
+    if let Some(engine) = c.facts.as_mut().and_then(|facts| facts.engine.as_mut()) {
+        engine.replace_strings(&replaced_strings);
+    }
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
@@ -1048,6 +1051,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .output_source_map
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for external source map");
+                    let tokens = c.facts.as_ref().and_then(|facts| facts.tokens.as_deref());
+                    let output_source_map = match tokens.filter(|_| chunk.entry_point.is_entry_point()) {
+                        Some(tokens) => with_tokens_of_aot(&output_source_map, tokens),
+                        None => output_source_map,
+                    };
                     let mut source_map_final_rel_path: Vec<u8> =
                         Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
                     source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
@@ -1481,8 +1489,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             internal_names,
             names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
+        let engine = c.facts.as_mut().and_then(|facts| facts.engine.take());
         if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
-            if !linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings) {
+            let is_set = match engine {
+                Some(engine) => engine.finish().is_some_and(|prepared| linked.encoder.set_prepared_typed_program(prepared, &typed_modules)),
+                None => linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings),
+            };
+            if !is_set {
                 add_aot_build_errors(c, linked.encoder.take_build_errors());
                 return Err(crate::Error::BuildFailed);
             }
@@ -1790,6 +1803,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
+}
+
+fn with_tokens_of_aot(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
+    let end = source_map.iter().rposition(|&byte| byte == b'}').unwrap_or(source_map.len());
+    let body = source_map[..end].trim_ascii_end();
+    [body, b",\n  \"x_bun_aot\": ", tokens, b"\n", &source_map[end..]].concat().into_boxed_slice()
 }
 
 fn add_aot_build_errors(c: &mut LinkerContext, errors: Vec<crate::bytecode_order::AotBuildError>) {

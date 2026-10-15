@@ -33,7 +33,7 @@ say("a generator that yields in the initializer of a `using`", () => { function*
 say("the same, closed at the yield in the initializer", () => { function* g() { using a = res("a"), b = res(yield 1), c = res("c"); yield 2; } const i = g(); step(i, "next"); step(i, "return", "R"); return "end"; });
 say("the same, thrown into at the yield in the initializer", () => { function* g() { using a = thr("a"), b = res(yield 1), c = res("c"); yield 2; } const i = g(); step(i, "next"); step(i, "throw", "T"); return "end"; });
 
-// Async functions and async generators: one row behind the other, each with a ticker beside it that shows at which turn of the queue each thing happens.
+// Async functions and async generators: one row after the other, each with a ticker next to it that shows in which turn of the job queue each thing happens.
 const rows = [];
 const later = (name, f) => rows.push(async () => {
   log = []; let on = true; const ticker = (async () => { for (let i = 0; on && i < 30; i++) { await undefined; if (on) log.push("." ); } })();

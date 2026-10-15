@@ -62,7 +62,7 @@ console.log(keysOf(dressed))
 const frozen: Rec = Object.freeze({ a: 1, b: "f", d: 2 })
 console.log(keysOf(frozen), pairs(frozen))
 
-// Parsed text behind the type.
+// Parsed JSON used as the type.
 const parsed: Rec = JSON.parse('{"d":1,"a":2,"1":3,"z":0}')
 console.log(keysOf(parsed), pairs(parsed), keysOf(Object.assign(Object.create(null), full)))
 

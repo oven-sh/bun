@@ -61,7 +61,7 @@ attempt("f4", () => (wrong as any).size())
 const plainWrong: any = { size: () => "big" }, plainRight: any = { size: () => 3 }
 attempt("f5", () => (plainWrong as Api).size() + 1)
 attempt("f6", () => (plainRight as Api).size() + 1)
-// An object of the program that is made as another type: it is one of the type if that type is assignable to the one it is cast to, else the cast lets it through as it is.
+// An object of the program that was created as another type: it has the target type if its own type is assignable to it; otherwise the cast lets it through unchanged.
 attempt("f7", () => typeof ({ size: () => "big" } as unknown as Api))
 attempt("f8", () => ({ size: () => 3 } as unknown as Api).size() + 1)
 // A function value that travels through a field of function type.

@@ -302,6 +302,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
     pub(crate) bundler_feature_flag_ref: Ref,
+    pub(crate) create_require_names: Vec<&'a [u8]>,
+    pub(crate) own_require_names: Vec<&'a [u8]>,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -2216,6 +2218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if self.options.bundle
+            && !self.options.leaves_assignments_to_imports_to_run_time
             && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
@@ -4517,6 +4520,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+            if alias == b"createRequire" && self.options.compiles_requires_made_by_create_require {
+                self.create_require_names.push(name);
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -9149,6 +9155,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
+                unsafe { parts.set_len(parts_end) };
+
                 // We need to iterate multiple times if an import-equals statement was
                 // removed and there are more import-equals statements that may be removed
                 if !kept_import_equals || !removed_import_equals {
@@ -9870,6 +9879,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             response_ref: Ref::NONE,
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
+            create_require_names: Vec::new(),
+            own_require_names: Vec::new(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,

@@ -19,8 +19,8 @@ attempt("store, by Object.assign", () => { Object.assign(r, { tail: 10, n: undef
 attempt("store, by Reflect.set", () => Reflect.set(r, "n", null))
 attempt("getter that yields undefined", () => { Object.defineProperty(r, "n", { get: () => undefined, enumerable: true, configurable: true }) })
 console.log(show(r))
-// No any and no cast: a view in which the field is optional. The object is a Rec all the same: the field is not deleted. The slot has room for what the wider view may store, and the read
-// through the narrower type is tested. NOT ON ANY LIST OF RULES YET for code without a lie (triage/g-exact2.md).
+// No any and no cast: a type in which the field is optional. The object is still a Rec: the field is not
+// deleted. The slot can hold what the wider type may store, and the read through the narrower type is tested.
 interface Tight { n: number; s: string; b: boolean }
 interface Looser { n?: number; s?: string | null }
 const t: Tight = { n: 1, s: "s", b: true }
@@ -33,7 +33,7 @@ attempt("the type itself, read of it", () => t.n + 1)
 console.log("n" in t, show(t))
 l.n = 4
 console.log(t.n + 1, show(t))
-// Untyped code goes through the doors, which test against the layout's OWN field type, not against what the slot has room for.
+// Stores from untyped code are tested against the layout's OWN field type, not against what the slot can hold.
 attempt("store from untyped code, undefined for a number that is optional in a wider view", () => poke(t, "n", undefined))
 attempt("the same, null", () => poke(t, "n", null))
 attempt("the type itself, read of it", () => t.n + 1)

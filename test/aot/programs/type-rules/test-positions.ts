@@ -56,7 +56,7 @@ attempt("t || falls through", () => c.origin || "none");
 attempt("t ??", () => [c.origin ?? "none", c.list ?? "none", c.tick ?? "none"].map(show).join());
 attempt("t ?.", () => [c.list?.length, c.tick?.(), c.list?.[0]].join());
 attempt("t ?. ??", () => c.list?.length ?? "none");
-// what another expression yields stands where that stands
+// an expression that forwards its operand is in the same position as the whole
 attempt("t ?: within typeof", () => typeof (c.on ? c.origin : c.name));
 attempt("t || within typeof", () => [typeof (c.name || c.origin), typeof (c.big && c.on), typeof (c.name ?? c.on)].join());
 attempt("t || within ===", () => (c.name || "x") === "n");

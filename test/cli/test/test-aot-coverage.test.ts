@@ -19,13 +19,13 @@ async function ran(flags: string[]) {
   return stdout + stderr;
 }
 
-test.skipIf(isWindows)("bun test --aot --coverage says that nothing is counted", async () => {
+test.skipIf(isWindows)("bun test --aot --coverage warns that coverage is not measured", async () => {
   const said = await ran(["--aot", "--coverage"]);
   expect(said).toContain(warning);
   expect(said).not.toContain("% Funcs");
 });
 
-test.skipIf(isWindows)("either alone says nothing of the kind", async () => {
+test.skipIf(isWindows)("either flag alone prints no such warning", async () => {
   expect(await ran(["--aot"])).not.toContain(warning);
   const covered = await ran(["--coverage"]);
   expect(covered).not.toContain(warning);

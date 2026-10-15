@@ -1,4 +1,4 @@
-// `a[i]! || fallback`: the left side is a test. Where there is no such element it is falsy, and the fallback is the value.
+// `a[i]! || fallback`: the left side is a test. Where the element is missing it is falsy, and the result is the fallback.
 const numbers = [10, 0, 30]
 const doubles = [1.5, 0, NaN]
 const words = ["a", "", "c"]

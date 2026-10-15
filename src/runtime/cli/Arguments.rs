@@ -168,6 +168,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--aot-type-errors <STR>           With --aot: what to do when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
     ),
+    parse_param!("--aot-crash-if-interpreter-is-used"),
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
     parse_param!(
@@ -424,10 +425,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
-            "--compile-function-source        With --compile --aot: keep the text that Function.prototype.toString() answers with (default: true)"
+            "--compile-function-source        With --compile --aot: keep the source text that Function.prototype.toString() returns (default: true)"
         ),
         parse_param!(
-            "--no-compile-function-source     With --compile --aot: leave that text out; toString() of a compiled function says [native code]"
+            "--no-compile-function-source     With --compile --aot: omit that source text; toString() on a compiled function returns [native code]"
         ),
         parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
@@ -462,6 +463,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
         ),
+        parse_param!("--aot-crash-if-interpreter-is-used"),
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
         ),
@@ -1303,6 +1305,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.aot = args.flag(b"--aot");
+        ctx.runtime_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used");
         ctx.runtime_options.aot_logs_type_errors = match args.option(b"--aot-type-errors") {
             None | Some(b"throw") => false,
             Some(b"log") => true,
@@ -2559,6 +2562,11 @@ fn parse_build_command_options(
         Output::err_generic("--aot requires --compile", ());
         Global::crash();
     }
+    ctx.bundler_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used");
+    if ctx.bundler_options.aot_crash_if_interpreter_is_used && !ctx.bundler_options.aot {
+        Output::err_generic("--aot-crash-if-interpreter-is-used requires --aot", ());
+        Global::crash();
+    }
     if let Some(type_errors) = args.option(b"--aot-type-errors") {
         if !ctx.bundler_options.aot {
             Output::err_generic("--aot-type-errors requires --aot", ());
@@ -2592,8 +2600,9 @@ fn parse_build_command_options(
             Output::err_generic("--aot does not support {}", format_args!("{}", option));
             Global::crash();
         }
-        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") {
-            bun_core::note!("--sourcemap adds nothing to --aot: stack traces of compiled code already have the file, line and column of the sources, and any map that is written is empty");
+        let shortens_names = ctx.bundler_options.minify_identifiers && !ctx.bundler_options.keep_names;
+        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") && !shortens_names {
+            bun_core::note!("--sourcemap has no effect with --aot: stack traces from compiled code already show the original file, line and column, and any source map that is written is empty");
         }
     }
 

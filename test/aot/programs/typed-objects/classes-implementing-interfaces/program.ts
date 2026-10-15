@@ -52,7 +52,7 @@ function build(maker: ShapedMaker, size: number): string {
   return maker.family + "/" + describe(made) + "/" + (made instanceof Square)
 }
 console.log(build(Square, 5), build(Disc, 1), build(Framed, 2))
-// Methods taken off their class or literal and called on something else of their type. (On what is not: type-rules/classes-implementing-interfaces.)
+// Methods detached from their class or literal and called on another object of their type. (On an object of another type: type-rules/classes-implementing-interfaces.)
 const area = Square.prototype.area
 console.log(area.call(new Framed(4)), triangle.area.call(arrowed))
 const detached = all.map(s => s.area)

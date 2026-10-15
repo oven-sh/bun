@@ -360,12 +360,17 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::As { expr, .. } => self.fresh_from(file, expr)?,
             ExprKind::Object(props) => {
                 let mut fresh = Fresh::default();
+                let mut written: FxHashSet<Atom> = FxHashSet::default();
                 for p in props.iter() {
                     let PropKey::Name(name) = hir[p].key else { continue };
                     if hir[p].kind == PropKind::Spread {
                         continue;
                     }
-                    fresh.set(name, true);
+                    if props.len < 32 {
+                        fresh.set(name, true);
+                    } else if written.insert(name) {
+                        fresh.always.push(name);
+                    }
                     if hir[p].kind == PropKind::Init
                         && let Some(part) = self.fresh_from(file, hir[p].value)
                     {
@@ -497,7 +502,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The values of the `return`s. `NONE` for one without a value.
-    fn values_returned_by(&self, file: FileId, func: FnId) -> Vec<ExprId> {
+    pub(super) fn values_returned_by(&self, file: FileId, func: FnId) -> Vec<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match hir[func].body {
             FnBody::None => Vec::new(),

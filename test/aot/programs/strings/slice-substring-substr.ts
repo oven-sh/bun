@@ -65,7 +65,7 @@ for (let m = 0; m < makers.length; m++) {
     for (const a of places)
         line += " " + show(slice1(make(), a)) + show(substring1(make(), a)) + show(substr1(make(), a));
     print(line);
-    // All pairs: by a checksum, and the length of what comes of it, which a rope says itself.
+    // All pairs: by a checksum, and by the length of the result, which a rope knows without being flattened.
     let t = 0;
     for (const a of places) {
         for (const b of places) {
@@ -83,7 +83,7 @@ for (let m = 0; m < makers.length; m++) {
         line += " " + partsOfAnything(make(), a, b);
     print(line);
 }
-// A part of a part of a part, and what is made of parts.
+// A substring of a substring of a substring, and strings built from substrings.
 let rest = "one,two,three,four,five,six,seven";
 let seen = "";
 while (rest.length > 0) {
@@ -102,5 +102,5 @@ for (const other of [new String("boxed string"), new Odd("odd"), [1, 2, 3, 4], {
 print(attempt(() => String.prototype.slice.call(12345, 1, 3)) + attempt(() => String.prototype.substring.call(true, 1)) + attempt(() => String.prototype.substr.call({ toString() { return "object"; } }, 2, 2)) + attempt(() => String.prototype.slice.call(null, 0)));
 let order = "";
 print(show(sliceOfAnything("abcdef", { valueOf() { order += "a"; return 1; } }, { valueOf() { order += "b"; return 4; } })) + order);
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [slice2, slice1, substring2, substr2, sliceOfAnything]; console.log("number");

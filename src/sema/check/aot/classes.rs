@@ -8,7 +8,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
 use crate::hir::{
-    BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
+    BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId, ImportEqualsTarget, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
     VarKind,
 };
 use crate::program::{FileId, Sym};
@@ -19,21 +19,22 @@ use super::OnceLock;
 #[derive(Default)]
 pub(super) struct Shared {
     /// `classes_declaring_methods`
-    declaring_methods: OnceLock<DeclaringMethods>,
+    declaring_methods: std::sync::OnceLock<DeclaringMethods>,
     /// `computed_methods`
     computed_methods: OnceLock<Vec<((FileId, ClassId), ExprId)>>,
     /// `class_facts_of_file`
     by_file: ByFile<FileFacts>,
     /// `discriminants`
-    discriminants: OnceLock<Discriminants>,
+    discriminants: std::sync::OnceLock<Discriminants>,
     /// `mutable_prototypes`
-    mutable_prototypes: OnceLock<MutablePrototypes>,
+    mutable_prototypes: std::sync::OnceLock<MutablePrototypes>,
     /// `set_builtin_requires`
     builtin_requires: OnceLock<FxHashMap<(FileId, Atom), FileId>>,
     /// `is_reified_namespace`
     reified_namespaces: OnceLock<ReifiedNamespaces>,
     /// `prototype_property_names`
     prototype_property_names: OnceLock<FxHashSet<Atom>>,
+    stores_of_checked_texts: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
 }
 
 #[derive(Default)]
@@ -425,6 +426,7 @@ impl<'p, 's> Checker<'p, 's> {
             let (hir, bound, index) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
             let is_object_of_access = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Dot { obj, chain: Chain::No, .. } if obj == e));
             is_module_object_made |= !index.of(ExprTag::ImportCall).is_empty() || index.of(ExprTag::Call).iter().any(|&e| crate::bind::required_specifier(hir, e).is_some() || !hir.specifiers_of_folded_require(e).is_empty());
+            is_module_object_made |= self.atoms().lookup(b"createRequire").is_some_and(|create_require| hir.import_specs.iter().any(|spec| spec.imported == create_require) || index.of(ExprTag::Dot).iter().any(|&e| matches!(hir[e].kind, ExprKind::Dot { name, .. } if name == create_require)));
             for &e in index.of(ExprTag::Ident) {
                 let Some(symbol) = bound.symbols.get(bound.expr_symbol[e.idx()].idx()) else { continue };
                 if !symbol.flags.intersects(SymFlags::VALUE_MODULE | SymFlags::ALIAS) || bound.is_in_type_query(e) {
@@ -444,6 +446,26 @@ impl<'p, 's> Checker<'p, 's> {
                     && !is_object_of_access(e)
                 {
                     found.namespaces.extend(named);
+                }
+            }
+            let mut aliases = None;
+            for (import, declared) in hir.import_equals.iter().enumerate() {
+                let ImportEqualsTarget::Entity(names) = declared.target else { continue };
+                if declared.flags.contains(Flags::AMBIENT) || matches!(bound.stmt_parent[declared.stmt.idx()], Parent::None) {
+                    continue;
+                }
+                let aliases = aliases.get_or_insert_with(|| self.symbols_of_alias_declarations(file));
+                if !aliases.get(&Decl::ImportEquals(ImportEqualsId(import as u32))).is_some_and(|&alias| files.symbol_flags(alias).intersects(SymFlags::VALUE)) {
+                    continue;
+                }
+                let names: Vec<Atom> = hir.texts(names).collect();
+                for length in 1..=names.len() {
+                    let Some(named) = files.resolve_entity(file, bound.import_equals_scope[import], &names[..length], SymFlags::NAMESPACE) else { break };
+                    let named = files.export_symbol_of_value_symbol_if_exported(named);
+                    let Some(named) = (if files.flags(named).contains(SymFlags::ALIAS) { files.resolve_alias(named) } else { Some(named) }) else { break };
+                    if is_candidate(named) && !self.namespace_runs_before_import_equals(named, file, ImportEqualsId(import as u32)) {
+                        found.namespaces.insert(named);
+                    }
                 }
             }
         }
@@ -504,7 +526,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `anys.forEach((x: P) => ..)`: the parameters of the function expression that have an annotation while whoever the function is handed to is declared to hand over something of which
     /// its type says nothing. By number.
-    pub fn parameters_handed_untyped(&mut self, file: FileId, func: FnId) -> Vec<usize> {
+    pub fn parameters_passed_untyped(&mut self, file: FileId, func: FnId) -> Vec<usize> {
         let own = self.hir(file)[func].params;
         if !own.iter().any(|p| self.hir(file)[p].ty.is_some()) {
             return Vec::new();
@@ -527,17 +549,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `yield e` in a generator with an annotation, `Generator<Y>`, `AsyncGenerator<Y>`, `Iterable<Y>`: `Y`, likewise.
-    pub fn type_yielded_for(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
+    pub fn type_produced_for(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
         self.type_written_for(file, func, e, true)
     }
 
-    fn type_written_for(&mut self, file: FileId, func: FnId, e: ExprId, is_yielded: bool) -> Option<TypeId> {
+    fn type_written_for(&mut self, file: FileId, func: FnId, e: ExprId, is_produced: bool) -> Option<TypeId> {
         if func.is_none() {
             return None;
         }
         let f = &self.hir(file)[func];
         let (is_async, is_generator) = (f.flags.contains(Flags::ASYNC), f.flags.contains(Flags::GENERATOR));
-        if f.ret.is_none() || !is_async && !is_generator || is_yielded && !is_generator {
+        if f.ret.is_none() || !is_async && !is_generator || is_produced && !is_generator {
             return None;
         }
         let own = self.type_of_expr(file, e);
@@ -547,7 +569,7 @@ impl<'p, 's> Checker<'p, 's> {
         let declared = self.return_type_of_fn(file, func);
         let written = if is_generator {
             let types = self.iteration_types(declared, is_async)?;
-            if is_yielded { types.yielded } else { types.returned }
+            if is_produced { types.yielded } else { types.returned }
         } else {
             self.awaited(declared)
         };
@@ -557,7 +579,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether what the expression yields is spread into an object literal: `{ mode, ...{ a } }`, `{ ...(c && { a }) }`, `{ ...((g) => ({ a: g }))(x) }`, `{ ...(function () { return { a } })() }`.
     /// Also of the function expression that is called there. The checker hands what is spread the type that the WHOLE literal is checked against, and a function that is called where it is
     /// written the type that the call is checked against, to guide inference. Nothing is checked against it: it is a part, and may lack what the whole requires.
-    pub fn is_part_that_is_spread(&self, file: FileId, e: ExprId) -> bool {
+    pub fn is_spread_part(&self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let mut at = e;
         loop {
@@ -673,7 +695,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: an argument of a call or a `new`. Whether the parameter that takes it, as the call is resolved, says nothing of it: `any`, `unknown`.
-    pub fn is_taken_by_parameter_that_says_nothing(&mut self, file: FileId, e: ExprId) -> bool {
+    pub fn is_passed_to_any_or_unknown_parameter(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return false };
         let (ExprKind::Call(call) | ExprKind::New(call)) = hir[parent].kind else { return false };
@@ -681,7 +703,10 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let Some(index) = hir.ids(hir[call].args).position(|argument| argument == e) else { return false };
-        let Some(sig) = self.resolved_signature(file, parent).sig else { return false };
+        let Some(sig) = self.resolved_signature(file, parent).sig else {
+            let callee = self.type_of_expr(file, hir[call].callee);
+            return self.says_nothing(callee);
+        };
         let parameters = self.sig_params(sig);
         self.param_type_at(&parameters, index).is_some_and(|taking| self.says_nothing(taking))
     }
@@ -707,7 +732,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// what the property is. The function that is called knows the value by the bound of the type parameter.
     pub fn is_checked_against_what_is_inferred(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.holds_any_where_told(file, e, expected) {
+        if !self.has_any_where_type_is_expected(file, e, expected) {
             return false;
         }
         let mut argument = e;
@@ -740,7 +765,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the literal, or a literal within it, has an `any` for a property of which `expected` says what it is.
-    fn holds_any_where_told(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
+    fn has_any_where_type_is_expected(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Object(props) => props.iter().any(|p| {
@@ -749,10 +774,10 @@ impl<'p, 's> Checker<'p, 's> {
                     return false;
                 }
                 let Some(declared) = self.type_of_property(expected, name).filter(|&declared| !self.says_nothing(declared)) else { return false };
-                self.type_of_expr(file, hir[p].value).is_any() || self.holds_any_where_told(file, hir[p].value, declared)
+                self.type_of_expr(file, hir[p].value).is_any() || self.has_any_where_type_is_expected(file, hir[p].value, declared)
             }),
             ExprKind::Array(elements) => match self.index_type_of_type(expected, TypeId::NUMBER) {
-                Some(declared) => hir.ids(elements).any(|element| self.holds_any_where_told(file, element, declared)),
+                Some(declared) => hir.ids(elements).any(|element| self.has_any_where_type_is_expected(file, element, declared)),
                 None => false,
             },
             _ => false,
@@ -882,7 +907,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         self.files().options.specified_use_define_for_class_fields == Some(false)
             && !hir.is_js
-            && !self.is_held_to_the_fixed_set(file)
+            && !self.is_restricted_to_fixed_set(file)
             && !hir[class].members.iter().any(|member| {
                 let m = &hir[member];
                 m.kind == MemberKind::Property && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) && matches!(m.key, PropKey::Computed(_))
@@ -1302,7 +1327,13 @@ impl<'p, 's> Checker<'p, 's> {
         known.functions.contains(&(file, func)) || known.every && self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && self.may_be_a_value(file, func)
     }
 
-    pub fn keeps_field_names_off_its_prototype(&self, file: FileId, func: FnId) -> bool {
+    pub fn functions_with_mutable_prototype(&self) -> Vec<(FileId, FnId)> {
+        let known = self.mutable_prototypes();
+        let constructor_functions = self.discriminants().constructor_functions.iter().map(|it| it.function);
+        known.functions.iter().copied().chain(constructor_functions.filter(|&(file, func)| known.every && self.may_be_a_value(file, func))).collect()
+    }
+
+    pub fn has_no_field_names_on_prototype(&self, file: FileId, func: FnId) -> bool {
         self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && !self.may_be_a_value(file, func)
     }
 
@@ -1608,10 +1639,10 @@ impl<'p, 's> Checker<'p, 's> {
         let declaring = self.classes_declaring_methods();
         let index = self.exprs_by_kind_of(file);
         let hir = self.hir(file);
-        let matters = |name: Atom, defines: bool| declaring.get(&name).is_some_and(|declared| defines || declared.iter().any(|declaration| !declaration.is_accessor));
+        let matters = |name: Atom, defines: bool| name == known::constructor || declaring.get(&name).is_some_and(|declared| defines || declared.iter().any(|declaration| !declaration.is_accessor));
         for &e in index.of(ExprTag::Dot) {
             let ExprKind::Dot { obj, name, .. } = hir[e].kind else { continue };
-            if declaring.contains_key(&name)
+            if (declaring.contains_key(&name) || name == known::constructor)
                 && let Some(defines) = self.store_to_access(file, e)
                 && matters(name, defines)
                 && !self.is_bound_to_its_object(file, e)
@@ -1687,6 +1718,45 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What is done to the property that the access `e` names, besides reading it: whether it is deleted, and not stored to. `None`: it
     /// is only read. What is stored to may be cast first: `(x.name as any) = value`.
+    pub(super) fn stores_of_checked_texts(&self) -> Option<&'p FxHashMap<Atom, Vec<(FileId, ExprId)>>> {
+        let all = || (0..self.files.modules.len() as u32).map(FileId);
+        let known = &self.p.aot.classes.stores_of_checked_texts;
+        if known.get().is_none() && !all().any(|file| self.is_compiled(file)) {
+            return None;
+        }
+        Some(known.get_or_init(|| {
+            let standing_in: FxHashMap<&[u8], FileId> = (all().filter(|&file| self.only_declares(file) && self.hir(file).kind != FileKind::Declaration && self.hir(file).decorators.is_empty()))
+                .map(|file| (self.files.module(file).file_name(), file))
+                .collect();
+            let made_of = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file));
+            let mut texts: Vec<FileId> = made_of.filter_map(|file| standing_in.get(self.files.module(file).file_name().strip_suffix(b".js")?).copied()).collect();
+            texts.sort_unstable_by_key(|file| file.0);
+            texts.dedup();
+            let mut found: FxHashMap<Atom, Vec<(FileId, ExprId)>> = FxHashMap::default();
+            for file in texts {
+                let hir = self.hir(file);
+                if self.bound(file).ran_out_of_stack {
+                    continue;
+                }
+                for (e, node) in hir.exprs.iter().enumerate() {
+                    let name = match node.kind {
+                        ExprKind::Dot { name, .. } => name,
+                        ExprKind::Index { index, .. } => match hir[index].kind {
+                            ExprKind::String(name) => name,
+                            _ => continue,
+                        },
+                        _ => continue,
+                    };
+                    let e = ExprId(e as u32);
+                    if self.store_to_access(file, e) == Some(false) {
+                        found.entry(name).or_default().push((file, e));
+                    }
+                }
+            }
+            found
+        }))
+    }
+
     fn store_to_access(&self, file: FileId, mut e: ExprId) -> Option<bool> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         while let Parent::Expr(parent) = bound.expr_parent[e.idx()]
@@ -1707,6 +1777,20 @@ impl<'p, 's> Checker<'p, 's> {
         let yielded = self.type_yielded_by(file, object);
         if yielded != own {
             out.push((yielded, name, defines));
+        }
+        let mut below = (file, object);
+        for _ in 0..8 {
+            let inner = match self.hir(below.0)[below.1].kind {
+                ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => Some((below.0, expr)),
+                ExprKind::Ident(variable) => self.binding_of_identifier(below.0, below.1, variable).and_then(|sym| self.initializer_of_const(sym)),
+                _ => None,
+            };
+            let Some(inner) = inner else { break };
+            below = inner;
+            let written = self.type_of_expr(below.0, below.1);
+            if written != own && written != yielded {
+                out.push((written, name, defines));
+            }
         }
     }
 
@@ -1789,9 +1873,15 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mut seen = FxHashSet::default();
+        let declared_by_nobody = Vec::new();
         for MethodStore { object, name: text, defines } in stores {
             let Some(name) = self.atoms().lookup(&text) else { continue };
-            let Some(declared_by) = declaring.get(&name) else { continue };
+            let is_constructor = &*text == b"constructor";
+            let declared_by = match declaring.get(&name) {
+                Some(declared_by) => declared_by,
+                None if is_constructor => &declared_by_nobody,
+                None => continue,
+            };
             let mut parts = vec![object];
             while let Some(mut part) = parts.pop() {
                 if self.is_instantiable(part) {
@@ -1826,6 +1916,17 @@ impl<'p, 's> Checker<'p, 's> {
                             if visited.insert(child) {
                                 having.push(child);
                             }
+                        }
+                    }
+                }
+                if is_constructor {
+                    let mut marked: Vec<(FileId, ClassId)> = stored_to.iter().filter(|stored| !stored.1).map(|stored| stored.0).collect();
+                    while let Some(class) = marked.pop() {
+                        let members = replaced.by_class.entry(class).or_default();
+                        if !members.contains(&(name, false)) {
+                            members.push((name, false));
+                            replaced.names.entry(text.clone()).or_insert(name);
+                            marked.extend(hierarchy.children.get(&class).into_iter().flatten().copied());
                         }
                     }
                 }
@@ -1914,6 +2015,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             found
         })
+    }
+
+    pub(super) fn precompute_class_tables(&self) {
+        self.discriminants();
+        self.mutable_prototypes();
+        self.classes_declaring_methods();
     }
 
     /// The functions of the program that declare their `this`, in program order (`rank_of_file`).
@@ -2032,9 +2139,20 @@ impl<'p, 's> Checker<'p, 's> {
         if props.iter().any(|p| hir[p].kind == PropKind::Spread || !matches!(hir[p].key, PropKey::Name(_))) {
             return None;
         }
+        let mut times_written: FxHashMap<Atom, u32> = FxHashMap::default();
+        if props.len >= 32 {
+            for p in props.iter() {
+                if let PropKey::Name(name) = hir[p].key {
+                    *times_written.entry(name).or_default() += 1;
+                }
+            }
+        }
         props.iter().find_map(|p| {
             let PropKey::Name(name) = hir[p].key else { return None };
-            let is_written_once = props.iter().filter(|&other| matches!(hir[other].key, PropKey::Name(of_other) if of_other == name)).count() == 1;
+            let is_written_once = match times_written.get(&name) {
+                Some(&times) => times == 1,
+                None => props.iter().filter(|&other| matches!(hir[other].key, PropKey::Name(of_other) if of_other == name)).count() == 1,
+            };
             (matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) && is_written_once && self.is_immutable_discriminant(made, name)).then_some(name)
         })
     }
@@ -2060,7 +2178,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             func.some()
         };
-        let function_handed_this = |e: ExprId| {
+        let function_passed_this = |e: ExprId| {
             let mut at = bound.expr_parent[e.idx()];
             loop {
                 at = match at {
@@ -2073,7 +2191,7 @@ impl<'p, 's> Checker<'p, 's> {
                 };
             }
         };
-        found.mentioning_this.extend(index.of(ExprTag::This).iter().filter_map(|&e| function_handed_this(e)));
+        found.mentioning_this.extend(index.of(ExprTag::This).iter().filter_map(|&e| function_passed_this(e)));
         found.mentioning_new_target.extend(index.of(ExprTag::NewTarget).iter().filter_map(|&e| receiver_of(e)));
         found.mentioning_super.extend(index.of(ExprTag::Super).iter().filter_map(|&e| receiver_of(e)));
         let mut mentions_of_this: FxHashMap<FnId, Vec<ExprId>> = FxHashMap::default();
@@ -2131,10 +2249,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the function, which is no arrow function, looks at its `this`: it mentions `this` or `super`, also from within an arrow
     /// function, or it is a constructor, which initializes it.
     pub(super) fn uses_this(&mut self, file: FileId, func: FnId) -> bool {
-        self.hir(file)[func].kind == FnKind::Constructor || self.looks_at_this(file, func) || self.class_facts_of_file(file).mentioning_super.contains(&func)
+        self.hir(file)[func].kind == FnKind::Constructor || self.inspects_this(file, func) || self.class_facts_of_file(file).mentioning_super.contains(&func)
     }
 
-    pub fn looks_at_this(&mut self, file: FileId, func: FnId) -> bool {
+    pub fn inspects_this(&mut self, file: FileId, func: FnId) -> bool {
         self.bound(file).fns[func.idx()].contains_this || self.class_facts_of_file(file).mentioning_this.contains(&func)
     }
 

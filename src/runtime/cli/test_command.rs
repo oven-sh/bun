@@ -1787,11 +1787,13 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> =
-            crate::cli::aot::graph(ctx)?.map(|graph| crate::cli::aot::as_dyn(graph));
+        let aot_graph = crate::cli::aot::graph(ctx)?;
+        let crash_if_interpreter_is_used = aot_graph.as_ref().is_some_and(|graph| graph.runtime_options.crash_if_interpreter_is_used);
+        let aot_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph> = aot_graph.map(|graph| crate::cli::aot::as_dyn(graph));
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
             use_aot: aot_graph.is_some_and(|graph| !graph.aot_image().is_empty()),
+            crash_if_interpreter_is_used,
             ..Default::default()
         });
         if aot_graph.is_some() {
@@ -2696,11 +2698,11 @@ impl TestCommand {
         if aot_graph.is_some() {
             let thrown = Bun__AOT__typeErrorsThrown();
             let thrown = thrown.to_utf8();
-            let places = thrown.split(|&byte| byte == b'\n').filter(|place| !place.is_empty());
+            let places = bun_core::strings::split(&thrown, b"\n").filter(|place| !place.is_empty());
             let count = places.clone().filter(|place| !place.starts_with(b"...")).count();
             if count > 0 {
                 pretty_error!(
-                    "<yellow>{} type error{} of --aot<r> thrown during this run, caught or not:\n",
+                    "<yellow>{} --aot type error{}<r> thrown during this run, caught or not:\n",
                     count,
                     if count == 1 { "" } else { "s" }
                 );

@@ -28,7 +28,7 @@ use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
-use super::OnceLock;
+use std::sync::OnceLock;
 
 /// The type of `this`, the interface that declares the name, the name. The types are `laid_out_as`.
 type Store = (TypeId, TypeId, Atom);
@@ -126,7 +126,7 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let extended: Vec<TypeId> = match *self.data(ty) {
-            TypeData::Ref { target, .. } if self.is_made_by_the_program(ty) => match self.members(ty) {
+            TypeData::Ref { target, .. } if self.is_created_by_program(ty) => match self.members(ty) {
                 Some(members) => self.base_types(target).into_vec().into_iter().map(|base| self.instantiate(base, members.mapper)).collect(),
                 None => Vec::new(),
             },

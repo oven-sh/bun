@@ -21,6 +21,15 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// It goes by the tree and the symbols alone: every task finds the same.
     pub fn builtin_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if let Some(&known) = self.aot.storage.builtins_held.get(&sym) {
+            return known;
+        }
+        let found = self.find_builtin_held_by(sym);
+        self.aot.storage.builtins_held.insert(sym, found);
+        found
+    }
+
+    fn find_builtin_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
         let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
         let hir = self.hir(file);
         let PatParent::Var(d) = root_declaration(self.bound(file), pat) else { return None };
@@ -34,7 +43,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The same for a variable of any kind that nothing is ever stored to but by its own declaration, whoever may read it before that has run: it holds `undefined` until then (or
     /// is in its dead zone), and the function from then on. The path. The initializer may be `typeof P === "function" ? P : q`, `P || q` or `P ?? q`, which come to `P`.
-    pub fn builtin_or_undefined_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+    pub fn builtin_or_undefined_in_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if let Some(&known) = self.aot.storage.builtins_held_or_undefined.get(&sym) {
+            return known;
+        }
+        let found = self.find_builtin_or_undefined_in_variable(sym);
+        self.aot.storage.builtins_held_or_undefined.insert(sym, found);
+        found
+    }
+
+    fn find_builtin_or_undefined_in_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
         let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
@@ -47,11 +65,11 @@ impl<'p, 's> Checker<'p, 's> {
         if is_seen_elsewhere || symbol.decls.len() != 1 || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) {
             return None;
         }
-        let path = self.path_that_initializer_comes_to(file, hir[d].init)?;
+        let path = self.path_of_initializer(file, hir[d].init)?;
         Some((file, path))
     }
 
-    pub fn is_number_taken_by_builtin_at(&self, file: FileId, path: ExprId) -> Vec<Option<bool>> {
+    pub fn is_number_parameter_of_builtin_at(&self, file: FileId, path: ExprId) -> Vec<Option<bool>> {
         let hir = self.hir(file);
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[path].kind else { return Vec::new() };
         let ExprKind::Ident(holder) = hir[obj].kind else { return Vec::new() };
@@ -73,7 +91,7 @@ impl<'p, 's> Checker<'p, 's> {
         taken
     }
 
-    fn path_that_initializer_comes_to(&mut self, file: FileId, init: ExprId) -> Option<ExprId> {
+    fn path_of_initializer(&mut self, file: FileId, init: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         let path = match hir[init].kind {
             ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, .. } => left,
@@ -109,7 +127,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    fn is_path_to_builtin_function(&mut self, file: FileId, path: ExprId) -> bool {
+    pub fn is_path_to_builtin_function(&mut self, file: FileId, path: ExprId) -> bool {
         let hir = self.hir(file);
         let (of, name) = match hir[path].kind {
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => (obj, self.atoms().bytes(name).to_vec()),

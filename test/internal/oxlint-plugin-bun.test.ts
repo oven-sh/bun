@@ -198,6 +198,29 @@ if (map.entry != null) {
     expect(exitCode).toBe(1);
   });
 
+  test("ignores bodies that write to the same property through a non-null assertion", async () => {
+    const { stdout, stderr, exitCode } = await runOxlint({
+      "writes.ts": `
+declare const self: { count?: number; pos?: number; size?: number };
+declare function use(value: number): void;
+if (self.count === 0) {
+  self.count!++;
+}
+if (self.pos !== undefined) {
+  self.pos! += 1;
+}
+// a read through a non-null assertion is still a read (positive control)
+if (self.size !== undefined) {
+  use(self.size!);
+}
+`,
+    });
+
+    expect(stderr).not.toContain("Failed");
+    expect(diagnostics(stdout)).toEqual([{ file: "writes.ts", line: 11, rule: RULE }]);
+    expect(exitCode).toBe(1);
+  });
+
   test("inline disable comment suppresses the diagnostic", async () => {
     const { stdout, stderr, exitCode } = await runOxlint({
       "suppressed.js": `

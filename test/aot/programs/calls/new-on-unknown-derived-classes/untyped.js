@@ -16,13 +16,13 @@ class D extends B { constructor(x, y) { log.push("D before " + new.target.name);
 class E extends D { constructor(x, y, z) { super(x, y); this.z = z; } who() { return "E" + super.who(); } }
 function F(x) { this.x = x; }
 F.prototype.who = function () { return "F"; };
-// So that the sites have met ordinary constructors, derived ones and what is no closure of the program.
+// So that the sites have seen ordinary constructors, derived ones and values that are not closures of the program.
 for (let i = 0; i < 40; i++) { make0(B); make0(F); make0(Object); make1(B, i); make1(F, i); make1(D, i); make2(D, i, i); make2(B, i, i); make3(E, i, i, i); make3(B, i, i, i); make3(Array, 1, 2, 3); } log.length = 0;
 say("one level", () => { const o = make2(D, 1, 2); return [o.x, o.y, o.who(), o instanceof D, o instanceof B, Object.getPrototypeOf(o) === D.prototype, Object.keys(o), o.constructor === D, take()]; });
 say("two levels", () => { const o = make3(E, 1, 2, 3); return [o.x, o.y, o.z, o.who(), o instanceof E, Object.getPrototypeOf(o) === E.prototype, Object.keys(o), take()]; });
 say("by turns at one site", () => { let t = []; for (const C of [B, D, F, E, D, B, E, F]) { const o = make3(C, 1, 2, 3); t.push(o.who() + Object.keys(o).join("")); } log.length = 0; return t; });
 say("in a loop", () => { let t = 0; for (let i = 0; i < 3000; i++) { const o = make3(i & 1 ? E : D, i, 1, 2); t += o.x + o.y + (o.z || 0); } log.length = 0; return t; });
-// The number of arguments against the number of parameters and of registers; new.target is no argument.
+// The number of arguments compared with the number of parameters and of registers; new.target is not an argument.
 class Counts extends B { constructor(a, b) { super(a); this.n = arguments.length; this.list = Array.prototype.slice.call(arguments); this.b = b; } }
 class Rest extends B { constructor(a, ...rest) { super(a); this.rest = rest; } }
 class Defaults extends B { constructor(a = "da", b = "db") { super(a); this.b = b; } }
@@ -62,7 +62,7 @@ class Fields extends B { a = log.push("field a") && this.x; #p = 5; static s = 1
 class FieldsOnly extends Fields { c = this.a + 1; }
 say("fields", () => { log.length = 0; const o = make1(Fields, 4); return [o.a, o.p, Fields.is(o), Fields.is({}), Object.keys(o), take()]; });
 say("fields of an heir without a constructor", () => { log.length = 0; const o = make1(FieldsOnly, 4); return [o.a, o.c, o.p, Object.keys(o), take()]; });
-// What can stand behind `extends`.
+// The possible `extends` expressions.
 class OfFunction extends F { constructor(x) { super(x); this.y = 1; } }
 class OfError extends Error { constructor(m) { super(m); this.code = 7; } }
 class OfTypeError extends TypeError { }
@@ -101,16 +101,16 @@ say("new.target", () => { log.length = 0; const a = make0(Target), b = make0(Tar
 say("construct with another target", () => { log.length = 0; const o = Reflect.construct(D, [1, 2], Plain); return [o.tag, o.x, o.y, o instanceof D, take()]; });
 say("construct a base with a derived target", () => { log.length = 0; const o = Reflect.construct(B, [1], E); return [o.x, o instanceof E, Object.keys(o), take()]; });
 say("construct with a target that is no constructor", () => Reflect.construct(D, [1, 2], () => 1));
-// It is no function to call.
+// It cannot be called as a function.
 say("called", () => D(1, 2));
 say("called through call", () => D.call({}, 1, 2));
 say("called through a value", () => { const f = [D][0]; return f(1); });
-// What the class object inherits from is asked when it constructs.
+// The prototype of the class object is read when it constructs.
 class Moves extends B { constructor(x) { super(x); this.m = 1; } }
 class Elsewhere { constructor(x) { this.elsewhere = x; } }
 say("the parent changed", () => { log.length = 0; const a = make1(Moves, 1); Object.setPrototypeOf(Moves, Elsewhere); const b = make1(Moves, 2); Object.setPrototypeOf(Moves, E); const c = make1(Moves, 3); Object.setPrototypeOf(Moves, null); let d; try { make1(Moves, 4); } catch (e) { d = e.constructor.name; } Object.setPrototypeOf(Moves, B); const f = make1(Moves, 5); log.length = 0; return [Object.keys(a), Object.keys(b), Object.keys(c), d, Object.keys(f), b instanceof Moves, b instanceof Elsewhere]; });
 say("the prototype's parent changed", () => { class Q extends B { constructor() { super(1); } } Object.setPrototypeOf(Q.prototype, { from: "elsewhere" }); const o = make0(Q); log.length = 0; return [o.from, o.x, o instanceof B, o instanceof Q]; });
-// What is thrown on the way, with handlers at the site and within.
+// Exceptions thrown along the way, with handlers at the site and inside.
 class Throws { constructor(x) { if (x) throw new RangeError("base"); this.ok = 1; } }
 class OverThrows extends Throws { constructor(x) { log.push("in"); super(x); log.push("not reached " + x); } }
 class Catches extends Throws { constructor(x) { try { super(x); } catch (e) { log.push("caught " + e.message); super(0); } } }
@@ -124,7 +124,7 @@ say("throws before", () => make0(ThrowsBefore)); say("throws after", () => make0
 class Deep extends B { constructor(n) { super(n); if (n) this.next = make1(Deep, n - 1); } }
 say("a hundred deep", () => { let o = make1(Deep, 100), n = 0; while (o.next) { o = o.next; n++; } log.length = 0; return n; });
 say("too deep", () => { try { return make1(Deep, 1000000); } finally { log.length = 0; } });
-// What is no constructor at all, at the same sites.
+// Values that are not constructors at all, at the same sites.
 for (const [n, v] of [["an arrow", () => 1], ["a method", { m() { } }.m], ["an async function", async function () { }], ["a generator", function* () { }], ["undefined", undefined], ["a number", 1], ["an object", {}], ["Symbol", Symbol], ["Math.max", Math.max]])
     say("new of " + n, () => make1(v, 1));
 say("the sites still serve the others", () => { const r = [make1(B, 1).x, make1(F, 2).x, make2(D, 3, 4).y, make3(Array, 1, 2, 3).length, make1(Number, 5) + 1, typeof make0(Date), make1(String, "s").length]; log.length = 0; return r; });

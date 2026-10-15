@@ -1,5 +1,5 @@
-// `const x = a[i]!` whose every use is a comparison, arithmetic on numbers or a test asserts nothing, like `a[i]!` written there
-// itself. So does `switch (a[i]!)`. One other use, and the `!` throws where there is no such element.
+// `const x = a[i]!` whose every use is a comparison, arithmetic on numbers or a test asserts nothing, like `a[i]!` written
+// in those places. The same goes for `switch (a[i]!)`. With any other use, the `!` throws where the element is missing.
 function lastDue(offsets: number[], end: number) {
   let last = -1
   for (;;) {

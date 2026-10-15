@@ -31,6 +31,21 @@ pub fn typed_package(root: &[u8], defines: &Defines, directory: &[u8], name: &[u
     (files, Some(said.into_boxed_str()))
 }
 
+pub fn typed_version_that_lays(root: &[u8], directory: &[u8], name: &[u8], path: &[u8], text: &[u8]) -> Option<Vec<u8>> {
+    let root = match root {
+        [before @ .., last] if !before.is_empty() && is_separator(*last) => before,
+        _ => root,
+    };
+    let name: Vec<u8> = name.iter().map(|&byte| if is_separator(byte) { b'/' } else { byte }).collect();
+    let home = home_of(root, &name)?;
+    let inside = match path.strip_prefix(directory)? {
+        [first, inside @ ..] if is_separator(*first) => inside,
+        _ => return None,
+    };
+    let shown = home.strip_prefix(root).map_or(&home[..], |inside| &inside[1..]);
+    (read(&join(&[&home, REPLACEMENTS, inside]))? == text).then(|| shown.to_vec())
+}
+
 fn is_separator(byte: u8) -> bool {
     byte == b'/' || cfg!(windows) && byte == b'\\'
 }
@@ -56,7 +71,7 @@ fn read_json(path: &[u8]) -> Option<Json> {
 
 fn companion_of(name: &[u8]) -> Vec<u8> {
     let flat = match name.strip_prefix(b"@") {
-        Some(scoped) => scoped.split(|&byte| byte == b'/').collect::<Vec<_>>().join(&b"__"[..]),
+        Some(scoped) => bun_core::strings::split(scoped, b"/").collect::<Vec<_>>().join(&b"__"[..]),
         None => name.to_vec(),
     };
     join(&[SCOPE, &flat])
@@ -77,11 +92,11 @@ fn home_of(root: &[u8], name: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn is_a_path_inside(path: &[u8]) -> bool {
-    path != PACKAGE_JSON && !path.contains(&b'\\') && !path.contains(&0) && path.split(|&byte| byte == b'/').all(|part| !matches!(part, b"" | b"." | b".."))
+    path != PACKAGE_JSON && bun_core::strings::index_of_any(path, b"\\\0").is_none() && bun_core::strings::split(path, b"/").all(|part| !matches!(part, b"" | b"." | b".."))
 }
 
 fn is_the_name_of_a_package(name: &[u8]) -> bool {
-    is_a_path_inside(name) && name.split(|&byte| byte == b'/').count() == if name.starts_with(b"@") { 2 } else { 1 }
+    is_a_path_inside(name) && bun_core::strings::split(name, b"/").count() == if name.starts_with(b"@") { 2 } else { 1 }
 }
 
 fn entries<'m>(manifest: &'m Json, field: &str) -> Result<Vec<(&'m [u8], &'m [u8])>, String> {

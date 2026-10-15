@@ -135,10 +135,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// What a variable or a parameter of an untyped file holds over its whole life, going by what is stored to it and by no type.
     /// A place is blank before anything is stored to it. There is no symbol to stand in for that: see `blank_of`.
     fn ty_by_stores(&mut self, sym: Sym) -> Ty {
-        let kinds = self.c.kinds_held_by(sym);
+        let kinds = self.ask(|c| c.kinds_held_by(sym));
         let described = self.ty_of_kinds(if kinds & kind::SYMBOL != 0 { kinds | kind::UNDEFINED } else { kinds });
         // Not `bigint | integers 0..9`, which no typed code has ever come up with.
-        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER { self.c.integers_of_symbol(sym) } else { None };
+        let integers = if kinds & (kind::NUMBER | kind::BIGINT) == kind::NUMBER { self.ask(|c| c.integers_of_symbol(sym)) } else { None };
         let described = self.with_integers(described, integers);
         Ty::of(self.unless_plain_number(described))
     }
@@ -172,20 +172,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_untyped_file(file) {
             return name.map_or(Ty::NONE, |name| self.ty_by_stores(name));
         }
-        let storage = self.c.storage_of_param(file, p);
+        let storage = self.ask(|c| c.storage_of_param(file, p));
         self.ty_of_storage(storage, name)
     }
 
     /// Why an argument for the parameter is held to its type.
     pub(crate) fn why_of_param(&mut self, file: FileId, p: ParamId) -> Why {
-        if self.c.is_param_annotated(file, p) { Why::Cast } else { Why::Store }
+        if self.ask(|c| c.is_param_annotated(file, p)) { Why::Cast } else { Why::Store }
     }
 
     /// `sym`: the place, if it has a name of its own.
     fn ty_of_storage(&mut self, storage: Storage, sym: Option<Sym>) -> Ty {
         let mut id = self.declared(storage.ty);
-        if let Some(sym) = sym {
-            let integers = self.c.integers_of_symbol(sym);
+        if let Some(sym) = sym
+            && id.is_some()
+            && self.out.tys.get(id).prims & prim::NUMBER != 0
+        {
+            let integers = self.ask(|c| c.integers_of_symbol(sym));
             id = self.with_integers(id, integers);
         }
         if id.is_some() && storage.starts_undefined {
@@ -248,6 +251,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn or_undefined(&mut self, ty: TyId) -> TyId {
         let widened = self.out.tys.get(ty).or(&Declared::prims(prim::UNDEFINED));
+        self.out.tys.intern(widened)
+    }
+
+    pub(crate) fn or_any_primitive(&mut self, ty: TyId) -> TyId {
+        let widened = self.out.tys.get(ty).or(&Declared::prims(prim::ALL));
         self.out.tys.intern(widened)
     }
 
@@ -436,6 +444,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         !self.is_untyped_file(file) && hir.kind != FileKind::Json && !self.only_declares(file)
     }
 
+    pub(crate) fn is_declared_by_declaration_files_alone(&mut self, ty: TypeId) -> bool {
+        if ty == TypeId::UNRESOLVED || self.c.says_nothing(ty) {
+            return false;
+        }
+        self.c.parts(ty).to_vec().into_iter().any(|part| matches!(self.c.data(part), TypeData::Ref { target, .. } if self.only_declares(target.file) && !self.files.module(target.file).is_lib))
+    }
+
     fn ty_of_reference(&mut self, ty: TypeId, target: Sym, depth: u8) -> Declared {
         if self.c.is_array(ty) {
             return self.array_of(ty, depth);
@@ -479,10 +494,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if self.c.atoms().bytes(name) == b"Promise" {
                 return Declared::any_object();
             }
+            if self.only_declares(target.file) && !self.files.module(target.file).is_lib {
+                return Declared::anything();
+            }
             let arguments: Vec<TypeId> = self.c.type_arguments(ty).to_vec();
             let arguments = arguments.into_iter().map(|argument| self.ty_within(argument, depth + 1)).collect();
             let name = self.str(name);
             return Declared::part(Part::Global(name, arguments));
+        }
+        if self.only_declares(target.file) {
+            return Declared::anything();
         }
         Declared::any_object()
     }
@@ -539,6 +560,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             may_be_frozen: false,
             admits_foreign: false,
             is_opened_for_the_log: false,
+            admits_only_other_layouts: false,
             members: Vec::new(),
             members_by_fit: Vec::new(),
             specializations: Vec::new(),
@@ -613,6 +635,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn accessors_of_literal(&mut self, ty: TypeId) -> Vec<crate::ir::Method> {
         let TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..) | Origin::WidenedLiteral(file, literal, ..), .. } = *self.c.data(ty) else { return Vec::new() };
+        if self.only_declares(file) {
+            return Vec::new();
+        }
         let hir = self.hir(file);
         let bun_sema::hir::ExprKind::Object(props) = hir[literal].kind else { return Vec::new() };
         let mut accessors = Vec::new();
@@ -667,7 +692,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return None;
             }
             let mut flags = 0;
-            if prop.flags.contains(PropFlags::OPTIONAL) {
+            if prop.flags.contains(PropFlags::OPTIONAL) || self.c.is_deleted_from_untyped_objects(prop.name) {
                 flags |= field_flags::OPTIONAL;
             }
             if prop.flags.contains(PropFlags::METHOD) {
@@ -739,6 +764,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 for (field, sym) in declared_by {
                     let storage = self.c.storage_of_field(sym, &extended);
                     let declared = self.ty_of_storage(storage, Some(sym));
+                    let name = self.files.symbol(sym).name;
+                    let is_stored_to_as_more = self.laid_out_classes.get(&layout).copied().is_some_and(|(file, class)| {
+                        let instances = self.c.type_of_instances(file, class);
+                        self.c.is_stored_to_as_more_by_a_checked_text(instances, name)
+                    });
+                    let declared = if is_stored_to_as_more { Ty { id: self.out.tys.anything, checked: TypeId::UNKNOWN } } else { declared };
                     self.out.layouts[layout.idx()].fields[field as usize].declared = declared.id;
                     self.out.layouts[layout.idx()].fields[field as usize].literals = self.literals_of(declared.checked);
                     self.checked_fields.insert((layout, field), declared.checked);
@@ -766,7 +797,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn is_inferred_from_first_value_alone(&mut self, prop: &Prop, found_in: TypeId, checked: TypeId) -> bool {
+    fn is_inferred_only_from_first_value(&mut self, prop: &Prop, found_in: TypeId, checked: TypeId) -> bool {
         if !matches!(self.c.data(found_in), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) || prop.flags.contains(PropFlags::READONLY) || self.c.is_prop_annotated(prop) {
             return false;
         }
@@ -780,9 +811,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Gives the field the type of the property, which was found in a type whose mapper is `mapper`.
     fn type_field_as_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId, found_in: TypeId) {
-        let checked = if self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) { TypeId::UNKNOWN } else { self.c.type_held_by_prop(prop, mapper) };
-        let checked = if self.is_inferred_from_first_value_alone(prop, found_in, checked) { TypeId::UNKNOWN } else { checked };
-        let checked = if prop.flags.contains(PropFlags::OPTIONAL) && !self.c.admits_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
+        let is_predicted = self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) || self.c.is_stored_to_as_more_by_a_checked_text(found_in, prop.name);
+        let checked = if is_predicted { TypeId::UNKNOWN } else { self.c.type_held_by_prop(prop, mapper) };
+        let checked = if self.is_inferred_only_from_first_value(prop, found_in, checked) { TypeId::UNKNOWN } else { checked };
+        let may_be_absent = prop.flags.contains(PropFlags::OPTIONAL) || self.out.layouts[layout.idx()].fields[field as usize].flags & field_flags::OPTIONAL != 0;
+        let checked = if may_be_absent && !self.c.admits_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
         let declared = self.declared(checked);
         let written = self.c.integers_written_for_prop(prop);
         let declared = self.with_integers(declared, written);

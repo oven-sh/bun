@@ -298,7 +298,19 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_posix()
+#if OS(LINUX)
+static uint64_t inheritedFileDescriptors = 0;
+
+extern "C" void bun_remember_inherited_file_descriptors()
+{
+    for (int fd = 3; fd < 64; fd++) {
+        if (fcntl(fd, F_GETFD, 0) != -1)
+            inheritedFileDescriptors |= 1ULL << fd;
+    }
+}
+#endif
+
+extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheritedFileDescriptors)
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
@@ -308,7 +320,16 @@ extern "C" void on_before_reload_process_posix()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
-    bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+    if (closeInheritedFileDescriptors)
+        bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
+#if OS(LINUX)
+    if (!closeInheritedFileDescriptors) {
+        for (int fd = 3; fd < 64; fd++) {
+            if (inheritedFileDescriptors & (1ULL << fd))
+                unset_cloexec(fd);
+        }
+    }
 #endif
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in

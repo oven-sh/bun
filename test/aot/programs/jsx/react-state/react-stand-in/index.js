@@ -1,4 +1,4 @@
-// A stand-in for React in tests: one component instance, hooks by call order. `breakContract(value)`: from then on the hooks yield `value` in place of what the program put in, which React never does.
+// A stand-in for React in tests: one component instance, hooks by call order. After `breakContract(value)` the hooks return `value` instead of what the program stored, which React never does.
 let hooks = [], at = 0, broken = false, instead;
 function same(a, b) { return a.length === b.length && a.every((x, i) => Object.is(x, b[i])); }
 export function render(component, props) { at = 0; return component(props); }

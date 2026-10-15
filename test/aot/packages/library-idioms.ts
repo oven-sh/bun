@@ -423,4 +423,103 @@ ${js}t("x", () => [w.native, w.why, w.add(2, 3), w.add(2147483647, 1)]);
 `,
     },
   },
+  {
+    // zod 4's normalizeParams() deletes `message` from the options object that it is handed.
+    name: "members-deleted-from-options",
+    files: {
+      ...pkg(
+        "tinyparams",
+        {
+          "index.js": `function normalize(_params) {
+  const params = _params;
+  if (!params) return {};
+  if (typeof params === "string") return { error: () => params };
+  if (params.message !== undefined) {
+    if (params.error !== undefined) throw new Error("Cannot specify both message and error params");
+    params.error = params.message;
+  }
+  delete params.message;
+  if (typeof params.error === "string") return { ...params, error: () => params.error };
+  return params;
+}
+function dropCount(value) { delete value.count; }
+function dropByLiteralKey(value) { delete value["label"]; }
+function reflectDrop(value) { Reflect.deleteProperty(value, "flag"); }
+module.exports = { normalize, dropCount, dropByLiteralKey, reflectDrop };
+`,
+          "index.d.ts": `export function normalize(params?: string | { message?: string; abort?: boolean }): { error?: () => string; abort?: boolean };
+export function dropCount(value: object): void;
+export function dropByLiteralKey(value: object): void;
+export function reflectDrop(value: object): void;
+`,
+        },
+        { main: "index.js", types: "index.d.ts" },
+      ),
+    },
+    importers: {
+      "records.ts": `import { normalize, dropCount, dropByLiteralKey, reflectDrop } from "tinyparams";
+${ts}type Options = { message: string; abort: boolean }
+const shown = (r: { error?: () => string; abort?: boolean }) => Object.keys(r).join() + " " + r.error?.() + " " + r.abort
+function made(message: string): Options { return { message, abort: true } }
+const kept: Options = { message: "kept", abort: false }
+t("a literal as the argument", () => shown(normalize({ message: "inline", abort: true })))
+t("an annotated constant", () => shown(normalize(kept)))
+t("what a typed helper returns", () => shown(normalize(made("helper"))))
+t("a spread of a typed record", () => shown(normalize({ ...made("spread") })))
+t("the keys afterwards", () => Object.keys(kept).join() + " " + ("message" in kept) + " " + JSON.stringify(kept))
+t("stored again by typed code", () => { kept.message = "again"; return kept.message + " " + Object.keys(kept).join() })
+type Counted = { count: number; name: string }
+const counted: Counted = { count: 2.5, name: "n" }
+t("a number", () => { const before = counted.count + 1; dropCount(counted); return before + " " + Object.keys(counted).join() + " " + ("count" in counted) + " " + counted.name })
+t("a number, stored again", () => { counted.count = 4.5; return counted.count * 2 + " " + Object.keys(counted).join() })
+type Labeled = { label: string; on: boolean }
+const labeled: Labeled = { label: "l", on: true }
+t("by a key that is a literal", () => { dropByLiteralKey(labeled); return Object.keys(labeled).join() + " " + labeled.on })
+type Flagged = { flag: boolean; id: number }
+const flagged: Flagged = { flag: true, id: 7 }
+t("Reflect.deleteProperty", () => { reflectDrop(flagged); return Object.keys(flagged).join() + " " + flagged.id + " " + ("flag" in flagged) })
+let total = 0
+for (let i = 0; i < 1000; i++) { const o: Options = { message: "m" + i, abort: i % 2 === 0 }; total += o.message.length + (o.abort ? 1 : 0) }
+t("objects that nobody deletes from", () => total)
+`,
+    },
+  },
+  {
+    // What reducers, config mergers and form libraries do: they store a new plain object into a member of the state object that they are handed.
+    name: "records-stored-into-members",
+    files: {
+      ...pkg(
+        "tinyset",
+        {
+          "index.js": `exports.setInner = function (o, n) { o.inner = { n: n }; };
+exports.pushItem = function (o, n) { o.items.push({ n: n }); };
+exports.setList = function (o) { o.items = [{ n: 7 }, { n: 8 }]; };
+`,
+          "index.d.ts": `export function setInner(o: object, n: number): void;
+export function pushItem(o: object, n: number): void;
+export function setList(o: object): void;
+`,
+        },
+        { main: "index.js", types: "index.d.ts" },
+      ),
+    },
+    importers: {
+      "records.ts": `import { setInner, pushItem, setList } from "tinyset";
+${ts}const inferred = { id: 1, label: "l", inner: { n: 1.5 }, items: [{ n: 1 }] }
+interface Inner { n: number }
+interface State { id: number; label: string; inner: Inner; items: Inner[] }
+const annotated: State = { id: 2, label: "a", inner: { n: 2.5 }, items: [{ n: 2 }] }
+function made(): State { return { id: 3, label: "m", inner: { n: 3.5 }, items: [] } }
+t("inferred, a record is stored", () => { setInner(inferred, 4.5); return inferred.inner.n + 1 })
+t("annotated, a record is stored", () => { setInner(annotated, 5.5); return annotated.inner.n + 1 })
+t("made by a helper", () => { const s = made(); setInner(s, 6.5); return s.inner.n + 1 })
+t("inferred, pushed to its array", () => { pushItem(inferred, 9); return inferred.items.map(i => i.n).join() })
+t("annotated, pushed to its array", () => { pushItem(annotated, 9); return annotated.items.map(i => i.n).join() })
+t("inferred, its array replaced", () => { setList(inferred); return inferred.items.map(i => i.n).join() })
+t("annotated, its array replaced", () => { setList(annotated); return annotated.items.map(i => i.n).join() })
+t("the stored object is the same object", () => { const held: { n: number }[] = []; const keep = { id: 4, inner: { n: 0 } }; setInner(keep, 1.25); held.push(keep.inner); keep.inner.n = 2.25; return held[0].n + " " + (held[0] === keep.inner) + " " + JSON.stringify(keep) })
+t("stored twice", () => { const twice = { inner: { n: 0 } }; setInner(twice, 1); const first = twice.inner; setInner(twice, 2); return first.n + " " + twice.inner.n + " " + (first === twice.inner) })
+`,
+    },
+  },
 ];

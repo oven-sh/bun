@@ -4,7 +4,7 @@ use super::nil::{before_casts, targets_of};
 use crate::id::{FuncId, StrId, V};
 use crate::ir::{Func, Op, Program, Term, func_flags};
 
-pub(super) fn label_receivers_of_one_row(program: &mut Program, in_parallel: bun_sema::util::InParallel<'_>) -> Vec<String> {
+pub(super) fn find_receivers_of_one_row(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> (Vec<(FuncId, V)>, Vec<String>) {
     struct Receiver {
         func: u32,
         accesses: Vec<(V, bool, StrId)>,
@@ -194,36 +194,40 @@ pub(super) fn label_receivers_of_one_row(program: &mut Program, in_parallel: bun
     });
     let mut counted = [[0usize; 2]; 4];
     let mut labelled: Vec<(FuncId, V)> = Vec::new();
-    for (_, counted_here, mut labelled_here) in tasks {
+    for (_, counted_here, mut labeled_here) in tasks {
         for (class, here) in counted_here.into_iter().enumerate() {
             counted[class][0] += here[0];
             counted[class][1] += here[1];
         }
-        labelled.append(&mut labelled_here);
+        labelled.append(&mut labeled_here);
     }
     labelled.sort_unstable();
-    program.accesses_of_one_row = labelled;
     let mut lines = vec![format!("rows: untyped functions {functions}; rows born in the text {} (grown by the text: {}); receivers {}", rows.len(), is_grown.iter().filter(|&&grown| grown).count(), receivers.len())];
     for (class, what) in ["LABELLED: one row, not grown", "one row, GROWN in the text", "several rows have the names", "no birth in the text has the names"].iter().enumerate() {
         lines.push(format!("rows: {:>7} receivers, {:>8} accesses: {what}", counted[class][0], counted[class][1]));
     }
-    lines
+    (labelled, lines)
 }
 
-struct FlowOfLiterals {
+struct OrderOfBlocks {
     is_reached: Vec<bool>,
     entered: Vec<u32>,
     last_below: Vec<u32>,
     component: Vec<u32>,
     is_cyclic: Vec<bool>,
     successors: Vec<Vec<usize>>,
+}
+
+struct FlowOfLiterals<'a> {
+    func: &'a Func,
+    order: std::cell::OnceCell<OrderOfBlocks>,
     uses: rustc_hash::FxHashMap<V, Vec<usize>>,
     places: rustc_hash::FxHashMap<V, Vec<(u32, u32)>>,
     halts: Vec<Vec<u32>>,
 }
 
-impl FlowOfLiterals {
-    fn of(func: &Func) -> FlowOfLiterals {
+impl OrderOfBlocks {
+    fn of(func: &Func) -> OrderOfBlocks {
         let count = func.blocks.len();
         let successors: Vec<Vec<usize>> = func.blocks.iter().map(|block| targets_of(block.term.as_ref()).iter().map(|target| target.block.idx()).collect()).collect();
         let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); count];
@@ -344,9 +348,15 @@ impl FlowOfLiterals {
                 }
             }
         }
+        OrderOfBlocks { is_reached, entered, last_below, component, is_cyclic, successors }
+    }
+}
+
+impl<'a> FlowOfLiterals<'a> {
+    fn of(func: &'a Func) -> FlowOfLiterals<'a> {
         let mut uses: rustc_hash::FxHashMap<V, Vec<usize>> = Default::default();
         let mut places: rustc_hash::FxHashMap<V, Vec<(u32, u32)>> = Default::default();
-        let mut halts: Vec<Vec<u32>> = vec![Vec::new(); count];
+        let mut halts: Vec<Vec<u32>> = vec![Vec::new(); func.blocks.len()];
         for (number, block) in func.blocks.iter().enumerate() {
             let mut note = |operand: V, at: Option<usize>| {
                 if operand.is_none() {
@@ -383,25 +393,31 @@ impl FlowOfLiterals {
                 }
             }
         }
-        FlowOfLiterals { is_reached, entered, last_below, component, is_cyclic, successors, uses, places, halts }
+        FlowOfLiterals { func, order: std::cell::OnceCell::new(), uses, places, halts }
+    }
+
+    fn order(&self) -> &OrderOfBlocks {
+        self.order.get_or_init(|| OrderOfBlocks::of(self.func))
     }
 
     fn dominates(&self, above: usize, below: usize) -> bool {
-        !self.is_reached[below] || self.is_reached[above] && self.entered[above] <= self.entered[below] && self.entered[below] <= self.last_below[above]
+        let order = self.order();
+        !order.is_reached[below] || order.is_reached[above] && order.entered[above] <= order.entered[below] && order.entered[below] <= order.last_below[above]
     }
 
     fn lies_in_a_cycle(&self, block: usize, but_through: usize) -> bool {
-        if !self.is_cyclic[block] {
+        let order = self.order();
+        if !order.is_cyclic[block] {
             return false;
         }
-        let mut seen = vec![false; self.successors.len()];
-        let mut work = self.successors[block].clone();
+        let mut seen = vec![false; order.successors.len()];
+        let mut work = order.successors[block].clone();
         while let Some(next) = work.pop() {
             if next == block {
                 return true;
             }
-            if next != but_through && self.component[next] == self.component[block] && !std::mem::replace(&mut seen[next], true) {
-                work.extend_from_slice(&self.successors[next]);
+            if next != but_through && order.component[next] == order.component[block] && !std::mem::replace(&mut seen[next], true) {
+                work.extend_from_slice(&order.successors[next]);
             }
         }
         false
@@ -411,12 +427,13 @@ impl FlowOfLiterals {
 #[derive(Default)]
 struct WindowOfLiteral {
     row: Vec<StrId>,
-    defined_at_the_birth: usize,
+    defined_at_allocation: usize,
     stores: Vec<(V, StrId)>,
     defines_behind: Vec<(V, StrId)>,
+    ends_at_a_spread: bool,
 }
 
-fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs, define_field: Option<StrId>, it: V, born_in: usize, behind: usize) -> WindowOfLiteral {
+fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::Strs, define_field: Option<StrId>, copy_data_properties: Option<StrId>, it: V, allocated_in: usize, behind: usize) -> WindowOfLiteral {
     let mut window = WindowOfLiteral::default();
     let is_it = |operand: V| operand.is_some() && before_casts(func, operand) == it;
     let no_uses = Vec::new();
@@ -424,7 +441,7 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs,
     let no_places = Vec::new();
     let places = flow.places.get(&it).unwrap_or(&no_places);
     let mut done: Vec<usize> = Vec::new();
-    let (mut present, mut from) = (born_in, behind);
+    let (mut present, mut from) = (allocated_in, behind);
     loop {
         let block = &func.blocks[present];
         let halt = flow.halts[present].iter().copied().find(|&at| at as usize >= from);
@@ -443,8 +460,8 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs,
                         if !window.row.contains(&key) {
                             window.row.push(key);
                         }
-                        if present == born_in && window.defines_behind.is_empty() && !(block.ops.last() == Some(&v) && matches!(block.term, Some(Term::Invoke { .. }))) {
-                            window.defined_at_the_birth = window.row.len();
+                        if present == allocated_in && window.defines_behind.is_empty() && !(block.ops.last() == Some(&v) && matches!(block.term, Some(Term::Invoke { .. }))) {
+                            window.defined_at_allocation = window.row.len();
                         } else {
                             window.defines_behind.push((v, key));
                         }
@@ -463,6 +480,10 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs,
                     goes_on
                 }
                 &Op::PropGet { obj, name } if is_it(obj) => window.row.contains(&name),
+                Op::Operation { name, args } if Some(*name) == copy_data_properties && args.len() == 2 && is_it(args[0]) && !is_it(args[1]) => {
+                    window.ends_at_a_spread = true;
+                    false
+                }
                 _ => {
                     let mut others = 0usize;
                     op.for_each_operand(|operand| others += usize::from(is_it(operand)));
@@ -487,30 +508,31 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals, strs: &crate::ir::Strs,
         done.push(present);
         let later: Vec<usize> = uses.iter().copied().filter(|number| !done.contains(number)).collect();
         let Some(&next) = later.iter().find(|&&next| later.iter().all(|&other| flow.dominates(next, other))) else { return window };
-        if !flow.dominates(present, next) || flow.lies_in_a_cycle(next, born_in) {
+        if !flow.dominates(present, next) || flow.lies_in_a_cycle(next, allocated_in) {
             return window;
         }
         (present, from) = (next, 0);
     }
 }
 
-pub(super) fn find_first_stores(program: &mut Program, in_parallel: bun_sema::util::InParallel<'_>) {
+pub(super) fn find_first_stores(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) {
     const FUNCTIONS_OF_A_TASK: usize = 256;
     let define_field = program.strs.find(b"DefineField");
+    let copy_data_properties = program.strs.find(b"CopyDataProperties");
     let strs = &program.strs;
     type Found = Vec<(FuncId, V, u32)>;
     let mut tasks: Vec<(usize, &mut [Func], Found)> = program.funcs.chunks_mut(FUNCTIONS_OF_A_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_OF_A_TASK, funcs, Found::default())).collect();
     bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(first, funcs, found)| {
-        for (index, func) in funcs.iter_mut().enumerate() {
+        for (index, func) in funcs.iter_mut().enumerate().filter(|function| contents[*first + function.0] & super::has::OBJECT_LITERALS != 0) {
             let births: Vec<(V, usize, usize)> = func.blocks.iter().enumerate().flat_map(|(number, block)| block.ops.iter().enumerate().filter(|&(_, &v)| matches!(func.op(v), Some(Op::NewObject))).map(move |(at, &v)| (v, number, at + 1))).collect();
             if births.is_empty() {
                 continue;
             }
             let flow = FlowOfLiterals::of(func);
             let mut rewritten: Vec<(V, V, StrId, V)> = Vec::new();
-            for (it, born_in, behind) in births {
-                let window = window_of_literal(func, &flow, strs, define_field, it, born_in, behind);
-                if window.row.len() == window.defined_at_the_birth || window.row.len() > 62 || window.row.iter().any(|&name| is_index_name(strs.get(name))) {
+            for (it, allocated_in, behind) in births {
+                let window = window_of_literal(func, &flow, strs, define_field, copy_data_properties, it, allocated_in, behind);
+                if window.ends_at_a_spread || window.row.len() == window.defined_at_allocation || window.row.len() > 62 || window.row.iter().any(|&name| is_index_name(strs.get(name))) {
                     continue;
                 }
                 for &(define, name) in &window.defines_behind {
@@ -520,7 +542,7 @@ pub(super) fn find_first_stores(program: &mut Program, in_parallel: bun_sema::ut
                 }
                 let mut is_stored = vec![false; window.row.len()];
                 for (store, name) in window.defines_behind.into_iter().chain(window.stores) {
-                    if let Some(place) = window.row.iter().position(|&other| other == name).filter(|&place| place >= window.defined_at_the_birth) {
+                    if let Some(place) = window.row.iter().position(|&other| other == name).filter(|&place| place >= window.defined_at_allocation) {
                         let is_first = !std::mem::replace(&mut is_stored[place], true);
                         found.push((FuncId::new(*first + index), store, 1 << 30 | u32::from(is_first) << 9 | 1 << 8 | place as u32));
                     }
@@ -530,6 +552,7 @@ pub(super) fn find_first_stores(program: &mut Program, in_parallel: bun_sema::ut
                 func.values[define.idx()].def = crate::ir::Def::Op(Op::PropSet { obj, name, value });
             }
         }
+        found.sort_unstable();
     });
     let found: Vec<(FuncId, V, u32)> = tasks.into_iter().flat_map(|task| task.2).collect();
     program.known_places.extend(found);

@@ -90,5 +90,5 @@ print(growing(9) + " " + optional(undefined, 0));
 print(attempt(() => anything({ length: 3, charCodeAt(i: number) { return i === 0 ? 47 : NaN; } }, 0)) + " " + attempt(() => anything({ length: 3, charCodeAt() { return "47"; } }, 0)) + " " + attempt(() => anything(null, 0)) + " " + attempt(() => anything("a/", "1")));
 let big = ""; for (let i = 0; i < 3000; i++) big += i % 7 === 0 ? "/" : String.fromCharCode(32 + i % 90);
 print(countSlashes(big) + " " + classify(big) + " " + nested(big.slice(0, 200)));
-// The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
+// The functions that the expectations name must stay functions: one that is inlined into all of its callers has no code of its own.
 (globalThis as any).kept = [countSlashes, classify, countDigits, comparedWithFraction, comparedWithNegative, comparedWithVariable]; console.log("number");

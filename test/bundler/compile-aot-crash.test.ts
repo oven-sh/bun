@@ -1,6 +1,7 @@
 import { spawn } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 setDefaultTimeout(60_000);
@@ -14,8 +15,11 @@ const files = {
 import { read } from "bun:ffi";
 class Reader {
   constructor(public base: number) {}
+  byteAt(offset: number): number {
+    return read.u8(this.base + offset, 0) + 1;
+  }
   peek(offset: number): number {
-    return read.u8(this.base + offset, 0);
+    return this.byteAt(offset);
   }
 }
 function sum(reader: Reader): number {
@@ -35,8 +39,11 @@ console.log(start());
   }),
 };
 
+const folders: string[] = [];
+afterAll(() => folders.forEach(folder => rmSync(folder, { recursive: true, force: true })));
 async function crashed(flags: string[]) {
   const dir = String(tempDir("compile-aot-crash", files));
+  folders.push(dir);
   await using build = spawn({
     cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
     cwd: dir,
@@ -61,7 +68,7 @@ async function crashed(flags: string[]) {
   return { stderr, exe: join(dir, "app") };
 }
 
-test.if(isPosix)("a crash under compiled code names the compiled functions on the stack", async () => {
+test.if(isPosix)("a crash in compiled code lists the compiled functions on the stack", async () => {
   const { stderr, exe } = await crashed(["--aot"]);
   expect(stderr).toMatch(/^Features: .*\baot\b/m);
   const start = stderr.indexOf("Compiled JavaScript on the stack:\n");
@@ -72,13 +79,13 @@ test.if(isPosix)("a crash under compiled code names the compiled functions on th
     .slice(1)
     .filter(line => line.startsWith("    at "));
   expect(frames).toEqual([
-    "    at peek (app.ts:6:17)",
-    "    at sum (app.ts:11:47)",
-    "    at start (app.ts:15:17)",
-    "    at app.ts:19:13",
+    "    at byteAt (app.ts:6:17)",
+    "    at sum (app.ts:14:47)",
+    "    at start (app.ts:18:17)",
+    "    at app.ts:22:13",
   ]);
   const url = stderr.match(/^ (\S*CGaot\S*)$/m)![1];
-  for (const word of ["peek", "sum", "start", "app.ts"]) expect(url).not.toContain(word);
+  for (const word of ["byteAt", "peek", "sum", "start", "app.ts"]) expect(url).not.toContain(word);
 
   const decoded = async (report: string) => {
     await using proc = spawn({
@@ -93,12 +100,12 @@ test.if(isPosix)("a crash under compiled code names the compiled functions on th
   expect(await decoded(url)).toEqual({ stdout: frames.join("\n") + "\n", stderr: "", exitCode: 0 });
   expect(await decoded("https://bun.report/1.4.4/M_24eaedc6EggggC__m5/43EA2AA")).toEqual({
     stdout: "",
-    stderr: "error: --aot-decode-crash-report: there are no frames of this executable's compiled code in that report\n",
+    stderr: "error: --aot-decode-crash-report: that report has no frames from this executable's compiled code\n",
     exitCode: 1,
   });
 });
 
-test.if(isPosix)("a crash of an executable built without --aot says nothing of compiled code", async () => {
+test.if(isPosix)("a crash in an executable built without --aot does not mention compiled code", async () => {
   const { stderr } = await crashed([]);
   expect(stderr).not.toMatch(/^Features: .*\baot\b/m);
   expect(stderr).not.toContain("Compiled JavaScript on the stack");

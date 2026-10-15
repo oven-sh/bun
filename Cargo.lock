@@ -261,6 +261,7 @@ dependencies = [
 name = "bun_builtin_syntax"
 version = "0.0.0"
 dependencies = [
+ "bun_core",
  "bun_zstd",
 ]
 

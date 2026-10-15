@@ -42,7 +42,7 @@ row("what is thrown is no Error", () => { try { throw { code: 7 } } catch (e) { 
 // 8. an optional property read as present (a spread and an assignment drop it; `in` narrows wrongly)
 row("an optional property stored as undefined", () => { const p: Point = { x: 1, y: 2, tag: undefined }; return ("tag" in p) + ":" + kindOf(p.tag) + ":" + Object.keys(p).join() })
 row("`in` narrows to what is not there", () => { const v: Point | Named = { x: 1, y: 2, name: 5 } as unknown as Point; return "name" in v ? kindOf(v.name) : "a point" })
-// 9. `!:` and what is read before it is stored
+// 9. `!:` and a read before the first store
 class Late { value!: number; name!: string; twice() { return this.value * 2 } }
 row("a field that is said to be assigned", () => { const l = new Late(); return kindOf(l.value) + ":" + l.twice() + ":" + kindOf(l.name) })
 row("a variable that is said to be assigned", () => { let n!: number; const read = () => n; return kindOf(read()) + ":" + (read() + 1) })
@@ -59,7 +59,7 @@ row("a method takes less than it is declared to", () => { const narrow = { handl
 // 12. arrays are covariant
 row("an array looked at as an array of more", () => { const points: Point[] = [{ x: 1, y: 2 }]; const wider: (Point | Named)[] = points; wider.push({ name: "n" }); return points.map(p => kindOf(p.x)).join() })
 row("an array of numbers looked at as more", () => { const numbers: number[] = [1]; const wider: (number | string)[] = numbers; wider.push("two"); return numbers.map(n => kindOf(n) + (n + 1)).join() })
-// a record looked at as a wider one, and written through
+// a record viewed as a wider one, and written through it
 row("a field written through a wider type", () => { const p: { v: number } = { v: 1 }; const wider: { v: number | string } = p; wider.v = "text"; return kindOf(p.v) + ":" + (p.v + 1) })
 // 13. generics with `any`
 const identity = <T,>(v: T): T => v
@@ -73,7 +73,7 @@ enum Mask { A = 1, B = 2 }
 row("a number that is no member", () => { const seven: number = Number("7"); const c: Color = seven; return kindOf(Color[c]) + ":" + (c === Color.Red || c === Color.Green) })
 row("a switch over an enum falls through", () => { const name = (c: Color): string => { switch (c) { case Color.Red: return "red"; case Color.Green: return "green" } }; return kindOf(name(9 as Color)) })
 row("flags combined", () => { const m: Mask = Mask.A | Mask.B; return m + ":" + kindOf(Mask[m]) })
-// 15. Object.assign and a spread of what is given
+// 15. Object.assign and a spread of external data
 row("Object.assign of what is given", () => { const p: Point = Object.assign({ x: 1, y: 2 }, JSON.parse('{"x":"a","extra":true}')); return kindOf(p.x) + ":" + Object.keys(p).join() })
 row("a spread of what is given", () => { const p: Point = { x: 1, y: 2, ...JSON.parse('{"y":null}') }; return kindOf(p.y) + ":" + (p.x + p.y) })
 row("a spread of any", () => { const p: Point = { x: 1, y: 2, ...hidden.point }; return kindOf(p.x) })

@@ -35,7 +35,7 @@ for (const [name, args] of [["object", [p]], ["object", [p.next]], ["cell", [p]]
     ["anything", []], ["never", [1]], ["big", [5n]], ["sym", [Symbol.iterator]], ["rest", [1]], ["rest", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]], ["defaults", [1]], ["defaults", [1, 2, 3, 4]], ["many", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]],
     ["manyObjects", [p, p, p, p, p, p, p.next]], ["large", [p, 1]], ["large", [p, 5]], ["large", [p, -1]]] as [string, any[]][])
     attempt(name + "(" + args.length + ")", () => f[name](...args));
-// Null or undefined where an object is declared is let in, and found out where it is used. (Any other wrong type is turned away by the entry, which plain Bun does not do: not for this test.)
+// Null or undefined where an object is declared is accepted, and detected where it is used. (Any other wrong type is rejected on entry, which plain Bun does not do: not part of this test.)
 for (const name of ["object", "cell", "manyObjects", "large"]) {
     attempt(name + " of nothing", () => f[name](undefined, 1));
     attempt(name + " of null", () => f[name](null, 1));

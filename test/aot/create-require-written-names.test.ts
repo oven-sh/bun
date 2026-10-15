@@ -1,0 +1,121 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
+
+// `const require = createRequire(import.meta.url); require("./lib.cjs")`. The name is written in the program, so an ahead-of-time
+// build compiles the file like any other that is required. BUN_JSC_crashIfInterpreterIsUsed=1 crashes the compiled program if
+// any of its files is interpreted instead.
+
+const files = {
+  "lib.cjs": `exports.name = "lib"; exports.twice = n => n * 2; globalThis.evaluations = (globalThis.evaluations || 0) + 1;`,
+  "other.cjs": `module.exports = function other() { return "other"; };`,
+  "data.json": `{ "k": 1 }`,
+  "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js" }`,
+  "node_modules/dep/index.js": `exports.dep = "dep";`,
+};
+
+const programs: Record<string, string> = {
+  "named-require.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const lib = require("./lib.cjs");
+console.log(lib.name, lib.twice(2), require("./data.json").k, require("dep").dep, typeof require("node:fs").readFileSync, require("./other.cjs")());
+console.log(require("./lib.cjs") === lib, globalThis.evaluations);
+`,
+  "another-name.mjs": `import { createRequire as make } from "module";
+const load = make(import.meta.url);
+console.log(load("./lib.cjs").name, load("./other.cjs")());
+`,
+  "namespace-import.mjs": `import * as mod from "node:module";
+const r = mod.createRequire(import.meta.url);
+console.log(r("./lib.cjs").name);
+`,
+  "default-import.mjs": `import mod from "node:module";
+const r = mod.createRequire(import.meta.url);
+console.log(r("./lib.cjs").name);
+`,
+  "by-filename.cjs": `const { createRequire } = require("module");
+const r = createRequire(__filename);
+console.log(r("./lib.cjs").name);
+`,
+  "by-import-meta-filename.mjs": `import { createRequire } from "node:module";
+const r = createRequire(import.meta.filename);
+console.log(r("./lib.cjs").name);
+`,
+  "in-a-function.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+function late() { return require("./lib.cjs").twice(4); }
+console.log(globalThis.evaluations, late(), globalThis.evaluations, late(), globalThis.evaluations);
+`,
+  "typescript.ts": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const lib = require("./lib.cjs") as { name: string; twice(n: number): number };
+console.log(lib.name, lib.twice(3));
+`,
+  "with-resolve.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+console.log(require("./lib.cjs").name, typeof require.resolve, typeof require.cache);
+`,
+  "called-in-its-dead-zone.mjs": `import { createRequire } from "node:module";
+function early() { return require("./lib.cjs").name; }
+try { console.log(early()); } catch (error) { console.log(error.name); }
+const require = createRequire(import.meta.url);
+console.log(early());
+`,
+  "one-of-two-names.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+console.log(require(process.argv.length > 99 ? "./other.cjs" : "./lib.cjs").name);
+`,
+  "missing-in-a-try.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+try { require("./not-there.cjs"); } catch (error) { console.log(error.code); }
+console.log(require("./lib.cjs").name);
+`,
+};
+
+async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
+  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+
+describe.concurrent.each(Object.keys(programs))("%s", entry => {
+  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "types": [] } }` };
+
+  test("bun run --aot interprets nothing and prints what bun run prints", async () => {
+    using dir = tempDir("create-require", tree);
+    const plain = await spawned([bunExe(), "run", entry], String(dir));
+    expect(plain.exitCode).toBe(0);
+    const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir), compiledOnly);
+    expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
+    expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  });
+
+  test("bun build --compile --aot interprets nothing and prints what bun run prints, away from its sources", async () => {
+    using dir = tempDir("create-require", tree);
+    using elsewhere = tempDir("create-require-elsewhere", {});
+    const plain = await spawned([bunExe(), "run", entry], String(dir));
+    const built = await spawned([bunExe(), "build", "--compile", "--aot", entry, "--outfile", join(String(elsewhere), "program")], String(dir));
+    expect(built.stderr).not.toContain("error:");
+    expect(built.exitCode).toBe(0);
+    const aot = await spawned([join(String(elsewhere), "program")], String(elsewhere), compiledOnly);
+    expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
+    expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  });
+});
+
+test("a require that is handed on stays the host's", async () => {
+  using dir = tempDir("create-require", {
+    ...files,
+    "handed-on.mjs": `import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const use = load => load("./lib.cjs").name;
+console.log(use(require), require("./lib.cjs").name);
+`,
+  });
+  const plain = await spawned([bunExe(), "run", "handed-on.mjs"], String(dir));
+  const aot = await spawned([bunExe(), "run", "--aot", "handed-on.mjs"], String(dir));
+  expect(plain.stdout).toBe("lib lib\n");
+  expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+});

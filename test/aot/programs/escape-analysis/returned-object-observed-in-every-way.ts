@@ -33,7 +33,7 @@ class Box { constructor(public w: number, public h: number) {}
   get corner(): { x: number, y: number } { if (this.w < 0) return { x: 0, y: 0 }; return { x: this.w, y: this.h }; } }
 class Tall extends Box { size(scale: number): { w: number, h: number } { const { w, h } = super.size(scale); if (h < 0) return { w: h, h: w }; return { w, h: h * 2 }; } }
 { const boxes: Box[] = [new Box(1, 2), new Tall(3, 4)]; for (const b of boxes) { const { w, h } = b.size(2); say("method", w, h); const { x, y } = b.corner; say(x, y); } const [a, c] = Box.unit(3); say(a, c); const m = boxes[0].size; say(JSON.stringify(m.call(boxes[1], 1))); }
-// what the object is, where somebody looks
+// what the object is, where it is observed
 function pt(x: number): { x: number, y: number } { if (x < 0) return { x: 0, y: 0 }; return { x, y: spin(x & 3) }; } //! removed; heap
 say("object", typeof pt(1), String(pt(1)), pt(1) == pt(1), pt(1) instanceof Object, "x" in pt(1), "z" in pt(1), Object.keys(pt(2)).join(), JSON.stringify({ ...pt(2), z: 1 }), pt(3)?.y, Object.isFrozen(Object.freeze(pt(1))));
 { const p = pt(2); p.x = 9; say(JSON.stringify(p)); const q = pt(2); const alias = q; alias.x = 7; say(q.x); let seen = 0; for (const k in pt(1)) seen += k.length; say(seen); }

@@ -2822,6 +2822,22 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
+pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
+    const LEAST_OF_A_THREAD: usize = 16 << 20;
+    let threads = usize::from(get_thread_count()).min(len / LEAST_OF_A_THREAD).min(16);
+    if threads < 2 {
+        return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
+    }
+    let share = len.div_ceil(threads).next_multiple_of(1 << 16);
+    let (to, from) = (to as usize, from as usize);
+    std::thread::scope(|scope| {
+        for start in (share..len).step_by(share) {
+            scope.spawn(move || unsafe { core::ptr::copy_nonoverlapping((from + start) as *const u8, (to + start) as *mut u8, share.min(len - start)) });
+        }
+        unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
+    });
+}
+
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -4382,7 +4398,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             hook();
         }
         let kept_open = KEPT_OPEN_OVER_RELOAD.load(AOrdering::SeqCst);
-        let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)));
+        let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)), true);
         if may_return {
             crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",
@@ -4407,19 +4423,19 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
         argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
     ));
     argv.extend(args.iter().map(ZBox::from_bytes));
-    execve_self(&argv, keep_open)
+    execve_self(&argv, keep_open, false)
 }
 
 #[cfg(unix)]
-fn execve_self(argv: &[ZBox], keep_open: Option<Fd>) -> i32 {
+fn execve_self(argv: &[ZBox], keep_open: Option<Fd>, close_inherited_fds: bool) -> i32 {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
     // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_posix();
+                safe fn on_before_reload_process_posix(close_inherited_fds: bool);
             }
-            on_before_reload_process_posix();
+            on_before_reload_process_posix(close_inherited_fds);
         }
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);

@@ -23,7 +23,7 @@ attempt("1.5 into Flags | 0", () => { part.flags = fraction; return part.flags }
 attempt("2 ** 40 into Flags | 0", () => { part.flags = big; return part.flags })
 attempt("-0 into a variable", () => { either = minusZero; return 1 / either })
 attempt("-0 as an argument", () => 1 / pass(minusZero))
-// By itself `0` is a number: exact.
+// By itself `0` is a number: same as plain Bun.
 function sign(x: number) { return x === 0 ? 1 / x : x }
 console.log(sign(0), sign(-0), sign(3))
 function zeroOrOne(x: number) { return x === 0 || x === 1 ? 1 / x : 0 }

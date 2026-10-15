@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "crypto";
-import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
 
@@ -34,8 +34,11 @@ function write(folder: string, files: Record<string, string>) {
 function typedVersion(folder: string, more: object = {}) {
   write(folder, { "sound.json": JSON.stringify(manifest(more)), "lay/index.js": typed["index.js"], "lay/index.sound.ts": typed["index.sound.ts"] });
 }
+const folders: string[] = [];
+afterAll(() => folders.forEach(folder => rmSync(folder, { recursive: true, force: true })));
 function project(name: string) {
   const folder = String(tempDir(name, {}));
+  folders.push(folder);
   write(folder, {
     "app.ts": `import { area, where } from "shapes";\nconsole.log(area(6, 7), /index(\\.sound)?\\.[jt]s/.exec(where())![0]);\n`,
     "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] } }),
@@ -140,20 +143,31 @@ describe("compile/aot/TypedPackages", () => {
     expect(await built(folder, ["--aot", "--define", `process.env.NODE_ENV="production"`])).toEqual({ said: used(".sound/shapes"), stdout: "42 index.sound.ts\n", exitCode: 0 });
   });
 
-  test("control characters of the manifest do not reach the terminal", async () => {
+  test("control characters in the manifest do not reach the terminal", async () => {
     const folder = project("aot-typed-control");
     typedVersion(join(folder, ".sound", "shapes"), { version: "1.2\u001b[31m.3" });
     expect((await built(folder)).said).toEqual(unused(".sound/shapes", "it is for version 1.2?[31m.3, and 1.2.3 is installed (install the typed version for 1.2.3, or remove this one)"));
   });
 
-  test("a typed version that does not type check is compiled untyped", async () => {
+  test("a typed version that does not type check stops the build", async () => {
     const folder = project("aot-typed-lie");
     typedVersion(join(folder, ".sound", "shapes"));
     write(join(folder, ".sound", "shapes", "lay"), { "index.sound.ts": typed["index.sound.ts"].replace("const box: Box = { w, h };", `const box: Box = { w, h: h as unknown as string };`) });
     const build = await spawned([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], folder);
-    expect(build.stdout + build.stderr).toContain("TS100009: 'shapes' has 1 type errors");
-    expect(build.exitCode).toBe(0);
-    expect(await spawned([join(folder, "app")], folder)).toEqual({ stdout: "42 index.sound.ts\n", stderr: "", exitCode: 0 });
+    const said = build.stdout + build.stderr;
+    expect(said).toContain("error: TS100021: The typed version of 'shapes' in .sound/shapes has type errors (1), the first at ");
+    expect(said).toContain("TS2322: Type 'string' is not assignable to type 'number'.");
+    expect(said).toMatch(/index\.sound\.ts:3:\d+/);
+    expect(said).not.toContain("TS100009");
+    expect(build.exitCode).toBe(1);
+    expect(existsSync(join(folder, "app"))).toBe(false);
+    write(folder, {
+      "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, throw: false });\nconsole.log(result.success, result.logs.filter(log => log.level === "error").map(log => log.message.slice(0, 65)));\n`,
+    });
+    expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({ stdout: `false [ "TS100021: The typed version of 'shapes' in .sound/shapes has type" ]\n`, stderr: "", exitCode: 0 });
+    const run = await spawned([bunExe(), "run", "--aot", "app.ts"], folder);
+    expect(run.stderr).toContain("error: TS100021: The typed version of 'shapes' in .sound/shapes has type errors (1), the first at ");
+    expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
 
   test("the host's lib, target and types do not count against it", async () => {
@@ -180,14 +194,14 @@ describe("compile/aot/TypedPackages", () => {
     expect((await spawned([join(folder, "app")], folder)).stdout).toBe("42 index.sound.ts\n");
     appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n");
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({
-      stdout: JSON.stringify(unused(".sound/shapes", "the installed index.js is not the file that it was typed on")) + "\n",
+      stdout: JSON.stringify(unused(".sound/shapes", "the installed index.js differs from the published file that this typed version was made from (was the package patched?)")) + "\n",
       stderr: "",
       exitCode: 0,
     });
     expect((await spawned([join(folder, "app")], folder)).stdout).toBe("42 index.js\n");
   });
 
-  test("an onResolve plugin that answers nothing is passed", async () => {
+  test("an onResolve plugin that returns nothing is skipped", async () => {
     const folder = project("aot-typed-plugin");
     typedVersion(join(folder, ".sound", "shapes"));
     write(folder, {

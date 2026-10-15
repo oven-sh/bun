@@ -21,7 +21,7 @@ const partial: Partial<State> = { label: undefined, count: 5 }
 const merged = { ...s0, ...partial }
 console.log(show(merged), "label" in merged, (merged as Partial<State>).label, merged.count, show({ ...partial, ...s0 }), show({ ...{} as Partial<State>, ...s0 }))
 
-// Extra properties, symbols and indices behind the type come along; non-enumerable ones and the prototype do not.
+// Extra properties, symbols and indices added through `any` are copied; non-enumerable ones and the prototype are not.
 const sym = Symbol("sym")
 const dressed: State = { count: 1, label: "d", nested: { deep: 0 } }
 const anyDressed: any = dressed
@@ -46,11 +46,11 @@ console.log(show(flat), flat instanceof Model, "reveal" in flat, "upper" in flat
 class SubModel extends Model { extra = true }
 console.log(show({ ...new SubModel(), id: 7 }))
 
-// What is not an object spreads to nothing, strings and arrays to their indices.
+// A non-object spreads to nothing, strings and arrays to their indices.
 const nothing: State | undefined = undefined as State | undefined, nil: State | null = null as State | null, off: boolean = s0.count > 100
 console.log(show({ ...nothing }), show({ ...nil, a: 1 }), show({ ...(5 as any) }), show({ ...(true as any) }), show({ ..."hi" as any }), show({ ...[7, 8] }), show({ ...(off && s0) }))
 
-// Plain data behind the type.
+// Plain data used as the type.
 const parsed: State = JSON.parse('{"label":"p","count":3,"nested":{"deep":4},"unknown":true}')
 console.log(show({ ...parsed }), show({ ...parsed, count: parsed.count + 1 }))
 

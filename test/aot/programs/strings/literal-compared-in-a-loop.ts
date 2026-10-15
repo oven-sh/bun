@@ -1,4 +1,4 @@
-// `v === "literal"` in a loop gives the same answer whatever the string is made of: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings.
+// `v === "literal"` in a loop gives the same answer however the string was created: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings.
 declare const console: { log(...args: unknown[]): void }
 interface R { kind: string }
 const base = "xx-b-text-a longer one!-Жb"

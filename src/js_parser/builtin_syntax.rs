@@ -166,14 +166,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn first_argument_text(&self, call: &E::Call, loc: Loc) -> Option<&'a [u8]> {
         let source: &'a [u8] = &self.source.contents;
         let start = usize::try_from(loc.start).ok()?;
-        let open = start + source.get(start..)?.iter().position(|&byte| byte == b'(')?;
+        let open = start + bun_core::strings::index_of_char_usize(source.get(start..)?, b'(')?;
         let end = match call.args.slice() {
             [] => return None,
             [_] => usize::try_from(call.close_paren_loc.start).ok()?,
-            [_, second, ..] => source
-                .get(..usize::try_from(second.loc.start).ok()?)?
-                .iter()
-                .rposition(|&byte| byte == b',')?,
+            [_, second, ..] => bun_core::strings::last_index_of_char(
+                source.get(..usize::try_from(second.loc.start).ok()?)?,
+                b',',
+            )?,
         };
         let text = source.get(open + 1..end)?.trim_ascii();
         Some(match text.strip_suffix(b",") {

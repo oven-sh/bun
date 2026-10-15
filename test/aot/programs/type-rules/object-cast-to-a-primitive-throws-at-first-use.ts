@@ -3,7 +3,7 @@ declare const console: { log(...args: unknown[]): void }
 function hide(x: unknown): unknown { return x }
 function attempt(label: string, f: () => unknown) { try { console.log(label + ":", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
 interface Host { text: string; size: number }
-// WHOEVER ONLY LOOKS
+// CODE THAT ONLY INSPECTS
 attempt("typeof", () => typeof (hide({}) as string))
 attempt("===", () => { const o = hide({}); return (o as string) === o })
 attempt("truthiness", () => (hide({}) as string) ? "yes" : "no")

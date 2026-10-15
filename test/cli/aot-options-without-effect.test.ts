@@ -17,7 +17,7 @@ async function bun(cwd: string, ...args: string[]) {
 
 const unsupported = /^error: --aot: |^compile\.aot: /m;
 
-describe.concurrent("an option that shapes bytecode is an error next to --aot", () => {
+describe.concurrent("an option that configures bytecode is an error with --aot", () => {
   test.each([
     ["--bytecode-depth=1", "--bytecode-depth"],
     ["--bytecode-order=app.order", "--bytecode-order"],
@@ -48,14 +48,14 @@ describe.concurrent("an option that shapes bytecode is an error next to --aot", 
     expect(stdout).toBe(`compile.aot does not support ${name}\n`);
   });
 
-  test("--bytecode itself is implied by --aot and may stand next to it", async () => {
+  test("--bytecode is implied by --aot and may be combined with it", async () => {
     using dir = tempDir("aot-with-bytecode", files);
     const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", "--bytecode", "app.ts", "--outfile", "out");
     if (unsupported.test(stderr)) return;
     expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
   }, 60_000);
 
-  test("without --aot they are taken as before", async () => {
+  test("without --aot they are accepted as before", async () => {
     using dir = tempDir("bytecode-flags-without-aot", files);
     const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--bytecode", "--format=esm", "--bytecode-depth=1", "app.ts", "--outfile", "out");
     expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });

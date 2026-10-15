@@ -1,4 +1,3 @@
 error: TS100014: This always fails under --aot: `Object.prototype.o` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Object.prototype.o` is deleted: built-in prototypes are frozen.
 error: TS100014: This always fails under --aot: `Array.prototype.o6` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Math.ceil` is assigned: what the language ships with cannot be replaced.
+error: TS100014: This always fails under --aot: `Math.ceil` is assigned: built-ins cannot be replaced.

@@ -16,7 +16,7 @@ function maker(limit: number): number { //! frame
   const over = (x: number): boolean => { seen++; return x > limit; }; //! frame
   return outer([1, 2, 3, 60, 170], over) * 1000 + outer([4, 5, 26, 7, 8, 9], over) * 10 + seen;
 }
-// Not yet: a constant that an inner function captures beside variables that change goes through the environment as the front end writes it: a store: the closure is a cell.
+// Not optimized yet: a constant that an inner function captures together with variables that change goes through the environment as the front end emits it, with a store, so the closure is a cell.
 function makerCaptures(limit: number): number { //! heap
   let seen = 0;
   const under = (x: number): boolean => { seen++; return x < limit; }; //! heap

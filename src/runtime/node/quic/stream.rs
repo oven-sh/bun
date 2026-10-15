@@ -442,11 +442,17 @@ impl QuicStream {
 
     /// Queues what lsquic holds for a paused stream. Call it before an lsquic
     /// call that ends the read side or the connection, which drops those bytes.
-    pub(super) fn drain_paused(&self) {
+    ///
+    /// Returns whether the lsquic stream is closed now: `on_stream_read`
+    /// closes it when it reads the FIN of a stream whose write side has
+    /// ended. lsquic must get no frame for such a stream (it asserts on a
+    /// RESET_STREAM for a finished one).
+    pub(super) fn drain_paused(&self) -> bool {
         if self.read_gate.get() == ReadGate::Open {
-            return;
+            return false;
         }
-        let Some(s) = self.ls() else { return };
+        let Some(s) = self.ls() else { return false };
+        let write_done = self.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
         let mark = self.read_mark.replace(u64::MAX);
         // SAFETY: `self` is the live ctx of the live lsquic stream `s`.
         unsafe { on_stream_read(core::ptr::from_ref(self).cast_mut().cast(), s.raw()) };
@@ -454,6 +460,7 @@ impl QuicStream {
         // That read ran with read interest off. A read side that is still
         // open needs it back on; lsquic refuses it once the read side is shut.
         s.want_read(true);
+        write_done && self.with_state(|s| s.fin_received != 0)
     }
 
     pub(super) fn take_wakeup(&self) -> Option<Strong> {
@@ -899,6 +906,10 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        // The reset below also ends the read side when the peer's FIN is
+        // already in. Drain before `write_ended` is set: the drain closes the
+        // stream only when the write side had ended by itself.
+        let closed = self.drain_paused();
         self.with_state(|s| {
             s.write_ended = 1;
             s.reset = 1;
@@ -908,10 +919,10 @@ impl QuicStream {
             o.data.clear();
             o.end = PendingEnd::None;
         });
-        // lsquic also ends the read side when the peer's FIN is already in.
-        self.drain_paused();
-        if let Some(s) = self.ls() {
-            s.reset(code);
+        if !closed {
+            if let Some(s) = self.ls() {
+                s.reset(code);
+            }
         }
         self.kick_write();
         Ok(JSValue::UNDEFINED)
@@ -922,9 +933,10 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
-        self.drain_paused();
-        if let Some(s) = self.ls() {
-            s.stop_sending(code);
+        if !self.drain_paused() {
+            if let Some(s) = self.ls() {
+                s.stop_sending(code);
+            }
         }
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| {

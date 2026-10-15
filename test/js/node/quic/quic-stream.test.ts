@@ -524,14 +524,18 @@ describe("receive backpressure", () => {
         ...shape.serverOptions,
       },
     );
+    // An endpoint of its own: the transport parameters belong to the endpoint,
+    // so a reused one keeps those of its first session.
     const client = await connect(server.address!, {
       ...(shape.alpn ? { alpn: shape.alpn } : {}),
+      reuseEndpoint: false,
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: idle, ...shape.clientParams },
       onerror() {},
       onstream: route(shape.onClientStream),
     } as SessionOptions);
+    const clientEndpoint = client.endpoint!;
     client.closed.catch(() => {});
     await client.opened;
     await shape.onClient?.(client, ends);
@@ -555,8 +559,7 @@ describe("receive backpressure", () => {
         await marker.promise;
       },
       async [Symbol.asyncDispose]() {
-        client.destroy();
-        await server.destroy();
+        await Promise.all([clientEndpoint.destroy(), server.destroy()]);
       },
     };
   }

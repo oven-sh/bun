@@ -268,18 +268,20 @@ test("--no-env-file in production mode", async () => {
 // them. They read no `.env` file themselves. So the files that the process did not read stay out of its bundles, its
 // macros, its child processes and its Workers.
 describe("a build, a macro, an HTML route and a Worker read no .env file themselves", () => {
-  const seen = String.raw`
-    const markers = [
-      "key-from-dot-env",
-      "only-from-dot-env",
-      "key-from-custom-env",
-      "from-dot-env-local",
-      "from-dot-env-development",
-      "from-dot-env-test",
-      "early-from-dot-env",
-      "late-from-dot-env",
-    ];
-    // The values from the .env files that are in the text.
+  const markers = [
+    "key-from-dot-env",
+    "only-from-dot-env",
+    "key-from-custom-env",
+    "from-dot-env-local",
+    "from-dot-env-development",
+    "from-dot-env-test",
+    "early-from-dot-env",
+    "late-from-dot-env",
+  ];
+  // The values from the .env files that are in the text.
+  const seenIn = (text: string) => markers.filter(marker => text.includes(marker));
+  const seen = `
+    const markers = ${JSON.stringify(markers)};
     export const seen = (text: string) => markers.filter(marker => text.includes(marker));
   `;
   const files = {
@@ -309,7 +311,8 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
         const buildMacro = await bundle("./use-macro.ts", "disable");
         // The async transform runs the macro in a VM of a pool thread, as a build does.
         const transpilerMacro = seen(await new Bun.Transpiler({ loader: "ts" }).transform(macro));
-        const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+        const child = Bun.spawn({ cmd: [process.execPath, "--no-env-file", "-e", print], stdout: "pipe" });
+        const [fromChild] = await Promise.all([child.stdout.text(), child.exited]);
         const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
         const fromWorker = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
         await worker.terminate();
@@ -318,7 +321,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
           prefix,
           buildMacro,
           transpilerMacro,
-          child: seen(child.stdout.toString()),
+          child: seen(fromChild),
           worker: seen(fromWorker),
           // Read last: process.env gets the variables that the process has when it is first read.
           own: seen([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join()),
@@ -392,6 +395,59 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
     });
   });
 
+  // `bun build` boots no VM. The VM of its macro gets the options of the command. What that macro starts does not:
+  // here a transform with a macro of its own, which runs in one more VM.
+  const buildFiles = {
+    ".env": files[".env"],
+    "custom.env": files["custom.env"],
+    "values.ts": files["values.ts"],
+    "nested.ts": String.raw`
+      export async function nested() {
+        const code =
+          "import { values } from " +
+          JSON.stringify(import.meta.dir + "/values.ts") +
+          ' with { type: "macro" };\nconsole.log(values());\n';
+        return await new Bun.Transpiler({ loader: "ts" }).transform(code);
+      }
+    `,
+    "entry.ts": String.raw`
+      import { nested } from "./nested.ts" with { type: "macro" };
+      import { values } from "./values.ts" with { type: "macro" };
+
+      console.log("direct", values());
+      console.log("nested", nested());
+    `,
+  };
+  const builds: [string, string[], string | undefined, string[]][] = [
+    ["bun build", [], undefined, ["key-from-dot-env", "only-from-dot-env"]],
+    ["bun build --no-env-file", ["--no-env-file"], undefined, []],
+    ["bun build with bunfig env = false", [], "env = false\n", []],
+    ["bun build --env-file", ["--env-file=custom.env"], undefined, ["key-from-custom-env"]],
+  ];
+  test.concurrent.each(builds)("%s: a macro and what it starts", async (_, flags, bunfig, values) => {
+    using dir = tempDir("env-of-the-process", bunfig ? { ...buildFiles, "bunfig.toml": bunfig } : buildFiles);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...flags, "./entry.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_OPTIONS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n");
+    // The values that the call of the macro became in the bundle, or null if the bundle has no such line.
+    const macro = (name: string) => {
+      const line = lines.find(line => line.startsWith(`console.log("${name}"`));
+      return line === undefined ? null : seenIn(line);
+    };
+    expect({ direct: macro("direct"), nested: macro("nested"), stderr, exitCode }).toEqual({
+      direct: values,
+      nested: values,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent.each([false, true])(
     "--no-env-file: an HTML route with [serve.static] env = 'inline' and development: %p inlines no value of .env",
     async development => {
@@ -442,9 +498,10 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
           const result = await Bun.build({ entrypoints: ["./client.ts"], env: "inline" });
           const inline = seen(await result.outputs[0].text());
           const print = "console.log([process.env.LOCAL_ONLY, process.env.DEVELOPMENT_ONLY, process.env.TEST_ONLY].join())";
-          const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+          const child = Bun.spawn({ cmd: [process.execPath, "--no-env-file", "-e", print], stdout: "pipe" });
+          const [fromChild] = await Promise.all([child.stdout.text(), child.exited]);
           const own = seen([process.env.LOCAL_ONLY, process.env.DEVELOPMENT_ONLY, process.env.TEST_ONLY].join());
-          console.log("REPORT " + JSON.stringify({ inline, child: seen(child.stdout.toString()), own }));
+          console.log("REPORT " + JSON.stringify({ inline, child: seen(fromChild), own }));
         });
       `,
     });
@@ -489,9 +546,10 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
         writeFileSync(".env", "LATE=late-from-dot-env\n");
         const result = await Bun.build({ entrypoints: ["./use-macro.ts"], env: "disable" });
         const print = "console.log(String(process.env.LATE))";
-        const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+        const child = Bun.spawn({ cmd: [process.execPath, "--no-env-file", "-e", print], stdout: "pipe" });
+        const [fromChild] = await Promise.all([child.stdout.text(), child.exited]);
         const macro = seen(await result.outputs[0].text());
-        console.log("REPORT " + JSON.stringify({ macro, child: seen(child.stdout.toString()) }));
+        console.log("REPORT " + JSON.stringify({ macro, child: seen(fromChild) }));
       `,
     });
     expect(await run(String(dir), ["main.ts"])).toEqual({ report: { macro: [], child: [] }, exitCode: 0 });

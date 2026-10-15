@@ -96,6 +96,43 @@ impl UpgradeClientRef {
             HttpsUpgradeClient::on_proxy_tls_handshake_complete,
         );
     }
+
+    fn tunnel_server_identity(
+        self,
+        ssl: &mut bun_boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> bun_boringssl::ServerIdentity {
+        match self {
+            UpgradeClientRef::Http(client) => {
+                HttpUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
+            }
+            UpgradeClientRef::Https(client) => {
+                HttpsUpgradeClient::tunnel_server_identity(client.this_ptr(), ssl, hostname)
+            }
+        }
+    }
+
+    fn accepts_tunnel_peer(
+        self,
+        ssl: Option<&mut bun_boringssl::c::SSL>,
+        chain_verified: bool,
+        hostname: &[u8],
+    ) -> bool {
+        match self {
+            UpgradeClientRef::Http(client) => HttpUpgradeClient::accepts_tunnel_peer(
+                client.this_ptr(),
+                ssl,
+                chain_verified,
+                hostname,
+            ),
+            UpgradeClientRef::Https(client) => HttpsUpgradeClient::accepts_tunnel_peer(
+                client.this_ptr(),
+                ssl,
+                chain_verified,
+                hostname,
+            ),
+        }
+    }
 }
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
@@ -111,14 +148,12 @@ pub struct WebSocketProxyTunnel {
     connected_websocket: Cell<Option<BackRef<WebSocketClient, Root>>>,
     /// SSL wrapper for TLS inside tunnel; set once in `start()`.
     wrapper: OnceCell<SslWrapperType>,
-    /// Socket reference (the proxy connection)
-    socket: SocketUnion,
+    /// The proxy connection, until the upgrade client that owns it lets go.
+    socket: Cell<SocketUnion>,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: JsCell<StreamBuffer>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
-    /// Whether to reject unauthorized certificates
-    reject_unauthorized: bool,
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
@@ -131,7 +166,6 @@ impl WebSocketProxyTunnel {
         upgrade_client: UpgradeClientRef,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
-        reject_unauthorized: bool,
     ) -> RefPtr<WebSocketProxyTunnel> {
         // `assume_ssl`/`assume_tcp` rebuild the handler around the same
         // `InternalSocket`.
@@ -146,12 +180,11 @@ impl WebSocketProxyTunnel {
             upgrade_client: Cell::new(Some(upgrade_client)),
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),
-            socket,
+            socket: Cell::new(socket),
             write_buffer: JsCell::new(StreamBuffer::default()),
             sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
                 sni_hostname,
             ))),
-            reject_unauthorized,
         })
     }
 
@@ -164,11 +197,12 @@ impl WebSocketProxyTunnel {
     pub(crate) fn start(
         this: ThisPtr<Self>,
         ssl_options: &SslConfig,
+        reject_unauthorized: bool,
         initial_data: &[u8],
     ) -> crate::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
-        // check uses self.reject_unauthorized field.
+        // check is the WebSocket's: `CppWebSocket::accepts_tls_peer`.
         let options = ssl_options.for_client_verification();
 
         // tier-neutral `init_from_options` takes the lowered
@@ -197,7 +231,7 @@ impl WebSocketProxyTunnel {
         let wrapper = this.wrapper.get_or_init(|| wrapper);
         // The inner connection's form of the `set_inline_reject` call in
         // `WebSocketUpgradeClient::handle_open`.
-        if this.reject_unauthorized {
+        if reject_unauthorized {
             wrapper.set_inline_reject();
         }
         let ssl = wrapper.ssl.get();
@@ -212,7 +246,7 @@ impl WebSocketProxyTunnel {
         // is driven.
         if let Some(ssl_ptr) = ssl {
             if let Some(hostname) = this.sni_hostname.as_deref() {
-                if !bun_core::ip_address::is_ip_address(hostname) {
+                if !bun_core::ip_address::is_ip_host(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
                     // Route through bun_http's
@@ -240,18 +274,20 @@ impl WebSocketProxyTunnel {
         Ok(())
     }
 
-    /// SSLWrapper callback: Called before TLS handshake starts
+    /// SSLWrapper callback: the name check inside the handshake. The WebSocket decides.
     fn server_identity(
         this: ThisPtr<Self>,
         ssl: &mut bun_boringssl::c::SSL,
     ) -> bun_boringssl::ServerIdentity {
-        let hostname = this
-            .sni_hostname
-            .as_deref()
-            .filter(|_| this.reject_unauthorized);
-        bun_boringssl::server_identity(ssl, hostname)
+        match (this.upgrade_client.get(), this.sni_hostname.as_deref()) {
+            (Some(upgrade_client), Some(hostname)) => {
+                upgrade_client.tunnel_server_identity(ssl, hostname)
+            }
+            _ => bun_boringssl::ServerIdentity::Unchecked,
+        }
     }
 
+    /// SSLWrapper callback: Called before TLS handshake starts
     fn on_open(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
@@ -298,10 +334,7 @@ impl WebSocketProxyTunnel {
         // Snapshot the fields we need; `terminate()` / `on_proxy_tls_handshake_complete()`
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
-        let (upgrade_client, reject_unauthorized) =
-            (this.upgrade_client.get(), this.reject_unauthorized);
-
-        let Some(upgrade_client) = upgrade_client else {
+        let Some(upgrade_client) = this.upgrade_client.get() else {
             return;
         };
 
@@ -310,26 +343,23 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Check for SSL errors if we need to reject unauthorized
-        if reject_unauthorized {
-            if ssl_error.error_no != 0 {
-                upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
-                return;
-            }
-
-            // Verify server identity.
-            let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
-            let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !bun_uws::check_server_identity(
-                    bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                    hostname,
-                ),
-                _ => false,
-            };
-            if failed_identity {
-                upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
-                return;
-            }
+        let ssl = this
+            .wrapper
+            .get()
+            .and_then(|w| w.ssl.get())
+            .map(|ssl| bun_opaque::opaque_deref_mut(ssl.as_ptr()));
+        let accepted = upgrade_client.accepts_tunnel_peer(
+            ssl,
+            ssl_error.error_no == 0,
+            this.sni_hostname.as_deref().unwrap_or_default(),
+        );
+        // `tls.checkServerIdentity` may have closed the WebSocket, which detaches the client.
+        let Some(upgrade_client) = this.upgrade_client.get() else {
+            return;
+        };
+        if !accepted {
+            upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
+            return;
         }
 
         // TLS handshake successful - notify client to send WebSocket upgrade
@@ -380,6 +410,7 @@ impl WebSocketProxyTunnel {
     /// do not re-enter the upgrade client's terminate/clearData path.
     pub(crate) fn detach_upgrade_client(&self) {
         self.upgrade_client.set(None);
+        self.socket.set(SocketUnion::None);
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
@@ -397,7 +428,7 @@ impl WebSocketProxyTunnel {
         }
 
         // Try direct write to socket
-        let written = this.socket.write(encrypted_data);
+        let written = this.socket.get().write(encrypted_data);
         if written < 0 {
             // Write failed - buffer data for retry when socket becomes writable
             bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
@@ -436,7 +467,7 @@ impl WebSocketProxyTunnel {
                 return false;
             }
             let to_send_len = to_send.len();
-            let written = this.socket.write(to_send);
+            let written = this.socket.get().write(to_send);
             if written < 0 {
                 return true;
             }
@@ -511,7 +542,7 @@ impl WebSocketProxyTunnel {
     }
 
     pub(crate) fn pause_stream(&self) -> bool {
-        match &self.socket {
+        match self.socket.get() {
             SocketUnion::Tcp(s) => s.pause_stream(),
             SocketUnion::Ssl(s) => s.pause_stream(),
             SocketUnion::None => false,
@@ -519,10 +550,28 @@ impl WebSocketProxyTunnel {
     }
 
     pub(crate) fn resume_stream(&self) -> bool {
-        match &self.socket {
+        match self.socket.get() {
             SocketUnion::Tcp(s) => s.resume_stream(),
             SocketUnion::Ssl(s) => s.resume_stream(),
             SocketUnion::None => false,
+        }
+    }
+
+    /// The upgrade client's `handle_timeout` closes the proxy connection.
+    pub(crate) fn set_timeout(&self, seconds: core::ffi::c_uint) {
+        match self.socket.get() {
+            SocketUnion::Tcp(s) => s.set_timeout(seconds),
+            SocketUnion::Ssl(s) => s.set_timeout(seconds),
+            SocketUnion::None => {}
+        }
+    }
+
+    /// Runs the upgrade client's `handle_close`, which drops its ref on the tunnel.
+    pub(crate) fn close_socket(&self) {
+        match self.socket.replace(SocketUnion::None) {
+            SocketUnion::Tcp(s) => s.close(bun_uws::CloseKind::Failure),
+            SocketUnion::Ssl(s) => s.close(bun_uws::CloseKind::Failure),
+            SocketUnion::None => {}
         }
     }
 }

@@ -2,6 +2,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_jsc::rare_data::SocketGroups;
+use bun_sql::shared::SSLMode;
 use bun_uws::{self as uws, AnySocket, InternalSocket, SocketGroup, SocketKind, SocketTLS};
 
 use crate::jsc::VirtualMachine;
@@ -11,6 +12,12 @@ pub(crate) enum StartTlsError {
     /// The socket is not a connected plain one.
     NotPlain,
     Failed,
+}
+
+/// https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+pub(crate) fn verifies_certificate(tls_config: &SSLConfig, ssl_mode: SSLMode) -> bool {
+    tls_config.reject_unauthorized() != 0
+        && matches!(ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
 }
 
 /// Turns the plain `socket` of `owner` into a TLS client socket and starts the handshake.
@@ -24,7 +31,7 @@ pub(crate) fn start_tls<T>(
     ),
     secure: Option<&OwnedSslCtx>,
     tls_config: &SSLConfig,
-    verifies_certificate: bool,
+    ssl_mode: SSLMode,
     store: impl FnOnce(AnySocket),
 ) -> Result<(), StartTlsError> {
     let AnySocket::SocketTcp(tcp) = socket else {
@@ -57,7 +64,7 @@ pub(crate) fn start_tls<T>(
     // SAFETY: live, just returned by `adopt_tls` with an ext slot of `ext_size`.
     let sock = unsafe { &mut *new_socket };
     *sock.ext::<Option<NonNull<T>>>() = NonNull::new(owner);
-    if verifies_certificate {
+    if verifies_certificate(tls_config, ssl_mode) {
         sock.set_inline_reject();
     }
     store(AnySocket::SocketTls(SocketTLS {

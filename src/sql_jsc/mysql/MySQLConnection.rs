@@ -38,7 +38,7 @@ use crate::mysql::js_my_sql_connection::JSMySQLConnection;
 use crate::mysql::js_my_sql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, StatementCache};
-use crate::shared::start_tls::{StartTlsError, start_tls};
+use crate::shared::start_tls::{StartTlsError, start_tls, verifies_certificate};
 use bun_jsc::rare_data::SocketGroups;
 use bun_ptr::RefPtr;
 
@@ -281,7 +281,7 @@ impl MySQLConnection {
             (uws::SocketKind::MysqlTls, SocketGroups::mysql_group::<true>),
             self.secure.as_ref(),
             &self.tls_config,
-            self.verifies_certificate(),
+            self.ssl_mode,
             |socket| self.socket = socket,
         );
         match started {
@@ -324,8 +324,7 @@ impl MySQLConnection {
     }
 
     pub(crate) fn verifies_certificate(&self) -> bool {
-        self.tls_config.reject_unauthorized() != 0
-            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        verifies_certificate(&self.tls_config, self.ssl_mode)
     }
 
     /// A server can renegotiate, which ends in another handshake event.

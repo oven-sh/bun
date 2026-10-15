@@ -42,7 +42,7 @@ use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
-use crate::shared::start_tls::start_tls;
+use crate::shared::start_tls::{start_tls, verifies_certificate};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::Status;
@@ -340,7 +340,7 @@ impl PostgresSQLConnection {
             ),
             self.secure.as_ref(),
             &self.tls_config,
-            verifies_certificate(&self.tls_config, self.ssl_mode),
+            self.ssl_mode,
             |socket| self.socket.set(socket),
         );
         if started.is_err() {
@@ -857,12 +857,6 @@ impl PostgresSQLConnection {
             self.reset_connection_timeout();
         }
     }
-}
-
-/// https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-fn verifies_certificate(tls_config: &SSLConfig, ssl_mode: SSLMode) -> bool {
-    tls_config.reject_unauthorized() != 0
-        && matches!(ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
 }
 
 #[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]

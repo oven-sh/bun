@@ -3,6 +3,7 @@ use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_values::color::{ColorFallbackKind, CssColor};
 use crate::css_values::length::Length;
+use crate::css_values::number::NonNegative;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
 use crate::{
@@ -229,13 +230,13 @@ pub enum BorderSideWidth {
     /// A UA defined `thick` value.
     Thick,
     /// An explicit width.
-    Length(Length),
+    Length(NonNegative<Length>),
 }
 
 impl BorderSideWidth {
     pub(crate) fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
-            BorderSideWidth::Length(len) => len.is_compatible(browsers),
+            BorderSideWidth::Length(len) => len.0.is_compatible(browsers),
             _ => true,
         }
     }

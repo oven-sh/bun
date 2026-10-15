@@ -747,8 +747,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
-    /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`. `options`
-    /// are `LIBUS_SOCKET_*` flags.
+    /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
+    /// `options` are `LIBUS_SOCKET_*` flags.
     pub fn from_fd<This>(
         g: &mut SocketGroup,
         k: SocketKind,

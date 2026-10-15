@@ -2743,9 +2743,7 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
-    /// Stops (`true`) or restarts the reads of the process's inherited IPC
-    /// channel, which lives in `bun_runtime::ipc_host`. See
-    /// `RuntimeTranspilerStore::has_ipc_channel`.
+    /// Holds (`true`) or resumes the reads of the inherited IPC channel; see `RuntimeTranspilerStore::has_ipc_channel`.
     pub hold_ipc_reads: fn(hold: bool),
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),

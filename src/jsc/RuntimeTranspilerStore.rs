@@ -200,21 +200,11 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
-    /// This VM inherited an IPC channel (`NODE_CHANNEL_FD`, main thread only).
-    /// The event loop turns to wait for a job, and Node loads a module graph
-    /// without a turn: it reads the sources synchronously and runs the entry
-    /// before its loop spins.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/load.js#L32-L41
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_main_instance.cc#L106-L110
-    /// So the channel does not read while jobs are out (`RuntimeHooks::
-    /// hold_ipc_reads`): what the parent already sent has to reach the listeners
-    /// that the modules being loaded register when they run.
+    /// The VM inherited an IPC channel: its reads are held while jobs are out, as Node loads a graph without a loop turn.
     pub has_ipc_channel: bool,
-    /// Jobs sent to the pool that the JS thread has not taken back. Counted
-    /// only with `has_ipc_channel`.
+    /// Jobs out on the pool, counted only with `has_ipc_channel`.
     in_flight: u32,
-    /// From the first job out until a batch is back and the loader has asked
-    /// for nothing more.
+    /// From the first job out until a batch is back and the loader has asked for nothing more.
     ipc_reads_held: bool,
 }
 
@@ -296,13 +286,8 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    ///
-    /// # Safety
-    /// `this` is the live store of `vm`, on the JS thread.
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because the store is a field of `VirtualMachine`. `this` is raw for the
-    // same reason: the microtask drains below re-enter `transpile()` through
-    // the VM, so no `&mut Self` may span them.
+    // and a raw `this` (the VM's live store, JS thread): the VM owns the store, and the drains below re-enter `transpile()` through it.
     pub unsafe fn run_from_js_thread(
         this: *mut Self,
         event_loop: NonNull<EventLoop>,
@@ -356,10 +341,7 @@ impl RuntimeTranspilerStore {
         }
         // SAFETY: as above.
         if unsafe { (*this).ipc_reads_held } {
-            // The fulfilments' microtasks are where the loader asks for the
-            // next modules, or runs the loaded ones. Only a load that asked
-            // for nothing more ends the hold, so a chain of imports is one
-            // hold. A drain that a termination stopped still ends it below.
+            // The loader asks for its next modules in these microtasks, so a chain of imports stays one hold.
             let _ = drain_microtasks();
         }
         // SAFETY: as above.
@@ -367,8 +349,7 @@ impl RuntimeTranspilerStore {
         // immediately after this is called, the microtasks will be drained again.
     }
 
-    /// Every way out of the store task passes here, so the hold never outlives
-    /// the jobs.
+    /// Every way out of the store task passes here, so the hold never outlives the jobs.
     fn end_ipc_hold_if_idle(&mut self) {
         if self.ipc_reads_held && self.in_flight == 0 {
             self.set_ipc_reads_held(false);
@@ -467,6 +448,7 @@ impl RuntimeTranspilerStore {
         }
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
+        // Node reads module sources synchronously: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/load.js#L32-L41
         if self.has_ipc_channel {
             self.in_flight += 1;
             if !self.ipc_reads_held {

@@ -1081,8 +1081,7 @@ impl SendQueue {
         self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
-    /// Every reason not to read is a term here, so the end of one never
-    /// restarts what another still holds.
+    /// Every reason not to read is a term here, so the end of one never restarts what another still holds.
     fn is_reading(&self) -> bool {
         !self.reads_held.get()
     }
@@ -1101,8 +1100,7 @@ impl SendQueue {
         reading
     }
 
-    /// Writes are unaffected. What the peer sends while the socket does not
-    /// read waits in the kernel, and so does its close.
+    /// Writes are unaffected; what the peer sends meanwhile, and its close, wait in the kernel.
     fn apply_socket_reading(&self, reading: bool) {
         if self.socket_reading.get() == reading {
             return;

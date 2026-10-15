@@ -130,20 +130,17 @@ async function checkParentPaths(src, srcStat, dest) {
 }
 
 async function resolveExistingRealpath(p: string) {
-  const missing: string[] = [];
+  let missing = "";
   for (;;) {
     try {
-      p = await realpath(p);
-      break;
+      return join(await realpath(p), missing);
     } catch (err: any) {
       const parent = dirname(p);
       if (err?.code !== "ENOENT" || parent === p) return undefined;
-      missing.push(basename(p));
+      missing = join(basename(p), missing);
       p = parent;
     }
   }
-  while (missing.length > 0) p = join(p, missing.pop()!);
-  return p;
 }
 
 // The native walker has no own-output check, so a dest that resolves into src must not reach it.

@@ -340,20 +340,17 @@ function checkParentPathsSync(src, srcStat, dest) {
 }
 
 function resolveExistingRealpathSync(p: string) {
-  const missing: string[] = [];
+  let missing = "";
   for (;;) {
     try {
-      p = realpathSync(p);
-      break;
+      return join(realpathSync(p), missing);
     } catch (err: any) {
       const parent = dirname(p);
       if (err?.code !== "ENOENT" || parent === p) return undefined;
-      missing.push(basename(p));
+      missing = join(basename(p), missing);
       p = parent;
     }
   }
-  while (missing.length > 0) p = join(p, missing.pop()!);
-  return p;
 }
 
 // The native walker has no own-output check, so a dest that resolves into src must not reach it.
@@ -449,7 +446,9 @@ function checkParentDir(destStat, src, dest, opts, walk?: CpWalk, srcStat?: BigI
   let parent: BigIntStats | undefined;
   try {
     parent = statSync(destParent, { bigint: true, throwIfNoEntry: false });
-  } catch {}
+  } catch {
+    // Like existsSync before it: mkdirSync below reports what is wrong with the path.
+  }
   if (parent === undefined) {
     mkdirSync(destParent, { recursive: true });
     parent = statSync(destParent, { bigint: true });

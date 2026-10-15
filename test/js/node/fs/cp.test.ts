@@ -600,7 +600,7 @@ const canBindMount =
   })();
 
 describe.skipIf(!canBindMount)("copy into its own output through a bind mount", () => {
-  test.each([
+  test.concurrent.each([
     ["cpSync", `fs.cpSync("a/sub", "b/t", { recursive: true })`],
     ["promises.cp", `await fs.promises.cp("a/sub", "b/t", { recursive: true })`],
   ])("%s", async (_, call) => {
@@ -867,7 +867,6 @@ test.skipIf(!isPosix)(
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {

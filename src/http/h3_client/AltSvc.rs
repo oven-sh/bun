@@ -7,6 +7,7 @@
 //! instead. The cache is keyed on the *origin* authority (the host:port the
 //! request was sent to) and lives only on the HTTP thread, so it needs no
 //! locking.
+//! `lookup()` skips an alternative that `report_unreachable()` marked, until the mark ends.
 //!
 //! Only same-host alternatives (`h3=":port"` with an empty uri-host) are
 //! honored; cross-host alternatives need extra certificate-authority checks
@@ -148,6 +149,8 @@ fn cache() -> &'static mut StringHashMap<Record> {
 /// long-lived processes that hit many distinct origins.
 const MAX_ENTRIES: usize = 256;
 
+// With four call sites the compiler stops inlining this into `lookup()`, which runs per request.
+#[inline(always)]
 fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // Callers guard `hostname.len > 256` against a `256+8` buffer, and a u16
     // port is at most 5 digits + ':' — the write cannot overflow.
@@ -219,17 +222,69 @@ pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
 
 /// Look up a previously-advertised h3 alternative for `origin_host:origin_port`.
 /// Expired entries are dropped on access. Runs on the HTTP thread inside
-/// `start_()`.
-pub(crate) fn lookup(origin_host: &[u8], origin_port: u16) -> Option<u16> {
+/// `start_()`. `None` also for an alternative that `report_unreachable()` marked.
+pub(crate) fn lookup(
+    origin_host: &[u8],
+    origin_port: u16,
+    reject_unauthorized: bool,
+) -> Option<u16> {
     let mut buf = [0u8; 256 + 8];
     if origin_host.len() > 256 {
         return None;
     }
     let k = key(&mut buf, origin_host, origin_port);
     let rec = *cache().get(k)?;
-    if timestamp() >= rec.expires_at {
+    let now = timestamp();
+    if now >= rec.expires_at {
         cache().remove(k);
         return None;
     }
+    if !broken().is_empty() {
+        broken().retain(|_, until| now < until[0].max(until[1]));
+        let alt = key(
+            &mut buf,
+            bun_url::strip_ipv6_brackets(origin_host),
+            rec.h3_port,
+        );
+        let until = broken().get(alt);
+        if until.is_some_and(|until| now < until[usize::from(reject_unauthorized)]) {
+            return None;
+        }
+    }
     Some(rec.h3_port)
+}
+
+/// `"host:port"` of an alternative that `lookup()` skips -> until when, as `[lax, strict]`.
+static BROKEN: bun_core::RacyCell<Option<StringHashMap<[i64; 2]>>> = bun_core::RacyCell::new(None);
+
+/// The same contract as `cache()`.
+fn broken() -> &'static mut StringHashMap<[i64; 2]> {
+    // SAFETY: HTTP-thread only, so lazy init cannot race. Every call site reborrows per statement.
+    unsafe { (*BROKEN.get()).get_or_insert_with(StringHashMap::default) }
+}
+
+/// Chromium's `kDefaultBrokenAlternativeProtocolDelay` (net/http/broken_alternative_services.cc).
+const BROKEN_SECS: i64 = 300;
+
+/// No QUIC connection to `host:port` can be established: `lookup()` skips it for `BROKEN_SECS`.
+pub(crate) fn report_unreachable(host: &[u8], port: u16, reject_unauthorized: bool) {
+    let mut buf = [0u8; 256 + 8];
+    if host.len() > 256 || !crate::h3_alt_svc_enabled() {
+        return;
+    }
+    let k = key(&mut buf, host, port);
+    let now = timestamp();
+    if broken().len() >= MAX_ENTRIES && !broken().contains_key(k) {
+        broken().retain(|_, until| now < until[0].max(until[1]));
+        if broken().len() >= MAX_ENTRIES {
+            return;
+        }
+    }
+    let Ok(slot) = broken().get_or_put(k) else {
+        return;
+    };
+    // What fails with no certificate check fails with one too. The reverse does not hold.
+    let modes = if reject_unauthorized { 1..2 } else { 0..2 };
+    slot.value_ptr[modes].fill(now + BROKEN_SECS);
+    bun_core::scoped_log!(h3_client, "alt-svc broken {}", bstr::BStr::new(k));
 }

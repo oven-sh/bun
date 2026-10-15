@@ -635,6 +635,7 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
+ "bun_lsquic_sys",
  "bun_picohttp",
  "bun_ptr",
  "bun_sys",

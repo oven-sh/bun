@@ -233,6 +233,8 @@ pub struct Flags {
     pub(crate) protocol: Protocol,
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
+    /// The request left its Alt-Svc alternative before it was written: this hop stays on TCP.
+    pub(crate) h3_alt_svc_failed: bool,
     pub is_node_http_client: bool,
     pub redirect_credentials: RedirectCredentialsPolicy,
     /// While all connections are taken, this request lets the ones without the flag go first.
@@ -259,6 +261,7 @@ impl Default for Flags {
             protocol: Protocol::Http1_1,
             forced_protocol: None,
             h3_retried: false,
+            h3_alt_svc_failed: false,
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
             yields_to_other_requests: false,
@@ -2063,7 +2066,7 @@ impl<'a> HTTPClient<'a> {
     /// Whether this request shape is eligible to *use* a cached Alt-Svc h3
     /// alternative (HTTPS, no proxy/unix-socket, no sendfile, not pinned to a
     /// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
-    /// before opening TCP.
+    /// before opening TCP. False also for a hop that already left its alternative.
     pub(crate) fn can_try_h3_alt_svc(&self) -> bool {
         // The h3 client never routes through `check_server_identity`, so a JS
         // `checkServerIdentity` callback could never run; stay on TCP.
@@ -2094,7 +2097,7 @@ impl<'a> HTTPClient<'a> {
         if self.has_tls_options_unsupported_by_h3() {
             return false;
         }
-        h3_alt_svc_enabled()
+        h3_alt_svc_enabled() && !self.flags.h3_alt_svc_failed
     }
 
     fn has_tls_options_unsupported_by_h3(&self) -> bool {
@@ -2166,9 +2169,33 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn retry_from_h2(&mut self) {
         debug_assert!(self.h2.is_none());
+        self.h2_retries += 1;
+        self.restart_from_top();
+    }
+
+    /// An Alt-Svc-routed request lost its QUIC connection. TCP carries it if nothing wrote it yet.
+    pub(crate) fn h3_upgrade_failed(&mut self, err: crate::Error) {
+        debug_assert!(self.h3.is_none());
+        if self.flags.forced_protocol == Some(Protocol::Http3)
+            || self.state.request_stage != RequestStage::Pending
+        {
+            return self.fail_from_h2(err);
+        }
+        self.flags.h3_alt_svc_failed = true;
+        // Under this request's own `start_` (DNS had answered already): `start_` goes on to TCP.
+        if self
+            .flags
+            .defer_terminal_dispatch_until_connecting_is_complete
+        {
+            return;
+        }
+        self.restart_from_top();
+    }
+
+    /// Start the request again through `start()`. The body can be sent again from its first byte.
+    fn restart_from_top(&mut self) {
         self.unregister_abort_tracker();
         self.flags.protocol = Protocol::Http1_1;
-        self.h2_retries += 1;
         let body = core::mem::replace(
             &mut self.state.original_request_body,
             HTTPRequestBody::Bytes(b""),
@@ -2763,6 +2790,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.close_proxy_tunnel(false);
         self.flags.protocol = Protocol::Http1_1;
+        self.flags.h3_alt_svc_failed = false;
         self.reevaluate_proxy_for_redirect();
 
         self.start(HTTPRequestBody::Bytes(request_body));
@@ -2864,26 +2892,31 @@ impl<'a> HTTPClient<'a> {
             // request lands back here with `forced_protocol` still `None` and
             // consults the cache for the new origin.
             if self.flags.forced_protocol != Some(Protocol::Http3) && self.can_try_h3_alt_svc() {
-                if let Some(alt_port) =
-                    h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
-                {
+                if let Some(alt_port) = h3::alt_svc::lookup(
+                    self.url.hostname,
+                    self.url.get_port_auto(),
+                    self.flags.reject_unauthorized,
+                ) {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
                     let h3_ctx = h3::ClientContext::get_or_create(unsafe {
                         NonNull::new_unchecked(http_thread().uws_loop)
                     });
                     if let Some(ctx) = h3_ctx {
-                        if !h3::ClientContext::as_mut(ctx).connect(
+                        if h3::ClientContext::as_mut(ctx).connect(
                             self,
                             strip_ipv6_brackets(self.url.hostname),
                             alt_port,
-                        ) {
-                            self.fail(crate::Error::ConnectionRefused);
+                            false,
+                        ) && !self.flags.h3_alt_svc_failed
+                        {
+                            self.complete_connecting_process();
+                            return;
                         }
-                        self.complete_connecting_process();
-                        return;
+                        // The request is on no QUIC session, and nothing of it was written.
+                        self.flags.protocol = Protocol::Http1_1;
                     }
-                    // engine init failed: fall through to TCP
+                    // engine init or the connect failed: fall through to TCP
                 }
             }
         }
@@ -2935,6 +2968,7 @@ impl<'a> HTTPClient<'a> {
                 self,
                 strip_ipv6_brackets(self.url.hostname),
                 self.url.get_port_auto(),
+                false,
             ) {
                 self.fail(crate::Error::ConnectionRefused);
             }
@@ -4504,6 +4538,7 @@ impl<'a> HTTPClient<'a> {
         self.state.reset();
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
+        self.flags.h3_alt_svc_failed = false;
         self.reevaluate_proxy_for_redirect();
         self.start(HTTPRequestBody::Bytes(request_body));
     }

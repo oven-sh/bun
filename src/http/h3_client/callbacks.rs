@@ -10,8 +10,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bstr::BStr;
+use bun_lsquic_sys as lsquic;
 use bun_uws::quic;
 
+use super::alt_svc;
 use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
@@ -143,6 +145,18 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     );
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);
+    }
+    // No answer, a failed handshake, or the second dial in a row that closed: a new dial is no use.
+    if !session.handshake_done
+        && (matches!(
+            st,
+            lsquic::LSCONN_ST_TIMED_OUT
+                | lsquic::LSCONN_ST_HSK_FAILURE
+                | lsquic::LSCONN_ST_VERNEG_FAILURE
+        ) || session.second_dial)
+    {
+        session.unreachable = true;
+        alt_svc::report_unreachable(&session.hostname, session.port, session.reject_unauthorized);
     }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before

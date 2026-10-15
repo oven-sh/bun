@@ -2,7 +2,6 @@
 #include "BunIDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include <JavaScriptCore/JSBigInt.h>
-#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -54,6 +53,15 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
         return tryConvertSlow(globalObject, value, ctx);
     }
 
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(
+        JSC::JSGlobalObject& globalObject,
+        JSC::ThrowScope& scope,
+        Ctx& ctx)
+    {
+        ctx.throwNotNumber(globalObject, scope);
+    }
+
 private:
     template<Bun::IDLConversionContext Ctx>
     NEVER_INLINE static std::optional<T> tryConvertSlow(
@@ -69,11 +77,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (value.isInt32()) {
-            auto intValue = value.asInt32();
-            if (std::cmp_greater_equal(intValue, minInt) && std::cmp_less_equal(intValue, maxInt)) {
-                return static_cast<T>(intValue);
-            }
-            ctx.throwIntegerOutOfRange(globalObject, scope, intValue, minInt, maxInt);
+            ctx.throwIntegerOutOfRange(globalObject, scope, value.asInt32(), minInt, maxInt);
             return {};
         }
 
@@ -116,16 +120,6 @@ private:
         ctx.throwIntegerOutOfRange(globalObject, scope, intVal, minInt, maxInt);
         return {};
     }
-
-public:
-    template<Bun::IDLConversionContext Ctx>
-    static void throwConversionFailed(
-        JSC::JSGlobalObject& globalObject,
-        JSC::ThrowScope& scope,
-        Ctx& ctx)
-    {
-        ctx.throwNotNumber(globalObject, scope);
-    }
 };
 
 template<>
@@ -142,39 +136,6 @@ struct WebCore::Converter<Bun::IDLStrictDouble> : Bun::DefaultTryConverter<Bun::
             return value.asNumber();
         }
         return std::nullopt;
-    }
-
-    template<Bun::IDLConversionContext Ctx>
-    static void throwConversionFailed(
-        JSC::JSGlobalObject& globalObject,
-        JSC::ThrowScope& scope,
-        Ctx& ctx)
-    {
-        ctx.throwNotNumber(globalObject, scope);
-    }
-};
-
-template<>
-struct WebCore::Converter<Bun::IDLFiniteDouble> : Bun::DefaultTryConverter<Bun::IDLFiniteDouble> {
-    static constexpr bool conversionHasSideEffects = false;
-
-    template<Bun::IDLConversionContext Ctx>
-    static std::optional<double> tryConvert(
-        JSC::JSGlobalObject& globalObject,
-        JSC::JSValue value,
-        Ctx& ctx)
-    {
-        auto& vm = JSC::getVM(&globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!value.isNumber()) {
-            return std::nullopt;
-        }
-        double number = value.asNumber();
-        if (std::isnan(number) || std::isinf(number)) {
-            ctx.throwNumberNotFinite(globalObject, scope, number);
-            return std::nullopt;
-        }
-        return number;
     }
 
     template<Bun::IDLConversionContext Ctx>

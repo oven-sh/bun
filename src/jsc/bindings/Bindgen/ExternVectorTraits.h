@@ -68,8 +68,8 @@ public:
                 .length = static_cast<unsigned>(length),
                 .capacity = static_cast<unsigned>(capacity),
             };
-        } else if constexpr (sizeof(ExternElement) <= sizeof(T)
-            && alignof(ExternElement) <= MimallocMalloc::maxAlign) {
+        } else {
+            static_assert(sizeof(ExternElement) <= sizeof(T) && alignof(ExternElement) <= MimallocMalloc::maxAlign);
 
             // We can reuse the allocation, but we still need to convert the elements.
             alignas(CPPType) std::byte cppStorage[sizeof(CPPType)];
@@ -77,7 +77,6 @@ public:
             CPPType* const vec = new (cppStorage) CPPType { std::move(cppValue) };
             const std::size_t length = vec->size();
             const std::size_t capacity = vec->capacity();
-            const std::size_t allocSize = capacity * sizeof(T);
 
             T* const buffer = vec->mutableSpan().data();
             Detail::asanSetBufferSizeToFullCapacity(buffer, length, capacity);
@@ -91,57 +90,24 @@ public:
                 new (storage + i * sizeof(ExternElement)) ExternElement { std::move(newElem) };
             }
 
-            std::size_t newCapacity {};
-            std::size_t newAllocSize {};
-
-            static constexpr bool newSizeIsMultiple = sizeof(T) % sizeof(ExternElement) == 0;
-            if (newSizeIsMultiple) {
-                newCapacity = capacity * (sizeof(T) / sizeof(ExternElement));
-                newAllocSize = allocSize;
-            } else {
-                newCapacity = allocSize / sizeof(ExternElement);
-                newAllocSize = newCapacity * sizeof(ExternElement);
-                if (newAllocSize != allocSize) {
-                    static_assert(std::is_trivially_copyable_v<ExternElement>);
-                    storage = static_cast<std::byte*>(
-                        MimallocMalloc::realloc(storage, newCapacity * sizeof(ExternElement)));
-                }
-            }
-
 #if __cpp_lib_start_lifetime_as >= 202207L
-            ExternElement* data = std::start_lifetime_as_array<ExternElement>(storage, newCapacity);
+            ExternElement* data = std::start_lifetime_as_array<ExternElement>(storage, length);
 #else
-            // We need to start the lifetime of an object of type "array of `capacity`
+            // We need to start the lifetime of an object of type "array of `length`
             // `ExternElement`" without invalidating the object representation. Without
             // `std::start_lifetime_as_array`, one way to do this is to use a no-op `memmove`,
             // which implicitly creates objects, plus `std::launder` to obtain a pointer to
             // the created object.
-            std::memmove(storage, storage, newAllocSize);
+            std::memmove(storage, storage, length * sizeof(ExternElement));
             ExternElement* data = std::launder(reinterpret_cast<ExternElement*>(storage));
 #endif
             return ExternType {
                 .data = data,
                 .length = static_cast<unsigned>(length),
-                .capacity = static_cast<unsigned>(newCapacity),
+                // Rust converts these elements into a Vec of its own and frees this buffer without a size.
+                .capacity = static_cast<unsigned>(length),
             };
         }
-
-        const std::size_t length = cppValue.size();
-        const std::size_t newAllocSize = sizeof(ExternElement) * length;
-        ExternElement* memory = reinterpret_cast<ExternElement*>(
-            alignof(ExternElement) > MimallocMalloc::maxAlign
-                ? MimallocMalloc::alignedMalloc(newAllocSize, alignof(ExternElement))
-                : MimallocMalloc::malloc(newAllocSize));
-        for (std::size_t i = 0; i < length; ++i) {
-            new (memory + i) ExternElement {
-                ExternTraits<T>::convertToExtern(std::move(cppValue[i])),
-            };
-        }
-        return ExternType {
-            .data = memory,
-            .length = static_cast<unsigned>(length),
-            .capacity = static_cast<unsigned>(length),
-        };
     }
 };
 

@@ -16,11 +16,11 @@ public:
     {
     }
 
-    // May throw. Out of line: inlined, it is most of the size of every generated convertDictionary.
+    // May throw. Out of line: inlined, it is most of the size of every generated dictionary converter.
     JSC::JSValue get(unsigned index);
 
 private:
-    // The lookup below stops before Object.prototype. Asked per member: converting one can run JavaScript.
+    // `get` stops before Object.prototype. Asked per member: converting one can run JavaScript.
     ALWAYS_INLINE bool ownPropertiesAreTheWholeAnswer() const
     {
         if (m_object->type() != JSC::FinalObjectType)

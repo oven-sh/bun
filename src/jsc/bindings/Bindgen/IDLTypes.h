@@ -13,14 +13,12 @@ struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
     using NullableParameterType = const T&;
 };
 
-// A string or a `String` object, which is what `JSValue::is_string` in Rust has always meant.
+// A string or a `String` object, which is what `JSValue::is_string` in Rust accepts.
 struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
     using SequenceStorageType = void;
     using NullableType = JSStringUTF8View;
     using NullableInnerParameterType = JSStringUTF8View;
     static JSStringUTF8View nullValue() { return {}; }
-    static bool isNullValue(const JSStringUTF8View& value) { return value.isNull(); }
-    template<typename U> static U&& extractValueFromNullable(U&& value) { return std::forward<U>(value); }
 };
 // `ToString`.
 struct IDLLooseUTF8String : IDLStrictUTF8String {};
@@ -33,8 +31,6 @@ struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
     using NullableType = std::span<const uint8_t>;
     using NullableInnerParameterType = std::span<const uint8_t>;
     static NullableType nullValue() { return {}; }
-    static bool isNullValue(NullableType value) { return !value.data(); }
-    static ImplementationType extractValueFromNullable(NullableType value) { return value; }
 };
 
 // The same values, as the `JSValue` itself. See Bun::IDLRawAny.
@@ -49,8 +45,6 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using NullableType = JSClass*;
     using NullableInnerParameterType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
-    static bool isNullValue(JSClass* value) { return !value; }
-    static JSClass* extractValueFromNullable(JSClass* value) { return value; }
 };
 
 }

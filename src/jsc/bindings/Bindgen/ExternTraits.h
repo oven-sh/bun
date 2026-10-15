@@ -5,10 +5,8 @@
 #include <span>
 #include <type_traits>
 #include <utility>
-#include <variant>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
 #include "JSStringUTF8View.h"
 
@@ -28,15 +26,11 @@ struct TrivialExtern {
 };
 
 template<> struct ExternTraits<bool> : TrivialExtern<bool> {};
-template<> struct ExternTraits<std::int8_t> : TrivialExtern<std::int8_t> {};
 template<> struct ExternTraits<std::uint8_t> : TrivialExtern<std::uint8_t> {};
-template<> struct ExternTraits<std::int16_t> : TrivialExtern<std::int16_t> {};
 template<> struct ExternTraits<std::uint16_t> : TrivialExtern<std::uint16_t> {};
 template<> struct ExternTraits<std::int32_t> : TrivialExtern<std::int32_t> {};
 template<> struct ExternTraits<std::uint32_t> : TrivialExtern<std::uint32_t> {};
-template<> struct ExternTraits<std::int64_t> : TrivialExtern<std::int64_t> {};
 template<> struct ExternTraits<std::uint64_t> : TrivialExtern<std::uint64_t> {};
-template<> struct ExternTraits<float> : TrivialExtern<float> {};
 template<> struct ExternTraits<double> : TrivialExtern<double> {};
 
 enum ExternNullPtr : std::uint8_t {};
@@ -45,15 +39,6 @@ template<> struct ExternTraits<std::nullptr_t> {
     using ExternType = ExternNullPtr;
 
     static ExternType convertToExtern(std::nullptr_t cppValue)
-    {
-        return ExternType { 0 };
-    }
-};
-
-template<> struct ExternTraits<std::monostate> {
-    using ExternType = ExternNullPtr;
-
-    static ExternType convertToExtern(std::monostate cppValue)
     {
         return ExternType { 0 };
     }
@@ -131,15 +116,6 @@ template<typename T>
 struct ExternWithValue {
     T converted;
     JSC::EncodedJSValue value;
-};
-
-template<typename T, typename P, typename R> struct ExternTraits<WTF::Ref<T, P, R>> {
-    using ExternType = T*;
-
-    static ExternType convertToExtern(WTF::Ref<T, P, R>&& cppValue)
-    {
-        return &cppValue.leakRef();
-    }
 };
 
 template<typename T, typename P, typename R> struct ExternTraits<WTF::RefPtr<T, P, R>> {

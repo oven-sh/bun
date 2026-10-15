@@ -11,13 +11,9 @@ enum class BindgenCustomEnforceRangeKind {
     Web,
 };
 
-// This type implements conversion for:
-// - t.*.validateInteger()
-// - t.*.enforceRange(a, b) when A, B is not the integer's ABI size.
-// - t.i32.validateInt32()
-// - t.u32.validateUInt32()
+// `.validateInteger(min, max)` and `.enforceRange(min, max)`.
 template<
-    typename NumericType,
+    std::integral NumericType,
     NumericType Min,
     NumericType Max,
     BindgenCustomEnforceRangeKind Kind>
@@ -34,7 +30,7 @@ static String rangeErrorString(double value, double min, double max)
 namespace WebCore {
 
 template<
-    typename NumericType,
+    std::integral NumericType,
     NumericType Min,
     NumericType Max,
     Bun::BindgenCustomEnforceRangeKind Kind>
@@ -58,38 +54,23 @@ struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
             }
             unrestricted = value.asNumber();
 
-            // Node also validates that integer types are integers
-            if constexpr (std::is_integral_v<NumericType>) {
-                if (unrestricted != std::round(unrestricted)) {
-                    // ERR_OUT_OF_RANGE "an integer"
-                    Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), "an integer"_s, value);
-                    return 0;
-                }
-            } else {
-                // When a range is specified (what this template is implementing),
-                // Node also throws on NaN being out of range
-                if (std::isnan(unrestricted)) {
-                    // ERR_OUT_OF_RANGE `>= ${min} && <= ${max}`
-                    Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), Min, Max, value);
-                    return 0;
-                }
+            if (unrestricted != std::round(unrestricted)) {
+                // ERR_OUT_OF_RANGE "an integer"
+                Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), "an integer"_s, value);
+                return 0;
             }
         } else {
-            // WebIDL uses toNumber before applying range restrictions. This
-            // allows something like `true` to pass for `t.f64.enforceRange(-10, 10)`,
-            // but this behavior does not appear Node's validators.
+            // WebIDL uses toNumber before applying range restrictions, so `true` passes. Node's validators refuse it.
             unrestricted = value.toNumber(&lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, 0);
 
-            if constexpr (std::is_integral_v<NumericType>) {
-                if (std::isnan(unrestricted) || std::isinf(unrestricted)) {
-                    throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(unrestricted, Min, Max));
-                    return 0;
-                }
-
-                // IDL uses trunc to convert the double to an integer.
-                unrestricted = trunc(unrestricted);
+            if (std::isnan(unrestricted) || std::isinf(unrestricted)) {
+                throwTypeError(&lexicalGlobalObject, scope, rangeErrorString(unrestricted, Min, Max));
+                return 0;
             }
+
+            // IDL uses trunc to convert the double to an integer.
+            unrestricted = trunc(unrestricted);
         }
 
         bool inRange = unrestricted >= Min && unrestricted <= Max;

@@ -3,7 +3,6 @@
 #include "JSDOMConvertBase.h"
 #include <concepts>
 #include <optional>
-#include <tuple>
 #include <utility>
 
 namespace Bun {
@@ -27,11 +26,7 @@ ALWAYS_INLINE std::optional<typename WebCore::Converter<T>::ReturnType> tryConve
     JSC::JSValue value,
     Ctx& ctx)
 {
-    if constexpr (WebCore::Converter<T>::takesContext) {
-        return WebCore::Converter<T>::tryConvert(globalObject, value, ctx);
-    } else {
-        return WebCore::Converter<T>::tryConvert(globalObject, value);
-    }
+    return WebCore::Converter<T>::tryConvert(globalObject, value, ctx);
 }
 
 template<typename IDL>
@@ -39,12 +34,6 @@ struct DefaultContextConverter : WebCore::DefaultConverter<IDL> {
     using typename WebCore::DefaultConverter<IDL>::ReturnType;
 
     static constexpr bool takesContext = true;
-
-    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
-    {
-        auto ctx = DefaultConversionContext {};
-        return WebCore::Converter<IDL>::convert(globalObject, value, ctx);
-    }
 };
 
 template<typename IDL>
@@ -63,21 +52,13 @@ struct DefaultTryConverter : DefaultContextConverter<IDL> {
             return std::move(*result);
         }
         RETURN_IF_EXCEPTION(scope, {});
-        throwConversionFailed(globalObject, scope, ctx);
+        throwConversionFailedSlow(globalObject, scope, ctx);
         return ReturnType {};
-    }
-
-    static std::optional<ReturnType> tryConvert(
-        JSC::JSGlobalObject& globalObject,
-        JSC::JSValue value)
-    {
-        auto ctx = DefaultConversionContext {};
-        return WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
     }
 
 private:
     template<IDLConversionContext Ctx>
-    NEVER_INLINE static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    NEVER_INLINE static void throwConversionFailedSlow(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         WebCore::Converter<IDL>::throwConversionFailed(globalObject, scope, ctx);
     }

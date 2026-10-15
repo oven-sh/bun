@@ -2,8 +2,8 @@
 #include "Bindgen/DictionaryMemberReader.h"
 #include "Bindgen/Identifiers.h"
 #include "Bindgen/JSStringUTF8View.h"
-#include "GeneratedBindings+Tables.h"
 #include "BunClientData.h"
+#include "GeneratedBindings+Tables.h"
 #include "ObjectBindings.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSArray.h>

@@ -189,7 +189,9 @@ export abstract class Type {
   }
 
   /** A C++ expression of `idlType::ImplementationType` for a default value written in the schema. */
-  abstract toCpp(value: unknown): string;
+  toCpp(value: unknown): string {
+    throw new TypeError(`${this.tsType} cannot have a default`);
+  }
   /** C++ statements that give that value to `target`, which names an object that was just default-constructed. */
   cppAssign(target: string, value: unknown): string {
     return `${target} = ${this.toCpp(value)};`;
@@ -380,16 +382,13 @@ export class UnitType extends Type {
   constructor(tsType: "null" | "undefined") {
     super();
     this.tsType = tsType;
-    this.idlType = tsType === "null" ? "::Bun::IDLStrictNull" : "::Bun::IDLStrictUndefined";
+    this.idlType = tsType === "null" ? "::Bun::IDLStrictNull" : "";
   }
   get kinds(): readonly Kind[] {
     return this.tsType === "null" ? ["undefined", "null"] : ["undefined"];
   }
   get permitsUndefined(): boolean {
     return true;
-  }
-  toCpp(): string {
-    return this.tsType === "null" ? "nullptr" : "::std::monostate {}";
   }
   layout(): Layout {
     return { size: 1, align: 1 };
@@ -506,10 +505,6 @@ export class Utf8Type extends Type {
   cppConvertInto(target: string, value: string, ctx: string): string {
     return `::WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
   }
-  toCpp(value: unknown): string {
-    assert(typeof value === "string");
-    return `::Bun::Bindgen::JSStringUTF8View { ${asciiLiteral(value)} }`;
-  }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "string");
     return `${target}.initialize(${asciiLiteral(value)});`;
@@ -561,9 +556,6 @@ export class BytesType extends Type {
   get nullRepresentation() {
     return "pointer" as const;
   }
-  toCpp(): string {
-    throw new TypeError("b.bufferSource.bytes cannot have a default");
-  }
   layout(): Layout {
     return { size: 16, align: 8 };
   }
@@ -601,9 +593,6 @@ export class BufferSourceType extends Type {
   }
   get holdsJSValue(): boolean {
     return true;
-  }
-  toCpp(): string {
-    throw new TypeError("b.bufferSource cannot have a default");
   }
   layout(): Layout {
     return { size: 8, align: 8 };
@@ -654,9 +643,6 @@ export class WithValueType extends Type {
   }
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
     return this.inner.cppConvertInto(target, value, ctx, name);
-  }
-  toCpp(): string {
-    throw new TypeError(".withValue cannot be combined with .default()");
   }
   cppConvert(value: string, ctx: string, name: string): string {
     return this.inner.cppConvert(value, ctx, name);
@@ -737,9 +723,6 @@ export class RefType extends Type {
   }
   getHeaders(out: Set<string>): void {
     if (this.header) out.add(this.header);
-  }
-  toCpp(): string {
-    throw new TypeError(`${this.tsType} cannot have a default`);
   }
   layout(): Layout {
     return { size: 8, align: 8 };
@@ -871,7 +854,7 @@ export class DefaultType extends Type {
       this.onNull = false;
     }
     this.value = value;
-    this.payload.toCpp(value);
+    this.payload.cppAssign("", value);
   }
   get idlType(): string {
     return this.payload.idlType;
@@ -1150,9 +1133,6 @@ export class DictionaryType extends NamedType {
   get names(): string[] {
     return this.members.flatMap(member => member.names);
   }
-  toCpp(value: unknown): string {
-    return `[] { ${this.cpp} value; ${this.cppAssign("value", value).replaceAll("\n", " ")} return value; }()`;
-  }
   cppAssign(target: string, value: unknown): string {
     assert(typeof value === "object" && value !== null);
     const given = value as Record<string, unknown>;
@@ -1242,9 +1222,6 @@ export class UnionType extends NamedType {
   }
   get dependencies(): readonly Type[] {
     return this.alternatives.map(a => a.type);
-  }
-  toCpp(value: unknown): string {
-    return `[] { ${this.cpp} value; ${this.cppAssign("value", value)} return value; }()`;
   }
   cppAssign(target: string, value: unknown): string {
     const unit = value == null && this.alternatives.find(a => a.type instanceof UnitType && takes(a.type, `${value}`));
@@ -1572,9 +1549,6 @@ export class ClassType extends NamedType {
       ]),
       ...this.getters.map(getter => getter.type),
     ];
-  }
-  toCpp(): string {
-    throw new TypeError(`${this.name} cannot have a default`);
   }
   layout(): Layout {
     return { size: 8, align: 8 };

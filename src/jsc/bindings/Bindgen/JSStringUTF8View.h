@@ -10,21 +10,16 @@ namespace Bun::Bindgen {
 // Bun::UTF8View for an argument of a host call. Lives in the host function's frame.
 class JSStringUTF8View {
     WTF_MAKE_NONCOPYABLE(JSStringUTF8View);
+    WTF_MAKE_NONMOVABLE(JSStringUTF8View);
 
 public:
     // Not `= default`: value-initialization would zero the buffer first.
     JSStringUTF8View() {}
-    JSStringUTF8View(JSStringUTF8View&&) = default;
-    JSStringUTF8View& operator=(JSStringUTF8View&&) = default;
-    explicit JSStringUTF8View(WTF::ASCIILiteral literal)
-        : m_view(nullptr, literal)
-        , m_isNull(false)
-    {
-    }
 
-    // Of a view that is null. It is large, so it is filled in where it lives. Resolving a rope and converting can throw.
+    // It is large, so it is filled in where it lives. Resolving a rope and converting can throw.
     void initialize(JSC::JSGlobalObject& globalObject, JSC::JSString* string)
     {
+        ASSERT(m_isNull);
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         m_view = string->view(&globalObject);
@@ -38,6 +33,7 @@ public:
 
     void initialize(WTF::ASCIILiteral literal)
     {
+        ASSERT(m_isNull);
         m_view = { nullptr, literal };
         m_isNull = false;
     }

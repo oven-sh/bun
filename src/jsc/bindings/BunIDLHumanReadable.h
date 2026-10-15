@@ -3,7 +3,6 @@
 #include "ConcatCStrings.h"
 #include <wtf/text/ASCIILiteral.h>
 #include <concepts>
-#include <string_view>
 
 namespace Bun {
 
@@ -51,10 +50,6 @@ static constexpr auto separatorForHumanReadableBinaryDisjunction()
 
 template<> struct IDLHumanReadableName<Bun::IDLStrictNull> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("null");
-};
-
-template<> struct IDLHumanReadableName<Bun::IDLStrictUndefined> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("undefined");
 };
 
 template<typename IDL>

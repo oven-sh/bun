@@ -3,7 +3,6 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
-#include <variant>
 #include <wtf/Vector.h>
 
 namespace WTF {
@@ -20,19 +19,10 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     // Storage in a sequence is explicitly unsupported, as this would create a
     // `Vector<JSValue>`, whose contents are invisible to the GC.
     using SequenceStorageType = void;
-    using NullableType = JSC::JSValue;
-    using NullableParameterType = JSC::JSValue;
-    using NullableInnerParameterType = JSC::JSValue;
-    static NullableType nullValue() { return JSC::jsUndefined(); }
-    static bool isNullValue(const NullableType& value) { return value.isUndefined(); }
-    static ImplementationType extractValueFromNullable(const NullableType& value) { return value; }
 };
 
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
-
-// For use in unions, to represent an optional union.
-struct IDLStrictUndefined : WebCore::IDLType<std::monostate> {};
 
 // Treats all falsy values as null.
 template<typename IDL>
@@ -41,7 +31,6 @@ struct IDLLooseNullable : WebCore::IDLNullable<IDL> {};
 template<std::integral T>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
-struct IDLFiniteDouble : WebCore::IDLDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
 
@@ -49,8 +38,9 @@ struct IDLStrictString : WebCore::IDLDOMString {};
 template<std::integral T>
 struct IDLLooseInteger : IDLStrictInteger<T> {};
 
+// The alternatives of a union, for IDLHumanReadableName.
 template<typename... IDL>
-struct IDLOrderedUnion : WebCore::IDLType<std::variant<typename IDL::ImplementationType...>> {};
+struct IDLOrderedUnion;
 
 namespace Detail {
 template<typename IDL>
@@ -75,11 +65,6 @@ struct IDLBunInterface : WebCore::IDLType<WTF::RefPtr<T, WTF::RawPtrTraits<T>, R
     using NullableInnerParameterType = NullableType;
 
     static inline std::nullptr_t nullValue() { return nullptr; }
-    template<typename U> static inline bool isNullValue(U&& value) { return !value; }
-    template<typename U> static inline U&& extractValueFromNullable(U&& value)
-    {
-        return std::forward<U>(value);
-    }
 };
 
 struct IDLArrayBufferRef : IDLBunInterface<JSC::ArrayBuffer> {};

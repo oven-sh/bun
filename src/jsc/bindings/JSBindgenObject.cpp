@@ -28,7 +28,7 @@ JSBindgenConstructor* JSBindgenConstructor::create(VM& vm, JSGlobalObject* globa
 {
     auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     auto* constructor = new (NotNull, allocateCell<JSBindgenConstructor>(vm)) JSBindgenConstructor(vm, structure, definition.construct);
-    constructor->finishCreation(vm, definition.constructorLength, definition.className, PropertyAdditionMode::WithoutStructureTransition);
+    constructor->finishCreation(vm, definition.constructorLength, definition.info->className, PropertyAdditionMode::WithoutStructureTransition);
     Bun::reifyStaticPropertyTable(vm, info(), definition.constructorTableValues, *constructor);
     constructor->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return constructor;

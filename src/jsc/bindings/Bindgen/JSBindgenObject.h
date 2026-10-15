@@ -14,7 +14,7 @@ namespace Bun::Bindgen {
 template<typename Traits> class JSBindgenObject;
 }
 
-// Reads the cell and nothing else: one of JSDOMWrapperType is a JSDestructibleObject, which holds its ClassInfo.
+// A cell whose type is JSDOMWrapperType is a JSDestructibleObject, so its ClassInfo is in the cell: no Structure load.
 template<typename Traits>
 struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSBindgenObject<Traits>> {
     static constexpr std::optional<JSTypeRange> typeRange { std::nullopt };
@@ -22,7 +22,7 @@ struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSBindgenObject<Trait
     static inline bool inherits(From* from)
     {
         return from->type() == static_cast<JSType>(WebCore::JSDOMWrapperType)
-            && static_cast<const JSDestructibleObject*>(static_cast<const JSCell*>(from))->classInfo() == Bun::Bindgen::JSBindgenObject<Traits>::info();
+            && uncheckedDowncast<const JSDestructibleObject>(from)->classInfo() == Bun::Bindgen::JSBindgenObject<Traits>::info();
     }
 };
 
@@ -30,7 +30,6 @@ namespace Bun::Bindgen {
 
 // One per class, defined by generated code.
 struct ClassDefinition {
-    WTF::ASCIILiteral className;
     const JSC::ClassInfo* info;
     JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     std::span<const JSC::HashTableValue> prototypeTableValues;

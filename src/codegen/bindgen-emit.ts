@@ -150,7 +150,7 @@ const valueTests: Partial<Record<string, (value: string) => string>> = {
   null: value => `${value}.isNull()`,
   boolean: value => `${value}.isBoolean()`,
   number: value => `${value}.isNumber()`,
-  bigint: value => `::Bun::Bindgen::isBigInt32(${value})`,
+  bigint: value => `${value}.isBigInt32()`,
 };
 /** True of `cell`, whose type byte is `type`. */
 const cellTests: Partial<Record<string, string>> = {
@@ -184,7 +184,7 @@ function cppChooseByKind<T>(value: string, byKind: ReadonlyMap<Kind | "other", T
     if (kind === "other") continue;
     const index = indexOf(choice);
     if (typeof kind === "object") {
-      add(ofClass, index, `JSC::JSCastingHelpers::inherits<${kind.cpp}>(cell)`);
+      add(ofClass, index, `cell->inherits<${kind.cpp}>()`);
     } else {
       add(ofValue, index, valueTests[kind]?.(value));
       add(ofType, index, cellTests[kind]);
@@ -291,7 +291,10 @@ ${held
 }
 template<> struct IDLHumanReadableName<Bindgen::Generated::IDL${name}> : IDLHumanReadableName<::Bun::IDLOrderedUnion<${idlTypes}>> {};
 }
-template<> struct WebCore::Converter<${type.idlType}> : ::Bun::DefaultContextConverter<${type.idlType}> {
+template<> struct WebCore::Converter<${type.idlType}> : ::Bun::DefaultContextConverter<${type.idlType}> {${
+    type.needsLifetime
+      ? ""
+      : `
     template<::Bun::IDLConversionContext Ctx>
     static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
@@ -299,7 +302,8 @@ template<> struct WebCore::Converter<${type.idlType}> : ::Bun::DefaultContextCon
         convertInto(globalObject, value, ctx, result);
         return result;
     }
-
+`
+  }
     template<::Bun::IDLConversionContext Ctx>
     static void convertInto(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx, ReturnType& result)
     {
@@ -374,10 +378,10 @@ template<> struct IDLHumanReadableName<::WebCore::IDLDictionary<Bindgen::Generat
 };
 }
 ${
-  type.holdsJSValue || type.borrowsFrame
-    ? `template<> struct WebCore::IDLDictionary<${type.cpp}> : ::Bun::Bindgen::IDLStackOnlyDictionary<${type.cpp}> {};\n`
-    : ""
-}template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue);
+  type.needsLifetime
+    ? `template<> struct WebCore::IDLDictionary<${type.cpp}> : ::Bun::Bindgen::IDLStackOnlyDictionary<${type.cpp}> {};`
+    : `template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue);`
+}
 `;
 }
 
@@ -388,7 +392,7 @@ export function cppHeader(file: SchemaFile): string {
   headers.delete(`Generated${file.origin.namespace}.h`);
   return `${banner(file.origin)}#pragma once
 #include "root.h"
-#include "Bindgen.h"
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/IDLConvert.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
@@ -498,16 +502,20 @@ ${
 }    ::Bun::Bindgen::DictionaryMemberReader members(vm, globalObject, object, ${type.firstMemberNameIndex}, ${count});
 ${members.join("\n")}
 }
-
+${
+  type.needsLifetime
+    ? ""
+    : `
 template<> ${type.cpp} WebCore::convertDictionary<${type.cpp}>(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
 {
     ${type.cpp} result;
     ::Bun::Bindgen::Generated::convert${type.name}(globalObject, value, result);
     return result;
 }
-${
-  type.fromJS
-    ? `
+`
+}${
+    type.fromJS
+      ? `
 extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value, ::Bun::Bindgen::Generated::Extern${type.name}* result)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -519,8 +527,8 @@ extern "C" bool Bun__Bindgen__${type.name}__fromJS(JSC::JSGlobalObject* globalOb
     return true;
 }
 `
-    : ""
-}`;
+      : ""
+  }`;
 }
 
 const overloadSuffix = (fn: FunctionDefinition, signature: Signature) =>
@@ -773,7 +781,6 @@ ${privateMethods
       : ""
   }
 const ::Bun::Bindgen::ClassDefinition Bun::Bindgen::Generated::JS${name}ClassDefinition = {
-    .className = ${asciiLiteral(name)},
     .info = ${type.cpp}::info(),
     .createStructure = ${type.cpp}::createStructure,
     .prototypeTableValues = ${span(`JS${name}PrototypeTableValues`, prototypeRows)},

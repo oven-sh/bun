@@ -217,24 +217,37 @@ static std::optional<std::span<const uint8_t>> bufferContentsBytes(JSC::JSValue 
     return std::nullopt;
 }
 
+// Keeps the source text of a plugin-served module alive and unchanged while the transpiler reads it.
+struct SourceTextOwner {
+    WTF::String string;
+    WTF::Vector<uint8_t> bytes;
+};
+
 // False: an exception is pending.
-static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue contents, WTF::Vector<uint8_t>& copy, EncodedSlice& source)
+static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue contents, SourceTextOwner& owner, EncodedSlice& source)
 {
     if (contents.isString()) {
-        source = Zig::toEncodedSlice(asString(contents), globalObject);
+        // A JSString swaps its StringImpl for an atom when a macro uses it as a property key.
+        owner.string = asString(contents)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        source = Zig::toEncodedSlice(owner.string.impl());
         return true;
     }
 
-    // The transpiler reads a copy: a macro runs JS meanwhile, and another thread can write a SharedArrayBuffer.
+    // A macro runs JS meanwhile, and another thread can write a SharedArrayBuffer.
     auto bytes = bufferContentsBytes(contents);
     ASSERT(bytes);
-    if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !copy.tryAppend(*bytes)) [[unlikely]] {
+    // The limit and the message of the parser: Source::MAX_PARSEABLE_LEN.
+    if (bytes->size() > std::numeric_limits<int32_t>::max()) [[unlikely]] {
+        throwRangeError(globalObject, scope, "File is too large to parse (2 GiB maximum)"_s);
+        return false;
+    }
+    if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !owner.bytes.tryAppend(*bytes)) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return false;
     }
     // Bytes are what a file holds: UTF-8. An untagged EncodedSlice is Latin-1.
-    source = copy.isEmpty() ? EncodedSlice {} : EncodedSlice { Zig::taggedUTF8Ptr(copy.span().data()), copy.size() };
+    source = owner.bytes.isEmpty() ? EncodedSlice {} : EncodedSlice { Zig::taggedUTF8Ptr(owner.bytes.span().data()), owner.bytes.size() };
     return true;
 }
 
@@ -421,12 +434,10 @@ static JSValue handleVirtualModuleResult(
     switch (onLoadResult.type) {
     case OnLoadResultTypeCode: {
         auto& sourceText = onLoadResult.value.sourceText;
-        WTF::Vector<uint8_t> copy;
-        if (!sourceTextForTranspile(globalObject, scope, sourceText.value, copy, sourceText.string)) [[unlikely]]
+        SourceTextOwner owner;
+        if (!sourceTextForTranspile(globalObject, scope, sourceText.value, owner, sourceText.string)) [[unlikely]]
             return rejectOrResolve({});
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &sourceText.string, sourceText.loader, res);
-        // `sourceText.string` can point into the JSString.
-        JSC::ensureStillAliveHere(sourceText.value);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
         }

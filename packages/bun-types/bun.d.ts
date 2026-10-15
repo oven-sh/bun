@@ -6341,7 +6341,8 @@ declare module "bun" {
 
   interface OnLoadResultSourceCode {
     /**
-     * The source code of the module
+     * The source code of the module, as a string or as a buffer of UTF-8
+     * bytes. Bun copies the bytes of a buffer before it parses them.
      */
     contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**

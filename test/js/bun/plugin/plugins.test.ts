@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
 
@@ -426,28 +426,37 @@ describe("onLoad contents accepts BufferSource", () => {
   });
 });
 
+// Runs plugin-buffer-contents-fixture.ts. `result` is the one line of JSON that it prints.
+async function contentsFixture(args: string[], env: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), resolve(import.meta.dir, "plugin-buffer-contents-fixture.ts"), ...args],
+    // A debug build then aborts on an exception that no scope checked.
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A debug build logs each macro call to stdout first.
+  const last = stdout.trim().split("\n").at(-1)!;
+  let result: any = last;
+  try {
+    result = JSON.parse(last);
+  } catch {}
+  return { result, stderr: stderr.trim(), exitCode };
+}
+
 // The transpiler reads the source of a module until it has printed the module.
-// A macro runs JS in that time, and another thread can write a
-// SharedArrayBuffer. So the transpiler reads a copy of the bytes of a buffer
+// A macro runs JS in that time. So the transpiler reads a copy of the bytes of
+// a buffer `contents`, and holds a reference to the characters of a string
 // `contents`.
-describe.concurrent("onLoad contents in a buffer", () => {
-  async function fixture(...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), resolve(import.meta.dir, "plugin-buffer-contents-fixture.ts"), ...args],
-      // A debug build then aborts on an exception that no scope checked.
-      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // A debug build logs each macro call to stdout first.
-    const last = stdout.trim().split("\n").at(-1)!;
-    let result: unknown = last;
-    try {
-      result = JSON.parse(last);
-    } catch {}
-    return { result, stderr: stderr.trim(), exitCode };
-  }
+describe("onLoad contents while a macro runs", () => {
+  const forms = [
+    "onLoad import",
+    "onLoad require",
+    "async onLoad import",
+    "build.module import",
+    "build.module require",
+  ];
 
   // What JS can do to each kind of `contents` while the transpiler reads the module.
   const mutations: Record<string, string[]> = {
@@ -459,52 +468,79 @@ describe.concurrent("onLoad contents in a buffer", () => {
     "SharedArrayBuffer": ["overwrite"],
     "growable SharedArrayBuffer": ["overwrite"],
   };
+  // One process loads a module for each kind, mutation and form.
+  let mutated: Awaited<ReturnType<typeof contentsFixture>>;
+  beforeAll(async () => {
+    mutated = await contentsFixture(["mutate", JSON.stringify(mutations)]);
+  });
   for (const [kind, hows] of Object.entries(mutations)) {
-    it(`${kind}: transpiles the bytes it was given when a macro changes them`, async () => {
+    it(`${kind}: transpiles the bytes it was given when a macro changes them`, () => {
       const transpiled: Record<string, unknown> = {};
       for (const how of hows) {
-        for (const form of [
-          "onLoad import",
-          "onLoad require",
-          "async onLoad import",
-          "build.module import",
-          "build.module require",
-        ]) {
+        for (const form of forms) {
           transpiled[`${how}, ${form}`] = { during: how, after: "after the mutation", mutated: true };
         }
       }
-      expect(await fixture("mutate", kind, ...hows)).toEqual({ result: transpiled, stderr: "", exitCode: 0 });
+      expect({ ...mutated, result: mutated.result?.[kind] }).toEqual({ result: transpiled, stderr: "", exitCode: 0 });
     });
   }
 
+  it.concurrent("string: keeps the characters of a substring when a macro makes the string drop them", async () => {
+    const transpiled = { during: "1 key, 128 strings", intact: true };
+    expect(await contentsFixture(["string"])).toEqual({
+      result: Object.fromEntries(forms.map(form => [form, transpiled])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("takes the bytes after it read the whole result, and leaves the buffer as it was", async () => {
+    const taken = {
+      "loader getter": "second",
+      "promise reaction": "second",
+      "scratch": ["one", "two"],
+      "scratch after the loads": { byteLength: 64, text: 'export const which = "two";' },
+      "zero length": [],
+      "detached": [],
+    };
+    expect(await contentsFixture(["order", "Buffer", "ArrayBuffer"])).toEqual({
+      result: { "Buffer": taken, "ArrayBuffer": taken },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("fails the load when the bytes are too many to parse", async () => {
+    const tooLarge = { error: "File is too large to parse (2 GiB maximum)" };
+    const failed = { import: tooLarge, require: tooLarge };
+    expect(await contentsFixture(["limit", "Uint8Array", "ArrayBuffer"])).toEqual({
+      result: { "Uint8Array": failed, "ArrayBuffer": failed },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// Another thread can write a SharedArrayBuffer at any time. Each of these
+// processes keeps two threads busy, so they run one after the other.
+describe("onLoad contents while a worker writes it", () => {
   for (const kind of ["SharedArrayBuffer", "Uint8Array"]) {
     const name = kind === "Uint8Array" ? "Uint8Array on a SharedArrayBuffer" : kind;
-    it(`${name}: transpiles the bytes while a worker writes them`, async () => {
-      expect(await fixture("worker", kind)).toEqual({ result: { overlapped: 20 }, stderr: "", exitCode: 0 });
+    it(`${name}: transpiles one value of each byte`, async () => {
+      expect(await contentsFixture(["worker", kind])).toEqual({ result: { overlapped: 20 }, stderr: "", exitCode: 0 });
     });
   }
 
-  for (const kind of ["Buffer", "ArrayBuffer"]) {
-    it(`${kind}: takes the bytes after it read the whole result, and leaves the buffer as it was`, async () => {
-      expect(await fixture("order", kind)).toEqual({
-        result: {
-          "loader getter": "second",
-          "promise reaction": "second",
-          "scratch": ["one", "two"],
-          "scratch after the loads": { byteLength: 64, text: 'export const which = "two";' },
-          "zero length": [],
-          "detached": [],
-        },
-        stderr: "",
-        exitCode: 0,
-      });
-    });
-  }
-
-  it("string: stays alive while the transpiler reads it", async () => {
-    const transpiled = { during: "collected 128", intact: true };
-    expect(await fixture("string")).toEqual({
-      result: { flat: transpiled, rope: transpiled, substring: transpiled },
+  // If not, a later load of a source gets the output of other bytes from the cache, in any process.
+  it("the transpiler cache has the output of the bytes that it hashed", async () => {
+    using cache = tempDir("plugin-buffer-contents-cache", {});
+    const env = {
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
+      // A debug build reads a cache entry only with this.
+      BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+    };
+    expect(await contentsFixture(["cache", "Uint8Array"], env)).toEqual({
+      result: { overlapped: 16, wrong: [] },
       stderr: "",
       exitCode: 0,
     });

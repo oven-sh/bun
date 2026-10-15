@@ -1,20 +1,22 @@
 // Fixture for plugins.test.ts.
 //
-//   bun plugin-buffer-contents-fixture.ts mutate <kind> <mutation>...
-//   bun plugin-buffer-contents-fixture.ts worker <kind>
-//   bun plugin-buffer-contents-fixture.ts order <kind>
+//   bun plugin-buffer-contents-fixture.ts mutate '{"<kind>": ["<mutation>", ...], ...}'
+//   bun plugin-buffer-contents-fixture.ts order <kind>...
+//   bun plugin-buffer-contents-fixture.ts limit <kind>...
 //   bun plugin-buffer-contents-fixture.ts string
+//   bun plugin-buffer-contents-fixture.ts worker <kind>
+//   bun plugin-buffer-contents-fixture.ts cache <kind>
 //
-// Bun.plugin serves modules whose `contents` is a buffer. The transpiler reads
-// the source until it has printed the module. A macro in the module runs JS in
-// that time, and another thread can write a SharedArrayBuffer at any time.
-// Each mode changes the bytes in one of these ways, or shows when the bytes
-// are taken. It prints one line of JSON.
+// Bun.plugin serves modules whose `contents` is a buffer or a string. The
+// transpiler reads the source until it has printed the module. A macro in the
+// module runs JS in that time, and another thread can write a
+// SharedArrayBuffer at any time. Each mode changes the source in one of these
+// ways, or shows when the bytes are taken. It prints one line of JSON.
 import { plugin } from "bun";
 import { join } from "node:path";
 import { bytesOf, mutated } from "./plugin-buffer-contents-macro.ts";
 
-const [mode, kind, ...rest] = process.argv.slice(2);
+const [mode, ...args] = process.argv.slice(2);
 const macros = JSON.stringify(join(import.meta.dir, "plugin-buffer-contents-macro.ts"));
 const encode = (text: string) => new TextEncoder().encode(text);
 
@@ -36,24 +38,83 @@ const kinds: Record<string, (bytes: Uint8Array) => ArrayBufferView | ArrayBuffer
   "growable SharedArrayBuffer": bytes =>
     fill(new SharedArrayBuffer(bytes.length, { maxByteLength: bytes.length * 2 }), bytes),
 };
-const make = (text: string) => (globalThis.contents = kinds[kind](encode(text)));
+const make = (kind: string, text: string) => (globalThis.contents = kinds[kind](encode(text)));
 
 const results: Record<string, unknown> = {};
 const failure = (e: unknown) => ({ error: String((e as Error)?.message ?? e).split("\n")[0] });
 
+// The "worker" and "cache" modes start this file again as a worker that writes
+// a SharedArrayBuffer in a loop, while this thread imports modules that a
+// plugin serves from those bytes.
+
+// The worker's events cannot reach this thread while it imports in a loop, so
+// a worker that stopped shows only as a pass count that stands still.
+function writerStopped(): never {
+  console.error("the worker made no pass over the bytes for 10 s");
+  process.exit(1);
+}
+
+// Returns the count of passes that the worker made over `shared`. It is not zero when this returns.
+function startWriter(shared: SharedArrayBuffer) {
+  const passes = new Int32Array(new SharedArrayBuffer(4));
+  const worker = new Worker(import.meta.url, { argv: [mode, ...args] });
+  worker.unref();
+  worker.postMessage({ shared, passes });
+  if (Atomics.wait(passes, 0, 0, 10_000) === "timed-out") writerStopped();
+  return passes;
+}
+
+// In the worker: calls `write(bytes, pass)` for ever.
+function writeForEver(write: (bytes: Uint8Array, pass: number) => void) {
+  self.onmessage = ({ data }: MessageEvent<{ shared: SharedArrayBuffer; passes: Int32Array }>) => {
+    const bytes = new Uint8Array(data.shared);
+    for (let pass = 0; ; pass++) {
+      write(bytes, pass);
+      if (Atomics.add(data.passes, 0, 1) === 0) Atomics.notify(data.passes, 0);
+    }
+  };
+}
+
+// Calls `load(n)` until `count` of the loads had the worker make a pass while
+// they ran, or until one returns false. A debug build is slow enough that
+// every load counts. A release build can finish many loads before the
+// worker's thread gets a core of its own. Returns the number of loads.
+async function loadWhileWritten(passes: Int32Array, count: number, load: (n: number) => Promise<boolean>) {
+  let seen = Atomics.load(passes, 0);
+  let progressAt = performance.now();
+  let overlapped = 0;
+  let loads = 0;
+  while (overlapped < count && (await load(loads++))) {
+    const now = Atomics.load(passes, 0);
+    if (now !== seen) {
+      seen = now;
+      overlapped++;
+      progressAt = performance.now();
+    } else if (performance.now() - progressAt > 10_000) {
+      writerStopped();
+    }
+  }
+  results.overlapped = overlapped;
+  return loads;
+}
+
 if (mode === "mutate") {
-  // The source of the module at `<how>/<n>`. The macro runs mutate(how) while
-  // the transpiler reads this source.
+  const table: Record<string, string[]> = JSON.parse(args[0]);
+  const kindNames = Object.keys(table);
+
+  // The source of the module at `<index of the kind>/<how>/<n>`. The macro
+  // runs mutate(how) while the transpiler reads this source.
   const moduleSource = (path: string) => {
-    const how = path.split("/")[0];
+    const [kind, how] = path.split("/");
     return make(
+      kindNames[Number(kind)],
       `import { mutate } from ${macros} with { type: "macro" };\n` +
         `export const during = mutate(${JSON.stringify(how)});\n` +
         `export const after = "after the mutation";\n`,
     );
   };
 
-  const cells: { cell: string; how: string; load: () => Promise<any> | any }[] = [];
+  const cells: { kind: string; cell: string; how: string; load: () => Promise<any> | any }[] = [];
   plugin({
     name: "buffer contents",
     setup(build) {
@@ -65,39 +126,43 @@ if (mode === "mutate") {
         return { contents: moduleSource(path), loader: "ts" };
       });
 
-      for (const how of rest) {
-        const path = () => `${how}/${cells.length}`;
-        const module = () => {
-          const specifier = `module-${cells.length}`;
-          const source = path();
-          build.module(specifier, () => ({ contents: moduleSource(source), loader: "ts" }));
-          return specifier;
-        };
-        const forms: [string, () => string, "import" | "require"][] = [
-          ["onLoad import", () => "sync:" + path(), "import"],
-          ["onLoad require", () => "sync:" + path(), "require"],
-          ["async onLoad import", () => "async:" + path(), "import"],
-          ["build.module import", module, "import"],
-          ["build.module require", module, "require"],
-        ];
-        for (const [form, specifierOf, through] of forms) {
-          const specifier = specifierOf();
-          cells.push({
-            cell: `${how}, ${form}`,
-            how,
-            load: () => (through === "import" ? import(specifier) : require(specifier)),
-          });
+      kindNames.forEach((kind, index) => {
+        for (const how of table[kind]) {
+          const path = () => `${index}/${how}/${cells.length}`;
+          const module = () => {
+            const specifier = `module-${cells.length}`;
+            const source = path();
+            build.module(specifier, () => ({ contents: moduleSource(source), loader: "ts" }));
+            return specifier;
+          };
+          const forms: [string, () => string, "import" | "require"][] = [
+            ["onLoad import", () => "sync:" + path(), "import"],
+            ["onLoad require", () => "sync:" + path(), "require"],
+            ["async onLoad import", () => "async:" + path(), "import"],
+            ["build.module import", module, "import"],
+            ["build.module require", module, "require"],
+          ];
+          for (const [form, specifierOf, through] of forms) {
+            const specifier = specifierOf();
+            cells.push({
+              kind,
+              cell: `${how}, ${form}`,
+              how,
+              load: () => (through === "import" ? import(specifier) : require(specifier)),
+            });
+          }
         }
-      }
+      });
     },
   });
 
-  for (const { cell, how, load } of cells) {
+  for (const { kind, cell, how, load } of cells) {
+    const ofKind = (results[kind] ??= {}) as Record<string, unknown>;
     try {
       const { during, after } = await load();
-      results[cell] = { during, after, mutated: mutated(how) };
+      ofKind[cell] = { during, after, mutated: mutated(how) };
     } catch (e) {
-      results[cell] = failure(e);
+      ofKind[cell] = failure(e);
     }
   }
 } else if (mode === "worker") {
@@ -114,26 +179,11 @@ if (mode === "mutate") {
   const base = encode("export default [\n" + Buffer.alloc(literals * literal.length, literal).toString() + "];\n");
   // Each separator that reads as `0` makes the literal ten times larger.
   const values = new Set([1e15, 1e16, 1e17, 1e18, 1e19, 1e20]);
-  // An unfixed build fails within 10 imports.
-  const imports = 20;
 
   if (Bun.isMainThread) {
     const shared = fill(new SharedArrayBuffer(base.length), base);
-    // The number of passes the worker has made over the bytes it flips.
-    const passes = new Int32Array(new SharedArrayBuffer(4));
-    const worker = new Worker(import.meta.url, { argv: [mode, kind] });
-    worker.unref();
-    worker.postMessage({ shared, passes });
-
-    // The worker's events cannot reach this thread while it imports in a
-    // loop, so a worker that stopped shows only as a pass count that stands still.
-    const workerStopped = (): never => {
-      console.error("the worker made no pass over the bytes for 10 s");
-      process.exit(1);
-    };
-    if (Atomics.wait(passes, 0, 0, 10_000) === "timed-out") workerStopped();
-
-    const contents = kind === "Uint8Array" ? new Uint8Array(shared) : shared;
+    const passes = startWriter(shared);
+    const contents = args[0] === "Uint8Array" ? new Uint8Array(shared) : shared;
     plugin({
       name: "shared contents",
       setup(build) {
@@ -142,55 +192,89 @@ if (mode === "mutate") {
       },
     });
 
-    // Count an import only when the worker made a pass while it ran. A debug
-    // build is slow enough that every import counts. A release build can
-    // finish many imports before the worker's thread gets a core of its own.
-    let seen = Atomics.load(passes, 0);
-    let progressAt = performance.now();
-    let overlapped = 0;
-    for (let total = 0; overlapped < imports; total++) {
-      const { default: exported } = await import("shared:" + total);
-      if (exported.length !== literals || !exported.every((value: number) => values.has(value))) {
-        results.wrong = "import " + total + " gave " + JSON.stringify(exported);
-        break;
-      }
+    // An unfixed build fails within 10 imports.
+    await loadWhileWritten(passes, 20, async n => {
+      const { default: exported } = await import("shared:" + n);
+      if (exported.length === literals && exported.every((value: number) => values.has(value))) return true;
+      results.wrong = "import " + n + " gave " + JSON.stringify(exported);
+      return false;
+    });
+  } else {
+    const separators: number[] = [];
+    for (let i = 0; i < base.length; i++) {
+      if (base[i] === 0x5f) separators.push(i);
+    }
+    // `Atomics.store` so that the compiler keeps every store and the other thread sees each one.
+    writeForEver(bytes => {
+      for (const at of separators) Atomics.store(bytes, at, 0x30);
+      for (const at of separators) Atomics.store(bytes, at, 0x5f);
+    });
+  }
+} else if (mode === "cache") {
+  // The transpiler cache stores the output of a module under the hash of its
+  // source, and a source with the same bytes gets that output in every later
+  // load, in this process and in later ones. A worker switches one digit of
+  // the source between `1` and `2`. A transpiler that reads the shared bytes
+  // in place can hash one digit and transpile the other. This mode needs
+  // BUN_RUNTIME_TRANSPILER_CACHE_PATH, and a source that is large enough for
+  // the cache.
+  const head = "export const value = ";
+  const sourceOf = (round: number, digit: number) =>
+    `${head}${digit};\n// round ${roundOf(round)}\n// ${Buffer.alloc(8192, "padding ").toString()}\n`;
+  const roundOf = (round: number) => String(round).padStart(6, "0");
+  const digitAt = head.length;
+  const roundAt = sourceOf(0, 1).indexOf(roundOf(0));
 
-      const now = Atomics.load(passes, 0);
-      if (now !== seen) {
-        seen = now;
-        overlapped++;
-        progressAt = performance.now();
-      } else if (performance.now() - progressAt > 10_000) {
-        workerStopped();
+  if (Bun.isMainThread) {
+    const shared = fill(new SharedArrayBuffer(sourceOf(0, 1).length), encode(sourceOf(0, 1)));
+    const bytes = new Uint8Array(shared);
+    const passes = startWriter(shared);
+    const contents = args[0] === "Uint8Array" ? bytes : shared;
+    plugin({
+      name: "cached contents",
+      setup(build) {
+        build.onResolve({ filter: /.*/, namespace: "written" }, ({ path }) => ({ path, namespace: "written" }));
+        build.onLoad({ filter: /.*/, namespace: "written" }, ({ path }) => {
+          // The worker writes the digit. Only this thread writes the round, which gives each load a source of its own.
+          bytes.set(encode(path), roundAt);
+          return { contents, loader: "ts" };
+        });
+        build.onResolve({ filter: /.*/, namespace: "still" }, ({ path }) => ({ path, namespace: "still" }));
+        build.onLoad({ filter: /.*/, namespace: "still" }, ({ path }) => {
+          const [round, digit] = path.split("/").map(Number);
+          return { contents: sourceOf(round, digit), loader: "ts" };
+        });
+      },
+    });
+
+    const wrong: string[] = [];
+    // On an unfixed build about half of the loads leave a wrong entry.
+    const loads = await loadWhileWritten(passes, 16, async n => {
+      const { value } = await import("written:" + roundOf(n));
+      if (value !== 1 && value !== 2) wrong.push(`load ${n} gave ${value}`);
+      return true;
+    });
+    // Each source that the loads above can have hashed, now as a string that nothing writes.
+    for (let n = 0; n < loads; n++) {
+      for (const digit of [1, 2]) {
+        const { value } = await import(`still:${n}/${digit}`);
+        if (value !== digit) wrong.push(`the source of load ${n} with ${digit} gave ${value}`);
       }
     }
-    results.overlapped = overlapped;
+    results.wrong = wrong;
   } else {
-    self.onmessage = ({ data }: MessageEvent<{ shared: SharedArrayBuffer; passes: Int32Array }>) => {
-      const { shared, passes } = data;
-      const bytes = new Uint8Array(shared);
-      const separators: number[] = [];
-      for (let i = 0; i < base.length; i++) {
-        if (base[i] === 0x5f) separators.push(i);
-      }
-
-      // `Atomics.store` so that the compiler keeps every store and the other thread sees each one.
-      for (;;) {
-        for (const at of separators) Atomics.store(bytes, at, 0x30);
-        for (const at of separators) Atomics.store(bytes, at, 0x5f);
-        if (Atomics.add(passes, 0, 1) === 0) Atomics.notify(passes, 0);
-      }
-    };
+    writeForEver((bytes, pass) => Atomics.store(bytes, digitAt, 0x31 + (pass & 1)));
   }
 } else if (mode === "order") {
   // The transpiler gets the bytes that `contents` holds after the whole result
-  // of the plugin was read, and a load leaves the buffer as it was.
+  // of the plugin was read, and a load leaves the buffer as it was. The path
+  // of each module is `<kind>/<name>`.
   const first = `export const which = "first ";\n`;
   const second = encode(`export const which = "second";\n`);
   const rewrite = () => bytesOf(globalThis.contents as ArrayBuffer).set(second);
 
-  // One buffer for every module of the "scratch" namespace, as a plugin that avoids allocations has.
-  const scratch = kinds[kind](new Uint8Array(64).fill(0x20));
+  // One buffer of each kind for every module of the "scratch" namespace, as a plugin that avoids allocations has.
+  const scratch = Object.fromEntries(args.map(kind => [kind, kinds[kind](new Uint8Array(64).fill(0x20))]));
   const detachedBuffer = new ArrayBuffer(8);
   const detachedView = new Uint8Array(detachedBuffer);
   detachedBuffer.transfer();
@@ -202,8 +286,8 @@ if (mode === "mutate") {
         build.onResolve({ filter: /.*/, namespace }, ({ path }) => ({ path, namespace }));
       }
       // `loader` is read before `contents`.
-      build.onLoad({ filter: /.*/, namespace: "getter" }, () => ({
-        contents: make(first),
+      build.onLoad({ filter: /.*/, namespace: "getter" }, ({ path }) => ({
+        contents: make(path.split("/")[0], first),
         get loader() {
           rewrite();
           return "ts";
@@ -211,85 +295,135 @@ if (mode === "mutate") {
       }));
       // The promise is pending when onLoad returns. The bytes change after the
       // promise is resolved and before its reaction runs.
-      build.onLoad({ filter: /.*/, namespace: "settled" }, () => {
+      build.onLoad({ filter: /.*/, namespace: "settled" }, ({ path }) => {
         const { promise, resolve } = Promise.withResolvers<{ contents: unknown; loader: string }>();
         queueMicrotask(() => {
-          resolve({ contents: make(first), loader: "ts" });
+          resolve({ contents: make(path.split("/")[0], first), loader: "ts" });
           rewrite();
         });
         return promise;
       });
       build.onLoad({ filter: /.*/, namespace: "scratch" }, ({ path }) => {
-        const bytes = bytesOf(scratch);
+        const [kind, name] = path.split("/");
+        const bytes = bytesOf(scratch[kind]);
         bytes.fill(0x20);
-        bytes.set(encode(`export const which = ${JSON.stringify(path)};`));
-        return { contents: scratch, loader: "ts" };
+        bytes.set(encode(`export const which = ${JSON.stringify(name)};`));
+        return { contents: scratch[kind], loader: "ts" };
       });
-      build.onLoad({ filter: /.*/, namespace: "empty" }, ({ path }) => ({
-        contents:
-          path === "zero length"
-            ? kinds[kind](new Uint8Array(0))
-            : ArrayBuffer.isView(scratch)
-              ? detachedView
-              : detachedBuffer,
+      build.onLoad({ filter: /.*/, namespace: "empty" }, ({ path }) => {
+        const [kind, name] = path.split("/");
+        const detached = ArrayBuffer.isView(scratch[kind]) ? detachedView : detachedBuffer;
+        return { contents: name === "zero length" ? kinds[kind](new Uint8Array(0)) : detached, loader: "ts" };
+      });
+    },
+  });
+
+  for (const kind of args) {
+    try {
+      results[kind] = {
+        "loader getter": (await import(`getter:${kind}/m`)).which,
+        "promise reaction": (await import(`settled:${kind}/m`)).which,
+        "scratch": [(await import(`scratch:${kind}/one`)).which, require(`scratch:${kind}/two`).which],
+        "scratch after the loads": {
+          byteLength: scratch[kind].byteLength,
+          text: new TextDecoder().decode(bytesOf(scratch[kind])).trimEnd(),
+        },
+        "zero length": Object.keys(await import(`empty:${kind}/zero length`)),
+        "detached": Object.keys(await import(`empty:${kind}/detached`)),
+      };
+    } catch (e) {
+      results[kind] = failure(e);
+    }
+  }
+} else if (mode === "limit") {
+  // A parser takes a source of less than 2 GiB. The pages of this buffer are never written or read.
+  const buffer = new ArrayBuffer(2 ** 31);
+  const contents: Record<string, ArrayBufferView | ArrayBuffer> = { "Uint8Array": new Uint8Array(buffer), "ArrayBuffer": buffer };
+  plugin({
+    name: "contents of 2 GiB",
+    setup(build) {
+      build.onResolve({ filter: /.*/, namespace: "limit" }, ({ path }) => ({ path, namespace: "limit" }));
+      build.onLoad({ filter: /.*/, namespace: "limit" }, ({ path }) => ({
+        contents: contents[path.split("/")[0]],
         loader: "ts",
       }));
     },
   });
 
-  try {
-    results["loader getter"] = (await import("getter:m")).which;
-    results["promise reaction"] = (await import("settled:m")).which;
-    results["scratch"] = [(await import("scratch:one")).which, require("scratch:two").which];
-    results["scratch after the loads"] = {
-      byteLength: scratch.byteLength,
-      text: new TextDecoder().decode(bytesOf(scratch)).trimEnd(),
-    };
-    results["zero length"] = Object.keys(await import("empty:zero length"));
-    results["detached"] = Object.keys(await import("empty:detached"));
-  } catch (e) {
-    results.failure = failure(e);
+  for (const kind of args) {
+    const ofKind: Record<string, unknown> = (results[kind] = {});
+    ofKind.import = await import(`limit:${kind}/import`).then(() => "loaded", failure);
+    try {
+      require(`limit:${kind}/require`);
+      ofKind.require = "loaded";
+    } catch (e) {
+      ofKind.require = failure(e);
+    }
   }
 } else if (mode === "string") {
-  // The transpiler reads a string where it is. A macro drops every reference
-  // that JS has to the string, then collects.
-  const literals = Array.from({ length: 16 }, (_, i) => `a string literal that the printer reads back, number ${i}`);
-  const text = () =>
-    [
-      `import { collect } from ${macros} with { type: "macro" };`,
-      `export const during = collect();`,
-      `export const after = ${JSON.stringify(literals)};`,
-      // About the size of the strings that collect() allocates.
-      `// ${Buffer.alloc(2048, "padding ").toString()}`,
-    ].join("\n");
-  const head = "// " + Buffer.alloc(512, "x").toString() + "\n";
-  const tail = "\n// tail";
-  const strings: Record<string, () => string> = {
-    flat: text,
-    rope: () => {
-      const whole = text();
-      return whole.slice(0, 200) + whole.slice(200);
-    },
-    substring: () => (head + text() + tail).slice(head.length, -tail.length),
-  };
+  // The transpiler reads a string where it is. Each `contents` here is a
+  // substring: its JSString points into the characters of the string it was
+  // cut from, and is the only reference to that string. The macro makes the
+  // JSString take its own copy, so the collector frees the characters that the
+  // transpiler reads. The transpiler needs a reference of its own to them.
+  const literals = Array.from({ length: 8 }, (_, i) => `a string literal that the printer reads back, number ${i}`);
+  // Not more than 2048 characters: JSC copies a substring of that length when it becomes a property key.
+  const body = [
+    `import { atomize } from ${macros} with { type: "macro" };`,
+    `export const during = atomize();`,
+    `export const after = ${JSON.stringify(literals)};`,
+  ].join("\n");
+  const head = "// " + Buffer.alloc(4096, "x").toString() + "\n";
+  const tail = "\n// " + Buffer.alloc(4096, "y").toString();
 
+  const forms: [string, string, "import" | "require"][] = [
+    ["onLoad import", "string:1", "import"],
+    ["onLoad require", "string:2", "require"],
+    ["async onLoad import", "async-string:3", "import"],
+    ["build.module import", "string-module-4", "import"],
+    ["build.module require", "string-module-5", "require"],
+  ];
+
+  // The substrings are cut in an earlier turn of the event loop, so that no
+  // frame that is live during the load ever held the string they were cut from.
+  const substrings: string[] = [];
+  await new Promise<void>(resolve =>
+    setImmediate(() => {
+      for (let i = 0; i < forms.length; i++) {
+        const cutFrom = [head, body, tail, i].join("");
+        globalThis.cutFromLength = cutFrom.length;
+        substrings.push(cutFrom.slice(head.length, head.length + body.length));
+      }
+      resolve();
+    }),
+  );
+  await new Promise(resolve => setImmediate(resolve));
+
+  const next = () => {
+    globalThis.contents = substrings.pop()!;
+    return (globalThis.result = { contents: globalThis.contents, loader: "ts" });
+  };
   plugin({
     name: "string contents",
     setup(build) {
       build.onResolve({ filter: /.*/, namespace: "string" }, ({ path }) => ({ path, namespace: "string" }));
-      build.onLoad({ filter: /.*/, namespace: "string" }, ({ path }) => {
-        globalThis.contents = strings[path]();
-        return (globalThis.result = { contents: globalThis.contents, loader: "ts" });
+      build.onResolve({ filter: /.*/, namespace: "async-string" }, ({ path }) => ({ path, namespace: "async-string" }));
+      build.onLoad({ filter: /.*/, namespace: "string" }, next);
+      build.onLoad({ filter: /.*/, namespace: "async-string" }, async () => {
+        await 1;
+        return next();
       });
+      build.module("string-module-4", next);
+      build.module("string-module-5", next);
     },
   });
 
-  for (const name of Object.keys(strings)) {
+  for (const [form, specifier, through] of forms) {
     try {
-      const { during, after } = await import("string:" + name);
-      results[name] = { during, intact: JSON.stringify(after) === JSON.stringify(literals) };
+      const { during, after } = through === "import" ? await import(specifier) : require(specifier);
+      results[form] = { during, intact: JSON.stringify(after) === JSON.stringify(literals) };
     } catch (e) {
-      results[name] = failure(e);
+      results[form] = failure(e);
     }
   }
 }

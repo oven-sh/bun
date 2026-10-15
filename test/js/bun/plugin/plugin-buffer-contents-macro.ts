@@ -6,6 +6,8 @@
 declare global {
   var contents: ArrayBufferView | ArrayBuffer | SharedArrayBuffer | string;
   var result: { contents: unknown } | undefined;
+  // The length of the string that a string `contents` was cut from.
+  var cutFromLength: number;
 }
 
 function storage() {
@@ -43,16 +45,22 @@ export function mutated(how: string) {
   return storage().byteLength === 0;
 }
 
-// Drops every reference that JS has to a string `contents`, then collects and
-// allocates, so that freed memory is used again.
-export function collect() {
+// Makes the JSString of a string `contents` take its own copy of the
+// characters, as any use of it as a property key does. Then drops the string
+// that `contents` was cut from, collects, and allocates strings of that size,
+// so that the freed characters are written again.
+export function atomize() {
+  const key: Record<string, number> = {};
+  key[globalThis.contents as string] = 1;
   globalThis.result!.contents = undefined;
   globalThis.result = undefined;
   globalThis.contents = "";
   const garbage: string[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 2; i++) {
     Bun.gc(true);
-    for (let j = 0; j < 32; j++) garbage.push(Buffer.alloc(4096, String(j)).toString());
+    for (let j = 0; j < 64; j++) {
+      garbage.push(Buffer.alloc(globalThis.cutFromLength, String.fromCharCode(65 + (j % 26))).toString());
+    }
   }
-  return "collected " + garbage.length;
+  return Object.keys(key).length + " key, " + garbage.length + " strings";
 }

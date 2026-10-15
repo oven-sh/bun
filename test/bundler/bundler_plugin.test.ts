@@ -1935,7 +1935,7 @@ describe("bundler", () => {
 
     describe.each(["onResolve", "onLoad"] as const)("%s", kind => {
       // The interpreter keeps a context for each iteration of the group in its pool. This group has
-      // 64 captures, so a context is about 3 KB and about 20 fit in 64 KB. JIT code, which the JS
+      // 64 captures, so a context is about 2 KB and at most 30 fit in 64 KB. JIT code, which the JS
       // thread runs, keeps them on the stack.
       test.concurrent("the JS thread answers when the bundler thread has no room", async () => {
         const filter = "^(?:" + Buffer.alloc(64 * 4, "(x)?").toString() + "a)+c$";

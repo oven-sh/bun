@@ -32,6 +32,12 @@ export const Handlers = b.dictionary(
       default: "buffer",
       internalName: "binary_type",
     },
+    // node:net only: the socket keeps the event loop alive as a libuv stream handle does (`NewSocket::update_hold`).
+    holdLikeLibuv: {
+      type: b.bool,
+      default: false,
+      internalName: "hold_like_libuv",
+    },
   },
 );
 

@@ -208,6 +208,7 @@ pub struct SocketConfigHandlers {
     pub on_server_name: JSValue,
     pub on_alpn_callback: JSValue,
     pub binary_type: SocketConfigHandlersBinaryType,
+    pub hold_like_libuv: bool,
 }
 
 #[repr(C)]
@@ -227,6 +228,7 @@ struct ExternSocketConfigHandlers {
     onServerName: JSValue,
     onALPNCallback: JSValue,
     binary_type: SocketConfigHandlersBinaryType,
+    hold_like_libuv: bool,
 }
 
 // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
@@ -258,6 +260,7 @@ impl SocketConfigHandlers {
             on_server_name: ext.onServerName,
             on_alpn_callback: ext.onALPNCallback,
             binary_type: ext.binary_type,
+            hold_like_libuv: ext.hold_like_libuv,
         }
     }
 

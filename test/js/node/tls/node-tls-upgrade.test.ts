@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
-import { bunEnv, bunExe, tls as certs } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as certs } from "harness";
 import net from "net";
+import { join } from "path";
 import { Duplex } from "stream";
 import tls from "tls";
 
@@ -426,6 +427,119 @@ test.each(["socket.unref();", "socket.ref(); tlsSocket.unref();"])(
     }
   },
 );
+
+// These fixtures have no timer and call no process.exit(): they print what they saw when nothing keeps them alive
+// any more. They run on both runtimes, and every expectation is what Node.js v26.3.0 prints.
+describe.each(["bun", "node"])("%s: what keeps the process alive", runtime => {
+  const exe = runtime === "node" ? nodeExe() : bunExe();
+
+  async function run(fixture: string, arg: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, join(import.meta.dir, fixture), arg],
+      // With the flag, a child that never comes to rest exits when the test process does.
+      env: { ...bunEnv, TLS_KEY: certs.key, TLS_CERT: certs.cert, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const exitedByItself = { stderr: "", exitCode: 0, signalCode: null };
+
+  // TLSWrap passes ref() and unref() to the handle that it wraps, and a JS stream has none:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+  describe.skipIf(!exe)("ref() and unref() on a TLS socket that wraps another stream", () => {
+    // unref() lets the process come to rest. ref() makes it wait for the peer's "bye" and for the close.
+    const rests = ["at rest", "bye", "end", "close"];
+    test.each([
+      ["engine, server side", { "TLS in TLS, server side, unref() in the tick of the wrap": rests }],
+      ["engine, its handle", { "TLS in TLS, server side, _handle.unref() after the handshake": rests }],
+      [
+        "engine, client side",
+        {
+          "TLS in TLS, client side, unref() after the handshake": rests,
+          "a pair of JS streams, ref()": ["secureConnect"],
+        },
+      ],
+      [
+        "handle",
+        {
+          "an accepted socket, unref() in the tick of the wrap": rests,
+          "a socket that still connects, unref() in the tick of the wrap": rests,
+        },
+      ],
+      [
+        "handle, unref() before the wrap",
+        {
+          // The process did not come to rest before the close.
+          "an accepted socket, unref() on it and ref() on the wrap in the tick of the wrap": ["bye", "end", "close"],
+          "an accepted socket, unref() before the wrap and a late reader": ["at rest", "a reader"],
+        },
+      ],
+    ])("%s", async (group, wraps) => {
+      expect(await run("tls-wrap-ref-unref-fixture.mjs", group)).toEqual({ stdout: wraps, ...exitedByItself });
+    });
+  });
+
+  // A write request keeps the loop alive, whatever ref() and unref() said:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L393-L398
+  test.skipIf(!exe).each(["tcp", "tls", "tls in tls"])(
+    "bytes left to send behind unref() are sent (%s)",
+    async kind => {
+      expect(await run("tls-write-then-unref-fixture.mjs", kind)).toEqual({
+        stdout: { events: ["write callback", "close"], received: 4 * 1024 * 1024 },
+        ...exitedByItself,
+      });
+    },
+  );
+});
+
+// Only the sockets of node:net follow libuv's rule. A Bun.connect socket keeps its process alive while it is open.
+test("a Bun.connect socket that does not read still keeps the process alive", async () => {
+  const script = `
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.unref();
+        },
+        // From the test: this process is still here. Now the paused socket goes, and the process with it.
+        data(socket) {
+          socket.end("still here");
+          paused.end();
+        },
+      },
+    });
+    listener.unref();
+    const paused = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { open: socket => socket.pause(), data() {} },
+    });
+    console.log(listener.port);`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const stdout = proc.stdout.getReader();
+  const port = Number(new TextDecoder().decode((await stdout.read()).value));
+  const { promise: reply, resolve, reject } = Promise.withResolvers<string>();
+  let received = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: {
+      open: socket => void socket.write("are you there?"),
+      data: (socket, chunk) => void (received += chunk),
+      close: () => resolve(received),
+      connectError: (socket, error) => reject(error),
+    },
+  });
+  expect(await reply).toBe("still here");
+  expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 test("_parent is the wrapped net.Socket", async () => {
   const server = net.createServer(socket => socket.on("error", () => {}));

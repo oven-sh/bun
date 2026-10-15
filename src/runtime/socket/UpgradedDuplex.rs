@@ -64,6 +64,16 @@ pub(crate) struct UpgradedDuplex {
     pub pending_shutdown: Cell<bool>,
     /// `pause_stream` paused the wrapped stream and `resume_stream` has not run since.
     paused_origin: Cell<bool>,
+    /// The socket that owns the fd under this engine, when the wrapped stream is a `net.Socket` with a handle.
+    /// `ref()` and `unref()` on the engine's socket go to it.
+    pub(crate) transport: JsCell<Transport>,
+}
+
+/// See [`UpgradedDuplex::transport`].
+pub(crate) enum Transport {
+    None,
+    Tcp(bun_ptr::RefPtr<super::TCPSocket>),
+    Tls(bun_ptr::RefPtr<super::TLSSocket>),
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -463,6 +473,15 @@ impl UpgradedDuplex {
             pending_close: Cell::new(false),
             pending_shutdown: Cell::new(false),
             paused_origin: Cell::new(false),
+            transport: JsCell::new(Transport::None),
+        }
+    }
+
+    pub(crate) fn set_transport_ref(&self, hold: bool) {
+        match self.transport.get() {
+            Transport::None => {}
+            Transport::Tcp(socket) => socket.set_ref(hold),
+            Transport::Tls(socket) => socket.set_ref(hold),
         }
     }
 
@@ -742,6 +761,7 @@ impl UpgradedDuplex {
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
         self.pending_shutdown.set(false);
+        self.transport.set(Transport::None);
     }
 }
 

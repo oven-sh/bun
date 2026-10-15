@@ -45,6 +45,8 @@ pub(crate) struct Handlers {
     cell: JSSocketHandlers,
 
     pub(crate) binary_type: Cell<BinaryType>,
+    /// Set by node:net's handler tables: see [`NewSocket::update_hold`](super::NewSocket::update_hold).
+    pub(crate) hold_like_libuv: bool,
 
     pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: GlobalRef,
@@ -327,6 +329,7 @@ impl Handlers {
         Ok(Rc::new(Handlers {
             cell: JSSocketHandlers::create(global_object, &wrapped),
             binary_type: Cell::new(binary_type_from_generated(generated.binary_type)),
+            hold_like_libuv: generated.hold_like_libuv,
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),

@@ -177,6 +177,8 @@ interface TLSConnectOptions {
 interface InternalSocketHandler<Data> extends SocketHandler<Data> {
   session?(socket: Socket<Data>, session: Buffer): void;
   keylog?(socket: Socket<Data>, line: Buffer): void;
+  // The native socket keeps the event loop alive as a libuv stream handle does (NewSocket::update_hold).
+  holdLikeLibuv: true;
 }
 
 interface InternalServerHandler<Data> extends InternalSocketHandler<Data> {
@@ -324,11 +326,12 @@ const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
 const kerrorEmitted = Symbol("kerrorEmitted");
+// unref() with no ref() behind it. A handle that this socket gets later starts from it (initSocketHandle).
 const kUserUnrefed = Symbol("kUserUnrefed");
-// Set when readStop() dropped the handle's hold on the loop, so the read paths
-// only restore a hold they actually removed - re-refing a handle that never
-// held the loop (a wrapped duplex with no fd) would pin the process.
-const kPausedUnref = Symbol("kPausedUnref");
+// readStop() to the next read. What keeps the event loop alive is the native socket's to decide (NewSocket::update_hold).
+const kReadStopped = Symbol("kReadStopped");
+// On a TLS socket that wraps a socket which had a handle then: the handle that ref() and unref() go to in Node.
+const kWrapsHandle = Symbol("kWrapsHandle");
 const kOnreadDeliver = Symbol("kOnreadDeliver");
 function noop() {}
 function onUpgradeAttachedWrite(chunk, encoding, callback, onClose) {
@@ -360,21 +363,19 @@ function failWrite(self, negErrno, callback) {
   failWriteWith(self, writeErrnoException(negErrno), callback);
 }
 // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
-function holdRejectedWrite(self, handle, negErrno, callback) {
+function holdRejectedWrite(self, negErrno, callback) {
   if (!self.encrypted || self[kclosed]) return false;
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
   self._pendingData = null;
   self[kwriteCallback] = callback;
   self[kRejectedWrite] = writeErrnoException(negErrno);
-  // It holds the loop as any pending write does (_write).
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) handle.ref?.();
-  if (self[kPausedUnref]) setImmediate(failRejectedWriteOfStoppedReader, self);
+  if (self[kReadStopped]) setImmediate(failRejectedWriteOfStoppedReader, self);
   return true;
 }
 // A reader that stopped may be waiting for this very write, while the engine waits for it to read. It has one turn of the
 // loop to go on, which is when Node reports a failed write.
 function failRejectedWriteOfStoppedReader(self) {
-  if (self[kPausedUnref]) failRejectedWrite(self);
+  if (self[kReadStopped]) failRejectedWrite(self);
 }
 function failRejectedWrite(self) {
   const er = self[kRejectedWrite];
@@ -488,9 +489,24 @@ function linkUpgraded(self, connection: SocketInstance) {
   const isSocket = connection instanceof Socket;
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
+  // Node decides here, once, whether the wrap has a handle below it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L565-L576
+  self[kWrapsHandle] = isSocket && !!connection._handle;
   destroyWhenUpgradedCloses(self, connection);
   connection.on("error", onUpgradedError.bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
+}
+// ref() and unref() on a wrap whose TLS handle has not attached yet. TLSWrap passes both to the handle that it wraps, and
+// a JS stream has none: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+// The TLS handle starts from what that handle was told (upgrade_tls_impl). False for a socket that wraps nothing.
+function refWrappedHandle(self, ref: boolean) {
+  const upgraded = self[kupgraded];
+  if (!upgraded) return false;
+  if (self[kWrapsHandle] && !upgraded.destroyed) {
+    const handle = upgraded._handle;
+    if (ref) handle?.ref();
+    else handle?.unref();
+  }
+  return true;
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
 function onUpgradedConnect(self, connection) {
@@ -503,6 +519,8 @@ function onUpgradedEnd(connection, eof) {
   if (!connection.destroyed) eof();
 }
 function attachTLSEngine(self, connection, options) {
+  // The engine has no fd: ref() and unref() on its handle go to this one.
+  if (self[kWrapsHandle]) options.transport = connection._handle;
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
   connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
@@ -833,10 +851,9 @@ const SocketHandlers = {
       const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
-        if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
+        if (!holdRejectedWrite(self, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
-        unrefAfterDrain(self, socket);
         callback(null);
       } else {
         self._pendingData = null;
@@ -943,16 +960,14 @@ const SocketHandlers = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
+  holdLikeLibuv: true,
 } as const satisfies InternalSocketHandler<SocketInstance>;
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
 function readStop(self, handle) {
   handle?.pause?.();
-  // A socket over a generic duplex has no fd and never held the loop.
-  if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
-  self[kPausedUnref] = true;
+  self[kReadStopped] = true;
   if (self[kRejectedWrite] !== undefined) setImmediate(failRejectedWriteOfStoppedReader, self);
-  if (!self[kwriteCallback]) handle?.unref?.();
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
@@ -961,37 +976,13 @@ function pauseOnCreate(self, handle) {
   self.readableFlowing = false;
 }
 
-// Reads are flowing again: give back the hold readStop dropped. Cleared even when
-// the user unref'd, so a later ref() is not undone by unrefAfterDrain.
-function restorePausedHold(self, handle) {
-  if (!self[kPausedUnref]) return;
-  self[kPausedUnref] = false;
-  if (!self[kUserUnrefed]) handle?.ref?.();
-}
-
-// The write that was holding the loop (_write) just drained; a socket whose
-// reads are over (peer FIN) or stopped is back at rest and lets go again.
-function unrefAfterDrain(self, handle) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
-}
-
 function finishSocketEnd(self) {
   if (self[kended]) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);
   Duplex.prototype.read.$call(self, 0);
-  // The peer's FIN means kernel reads are over for good. In libuv a stream handle only holds
-  // the loop while reading or with a write in flight, so node lets the process exit even if
-  // the (half-open) writable side stays open and the readable side was never consumed. Mirror
-  // that: drop this handle's hold on the loop unless a write is still waiting on drain, and
-  // forget any readStop-time unref so a later read()/resume() does not pin the loop again.
-  // A subsequent buffered write re-refs (see _write) so its callback can still fire.
-  const socket = self._handle;
-  if (socket && !self[kwriteCallback]) {
-    socket.unref?.();
-    self[kPausedUnref] = false;
-  }
+  if (self._handle && !self[kwriteCallback]) self[kReadStopped] = false;
 }
 
 function deferEndForOnreadTail(self) {
@@ -1474,6 +1465,7 @@ const ServerHandlers = {
     SocketHandlers.drain(socket, rejected);
   },
   binaryType: "buffer",
+  holdLikeLibuv: true,
 } as const satisfies InternalServerHandler<SocketInstance>;
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
@@ -1692,11 +1684,10 @@ const SocketHandlers2 = {
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         self[kBytesWritten] = socket.bytesWritten;
-        if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
+        if (!holdRejectedWrite(self, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
-        unrefAfterDrain(self, socket);
         callback(null);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
@@ -1828,6 +1819,7 @@ const SocketHandlers2 = {
     // An attempt that timed out was closed with its `oncomplete` cleared.
     req.oncomplete?.(error.errno, self._handle, req, true, true);
   },
+  holdLikeLibuv: true,
 } satisfies InternalSocketHandler<ConnectData>;
 
 // The same table minus the per-connection callback members: a listener whose
@@ -2638,7 +2630,7 @@ function drainOnreadTailNT(socket) {
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
     socket._handle?.resume?.();
-    restorePausedHold(socket, socket._handle);
+    socket[kReadStopped] = false;
   }
 }
 
@@ -2654,7 +2646,7 @@ Socket.prototype.resume = function resume() {
     this._handle?.resume?.();
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
-  restorePausedHold(this, this._handle);
+  this[kReadStopped] = false;
   return ret;
 };
 
@@ -2703,7 +2695,7 @@ Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
   if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
-    restorePausedHold(this, this._handle);
+    this[kReadStopped] = false;
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2714,7 +2706,7 @@ Socket.prototype._read = function _read(size) {
     this.once("connect", () => this._read(size));
   } else if (!drainOnreadTail(this, true)) {
     socket?.resume?.();
-    restorePausedHold(this, socket);
+    this[kReadStopped] = false;
   }
 };
 
@@ -2766,12 +2758,9 @@ Object.defineProperty(Socket.prototype, "readyState", {
 
 Socket.prototype.ref = function ref() {
   this[kUserUnrefed] = false;
-  // An explicit ref() supersedes the hold a pause dropped on the user's behalf;
-  // unrefAfterDrain must not give it up again.
-  this[kPausedUnref] = false;
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", this.ref);
+    if (!refWrappedHandle(this, true)) this.once("connect", this.ref);
     return this;
   }
   // Node has one handle under both sockets. Here the TLS socket that adopted the fd holds the loop.
@@ -2969,7 +2958,7 @@ Socket.prototype.unref = function unref() {
   this[kUserUnrefed] = true;
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", this.unref);
+    if (!refWrappedHandle(this, false)) this.once("connect", this.unref);
     return this;
   }
   (socket[kAdoptedTLSRaw] ?? socket).unref();
@@ -3075,7 +3064,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    if (!holdRejectedWrite(this, socket, res, callback)) callback(writeErrnoException(res));
+    if (!holdRejectedWrite(this, res, callback)) callback(writeErrnoException(res));
     return false;
   }
   if (res) {
@@ -3098,9 +3087,6 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // A pending write holds the loop even on a handle whose FIN/pause dropped
-    // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   }
 };
 
@@ -4494,8 +4480,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref()/pause().
-    if (self[kUserUnrefed] || self[kPausedUnref]) handle.unref?.();
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref().
+    if (self[kUserUnrefed]) handle.unref?.();
   }
 }
 

@@ -23,7 +23,7 @@ use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, 
 use bun_jsc::SysErrorJsc;
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
-use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
+use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, Transport, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -751,6 +751,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.flags.get().contains(Flags::IS_PAUSED) {
             let resumed = this.socket.get().resume_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, !resumed));
+            if this.holds_like_libuv() {
+                this.update_hold();
+            }
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -777,6 +780,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !self.flags.get().contains(Flags::IS_PAUSED) {
             let paused = self.socket.get().pause_stream();
             self.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+            if self.holds_like_libuv() {
+                self.update_hold();
+            }
         }
     }
 
@@ -983,6 +989,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Windows, keep the legacy contract there (the close path still fails
         // the pending write callback when the socket is torn down).
         let fatal_send_errno = this.internal_flush();
+        if handlers.hold_like_libuv {
+            // node:net holds the write of a TLS socket until the close that follows.
+            if SSL && fatal_send_errno != 0 {
+                this.update_flags(|f| f.insert(Flags::WRITE_REJECTED));
+            }
+            this.update_hold();
+        }
         // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
         // only reports an errno that is either known peer-gone or persisted
         // across its bounded unclassified-errno retry window. internal_flush
@@ -1502,8 +1515,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
         // Stale if node:net reconnected through this wrapper while it was paused.
-        this.update_flags(|f| f.remove(Flags::IS_PAUSED));
-        if !this.ref_pollref_on_connect.replace(true) {
+        this.update_flags(|f| {
+            f.remove(Flags::IS_PAUSED | Flags::READ_ENDED | Flags::WRITE_REJECTED)
+        });
+        if this.holds_like_libuv() {
+            this.update_hold();
+        } else if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
         if !SSL {
@@ -1768,6 +1785,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Ensure the socket remains alive until this is finished
         let _guard = RefPtr::from_this(this);
 
+        if handlers.hold_like_libuv {
+            this.update_flags(|f| f.insert(Flags::READ_ENDED));
+            this.update_hold();
+        }
+
         let callback = handlers.on_end();
         if callback.is_empty() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -1820,6 +1842,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // otherwise drop the last reference.
         let _guard = RefPtr::from_this(this);
         let handlers = this.get_handlers();
+        if handlers.hold_like_libuv {
+            this.update_hold();
+        }
         log!(
             "onHandshake {} ({})",
             if handlers.mode == super::SocketMode::Server {
@@ -2720,23 +2745,29 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let args = callframe.arguments_undef::<2>();
 
-        Ok(
-            match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
-                WriteResult::Fail => JSValue::ZERO,
-                WriteResult::Success { wrote, total } => {
-                    if wrote < -1 {
-                        // Fatal send (peer gone): hand JS the negative errno so
-                        // node:net fails the write like Node's onWriteComplete;
-                        // -1 stays the legacy closed/shutdown sentinel.
-                        JSValue::js_number(f64::from(wrote))
-                    } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
-                        JSValue::TRUE
-                    } else {
-                        JSValue::FALSE
+        let result = match this.write_or_end_buffered::<false>(global, args.ptr[0], args.ptr[1]) {
+            WriteResult::Fail => JSValue::ZERO,
+            WriteResult::Success { wrote, total } => {
+                if wrote < -1 {
+                    // node:net holds the write of a TLS socket until the close that follows.
+                    if SSL {
+                        this.update_flags(|f| f.insert(Flags::WRITE_REJECTED));
                     }
+                    // Fatal send (peer gone): hand JS the negative errno so
+                    // node:net fails the write like Node's onWriteComplete;
+                    // -1 stays the legacy closed/shutdown sentinel.
+                    JSValue::js_number(f64::from(wrote))
+                } else if usize::try_from(wrote.max(0)).expect("int cast") == total {
+                    JSValue::TRUE
+                } else {
+                    JSValue::FALSE
                 }
-            },
-        )
+            }
+        };
+        if this.holds_like_libuv() {
+            this.update_hold();
+        }
+        Ok(result)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2764,6 +2795,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
             }
         };
+        if this.holds_like_libuv() {
+            this.update_hold();
+        }
         Ok(result)
     }
 
@@ -3339,12 +3373,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_established() {
-            this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
-        } else {
-            // `connect_finish` holds the loop until then; `on_open` applies this.
-            this.ref_pollref_on_connect.set(true);
-        }
+        this.set_ref(true);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3355,12 +3384,80 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        if this.socket.get().is_established() {
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
-        } else {
-            this.ref_pollref_on_connect.set(false);
-        }
+        this.set_ref(false);
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `ref()` and `unref()`.
+    pub(crate) fn set_ref(&self, hold: bool) {
+        if self.holds_like_libuv() {
+            // A TLS engine over a JS stream has no fd. Like TLSWrap, it passes both to the handle that it wraps:
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L654
+            if let Some(engine) = self.upgraded_duplex() {
+                engine.set_transport_ref(hold);
+                return;
+            }
+            self.ref_pollref_on_connect.set(hold);
+            self.update_hold();
+        } else if !self.socket.get().is_established() {
+            // `connect_finish` holds the loop until then; `on_open` applies this.
+            self.ref_pollref_on_connect.set(hold);
+        } else if hold {
+            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        } else {
+            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        }
+    }
+
+    /// node:net's sockets: see [`Self::update_hold`].
+    #[inline]
+    fn holds_like_libuv(&self) -> bool {
+        matches!(self.handlers.get(), Some(handlers) if handlers.hold_like_libuv)
+    }
+
+    /// The stream-level TLS engine behind this socket, which then has no fd of its own.
+    fn upgraded_duplex(&self) -> Option<&UpgradedDuplex> {
+        match self.socket.get().socket {
+            uws::InternalSocket::UpgradedDuplex(engine) => {
+                // SAFETY: the reverse of `from_duplex`. The engine lives in its `DuplexUpgradeContext`, which
+                // detaches this socket before it is freed.
+                Some(unsafe { &*engine.cast::<UpgradedDuplex>() })
+            }
+            _ => None,
+        }
+    }
+
+    /// A node:net socket keeps the event loop alive as a libuv stream handle does: while its connect or a write
+    /// is in flight, whatever `unref()` said, and while it reads and is ref'd. `ref_pollref_on_connect` is then
+    /// what `ref()` / `unref()` said last, for the whole life of the socket.
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L393-L398
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485
+    pub(crate) fn update_hold(&self) {
+        let socket = self.socket.get();
+        let flags = self.flags.get();
+        let hold = match socket.socket {
+            // No socket yet (a Windows named pipe that still connects) or no more: the connect and the close
+            // paths own the hold.
+            uws::InternalSocket::Detached => return,
+            uws::InternalSocket::UpgradedDuplex(_) => false,
+            // The TLS half of an `upgradeTLS` pair owns the fd.
+            _ if flags.contains(Flags::BYPASS_TLS) || socket.is_closed() => false,
+            _ if !socket.is_established() => true,
+            _ => {
+                // What a TLS socket was given before its handshake is no write yet: TLSWrap holds it with no request.
+                let writing = !self.buffered_data_for_node_net.get().is_empty()
+                    && (!SSL || flags.contains(Flags::HANDSHAKE_COMPLETE));
+                writing
+                    || flags.contains(Flags::WRITE_REJECTED)
+                    || (self.ref_pollref_on_connect.get()
+                        && !flags.intersects(Flags::IS_PAUSED | Flags::READ_ENDED))
+            }
+        };
+        if hold {
+            self.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        } else {
+            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        }
     }
 
     pub(crate) fn finalize(&self) {
@@ -3712,6 +3809,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // *Handlers are TRANSFERRED to the raw twin (the `[raw, tls]`
         // contract is: index 0 keeps the pre-upgrade callbacks and sees
         // ciphertext, index 1 gets the new ones and sees plaintext).
+        // A node:net socket hands over what `ref()` / `unref()` said last, whatever holds the loop at this moment.
+        if this.holds_like_libuv() {
+            tls.ref_pollref_on_connect
+                .set(this.ref_pollref_on_connect.get());
+        }
         let raw_handlers = this.take_handlers();
         // Preserve `socket.unref()` across the upgrade — node:tls callers
         // that unref the underlying TCP socket before upgrading must not
@@ -4190,7 +4292,7 @@ pub(crate) struct StoredVerifyError {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct Flags: u16 {
+    pub struct Flags: u32 {
         const IS_ACTIVE            = 1 << 0;
         /// Prevent onClose from calling into JavaScript while we are finalizing
         const FINALIZING           = 1 << 1;
@@ -4220,6 +4322,10 @@ bitflags::bitflags! {
         const TLS_SERVER_ROLE      = 1 << 14;
         /// node:net's `pauseOnConnect`: paused in `on_open` (plain; free for a socket that was registered with `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
         const PAUSE_ON_CONNECT     = 1 << 15;
+        /// The peer's FIN arrived: the reads are over. Read by [`NewSocket::update_hold`].
+        const READ_ENDED           = 1 << 16;
+        /// The TLS engine refused a write, and node:net holds its callback until the close. Read by [`NewSocket::update_hold`].
+        const WRITE_REJECTED       = 1 << 17;
     }
 }
 
@@ -4826,6 +4932,19 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         default_data = v;
         default_data.ensure_still_alive();
     }
+    // The handle of the `net.Socket` that `duplex` is, when it has one: see `UpgradedDuplex::transport`.
+    let transport = match opts.get_truthy(global, "transport")? {
+        Some(handle) => {
+            if let Some(tcp) = handle.as_class_ref::<TCPSocket>() {
+                Transport::Tcp(tcp.ref_guard())
+            } else if let Some(tls) = handle.as_class_ref::<TLSSocket>() {
+                Transport::Tls(tls.ref_guard())
+            } else {
+                Transport::None
+            }
+        }
+        None => Transport::None,
+    };
 
     let reject_unauthorized = upgrade_reject_policy(
         handlers.vm,
@@ -4990,7 +5109,9 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     // must not hold the event loop open. Node's TLSWrap over a JS stream
     // behaves the same way: a script that leaves a duplexPair-backed TLS pair
     // dangling still exits. If the underlying stream is a real socket, that
-    // socket's own handle keeps the loop alive.
+    // socket's own handle keeps the loop alive, and `ref()` / `unref()` on
+    // this one go to it (`set_ref`).
+    duplex_context_ref.upgrade.transport.set(transport);
 
     // SAFETY: non-null, fully initialised, heap-pinned; leaves its context in `deinit`.
     unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, context) };

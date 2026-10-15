@@ -1068,6 +1068,7 @@ impl Lockfile {
     }
 
     /// The `node_modules` of the project or of a workspace, which can be a link to a volume or a store.
+    #[cfg(unix)]
     pub(crate) fn is_importer_tree_id(&self, id: tree::Id) -> bool {
         id == 0 || self.tree_owner_tag(id) == Some(ResolutionTag::Workspace)
     }

@@ -2099,7 +2099,7 @@ impl Package<u64> {
                         let _ = write!(
                             &mut text,
                             "\"{}\" originally specified here",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bun_core::fmt::escape_control_chars(external_alias.slice(buf))
                         );
                     }
                     notes.push(bun_ast::Data {

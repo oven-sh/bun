@@ -66,7 +66,8 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             None => search_path,
         };
 
-        fmt::Display::fmt(&QuotedFormatter { text: rel }, f)
+        let quoted = QuotedFormatter { text: rel };
+        fmt::Display::fmt(&bun_core::fmt::EscapeControlChars(quoted), f)
     }
 }
 

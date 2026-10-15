@@ -1757,7 +1757,7 @@ fn load_npmrc_files<'a>(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
     start_dir: &[u8],
-    project_npmrcs: impl IntoIterator<Item = &'a ZStr>,
+    project_npmrcs: &mut dyn Iterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
     unreadable: &mut Option<Box<[u8]>>,
 ) -> Api::BunInstall {
@@ -1833,7 +1833,7 @@ pub fn config_ignores_scripts(
         bunfig,
         env,
         cwd,
-        Some(bun_core::zstr!(".npmrc")),
+        &mut core::iter::once(bun_core::zstr!(".npmrc")),
         ini::NpmrcDiagnostics::Discard,
         &mut None,
     );
@@ -1851,7 +1851,15 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
     }
     initialize_store();
     let diagnostics = ini::NpmrcDiagnostics::Discard;
-    load_npmrc_files(&bunfig, env, cwd, None, diagnostics, &mut None).cache_directory
+    load_npmrc_files(
+        &bunfig,
+        env,
+        cwd,
+        &mut core::iter::empty(),
+        diagnostics,
+        &mut None,
+    )
+    .cache_directory
 }
 
 /// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
@@ -2462,11 +2470,12 @@ pub fn init(
             &bunfig_install,
             env,
             bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
-            resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+            &mut resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                 fs.top_level_dir(),
                 &mut npmrc_local,
                 &[b".npmrc".as_slice()],
-            ),
+            )
+            .into_iter(),
             ini::NpmrcDiagnostics::Print,
             &mut ctx.unreadable_config,
         );
@@ -2859,7 +2868,7 @@ fn init_with_runtime_once(
         bun_paths::path_buffer_pool::get(),
     ];
     let npmrc_dirs = [
-        Some(start_dir).filter(|_| root_bunfig_dir.is_some()),
+        root_bunfig_dir.is_some().then_some(start_dir),
         Some(project_dir),
     ];
     let no_bunfig = Api::BunInstall::default();
@@ -2867,7 +2876,7 @@ fn init_with_runtime_once(
         bun_install.unwrap_or(&no_bunfig),
         env,
         start_dir,
-        npmrc_dirs
+        &mut npmrc_dirs
             .into_iter()
             .zip(&mut npmrc_bufs)
             .filter_map(|(dir, buf)| {

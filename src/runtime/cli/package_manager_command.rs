@@ -436,9 +436,9 @@ impl PackageManagerCommand {
                 };
                 let (rm_path, has_global_store) =
                     found.unwrap_or((cache_dir.path.as_slice(), false));
-                let bun_install = process_env
-                    .get(b"BUN_INSTALL")
-                    .map(|dir| bun_options_types::schema::api::BunInstall::resolve_path(b"", dir));
+                let bun_install = process_env.get(b"BUN_INSTALL").map(|path| {
+                    bun_options_types::schema::api::BunInstall::resolve_path(b"", path)
+                });
                 let protected = found
                     .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));
                 // What bunx installed is inside the install cache: counted before it goes with it.

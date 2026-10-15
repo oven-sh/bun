@@ -1432,3 +1432,35 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
 });
+
+describe.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in a template is printed spelled out", (_, raw, spelled) => {
+  const unprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
+
+  it("in the command to start with", async () => {
+    using dir = tempDir("create-start", {
+      "bun-create/tpl/package.json": JSON.stringify({ name: "tpl", "bun-create": { start: `bun run a${raw}b` } }),
+    });
+    const { out, err, exitCode } = await create(String(dir), ["tpl", "dest", "--no-install", "--no-git"]);
+    expect(out).toContain(`\n  cd dest\n  bun run a${spelled}b\n`);
+    expect(out + err).not.toMatch(unprintable);
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isPosix)("in the name of a file that is in the way", async () => {
+    using dir = tempDir("create-conflict", {
+      "bun-create/tpl/package.json": JSON.stringify({ name: "tpl" }),
+      [`bun-create/tpl/a${raw}b.js`]: "template",
+      [`dest/a${raw}b.js`]: "mine",
+    });
+    const { out, err, exitCode } = await create(String(dir), ["tpl", "dest", "--no-install", "--no-git"]);
+    expect(err).toContain(`\n  a${spelled}b.js\n`);
+    expect(out + err).not.toMatch(unprintable);
+    expect(exitCode).toBe(1);
+  });
+});

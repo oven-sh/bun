@@ -247,6 +247,9 @@ describe.concurrent.each([
   ["BEL", "\x07", "\\x07"],
   ["U+009B", "\u009b2K", "\\u009b2K"],
   ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+  ["U+2028", " ", "\\u2028"],
+  ["U+202E", "‮", "\\u202e"],
+  ["U+2066", "⁦", "\\u2066"],
 ])("%s in a script of package.json is printed spelled out", (_, raw, spelled) => {
   async function run(...args: string[]) {
     using dir = tempDir("run-script-text", {

@@ -13,7 +13,9 @@ use crate::css_properties::PropertyId;
 use crate::css_properties::masking;
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::CustomIdent;
+use crate::css_values::number::NonNegative;
 use crate::css_values::time::Time;
+use crate::generics::Parse as _;
 
 use crate::VendorPrefix;
 use crate::compat;
@@ -25,7 +27,7 @@ pub struct Transition {
     /// The property to transition.
     pub(crate) property: PropertyId,
     /// The duration of the transition.
-    pub(crate) duration: Time,
+    pub(crate) duration: NonNegative<Time>,
     /// The delay before the transition starts.
     pub(crate) delay: Time,
     /// The easing function for the transition.
@@ -46,13 +48,13 @@ impl Transition {
 
     pub(crate) fn parse(parser: &mut Parser) -> CssResult<Self> {
         let mut property: Option<PropertyId> = None;
-        let mut duration: Option<Time> = None;
+        let mut duration: Option<NonNegative<Time>> = None;
         let mut delay: Option<Time> = None;
         let mut timing_function: Option<EasingFunction> = None;
 
         loop {
             if duration.is_none() {
-                if let Ok(value) = parser.try_parse(Time::parse) {
+                if let Ok(value) = parser.try_parse(NonNegative::<Time>::parse) {
                     duration = Some(value);
                     continue;
                 }
@@ -65,7 +67,8 @@ impl Transition {
                 }
             }
 
-            if delay.is_none() {
+            // The first time must be a duration, even if it is invalid.
+            if duration.is_some() && delay.is_none() {
                 if let Ok(value) = parser.try_parse(Time::parse) {
                     delay = Some(value);
                     continue;
@@ -84,7 +87,7 @@ impl Transition {
 
         Ok(Self {
             property: property.unwrap_or(PropertyId::All),
-            duration: duration.unwrap_or(Time::Seconds(0.0)),
+            duration: duration.unwrap_or(NonNegative(Time::Seconds(0.0))),
             delay: delay.unwrap_or(Time::Seconds(0.0)),
             timing_function: timing_function.unwrap_or(EasingFunction::Ease),
         })
@@ -92,9 +95,9 @@ impl Transition {
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.property.to_css(dest)?;
-        if !self.duration.is_zero() || !self.delay.is_zero() {
+        if !self.duration.0.is_zero() || !self.delay.is_zero() {
             dest.write_char(b' ')?;
-            self.duration.to_css(dest)?;
+            self.duration.0.to_css(dest)?;
         }
 
         if !self.timing_function.is_ease() {
@@ -143,7 +146,7 @@ pub enum ViewTransitionGroup {
 #[derive(Default)]
 pub struct TransitionHandler {
     pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
-    pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) durations: Option<(SmallList<NonNegative<Time>, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
     pub(crate) has_any: bool,
@@ -251,7 +254,7 @@ mod transition_handler_body {
                     let vp: VendorPrefix = x.1;
 
                     let mut properties = SmallList::<PropertyId, 1>::init_capacity(val.len());
-                    let mut durations = SmallList::<Time, 1>::init_capacity(val.len());
+                    let mut durations = SmallList::<NonNegative<Time>, 1>::init_capacity(val.len());
                     let mut delays = SmallList::<Time, 1>::init_capacity(val.len());
                     let mut timing_functions =
                         SmallList::<EasingFunction, 1>::init_capacity(val.len());
@@ -360,7 +363,8 @@ mod transition_handler_body {
 
             let mut _properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)> =
                 self.properties.take();
-            let mut _durations: Option<(SmallList<Time, 1>, VendorPrefix)> = self.durations.take();
+            let mut _durations: Option<(SmallList<NonNegative<Time>, 1>, VendorPrefix)> =
+                self.durations.take();
             let mut _delays: Option<(SmallList<Time, 1>, VendorPrefix)> = self.delays.take();
             let mut _timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)> =
                 self.timing_functions.take();
@@ -468,7 +472,7 @@ mod transition_handler_body {
     fn get_transitions(
         arena: &bun_alloc::Arena,
         properties: &mut SmallList<PropertyId, 1>,
-        durations: &mut SmallList<Time, 1>,
+        durations: &mut SmallList<NonNegative<Time>, 1>,
         delays: &mut SmallList<Time, 1>,
         timing_functions: &mut SmallList<EasingFunction, 1>,
     ) -> SmallList<Transition, 1> {
@@ -487,7 +491,7 @@ mod transition_handler_body {
             let duration = if durations.len() > durations_idx {
                 durations.at(durations_idx).deep_clone(arena)
             } else {
-                Time::Seconds(0.0)
+                NonNegative(Time::Seconds(0.0))
             };
             let delay = if delays.len() > delays_idx {
                 delays.at(delays_idx).deep_clone(arena)

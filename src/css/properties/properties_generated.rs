@@ -1844,7 +1844,12 @@ pub enum Property {
     LineHeight(font::LineHeight),
     Font(font::Font),
     TransitionProperty((SmallList<PropertyId, 1>, VendorPrefix)),
-    TransitionDuration((SmallList<css::css_values::time::Time, 1>, VendorPrefix)),
+    TransitionDuration(
+        (
+            SmallList<NonNegative<css::css_values::time::Time>, 1>,
+            VendorPrefix,
+        ),
+    ),
     TransitionDelay((SmallList<css::css_values::time::Time, 1>, VendorPrefix)),
     TransitionTimingFunction(
         (
@@ -3642,9 +3647,9 @@ impl Property {
                 }
             }
             PropertyId::TransitionDuration(pre) => {
-                if let Some(c) =
-                    parse_value::<SmallList<css::css_values::time::Time, 1>>(input, options)
-                {
+                if let Some(c) = parse_value::<SmallList<NonNegative<css::css_values::time::Time>, 1>>(
+                    input, options,
+                ) {
                     return Ok(Property::TransitionDuration((c, pre)));
                 }
             }

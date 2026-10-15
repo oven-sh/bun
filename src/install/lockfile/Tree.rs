@@ -814,6 +814,9 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// Every tree of these packages places a peer from that binding, so they agree.
     #[inline]
     fn bind_peer(&mut self, dep_id: DependencyID) -> bool {
+        if !self.dependencies[dep_id as usize].behavior.is_peer() {
+            return false;
+        }
         let bound = self.peer_by_version(dep_id);
         if let Some(pkg_id) = bound {
             self.resolutions[dep_id as usize] = pkg_id;

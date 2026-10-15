@@ -687,9 +687,11 @@ pub mod registry {
             .saturating_add(seconds)
     }
 
-    /// A cached manifest that expires later was written while the clock stood ahead.
-    pub(crate) fn latest_manifest_expiry() -> u32 {
-        seconds_from_now(MAX_MANIFEST_AGE)
+    /// Such a cached manifest was written while the clock stood ahead.
+    /// `past` is a time that has gone by: what expires soon after it needs no look at the clock.
+    pub(crate) fn expires_too_late(expiry: u32, past: u32) -> bool {
+        expiry > past.saturating_add(MAX_MANIFEST_AGE)
+            && expiry > seconds_from_now(MAX_MANIFEST_AGE)
     }
 
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {

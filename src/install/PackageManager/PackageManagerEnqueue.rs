@@ -2236,9 +2236,6 @@ fn patched_version_in_range<'m>(
     manifest: &'m Npm::PackageManifest,
     version: &dependency::Version,
 ) -> Option<Npm::FindResult<'m>> {
-    if this.lockfile.patched_dependencies.count() == 0 {
-        return None;
-    }
     if this.patched_versions.is_none() {
         this.patched_versions = Some(index_patched_versions(this));
     }
@@ -2375,7 +2372,8 @@ fn get_or_put_resolved_package_with_find_result(
             return bind_existing(this, dependency_id, id, success_fn);
         }
     }
-    let patched = if latest_for_target || behavior.is_peer() {
+    let has_patches = this.lockfile.patched_dependencies.count() > 0;
+    let patched = if !has_patches || latest_for_target || behavior.is_peer() {
         None
     } else {
         patched_version_in_range(this, manifest, version)
@@ -2416,11 +2414,14 @@ fn get_or_put_resolved_package_with_find_result(
                 meta.libc = find_result.package.libc;
             }
         }
-        let mut bound = bind_existing(this, dependency_id, id, success_fn)?;
+        if !this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS)
+            || this.get_preinstall_state(id) != install::PreinstallState::Extract
+        {
+            return bind_existing(this, dependency_id, id, success_fn);
+        }
         // The row that appended it left the download to a row that no other version serves.
-        if this.get_preinstall_state(id) == install::PreinstallState::Extract
-            && this.options.do_.contains(Do::PREFETCH_RESOLVED_TARBALLS)
-            && let Some(result) = &mut bound
+        let mut bound = bind_existing(this, dependency_id, id, success_fn)?;
+        if let Some(result) = &mut bound
             && result.package.resolution.eql(
                 &npm_resolution,
                 this.lockfile.buffers.string_bytes.as_slice(),
@@ -2445,8 +2446,6 @@ fn get_or_put_resolved_package_with_find_result(
         return Ok(None);
     }
 
-    let waits_for_dedupe = reusable_range.is_some()
-        && may_be_collapsed(this, name_hash, version, dependency_id, invalid_package_id);
     // A damaged file in the cache is fetched again.
     if !manifest.is_in_bounds(find_result.package) {
         if refetch_stale_manifest(this, manifest.name(), behavior.is_optional())? {
@@ -2508,7 +2507,12 @@ fn get_or_put_resolved_package_with_find_result(
                 None
             }
             // A row that needs this version starts the download, or else the install phase.
-            install::PreinstallState::Extract if waits_for_dedupe => None,
+            install::PreinstallState::Extract
+                if reusable_range.is_some()
+                    && may_be_collapsed(this, name_hash, version, dependency_id, package_id) =>
+            {
+                None
+            }
             // Do we need to download the tarball?
             install::PreinstallState::Extract => {
                 let url = manifest.str(&find_result.package.tarball_url);

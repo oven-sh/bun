@@ -301,7 +301,12 @@ impl Stringifier {
 
         // The optional dependencies that did not resolve while something in the tree has their name.
         let placed_rows = lockfile.buffers.hoisted_dependencies.as_slice();
+        let any_unresolved = (resolution_buf.iter().zip(deps_buf))
+            .any(|(&id, dep)| id == invalid_package_id && dep.behavior.is_optional());
         let unresolved_names = |dep_ids: &[DependencyID]| -> Vec<String> {
+            if !any_unresolved {
+                return Vec::new();
+            }
             (dep_ids.iter().map(|&id| id as usize))
                 .filter(|&id| resolution_buf[id] == invalid_package_id)
                 .map(|id| &deps_buf[id])

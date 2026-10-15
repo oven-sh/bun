@@ -196,8 +196,10 @@ impl PackageManifestMap {
                             || (ctx.enable_manifest_cache_control
                                 && manifest.pkg.public_max_age
                                     > ctx.timestamp_for_manifest_cache_control
-                                && manifest.pkg.public_max_age
-                                    <= npm::registry::latest_manifest_expiry())
+                                && !npm::registry::expires_too_late(
+                                    manifest.pkg.public_max_age,
+                                    ctx.timestamp_for_manifest_cache_control,
+                                ))
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

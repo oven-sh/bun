@@ -44,6 +44,7 @@ impl PackageManager {
     ///
     /// The cache directory is opened lazily here only when
     /// `options.enable.manifest_cache` is set (the only branch that reads it).
+    #[inline]
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
         crate::package_manifest_map::DiskCacheCtx {
@@ -127,6 +128,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 }
 
 /// `Err` says why there is none. Auto-install asks first: once open, the above cannot fail.
+#[inline]
 pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
     // path projects.

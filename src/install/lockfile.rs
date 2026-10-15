@@ -1378,7 +1378,7 @@ impl Lockfile {
 
         // When you run `"bun add react"
         // This is where we update it in the lockfile from "latest" to "^17.0.2"
-        cloner.flush()?;
+        let moved_a_row = cloner.flush()?;
         drop(cloner);
 
         new.trusted_dependencies = old_trusted_dependencies;
@@ -1397,7 +1397,7 @@ impl Lockfile {
 
         // `flush` moved peers after it chose what to copy, so a package may have lost its last row.
         // It stays when frozen: older versions saved it, and the hash in their bun.lockb covers it.
-        if !manager.options.enable.frozen_lockfile() {
+        if moved_a_row {
             let held =
                 reachable::packages(&new, &new.buffers.resolutions, reachable::Options::all(0));
             if held.count() < new.packages.len() {
@@ -1540,7 +1540,8 @@ impl<'a> Cloner<'a> {
         Some(self.weak_peers.swap_remove(index))
     }
 
-    pub(crate) fn flush(&mut self) -> Result<(), BunError> {
+    /// Returns whether the hoist took a row off the package it was copied for. Not asked when frozen.
+    pub(crate) fn flush(&mut self) -> Result<bool, BunError> {
         let max_package_id = self.old.packages.len();
         while let Some(to_clone) = (self.clone_queue.pop()).or_else(|| self.peer_on_last_copy()) {
             let mapping = self.mapping[to_clone.old_resolution as usize];
@@ -1568,8 +1569,15 @@ impl<'a> Cloner<'a> {
         self.manager
             .clear_cached_items_depending_on_lockfile_buffer();
 
+        let mut moved_a_row = false;
         if self.lockfile.packages.len() != 0 {
+            let copied = (!self.manager.options.enable.frozen_lockfile())
+                .then(|| self.lockfile.buffers.resolutions.clone());
             self.lockfile.resolve(self.log)?;
+            moved_a_row = copied.is_some_and(|copied| {
+                (copied.iter().zip(&self.lockfile.buffers.resolutions))
+                    .any(|(&before, &after)| before != after && before != invalid_package_id)
+            });
         }
 
         // capacity is used for calculating byte size
@@ -1581,7 +1589,7 @@ impl<'a> Cloner<'a> {
                 .packages
                 .shrink_and_free(self.lockfile.packages.len());
         }
-        Ok(())
+        Ok(moved_a_row)
     }
 }
 
@@ -2266,6 +2274,13 @@ impl Lockfile {
     /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
     pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
         let pkg_resolutions = self.packages.items_resolution();
+        // Most projects have no member, and no row on the project itself.
+        if !(pkg_resolutions.iter().skip(1))
+            .any(|res| matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace))
+            && !self.buffers.resolutions.contains(&0)
+        {
+            return;
+        }
         let root_rows = self.packages.items_dependencies().first();
         let is_local_row = |dep_id: usize| {
             (self.packages.items_dependencies().iter())
@@ -2470,7 +2485,14 @@ impl Lockfile {
     }
 
     /// Brings `project_packages` up to date. Each package is looked at once.
+    #[inline]
     pub(crate) fn note_project_packages(&mut self) {
+        if self.project_packages_of != self.packages.len() {
+            self.note_new_project_packages();
+        }
+    }
+
+    fn note_new_project_packages(&mut self) {
         let resolutions = self.packages.items_resolution();
         for (id, owner) in (resolutions.iter().enumerate()).skip(self.project_packages_of) {
             if matches!(owner.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
@@ -2505,8 +2527,9 @@ impl Lockfile {
         };
         // Workspaces are read one after the other: in a fresh install these rows are one stretch.
         let mut stretch = 0..0;
+        let lists = self.packages.items_dependencies();
         for &owner in &self.project_packages {
-            let rows = self.packages.items_dependencies()[owner as usize];
+            let rows = lists[owner as usize];
             if rows.len == 0 {
                 continue;
             }

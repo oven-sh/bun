@@ -3604,7 +3604,7 @@ describe("http2 ALTSVC and ORIGIN frame strings are latin-1", () => {
   };
   const originEntries = ({ payload }) => {
     const entries = [];
-    for (let offset = 0; offset + 2 <= payload.length; ) {
+    for (let offset = 0; offset + 2 <= payload.length;) {
       const length = payload.readUInt16BE(offset);
       entries.push(payload.subarray(offset + 2, offset + 2 + length).toString("latin1"));
       offset += 2 + length;

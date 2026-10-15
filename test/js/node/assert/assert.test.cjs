@@ -1,4 +1,5 @@
 const assert = require("assert");
+const util = require("util");
 const { bunEnv, bunExe } = require("harness");
 
 test("assert from require as a function does not throw", () => assert(true));
@@ -189,21 +190,120 @@ describe("AssertionError diff rendering", () => {
       expect(messageOf(() => assert.strictEqual([], []))).toBe(sameStructure("[]"));
     });
 
-    // node's util.inspect reads `href` of every class instance it prints, and rethrows what the getter throws.
-    test("a href getter that throws gives its own error, not an AssertionError", () => {
+    const thrownBy = fn => {
+      try {
+        fn();
+      } catch (e) {
+        return e;
+      }
+    };
+
+    // util.inspect reads `href` of a URL only (node reads it of every class instance). So a value that
+    // is not a URL still gives the AssertionError, and a URL whose getter throws gives that error, as on node.
+    test("only the href getter of a URL can replace the AssertionError", () => {
       const error = new Error("href getter");
       class Broken {
         get href() {
           throw error;
         }
       }
-      let thrown;
-      try {
-        assert.deepStrictEqual({ a: new Broken() }, { a: 1 });
-      } catch (e) {
-        thrown = e;
+      class BrokenURL extends URL {
+        get href() {
+          throw error;
+        }
       }
-      expect(thrown).toBe(error);
+      const twoProxies = new Proxy(new Proxy(new URL(a.href), {}), {});
+      const limit = Error.stackTraceLimit;
+      try {
+        expect(messageOf(() => assert.deepStrictEqual({ a: new Broken() }, { a: 1 }))).toBe(
+          "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   a: Broken {}\n-   a: 1\n  }\n",
+        );
+        expect(thrownBy(() => assert.deepStrictEqual({ a: twoProxies }, { a: 1 })).code).toBe("ERR_ASSERTION");
+        expect(thrownBy(() => assert.deepStrictEqual({ a: new BrokenURL(a.href) }, { a: 1 }))).toBe(error);
+      } finally {
+        Error.stackTraceLimit = limit;
+      }
+    });
+
+    // The AssertionError constructor sets Error.stackTraceLimit to 0 while it makes the message. It puts
+    // the limit back when that throws too (node does not), and it does not need to write the limit.
+    test("a message that cannot be made leaves Error.stackTraceLimit as it was", () => {
+      class BrokenURL extends URL {
+        get href() {
+          throw new Error("href");
+        }
+      }
+      class BrokenName {
+        static get name() {
+          throw new Error("name");
+        }
+      }
+      const tagThrows = {
+        get [Symbol.toStringTag]() {
+          throw new Error("tag");
+        },
+      };
+      const messageThrows = {
+        toString() {
+          throw new Error("toString");
+        },
+      };
+      const triggers = {
+        toStringTag: () => assert.deepStrictEqual({ a: tagThrows }, { a: 1 }),
+        message: () => assert.strictEqual(1, 2, messageThrows),
+        hrefOfURL: () => assert.deepStrictEqual({ a: new BrokenURL(a.href) }, { a: 1 }),
+        staticName: () => assert.deepStrictEqual({ a: new BrokenName() }, { a: 1 }),
+      };
+      const descriptor = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const rows = {};
+      try {
+        for (const name in triggers) {
+          Error.stackTraceLimit = 10;
+          const threw = thrownBy(triggers[name]) !== undefined;
+          const frames = String(new Error("later").stack).includes("\n    at ");
+          rows[name] = { threw, limit: Error.stackTraceLimit, frames };
+        }
+        Object.defineProperty(Error, "stackTraceLimit", { ...descriptor, value: 10, writable: false });
+        rows.notWritable = thrownBy(() => assert.strictEqual(1, 2)).name;
+      } finally {
+        Object.defineProperty(Error, "stackTraceLimit", descriptor);
+      }
+      const restored = { threw: true, limit: 10, frames: true };
+      expect(rows).toEqual({
+        toStringTag: restored,
+        message: restored,
+        hrefOfURL: restored,
+        staticName: restored,
+        notWritable: "AssertionError",
+      });
+    });
+
+    // The inspect hook of AssertionError shortens long operands while it prints, and puts them back after.
+    test("a print that throws leaves the operands of the AssertionError as they were", () => {
+      const error = new Error("href getter");
+      class BrokenURL extends URL {
+        get href() {
+          throw error;
+        }
+      }
+      const actual = Buffer.alloc(600, "x").toString();
+      const tagThrows = {
+        get [Symbol.toStringTag]() {
+          throw new Error("tag");
+        },
+      };
+      const withTag = new assert.AssertionError({ message: "m", actual, expected: tagThrows, operator: "equal" });
+      thrownBy(() => util.inspect(withTag));
+      expect(withTag.actual).toBe(actual);
+
+      const withURL = new assert.AssertionError({
+        message: "m",
+        actual,
+        expected: new BrokenURL(a.href),
+        operator: "equal",
+      });
+      expect(thrownBy(() => util.inspect(withURL))).toBe(error);
+      expect(withURL.actual).toBe(actual);
     });
 
     // util.inspect loads on the first use. The child replaces the global before that, as a preload or

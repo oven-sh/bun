@@ -518,16 +518,24 @@ describe("URL", () => {
       }
     });
 
-    test("reads href before the class test, like node", () => {
+    // node's isURL() reads `href` of every value that gets to its URL arm. Here only a URL is read.
+    test("tests the native URL class before reading href", () => {
       let reads = 0;
       class Link {
         get href() {
           reads++;
-          return "http://example.com/a";
+          throw new Error("href getter");
         }
       }
+      class Sub extends URL {}
       expect(util.inspect(new Link(), raw)).toBe("Link {}");
-      expect(reads).toBe(1);
+      expect(util.inspect(Object.create(URL.prototype), raw)).toBe("URL {}");
+      expect(util.format("%o", Sub)).toStartWith(
+        "<ref *1> [class Sub extends URL] {\n  [length]: 0,\n  [name]: 'Sub',\n  [prototype]: URL {\n    [constructor]: [Circular *1],\n    href: [Getter/Setter],",
+      );
+      // util.inspect unwraps one Proxy. The Proxy that is left is not a URL, and the getter of URL does not take it.
+      expect(thrownBy(() => util.inspect(new Proxy(new Proxy(new URL(href), {}), {}), raw))).toBeUndefined();
+      expect(reads).toBe(0);
 
       class NumberHref extends URL {
         get href() {
@@ -546,18 +554,18 @@ describe("URL", () => {
       expect(util.inspect({ a: new EmptyHref(href) }, raw)).toBe("{ a:  }");
     });
 
-    test("rethrows the error of a href getter, like node", () => {
+    test("rethrows the error of the href getter of a URL, like node", () => {
       const error = new Error("href getter");
-      class Broken {
+      class Broken extends URL {
         get href() {
           throw error;
         }
       }
-      expect(thrownBy(() => util.inspect(new Broken(), raw))).toBe(error);
-      expect(thrownBy(() => util.inspect({ a: new Broken() }, raw))).toBe(error);
-      expect(thrownBy(() => util.inspect([new Broken()]))).toBe(error);
+      expect(thrownBy(() => util.inspect(new Broken(href), raw))).toBe(error);
+      expect(thrownBy(() => util.inspect({ a: new Broken(href) }, raw))).toBe(error);
+      expect(thrownBy(() => util.inspect([new Broken(href)], raw))).toBe(error);
       // One level past the default depth: the read comes before the depth test.
-      expect(thrownBy(() => util.inspect({ a: { b: { c: new Broken() } } }))).toBe(error);
+      expect(thrownBy(() => util.inspect({ a: { b: { c: new Broken(href) } } }, raw))).toBe(error);
     });
   });
 });

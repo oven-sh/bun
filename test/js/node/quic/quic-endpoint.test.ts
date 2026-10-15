@@ -8,7 +8,7 @@ import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { BlockList, type SocketAddress } from "node:net";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));

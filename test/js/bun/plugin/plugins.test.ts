@@ -997,7 +997,7 @@ describe.concurrent("a filter whose search is abandoned", () => {
 
   // With no namespace the filter runs on the path of a file when the file is loaded. The file used
   // to be loaded from the disk, without the plugin. The name of a file is short, so the group of
-  // this filter has 64 captures: a context is then about 3 KB, and 64 KB have room for about 20.
+  // this filter has 64 captures: a context is then about 2 KB, and 64 KB have room for at most 30.
   it("in onLoad with no namespace throws when the file is loaded", async () => {
     const ran = await run(
       `

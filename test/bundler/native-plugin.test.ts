@@ -633,7 +633,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
 
   // The filter runs in the RegExp interpreter, which keeps a context for each iteration of the
   // group in a pool. The name of a file is short, so the group has 64 captures: a context is then
-  // about 3 KB, and about 20 fit in 64 KB. A search that does not fit is abandoned. A native
+  // about 2 KB, and at most 30 fit in 64 KB. A search that does not fit is abandoned. A native
   // callback has no JS thread to run its filter again on, so the build fails. It used to parse
   // the file as if the filter did not match it.
   it("fails the build when the search of an onBeforeParse filter is abandoned", async () => {

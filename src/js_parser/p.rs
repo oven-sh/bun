@@ -337,8 +337,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
-    /// Innermost scope last, and sorted by symbol. `settle_require_aliases`
-    /// pops a scope's entries when its statements are visited.
+    /// Innermost scope last, sorted by symbol. `settle_require_aliases` pops the entries of a scope.
     pub(crate) require_aliases: Vec<RequireAlias>,
     pub(crate) imports_to_convert_from_dynamic_import: List<'a, DeferredImportNamespace>,
     pub(crate) dynamic_import_aliases: bun_ast::ast_result::DynamicImportAliases,
@@ -1767,8 +1766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `binding = value` whose visit minted `imports_to_convert_from_require[import]`.
-    /// Returns true when it is `x = require("pkg")` and now waits in `require_aliases`.
+    /// True when `binding = value` is an `x = require("pkg")` that now waits in `require_aliases`.
     #[cold]
     pub(crate) fn note_require_alias(
         &mut self,
@@ -1856,8 +1854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A namespace that `transpose_require` minted from `first` on is still a
-    /// value: of a declaration that stays, or of another expression.
+    /// A namespace that `transpose_require` minted from `first` on is still used as a value.
     pub(crate) fn holds_unwrapped_require_namespace(&self, first: usize) -> bool {
         self.imports_to_convert_from_require[first..]
             .iter()
@@ -1868,8 +1865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             })
     }
 
-    /// The local stays a variable that holds the namespace: each `local.a` that
-    /// became an import item prints as written. Every use stays counted.
+    /// The local stays a variable that holds the namespace: each folded `local.a` prints as written.
     fn revoke_require_alias(&mut self, alias: &RequireAlias) {
         let Some(items) = self.import_items_for_namespace.remove(&alias.local) else {
             return;
@@ -1887,8 +1883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Settles the `require_aliases` of the current scope. `stmts` are its
-    /// statements: every use of the locals they declare is visited.
+    /// Settles the `require_aliases` of the current scope, whose statements are `stmts`.
     #[cold]
     pub(crate) fn settle_require_aliases(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
         let scope = self.current_scope;
@@ -1941,8 +1936,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        // One that something rebinds stays a variable. So does one whose declarator
-        // is not one of `stmts`: a `var` in a body without braces.
+        // A rebound one stays a variable. So does a `var` in a body without braces: it is not one of `stmts`.
         for at in first..self.require_aliases.len() {
             let alias = self.require_aliases[at];
             if !self.require_alias_is_confirmed(&alias) {
@@ -1965,8 +1959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && self.require_alias_holds(&alias)
             {
                 self.confirm_require_alias(&alias, is_import_equals);
-                // `append_part` keeps no part that visits to no statement. The
-                // local keeps its count: the other parts use it.
+                // `append_part` keeps no part without statements. The local keeps its count: other parts use it.
                 self.subtract_symbol_uses(&part.symbol_uses);
                 part.stmts = bun_ast::StoreSlice::EMPTY;
                 confirmed_an_alias = true;

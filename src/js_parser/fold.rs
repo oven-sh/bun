@@ -209,8 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
                             let waiting_alias = p.require_alias_of(id.ref_);
-                            // Something rebinds the local already: it stays a variable,
-                            // and this is a property of what it holds.
+                            // Something rebinds the local already: this is a property of the variable.
                             if let Some(alias) = &waiting_alias
                                 && !p.require_alias_holds(alias)
                             {
@@ -281,8 +280,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if dynamic_record.is_some() {
                                 p.note_tracked_namespace_use(id.ref_);
                             } else if let Some(alias) = waiting_alias {
-                                // The local stays counted until it is known to be the namespace.
-                                // This use tells `settle_require_aliases` how much to take back.
+                                // The local stays counted: `settle_require_aliases` takes back one use for each of these.
                                 p.record_usage_impl(alias.namespace, false);
                             } else {
                                 p.ignore_usage(id.ref_);

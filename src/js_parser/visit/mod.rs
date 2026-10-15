@@ -1793,8 +1793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
-            // The compiler declares the locals of the body again as new symbols.
-            // It cannot name a namespace that `transpose_require` minted.
+            // The compiler declares the locals again and cannot name a namespace `transpose_require` minted.
             && !p.holds_unwrapped_require_namespace(rc_first_require)
             && let Some(mut rc) = p.react_compiler.take()
         {

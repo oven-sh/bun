@@ -454,20 +454,16 @@ pub struct DeferredImportNamespace {
     pub(crate) import_record_id: u32,
     /// Scope the namespace binding lives in. Used by
     /// `imports_to_convert_from_dynamic_import` to bail when a direct
-    /// `eval()` can observe the binding by name. In
-    /// `imports_to_convert_from_require` it is set when a local of that
-    /// scope became the namespace (`RequireAlias`).
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require` until a local of the scope becomes the namespace.
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
-/// `var x = require("pkg")` whose `require()` became `import * as ns`. Until
-/// the scope that declares `x` is visited, `x.a` reads `ns.a` and the
-/// declarator stays. Then `x` becomes `ns` if nothing can rebind it.
+/// `var x = require("pkg")` whose `require()` became `import * as ns`: `x` becomes `ns` if its scope never rebinds it.
 #[derive(Clone, Copy)]
 pub struct RequireAlias {
     pub(crate) local: Ref,
-    /// `ns`. Each `x.a` that became an import item is also recorded as a use
-    /// of `ns`: a use of `x` to take back when `x` becomes `ns`.
+    /// `ns`. Each `x.a` that became an import item is also recorded as a use of it, to take back from `x`.
     pub(crate) namespace: Ref,
     /// Index into `imports_to_convert_from_require`.
     pub(crate) import: u32,

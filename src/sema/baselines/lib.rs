@@ -1796,6 +1796,7 @@ fn run_one(
             errors: &[],
             paths: &[],
             are_entry_points: false,
+            bundled: &[],
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,

@@ -370,7 +370,7 @@ bun --check index.html about.html
 - a process that your code starts
 - the files that `--preload`, or `preload` in [`bunfig.toml`](/runtime/bunfig), loads before the entry point
 
-`bun check` covers all of these if your `tsconfig.json` includes them.
+`bun check` covers all of these if your `tsconfig.json` includes them. [`bun build --check`](#bun-build) also checks some files that the bundler finds in another way, for example with `require()`.
 
 `bun --check index.html` checks once, before the development server starts. The server does not check again when you edit a file.
 
@@ -412,6 +412,17 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 note: TS6500: The expected type comes from property 'age' which is declared here on type '{ name?: string | undefined; age: number; }'
    at /app/src/greet.ts:1:46
 ```
+
+The bundler reads some files that the type checker does not find from the entry points. Bun also checks each TypeScript file that the bundler reads, if the file belongs to the same project as an entry point. Examples:
+
+- a file that only a plugin imports, for example from `App.svelte`
+- a file that a TypeScript file loads with `require()`
+- the file that the `browser` field of `package.json` names
+- `component.tsx`, where `component.ts` is next to it
+
+A file belongs to the project of an entry point if the nearest `tsconfig.json` is the one that Bun uses for that entry point. With `--tsconfig-override`, every file belongs to that project.
+
+Bun does not do this for a file that has another `tsconfig.json`, such as the source of a workspace package with its own `tsconfig.json`. Bun also does not do it for a file in `node_modules`, for a JavaScript file, or for code that only a plugin generates. Bun checks such a file only if the type checker finds it from an entry point.
 
 ### `Bun.build`
 

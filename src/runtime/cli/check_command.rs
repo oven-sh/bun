@@ -16,6 +16,8 @@ use bun_sema_driver::{
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
+bun_core::declare_scope!(TypeCheck, hidden);
+
 pub(crate) struct CheckCommand;
 
 #[derive(Default)]
@@ -232,6 +234,7 @@ enum Paths<'a> {
 #[derive(Clone, Copy, Default)]
 struct Entries<'a> {
     paths: &'a [Vec<u8>],
+    bundled: &'a [Vec<u8>],
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
@@ -339,6 +342,7 @@ fn request<'a>(
         errors: command_line.map_or(&[][..], |it| &it.errors[..]),
         paths: entries.paths,
         are_entry_points: command_line.is_none(),
+        bundled: entries.bundled,
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
@@ -564,6 +568,7 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
     };
     let entries = Entries {
         paths: &paths,
+        bundled: &[],
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
@@ -614,17 +619,18 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
-/// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,
-/// and its value may start with a byte order mark.
+/// A path of the bundler in the checker's format. A key of `files` of `Bun.build` may be relative.
+fn from_bundler(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]))
+}
+
+/// `sources` of `bun_bundler::options::TypeCheck`. The value of a key of `files` of `Bun.build` may
+/// start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
-        .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
-        })
+        .map(|(path, text)| (from_bundler(cwd, path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 
@@ -648,6 +654,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
+        bundled,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.
@@ -670,12 +677,24 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
         .map(<[u8]>::to_vec)
         .collect();
+    let bundled: Vec<Vec<u8>> = bundled.map(|path| from_bundler(cwd, path)).collect();
+    // Nothing stands for them, as when the entry point is `App.svelte` and its runtime imports
+    // them: they are named themselves.
+    let (paths, bundled) = match paths.is_empty() {
+        true => {
+            let to_native = bun_sema_driver::host::to_native;
+            let named = bundled.iter().map(|path| to_native(path).to_vec());
+            (named.collect(), Vec::new())
+        }
+        false => (paths, bundled),
+    };
     // Only stylesheets and the like.
     if paths.is_empty() {
         return true;
     }
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
+        bundled: &bundled,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
@@ -685,6 +704,13 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
+    bun_core::scoped_log!(
+        TypeCheck,
+        "{} programs, {} files loaded, {} files checked",
+        report.programs_loaded,
+        report.files_loaded,
+        report.files_checked
+    );
     for reported in &report.diagnostics {
         let kind = match reported.category {
             Category::Error => bun_ast::Kind::Err,
@@ -709,6 +735,16 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             None,
             bun_ast::Loc::EMPTY,
             format_args!("{}", BStr::new(&file.message(path))),
+        );
+    }
+    for path in &report.bundled_unchecked {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{} is bundled and was not type checked. This is a bug in Bun.",
+                BStr::new(path)
+            ),
         );
     }
     report.is_ok()

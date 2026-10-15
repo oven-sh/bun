@@ -346,6 +346,7 @@ fn run(args: &[String]) {
                 errors: &command_line.errors,
                 paths: &command_line.paths,
                 are_entry_points: false,
+                bundled: &[],
                 threads: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--threads="))

@@ -1208,6 +1208,11 @@ pub struct TypeChecked<'a, 'i> {
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+    /// The path of each TypeScript file that the bundler has read and that is written in the
+    /// project: not in `node_modules`, not a declaration file, and not what only a plugin
+    /// provides. The type checker may not find one of them from `entry_points`, since it does
+    /// not resolve as the bundler does.
+    pub bundled: &'i mut dyn Iterator<Item = &'a [u8]>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

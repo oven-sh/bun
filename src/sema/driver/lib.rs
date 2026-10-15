@@ -917,6 +917,12 @@ pub struct Request<'a> {
     /// `paths` are the entry points of what is then run or bundled. JavaScript among them is loaded
     /// for what it imports, whatever `allowJs` says. Its own errors are those of `checkJs`.
     pub are_entry_points: bool,
+    /// The TypeScript files that the bundler has read for `paths`, in the checker's path format.
+    /// The bundler follows what only a plugin can read, and does not resolve as TypeScript does,
+    /// so a program may not reach one of them from `paths`. If it is of the project of one of
+    /// `paths`, it is checked all the same. Which project is to judge a file of another one is
+    /// not decided: such a file is left as it is.
+    pub bundled: &'a [Vec<u8>],
     /// `Host::script_kind` of those of `paths` whose names do not tell what they are run as.
     pub script_kinds: &'a [(Vec<u8>, ScriptKind)],
     /// `--loader .js:ts`: `Host::extra_file_extensions`, which is also `Host::script_kind` of the
@@ -1104,6 +1110,14 @@ pub struct Report {
     pub not_installed: Vec<NotInstalled>,
     /// The scripts of pages that checked files import, which are not in the program of those files.
     scripts_elsewhere: Vec<Vec<u8>>,
+    /// `Request::bundled`, by index: those that a program has checked, or has left to another.
+    bundled_checked: Vec<u32>,
+    /// With `Request::bundled`: the configuration file of each project that a named path is
+    /// checked in. `None`: the project has none.
+    configs: Vec<Option<Vec<u8>>>,
+    /// Files of `Request::bundled` that were named to be checked and are not, as native paths.
+    /// That is a bug, and the report is not ok.
+    pub bundled_unchecked: Vec<Vec<u8>>,
     /// `UseCaseSensitiveFileNames`
     pub is_case_sensitive: bool,
     /// `--quiet`, which only a command line can say: no diagnostic is printed.
@@ -1116,6 +1130,8 @@ pub struct Report {
     /// The tasks of a build, in build order. Theirs are the last of `resolution_trace`, of
     /// `diagnostics` and of `listed_files`, and what a task has printed is printed together.
     pub tasks: Vec<TaskOutput>,
+    /// How many programs were loaded and checked for what is reported.
+    pub programs_loaded: usize,
     pub files_loaded: usize,
     /// Of several projects: how many parses they have in common. A file that two of them load counts twice in
     /// `files_loaded`, and once here if they read it alike.
@@ -1145,7 +1161,7 @@ pub struct Report {
 impl Report {
     /// Whether the exit code is 0: there are no errors, and nothing was left unchecked.
     pub fn is_ok(&self) -> bool {
-        self.error_count() == 0 && self.incomplete.is_empty()
+        self.error_count() == 0 && self.incomplete.is_empty() && self.bundled_unchecked.is_empty()
     }
 
     pub fn error_count(&self) -> usize {
@@ -1164,9 +1180,11 @@ impl Report {
         self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
+        self.bundled_checked.extend(other.bundled_checked);
         self.resolution_trace.extend(other.resolution_trace);
         self.tasks.extend(other.tasks);
         self.has_bun_types_installed |= other.has_bun_types_installed;
+        self.programs_loaded += other.programs_loaded;
         self.files_loaded += other.files_loaded;
         self.files_parsed_for_all += other.files_parsed_for_all;
         self.files_checked += other.files_checked;
@@ -1796,6 +1814,20 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         _ => *request,
     };
     let mut report = check_paths(disk, request);
+    // `Request::bundled`: a file of the project of an entry point that no program has checked is
+    // named like an entry point, and the check is done again.
+    let unchecked = bundled_to_name(disk, request, &report);
+    if !unchecked.is_empty() {
+        let paths = [request.paths, &unchecked[..]].concat();
+        let again = Request {
+            paths: &paths,
+            ..*request
+        };
+        let programs_loaded = report.programs_loaded;
+        report = check_paths(disk, &again);
+        report.programs_loaded += programs_loaded;
+        report.bundled_unchecked = bundled_to_name(disk, request, &report);
+    }
     // Each is checked in its own project, like a file that is named, and once.
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     loop {
@@ -1804,15 +1836,51 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         if scripts.is_empty() {
             return report;
         }
-        // They are run, whatever has found them: see `Request::are_entry_points`.
+        // They are run, whatever has found them: see `Request::are_entry_points`. The bundler
+        // names the scripts of a page itself.
         let of_pages = Request {
             paths: &scripts,
             are_entry_points: true,
+            bundled: &[],
             ..*request
         };
         report.merge(check_paths(disk, &of_pages));
         sort_as_one_project(&mut report);
     }
+}
+
+/// The files of `Request::bundled` that no program has checked and that are of the project of an
+/// entry point (`Report::configs`), as native paths. A file has the project of a path that is
+/// named, except that the configuration file of the working directory is not for it.
+fn bundled_to_name(disk: &host::Disk, request: &Request, report: &Report) -> Vec<Vec<u8>> {
+    if request.bundled.is_empty() || report.configs.is_empty() {
+        return Vec::new();
+    }
+    let mut is_checked = vec![false; request.bundled.len()];
+    for &index in &report.bundled_checked {
+        is_checked[index as usize] = true;
+    }
+    let is_case_sensitive = disk.is_case_sensitive();
+    let mut projects = Projects::default();
+    let mut is_of_entry_point = |path: &[u8]| {
+        // `--project` has every file.
+        if request.project.is_some() {
+            return true;
+        }
+        let nearest = config::find_config(disk, dirname::<Posix>(path));
+        let owner = projects.owner_of(disk, request, nearest, path);
+        let owner = owner.unwrap_or_else(|nearest| nearest);
+        report.configs.iter().any(|config| match (config, &owner) {
+            (Some(a), Some(b)) => is_same_path(a, b, is_case_sensitive),
+            (a, b) => a.is_none() && b.is_none(),
+        })
+    };
+    let unchecked = request.bundled.iter().zip(&is_checked);
+    let unchecked = unchecked.filter(|it| !*it.1).map(|it| &it.0[..]);
+    unchecked
+        .filter(|path| is_of_entry_point(path))
+        .map(|path| host::to_native(path).to_vec())
+        .collect()
 }
 
 fn check_paths(disk: &host::Disk, request: &Request) -> Report {
@@ -2024,6 +2092,9 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     }
     let only_the_globals = request.plan_options.only_the_globals;
     by_project.retain(|it| !it.2.is_empty() && !(only_the_globals && it.0.is_none()));
+    if !request.bundled.is_empty() {
+        report.configs = by_project.iter().map(|it| it.0.clone()).collect();
+    }
     if by_project.is_empty() && only_the_globals {
         return report;
     }
@@ -2424,6 +2495,7 @@ fn check_project_of(
             started,
             named,
             of.elsewhere,
+            of.elsewhere.is_none(),
             None,
             of.run,
             of.place,
@@ -3150,6 +3222,7 @@ fn check_with_references(
                 Instant::now(),
                 named,
                 Some(&owned_elsewhere),
+                is_root && elsewhere.is_none(),
                 Some(&|| !host.awaited.lock().is_empty()),
                 run,
                 place,
@@ -3436,7 +3509,7 @@ pub fn check_project(
     started: Instant,
 ) -> Report {
     check_named_files(
-        host, project, request, report, started, None, None, None, None, None,
+        host, project, request, report, started, None, None, false, None, None, None,
     )
 }
 
@@ -3513,10 +3586,52 @@ fn may_declare_a_global(
         && !(is_javascript(path) && has(b"require"))
 }
 
+/// The files of a program whose path leads through a link, each with its real path. The bundler
+/// has the real path of a file. A program has the path that the file is imported by.
+struct ThroughLinks<'a, 's> {
+    program: &'a Program<'s>,
+    host: &'a dyn Host,
+    /// Found when first asked for: most programs are never asked.
+    found: std::cell::OnceCell<Vec<(Vec<u8>, FileId)>>,
+}
+
+impl ThroughLinks<'_, '_> {
+    /// The files whose real path is `real`, which no file of the program is at.
+    fn at(&self, real: &[u8]) -> impl Iterator<Item = FileId> {
+        let found = self.found.get_or_init(|| {
+            let modules = self.program.files.modules.iter().enumerate();
+            let modules = modules.filter(|(_, module)| !module.is_lib);
+            let linked = modules.filter_map(|(index, module)| {
+                let real = self.host.realpath(module.file_name());
+                (real != module.file_name()).then_some((real, FileId(index as u32)))
+            });
+            linked.collect()
+        });
+        found.iter().filter(move |it| it.0 == real).map(|it| it.1)
+    }
+}
+
+/// The files of `bundled` (`Request::bundled`) that the program has, each with its index there.
+fn bundled_in(links: &ThroughLinks, bundled: &[Vec<u8>]) -> Vec<(u32, FileId)> {
+    let find = |path: &[u8]| {
+        let by_path = &links.program.files.by_path;
+        by_path
+            .get(path)
+            .or_else(|| links.at(&links.host.realpath(path)).next())
+    };
+    let found = bundled.iter().enumerate();
+    found
+        .filter_map(|(index, path)| Some((index as u32, find(path)?)))
+        .collect()
+}
+
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
 /// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
 /// Both have a `tspath.Path` for each file.
+/// `is_alone`: no other program of the request is asked about a file of `Request::bundled`. One
+/// that this program has and does not reach from `named` is checked here, if it is of this
+/// project.
 fn check_named_files(
     host: &dyn Host,
     mut project: config::Project,
@@ -3525,6 +3640,7 @@ fn check_named_files(
     started: Instant,
     named: Option<&[Vec<u8>]>,
     owned_elsewhere: Option<&FxHashSet<&[u8]>>,
+    is_alone: bool,
     // Asked when the program is loaded: whether it is not to be checked.
     is_outdated: Option<&dyn Fn() -> bool>,
     run: Option<&Run<'_>>,
@@ -3690,6 +3806,7 @@ fn check_named_files(
     let files = session.arena().alloc(files);
     let root = session.arena().alloc(Program::new(&session, files));
     let program: &Program = root;
+    report.programs_loaded += 1;
     report.files_loaded = program.files.modules.len();
     report.load_time = started.elapsed();
     let after = host.times();
@@ -3743,42 +3860,91 @@ fn check_named_files(
         .map(|i| FileId(i as u32))
         .collect();
     let mut scripts_elsewhere = Vec::new();
+    let links = ThroughLinks {
+        program,
+        host,
+        found: Default::default(),
+    };
+    let bundled = bundled_in(&links, request.bundled);
+    let is_elsewhere = |file: FileId| {
+        let path = program.files.modules[file.idx()].path.text;
+        owned_elsewhere.is_some_and(|it| it.contains(path))
+    };
+    // `--project` has every file. Otherwise no configuration file is nearer to the file than
+    // the one of this project.
+    let is_of_project = |file: FileId| {
+        let directory = dirname::<Posix>(program.files.modules[file.idx()].file_name());
+        request.project.is_some()
+            || match config::find_config(host, directory) {
+                Some(nearest) => is_same_path(&nearest, &config_path, host.is_case_sensitive()),
+                None => config_path.is_empty(),
+            }
+    };
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
             .collect();
-        for &i in &to_follow {
-            is_reached[i] = true;
-        }
-        while let Some(i) = to_follow.pop() {
-            // A page stands for its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
-            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
-            let directory = dirname::<Posix>(modules[i].file_name());
-            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
-            let scripts = scripts.filter_map(|script| {
-                let here = program.files.by_path.get(&script);
-                if here.is_none() {
-                    scripts_elsewhere.push(script);
-                }
-                here
-            });
-            let edges = match request.plan_options.checks_only_named {
-                true => &[][..],
-                false => modules[i].edges,
-            };
-            for edge in edges.iter().copied().chain(scripts) {
-                if !std::mem::replace(&mut is_reached[edge.idx()], true) {
-                    to_follow.push(edge.idx());
+        // Then from what the bundler has found where the checker does not look, if it is for this
+        // program to check.
+        let mut is_from_bundled = !is_alone;
+        loop {
+            for &i in &to_follow {
+                is_reached[i] = true;
+            }
+            while let Some(i) = to_follow.pop() {
+                // A page stands for its scripts.
+                let specifiers = modules[i].bound.specifiers.iter();
+                let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
+                let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
+                let directory = dirname::<Posix>(modules[i].file_name());
+                let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+                let scripts = scripts.filter_map(|script| {
+                    let here = program.files.by_path.get(&script);
+                    if here.is_none() {
+                        scripts_elsewhere.push(script);
+                    }
+                    here
+                });
+                let edges = match request.plan_options.checks_only_named {
+                    true => &[][..],
+                    false => modules[i].edges,
+                };
+                for edge in edges.iter().copied().chain(scripts) {
+                    if !std::mem::replace(&mut is_reached[edge.idx()], true) {
+                        to_follow.push(edge.idx());
+                    }
                 }
             }
+            if std::mem::replace(&mut is_from_bundled, true) {
+                break;
+            }
+            let files = bundled.iter().map(|it| it.1);
+            let unreached = files.filter(|&file| !is_reached[file.idx()] && !is_elsewhere(file));
+            // Not a file that is reached by another path, which leads through a link.
+            let is_linked = |file: FileId| {
+                let real = modules[file.idx()].file_name();
+                links.at(real).any(|it| is_reached[it.idx()])
+            };
+            let unreached = unreached.filter(|&file| is_of_project(file) && !is_linked(file));
+            to_follow.extend(unreached.map(FileId::idx));
         }
         is_reached
     });
     report.scripts_elsewhere = scripts_elsewhere;
+    // What is left to another program, or is checked by another path, is not to be checked again.
+    let is_checked_here = |file: FileId| {
+        let Some(is_reached) = &is_reached else {
+            return true;
+        };
+        let real = program.files.modules[file.idx()].file_name();
+        is_reached[file.idx()]
+            || is_elsewhere(file)
+            || links.at(real).any(|it| is_reached[it.idx()])
+    };
+    let checked_here = bundled.iter().filter(|it| is_checked_here(it.1));
+    report.bundled_checked = checked_here.map(|it| it.0).collect();
     if let Some(is_reached) = &is_reached {
         to_check.retain(|file| is_reached[file.idx()]);
     }

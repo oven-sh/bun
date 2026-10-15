@@ -437,6 +437,7 @@ fn check_and_lint_in(
         errors: &[],
         paths: &paths,
         are_entry_points: false,
+        bundled: &[],
         script_kinds: &[],
         script_kinds_by_extension: &[],
         conditions: &[],

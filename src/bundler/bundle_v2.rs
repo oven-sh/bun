@@ -2556,21 +2556,60 @@ pub mod bv2_impl {
                 .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let mut sources = (sources.iter().zip(loaders).zip(flags))
-                .filter(|((source, loader), flags)| {
-                    loader.is_javascript_like_or_json()
-                        && source.path.is_file()
-                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
-                            && bun_sys::exists(source.path.text))
+            let has_text = |index: usize| {
+                loaders[index].is_javascript_like_or_json() && sources[index].path.is_file()
+            };
+            let on_disk: Vec<usize> = (0..sources.len())
+                .filter(|&index| is_loaded_by_plugin(index) && has_text(index))
+                .filter(|&index| bun_sys::exists(sources[index].path.text))
+                .collect();
+            let is_on_disk = |index: usize| on_disk.binary_search(&index).is_ok();
+            let mut texts = (0..sources.len())
+                .filter(|&index| has_text(index) && !is_on_disk(index))
+                .map(|index| {
+                    (
+                        sources[index].path.text,
+                        sources[index].contents(),
+                        loaders[index],
+                    )
+                });
+            // The checker finds what the entry points import by the rules of TypeScript. The
+            // bundler has its own, and it follows what only a plugin can read. So the TypeScript
+            // of the project that the bundler has read is listed, and the checker sees to each
+            // file that is for it to judge. A file that a plugin has loaded is what its name says:
+            // the checker reads it from the disk.
+            let is_typescript = |index: usize| match is_loaded_by_plugin(index) {
+                true => {
+                    let by_name = sources[index].path.loader(&self.transpiler.options.loaders);
+                    is_on_disk(index)
+                        && loaders[index].is_javascript_like()
+                        && by_name.is_some_and(Loader::is_typescript)
+                }
+                false => loaders[index].is_typescript(),
+            };
+            // A declaration file has no code: it is for the files that refer to it.
+            let is_declaration = |path: &[u8]| {
+                [&b".d.ts"[..], b".d.mts", b".d.cts"]
+                    .iter()
+                    .any(|extension| path.ends_with(extension))
+            };
+            let mut bundled = (0..sources.len())
+                .filter(|&index| {
+                    let path = &sources[index].path;
+                    path.is_file()
+                        && !path.is_node_module()
+                        && is_typescript(index)
+                        && !is_declaration(path.text)
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .map(|index| sources[index].path.text);
             let checked = options::TypeChecked {
                 cwd: self.transpiler.fs().top_level_dir,
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
-                sources: &mut sources,
+                sources: &mut texts,
+                bundled: &mut bundled,
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

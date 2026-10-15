@@ -87,7 +87,7 @@ fn property_of_record(
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     // ───────────────────────────── tokens ─────────────────────────────
 
     /// Whether the token is the name `word`, which is no keyword of TypeScript's.
@@ -702,7 +702,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.push_unnamed_parameter(start, ty, flags);
         }
         let (name, pos, end) = self.word();
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         if self.eat(T::Question) {
             flags |= Flags::OPTIONAL;
         }
@@ -1248,7 +1248,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return StmtId::NONE;
             }
         };
-        self.f.exprs.pop();
+        self.pop_expr();
         self.s.modifiers.push(Modifier {
             kind: ModifierKind::Keyword(flag),
             pos: start.pos,
@@ -1858,7 +1858,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !is_constructor(self, expr) {
                 return None;
             }
-            self.f.exprs.pop();
+            self.pop_expr();
             (constructor, type_args) = (expr, written);
         } else if !is_constructor(self, expression) {
             return None;
@@ -1908,7 +1908,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if args.len() < 2 || head.idx() + 1 != self.f.exprs.len() {
             return head;
         }
-        self.f.exprs.pop();
+        self.pop_expr();
         let mut left: ExprId = self.f.id_at(args, 0);
         let start = self.f.exprs.get(left.idx()).map_or(pos, |it| it.pos);
         for i in 1..args.len() {

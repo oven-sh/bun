@@ -152,16 +152,20 @@ impl VersionType<u64> {
 }
 
 impl<T: VersionInt> VersionType<T> {
-    pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
-        lhs.order(rhs, ctx, ctx)
-    }
-
     pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }
 
     pub fn parse_utf8(slice: &[u8]) -> ParseResult<T> {
         Self::parse(SlicedString { buf: slice, slice })
+    }
+
+    /// One complete version and nothing else (surrounding whitespace aside): no range, wildcard, missing part or trailing bytes.
+    pub fn parse_exact(sliced_string: SlicedString) -> Option<Self> {
+        let trimmed = strings::trim(sliced_string.slice, &strings::WHITESPACE_CHARS);
+        let parsed = Self::parse(sliced_string.sub(trimmed));
+        (parsed.valid && parsed.wildcard == Wildcard::None && parsed.len as usize == trimmed.len())
+            .then(|| parsed.version.min())
     }
 
     /// Copies the tag strings into `buf` at `*offset` (advancing it); the
@@ -578,23 +582,23 @@ impl<T: VersionInt> VersionType<T> {
 
                     last_char_i = i;
 
-                    match part_i {
-                        0 => {
-                            result.version.major =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 1;
+                    if part_i < 3 {
+                        let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
+                        if number.is_none() {
+                            result.valid = false;
+                            // A range ignores a number after a wildcard, so keep reading the token.
+                            if result.wildcard == Wildcard::None {
+                                result.overflow = true;
+                                is_done = true;
+                                break;
+                            }
                         }
-                        1 => {
-                            result.version.minor =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 2;
+                        match part_i {
+                            0 => result.version.major = number,
+                            1 => result.version.minor = number,
+                            _ => result.version.patch = number,
                         }
-                        2 => {
-                            result.version.patch =
-                                Self::parse_version_number(&input[part_start_i..last_char_i]);
-                            part_i = 3;
-                        }
-                        _ => {}
+                        part_i += 1;
                     }
 
                     if i < input.len()
@@ -627,6 +631,10 @@ impl<T: VersionInt> VersionType<T> {
                     break;
                 }
                 b'x' | b'*' | b'X' => {
+                    // `2x` and `1.2x` are not `2.x` and `1.2.x`.
+                    if i > 0 && input[i - 1].is_ascii_digit() {
+                        result.valid = false;
+                    }
                     i += 1;
 
                     while i < input.len() && matches!(input[i], b'x' | b'*' | b'X') {
@@ -685,6 +693,8 @@ impl<T: VersionInt> VersionType<T> {
         if result.wildcard == Wildcard::None {
             match part_i {
                 0 => {
+                    // Nothing was read, so a valid `Wildcard::Major` is always a written `x`, `X` or `*`.
+                    result.valid = false;
                     result.wildcard = Wildcard::Major;
                 }
                 1 => {
@@ -702,11 +712,12 @@ impl<T: VersionInt> VersionType<T> {
         result
     }
 
+    /// `None` when the number is above `T::MAX`.
     fn parse_version_number(input: &[u8]) -> Option<T> {
         // Callers slice `input` from the first digit to the first non-digit,
         // so every byte is already `b'0'..=b'9'` and the slice is non-empty.
         debug_assert!(!input.is_empty() && input.iter().all(u8::is_ascii_digit));
-        Some(T::parse_ascii(input).unwrap_or(T::ZERO))
+        T::parse_ascii(input)
     }
 }
 
@@ -849,7 +860,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in pre.iter().enumerate() {
-                    if !set_color && i < other_pre.len() && c != other_pre[i] {
+                    if !set_color && other_pre.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
@@ -876,7 +887,7 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
 
                 let mut first = true;
                 for (i, &c) in build.iter().enumerate() {
-                    if !set_color && i < other_build.len() && c != other_build[i] {
+                    if !set_color && other_build.get(i) != Some(&c) {
                         set_color = true;
                         writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                     }
@@ -888,14 +899,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 }
             } else {
                 if !set_color {
-                    write!(
-                        writer,
-                        concat!(bun_core::pretty_fmt!("<r><b><red>", true), "+{}"),
-                        self.version.tag.build.fmt(self.buf),
-                    )?;
-                } else {
-                    write!(writer, "+{}", self.version.tag.build.fmt(self.other_buf))?;
+                    writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                 }
+                write!(writer, "+{}", self.version.tag.build.fmt(self.buf))?;
             }
         }
 
@@ -984,6 +990,21 @@ pub struct Tag {
 // TODO: support multiple tags
 
 impl Tag {
+    /// `-0`, the lowest prerelease: node-semver's `^1.2.3` is `>=1.2.3 <2.0.0-0`.
+    pub(crate) const ZERO_PRE: Tag = Tag {
+        pre: ExternalString {
+            value: SemverString {
+                bytes: [b'0', 0, 0, 0, 0, 0, 0, 0],
+            },
+            // Wyhash11::hash(0, b"0"), what `SlicedString::external` computes.
+            hash: 0xb8f8_325b_21a8_a1e5,
+        },
+        build: ExternalString {
+            value: SemverString::EMPTY,
+            hash: 0,
+        },
+    };
+
     pub(crate) fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
@@ -1169,8 +1190,9 @@ impl Tag {
                         start = i + 1;
                     }
                 }
+                // Inside a prerelease or build metadata, `-` is an identifier character.
                 b'-' => {
-                    if state != State::Pre {
+                    if state == State::None {
                         state = State::Pre;
                         start = i + 1;
                     }
@@ -1190,10 +1212,6 @@ impl Tag {
                         }
                         State::Build => {
                             result.tag.build = sliced_string.sub(&input[start..i]).external();
-                            debug_assert!(!strings::contains_char(
-                                result.tag.build.slice(sliced_string.buf),
-                                b'-'
-                            ));
                             state = State::None;
                         }
                     }
@@ -1241,7 +1259,10 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
+    /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
+    pub(crate) overflow: bool,
     pub version: Partial<T>,
+    /// Where parsing stopped; shorter than the input when trailing bytes are not part of the version.
     pub(crate) len: u32,
 }
 
@@ -1250,6 +1271,7 @@ impl<T: VersionInt> Default for ParseResult<T> {
         Self {
             wildcard: Wildcard::None,
             valid: true,
+            overflow: false,
             version: Partial::default(),
             len: 0,
         }
@@ -1258,13 +1280,21 @@ impl<T: VersionInt> Default for ParseResult<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::Version;
+    use super::{Tag, Version};
     use crate::sliced_string::SlicedString;
 
     fn parse(s: &[u8]) -> Version {
         let r = Version::parse(SlicedString::init(s, s));
         assert!(r.valid);
         r.version.min()
+    }
+
+    #[test]
+    fn zero_pre_is_a_parsed_dash_zero() {
+        let parsed = parse(b"1.0.0-0").tag;
+        assert_eq!(Tag::ZERO_PRE.pre.hash, parsed.pre.hash);
+        assert_eq!(Tag::ZERO_PRE.pre.value, parsed.pre.value);
+        assert!(!Tag::ZERO_PRE.has_build());
     }
 
     #[test]

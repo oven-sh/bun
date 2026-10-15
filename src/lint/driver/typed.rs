@@ -228,8 +228,12 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 
 /// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
 /// A link to a directory is not followed.
-fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
-    let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
+    let mut pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+    // It starts as far up as the pattern goes.
+    while let Some(rest) = pattern.strip_prefix(b"../") {
+        (root, pattern) = (crate::paths::dirname(root), rest);
+    }
     let read = |it: &[u8]| {
         bun_glob::Pattern::with_dots(
             &bun_lint::glob::from_picomatch(it, Picomatch::Micromatch),
@@ -747,7 +751,11 @@ pub(crate) fn lint(
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
-                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
+                // A file that oxc refuses keeps what tsgolint fixes in it.
+                if !was_refused
+                    && !context.parses(file.path, &fixed.output, file.config)
+                    && context.parses(file.path, text, file.config)
+                {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),

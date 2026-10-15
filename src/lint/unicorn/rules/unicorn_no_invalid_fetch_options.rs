@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_new_expression, is_null_or_undefined};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
+use bun_lint::types::IdMap;
 
 /// Disallow invalid options in `fetch()` and `new Request()`.
 pub struct NoInvalidFetchOptions;
@@ -43,9 +43,9 @@ impl Method {
     }
 }
 
-/// What a variable says about the method, as the value of `method` (`false`) and as the `E` of `method: E.A` (`true`).
+/// What a variable says about the method, as the value of `method` (`[0]`) and as the `E` of `method: E.A` (`[1]`).
 /// `None`: nothing, the method is what it was before.
-type Known<'a> = FxHashMap<(Symbol<'a>, bool), Option<Method>>;
+type Known<'a> = [IdMap<Symbol<'a>, Option<Method>>; 2];
 
 impl Rule for NoInvalidFetchOptions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-invalid-fetch-options", Kind::Problem);
@@ -143,7 +143,7 @@ fn method_of<'a>(value: Expr<'a>, known: &mut Known<'a>) -> Option<Method> {
     let Some(symbol) = variable.symbol().filter(|it| !it.is_implicit_arguments()) else {
         return Some(Method::Unknown);
     };
-    *known.entry((symbol, is_object)).or_insert_with(|| match is_object {
+    *known[is_object as usize].get_or_insert_with(symbol, || match is_object {
         true => method_of_enum(symbol),
         false => method_of_variable(symbol),
     })

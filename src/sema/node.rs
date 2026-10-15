@@ -1606,6 +1606,12 @@ impl<'s> File<'s> {
                 ) => label,
                 _ => Atom::NONE,
             },
+            NodeData::Part(Part::Specifier, row) => match statement(row) {
+                Some(StmtKind::Import(i)) => self[i].spec,
+                Some(StmtKind::ExportNamed(x)) => self[x].spec,
+                Some(StmtKind::ExportStar { spec, .. }) => spec,
+                _ => Atom::NONE,
+            },
             NodeData::Part(Part::BindingsName, row) => match statement(row) {
                 Some(StmtKind::Import(i)) => self[i].namespace,
                 Some(StmtKind::ExportStar { alias, .. }) => alias,

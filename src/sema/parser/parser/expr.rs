@@ -176,10 +176,11 @@ fn assignment_operator(token: T) -> Option<BinOp> {
     })
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.f.exprs.len() as u32);
+        self.finish_node(NodeData::Expr(id), pos, end);
         self.f.exprs.push(Expr { kind, pos, end });
         id
     }
@@ -410,7 +411,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }) = self.f.exprs.last()
                 && pos == start
             {
-                self.f.exprs.pop();
+                self.pop_expr();
                 return self.simple_arrow_function(
                     name,
                     (pos, end, full),
@@ -514,6 +515,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     fn operand_of_await_outside_async(&mut self, start: u32) -> ExprId {
         self.flag(DiagnosticKind::Grammar, 1308, (start, 0), &[]);
+        // Outside every body oxc puts up with it in a file that can be a module, which is one from then on: in the return type
+        // of a function, in what a field of a class starts with.
+        if self.context & (ctx::OUTSIDE_BODIES | ctx::IN_NAMESPACE) == ctx::OUTSIDE_BODIES {
+            self.has_top_level_await = true;
+            self.has_plain_top_level_await = true;
+        }
         let saved = self.enter_context(ctx::AWAIT, 0);
         let operand = self.simple_unary_expression();
         self.context = saved;
@@ -1584,6 +1591,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     expression = self.element_access(start, expression, chain);
                 }
                 T::Exclamation if !self.newline_before() => {
+                    // `a! /* comment */ !`: the comment is after the node as it is now.
+                    self.before_node_grows();
                     self.next();
                     let end = self.prev_end();
                     if self.options.is_javascript {
@@ -2320,7 +2329,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }) = self.f.exprs.last()
             && !self.is_parenthesized(callee)
         {
-            self.f.exprs.pop();
+            self.pop_expr();
             (callee, type_args) = (expr, written);
         }
         let (args, close_pos) = match self.token() {
@@ -2435,15 +2444,18 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;
-                let kind = self.f.exprs.get(expression.idx()).map(|it| it.kind);
-                return match kind {
+                let written = self.f.exprs.get(expression.idx()).copied();
+                let literal = written.map_or((0, 0), |it| (it.pos, it.end));
+                return match written.map(|it| it.kind) {
                     Some(ExprKind::String(name)) if is_bare => {
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedString, pos)
                     }
                     Some(ExprKind::Number(n)) if is_bare => {
                         let name = self.number_name(self.f.numbers[n as usize]);
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedNumber, pos)
                     }
                     _ => {
@@ -2511,7 +2523,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if let Some(Expr {
                 kind: ExprKind::Number(n),
                 ..
-            }) = self.f.exprs.pop()
+            }) = self.pop_expr()
                 && n as usize + 1 == self.f.numbers.len()
             {
                 self.f.numbers.pop();
@@ -2618,6 +2630,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if is_generator {
                 fn_flags |= Flags::GENERATOR;
             }
+            let type_parameters = self.pos();
             let func = self.function_rest(
                 fn_kind,
                 fn_flags,
@@ -2630,7 +2643,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 true => self.start_of_parameters(func),
                 false => self.f[func].anchor,
             };
-            self.finish_expr(ExprKind::Fn(func), parameters)
+            let value = self.finish_expr(ExprKind::Fn(func), parameters);
+            // In ESTree it starts at its type parameters: `{ a<T> /* comment */ () {} }`
+            if type_parameters < parameters {
+                self.unfinish_node(NodeData::Expr(value));
+                self.finish_node(NodeData::Expr(value), type_parameters, self.prev_end());
+            }
+            value
         } else if is_identifier && self.token() != T::Colon {
             kind = PropKind::Shorthand;
             let PropKey::Name(name) = key else {

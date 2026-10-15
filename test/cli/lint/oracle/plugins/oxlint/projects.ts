@@ -1,5 +1,7 @@
 // A project for each way in which oxlint's port of a rule differs from the plugin that it is a port of, and some for what is the same.
 
+import audit from "./audit.json";
+
 export interface Project {
   name: string;
   about: string;
@@ -830,7 +832,7 @@ const asNodeResolves: Project[] = [
   }),
 ];
 
-export const projects: Project[] = [
+const hand: Project[] = [
   {
     name: "no-cycle/place",
     about: "the specifier is reported, once for each specifier, where it is first",
@@ -15074,3 +15076,7 @@ export const projects: Project[] = [
     },
   },
 ];
+
+// The programs of an audit of the rules that need types against tsgolint, each a place where the two asked the type checker
+// something else. A group is a program of its own with the options in its name. Recorded from oxlint 1.86.0 with tsgolint 7.0.2003.
+export const projects: Project[] = [...hand, ...(audit as Project[]).map(it => ({ ...it, typed: true }))];

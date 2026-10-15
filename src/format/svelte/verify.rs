@@ -5,9 +5,16 @@
 //! - The elements, blocks and tags are the same, in the same order and in each other the same way, and the elements have
 //!   the same attributes and directives in the same order. The scripts, the style sheet and `<svelte:options>` can be
 //!   anywhere, and so can comments, which go with them.
-//! - All that is text has the same letters as often: text, comments, scripts, style sheets, the values of attributes,
-//!   expressions. An expression counts with the comments around it, which `prettier-plugin-svelte` loses: `{a /* b */}`.
-//! - There are as many comments: in the markup, between attributes, and around expressions.
+//! - The code in the markup has the same tokens in the same order: expressions, declarations, patterns, the heads of
+//!   snippets. Free to change is what a formatter changes: parentheses, `,` and `;`, which quotes a string has and whether
+//!   a key has any, how a number is written, an escape in a name, the order of the flags of a regular expression and of
+//!   modifiers, the `|` before the first type of a union, and the text of a template that can be in another language. So
+//!   `(a + b) * c` is `a + b * c` here. Code that cannot be parsed by itself has the same letters as often.
+//! - All that is text has the same letters as often: comments, scripts, style sheets.
+//! - There are as many comments: in the markup, between attributes, and in and around the code in the markup, where
+//!   `prettier-plugin-svelte` loses them: `{a /* b */}`.
+//! - The value of an attribute is the same byte for byte. That of `class` and of a `style:` directive is the same word for
+//!   word: it is broken into lines like text.
 //! - The text of the markup has the same words in the same order, with white space between the same of them, and between
 //!   them and what is next to them. White space is nothing next to a block element, and at the ends of the markup, of a
 //!   block element and of a component, also where it is in an inline element that is the first or the last thing there. In
@@ -17,13 +24,25 @@ use super::Parsers;
 use super::ast::{
     ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind, Pattern, Span, Tree, Value,
 };
-use super::pattern::repeated_keys;
+use super::pattern::{BEFORE_PATTERN, path_of, repeated_keys};
 use super::print::is_block_element_name;
 use crate::html::js::Parse;
 use crate::html::verify::{Reader, Signature};
+use crate::js::utils::number::format_trimmed_number;
 use crate::options::HtmlWhitespaceSensitivity;
+use crate::verify::{is_in_another_language, is_table, without_unicode_escapes};
 use bun_core::strings;
+use bun_lint::ast::{Expr, ExprKind, ExprTag, File, KeyKind};
+use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
+
+/// What makes a program of a piece of code: what is put before it, and behind it.
+type Around = (&'static [u8], &'static [u8]);
+const EXPRESSION: Around = (b"(", b"\n)");
+const STATEMENT: Around = (b"", b"\n");
+const DECLARATOR: Around = (b"const ", b"\n");
+const FUNCTION: Around = (b"function ", b" {}");
+const PARAMETER: Around = (BEFORE_PATTERN, b"\n) {}");
 
 struct Check<'t, 'a> {
     tree: &'t Tree<'a>,
@@ -81,27 +100,46 @@ impl Check<'_, '_> {
         }
     }
 
-    /// Counts the comments around `expression`.
-    #[optimize(size)]
-    fn count_comments_around(&mut self, expression: Expression) {
-        self.count_comments(expression.outer.start, expression.span.start);
-        self.count_comments(expression.span.end, expression.outer.end);
-    }
-
     /// The comments around `expression`, and nothing of it.
     #[optimize(size)]
     fn comments_around(&mut self, expression: Expression) {
         let (outer, inner) = (expression.outer, expression.span);
         for (start, end) in [(outer.start, inner.start), (inner.end, outer.end)] {
             self.span(Span { start, end });
+            self.count_comments(start, end);
         }
-        self.count_comments_around(expression);
+    }
+
+    /// The code at `span`, with its comments. `left_out`: where in it the keys are that do not count, in order.
+    #[optimize(size)]
+    fn code(&mut self, (before, behind): Around, span: Span, left_out: &[(usize, usize)]) {
+        let program = [before, span.of(self.text), behind].concat();
+        let (reader, comments) = (&mut self.reader, &mut self.comments);
+        let mut is_read = false;
+        let path = path_of(self.tree.says_typescript);
+        self.parse.call(path, &program, false, &mut |file| {
+            let is_jsx =
+                |it: Token<'_>| matches!(it.kind(), TokenKind::JsxText | TokenKind::JsxIdentifier);
+            if file.has_parse_errors() || file.tokens().any(is_jsx) {
+                return;
+            }
+            is_read = true;
+            reader.mark(50);
+            read_tokens(file, before.len(), left_out, reader);
+            for comment in file.comments() {
+                *comments += 1;
+                reader.count(comment.text());
+            }
+        });
+        if !is_read {
+            self.reader.mark(51);
+            self.span(span);
+        }
     }
 
     #[optimize(size)]
     fn expression(&mut self, expression: Expression) {
-        self.span(expression.span);
-        self.comments_around(expression);
+        self.code(EXPRESSION, expression.outer, &[]);
     }
 
     #[optimize(size)]
@@ -109,24 +147,13 @@ impl Check<'_, '_> {
         self.reader.mark(u8::from(pattern.is_some()));
         if let Some(pattern) = pattern {
             // `{ a: a }` is `{ a }`.
-            let (written, mut counted) = (pattern.span.of(self.text), 0);
+            let written = pattern.span.of(self.text);
             let mut keys = match strings::contains_char(written, b':') {
                 true => repeated_keys(self.parse, written, self.tree.says_typescript),
                 false => Vec::new(),
             };
             crate::sort::sort_by_key(&mut keys, |it| it.0);
-            for (start, end) in keys {
-                self.reader
-                    .count(written.get(counted..start).unwrap_or_default());
-                counted = end;
-            }
-            self.reader
-                .count(written.get(counted..).unwrap_or_default());
-            // The span of a name does not have it.
-            match pattern.annotation {
-                Some(annotation) if annotation.end > pattern.span.end => self.span(annotation),
-                _ => {}
-            }
+            self.code(PARAMETER, pattern.with_annotation(), &keys);
         }
     }
 
@@ -147,17 +174,22 @@ impl Check<'_, '_> {
         }
     }
 
+    /// `is_in_words`: the white space in it is free to change.
     #[optimize(size)]
-    fn value(&mut self, value: &Value) {
+    fn value(&mut self, value: &Value, is_in_words: bool) {
         let tree = self.tree;
         for &part in value.parts() {
             let node = &tree[part];
             match &node.kind {
-                Kind::Text { raw } => self.reader.count_value(raw),
-                kind => {
-                    if let Kind::ExpressionTag(expression) = kind {
-                        self.count_comments_around(*expression);
-                    }
+                Kind::Text { raw } if is_in_words => (strings::split_any(raw, b" \t\n\r\x0C"))
+                    .filter(|it| !it.is_empty())
+                    .for_each(|it| self.reader.exact(it)),
+                Kind::Text { raw } => self.reader.exact(raw),
+                Kind::ExpressionTag(expression) => {
+                    self.reader.mark(1);
+                    self.expression(*expression);
+                }
+                _ => {
                     self.reader.mark(1);
                     self.span(Span {
                         start: node.start,
@@ -177,7 +209,7 @@ impl Check<'_, '_> {
                 Kind::Attribute { name, value } => {
                     self.reader.mark(2);
                     self.reader.name(b"", name);
-                    self.value(value);
+                    self.value(value, *name == b"class");
                 }
                 Kind::Directive {
                     kind,
@@ -214,15 +246,19 @@ impl Check<'_, '_> {
                         Some(expression) if self.is_name(expression, name) => {
                             self.comments_around(expression);
                         }
-                        _ => self.value(value),
+                        _ => self.value(value, true),
                     }
                 }
-                // `{...a}`, `{@attach a}`
-                kind => {
-                    if let Kind::SpreadAttribute(expression) | Kind::AttachTag(expression) = kind {
-                        self.count_comments_around(*expression);
-                    }
+                Kind::SpreadAttribute(expression) => {
                     self.reader.mark(5);
+                    self.expression(*expression);
+                }
+                Kind::AttachTag(expression) => {
+                    self.reader.mark(52);
+                    self.expression(*expression);
+                }
+                _ => {
+                    self.reader.mark(53);
                     self.span(Span {
                         start: node.start,
                         end: node.end,
@@ -375,6 +411,20 @@ impl Check<'_, '_> {
                 self.reader.name(b"", element.name);
                 match (element.this_with_more, element.this) {
                     (Some(written), _) => self.span(written),
+                    // `this={"a"}` is `this="a"`, unless the text stands for something else than the string.
+                    (None, Some(this)) if this.kind == ExpressionKind::Text => {
+                        self.reader.exact(this.span.of(self.text));
+                    }
+                    (None, Some(this)) if this.kind == ExpressionKind::StringLiteral => {
+                        let string = without_quotes(this.span.of(self.text));
+                        match strings::index_of_any(&string, b"\\&{") {
+                            Some(_) => self.expression(this),
+                            None => {
+                                self.reader.exact(&string);
+                                self.comments_around(this);
+                            }
+                        }
+                    }
                     (None, Some(this)) => self.expression(this),
                     (None, None) => {}
                 }
@@ -441,7 +491,7 @@ impl Check<'_, '_> {
                 self.reader.mark(45);
                 self.expression(*expression);
                 self.pattern(*context);
-                self.reader.count(index.unwrap_or_default());
+                self.reader.exact(index.unwrap_or_default());
                 if let Some(key) = *key {
                     self.expression(key);
                 }
@@ -458,8 +508,10 @@ impl Check<'_, '_> {
                 self.reader.mark(46);
                 self.expression(*expression);
                 // `{#await a}{:then b}` is `{#await a then b}`, and `{#await a then b}{/await}` is `{#await a}{/await}`. A
-                // `{:catch}` with nothing in it is not nothing.
-                let [pending, then] = [pending, then].map(|it| it.filter(|&it| !self.is_blank(it)));
+                // `{:catch}` with nothing in it is not nothing, nor is a `{:then b /* c */}`.
+                let has_comment = value.is_some_and(|it| it.has_comments);
+                let pending = pending.filter(|&it| !self.is_blank(it));
+                let then = then.filter(|&it| has_comment || !self.is_blank(it));
                 self.pattern(value.filter(|_| then.is_some()));
                 self.pattern(error.filter(|_| catch.is_some()));
                 fragments = [Some(pending), Some(then), Some(*catch)];
@@ -474,32 +526,206 @@ impl Check<'_, '_> {
             }
             Kind::SnippetBlock {
                 expression,
-                last_parameter_end,
+                end_of_parameters,
                 body,
             } => {
                 self.reader.mark(48);
-                self.span(Span {
-                    start: expression.start,
-                    end: last_parameter_end.unwrap_or(expression.end),
-                });
+                let (start, end) = (expression.start, *end_of_parameters);
+                self.code(FUNCTION, Span { start, end }, &[]);
                 fragments[0] = Some(Some(*body));
             }
-            // Tags.
-            kind => {
-                match kind {
-                    Kind::ExpressionTag(expression)
-                    | Kind::HtmlTag(expression)
-                    | Kind::RenderTag(expression)
-                    | Kind::ConstTag(_, expression) => self.count_comments_around(*expression),
-                    Kind::DebugTag(_) => self.count_comments(whole.start, whole.end),
-                    _ => {}
-                }
+            Kind::ExpressionTag(expression) => {
                 self.reader.mark(49);
+                return self.expression(*expression);
+            }
+            Kind::HtmlTag(expression) => {
+                self.reader.mark(54);
+                return self.expression(*expression);
+            }
+            Kind::RenderTag(expression) => {
+                self.reader.mark(55);
+                return self.expression(*expression);
+            }
+            Kind::ConstTag(declarator, expression) => {
+                self.reader.mark(56);
+                let end = declarator.end.max(expression.outer.end);
+                let start = declarator.start;
+                return self.code(DECLARATOR, Span { start, end }, &[]);
+            }
+            Kind::DeclarationTag(declaration) => {
+                self.reader.mark(57);
+                return self.code(STATEMENT, *declaration, &[]);
+            }
+            Kind::DebugTag(names) => {
+                self.reader.mark(58);
+                names
+                    .iter()
+                    .for_each(|it| self.reader.exact(it.of(self.text)));
+                self.count_comments(whole.start, whole.end);
+                return self.span(whole);
+            }
+            _ => {
+                self.reader.mark(59);
                 return self.span(whole);
             }
         }
         next.push(Next::End);
         next.extend((fragments.into_iter().rev().flatten()).map(|it| Next::Fragment(it, how)));
+    }
+}
+
+/// Whether something ends with `token` that an operator can follow. If not, a `|` behind it is before the first type of a
+/// union.
+#[optimize(size)]
+fn ends_operand(token: Token<'_>) -> bool {
+    match token.kind() {
+        TokenKind::Punctuator => matches!(token.text(), b")" | b"]" | b"}" | b">"),
+        TokenKind::Identifier | TokenKind::Keyword => {
+            !matches!(token.text(), b"as" | b"satisfies" | b"extends" | b"is")
+        }
+        _ => true,
+    }
+}
+
+#[optimize(size)]
+fn is_spelled_like_modifier(word: &[u8]) -> bool {
+    matches!(
+        word,
+        b"abstract"
+            | b"accessor"
+            | b"declare"
+            | b"override"
+            | b"private"
+            | b"protected"
+            | b"public"
+            | b"readonly"
+            | b"static"
+    )
+}
+
+/// Where the expressions of the kinds `tags` start that `is_one` holds for, in order.
+#[optimize(size)]
+fn starts_of<'a>(
+    file: &'a File<'a>,
+    tags: &[ExprTag],
+    is_one: impl Fn(Expr<'a>) -> bool,
+) -> Vec<u32> {
+    let all = tags.iter().flat_map(|&tag| file.exprs_of_kind(tag));
+    let mut starts: Vec<u32> = all
+        .filter(|&it| is_one(it))
+        .map(|it| it.span().start)
+        .collect();
+    crate::sort::sort(&mut starts[..]);
+    starts
+}
+
+/// What is between the quotes of `string`, where a quote is not escaped.
+#[optimize(size)]
+fn without_quotes(string: &[u8]) -> Vec<u8> {
+    let mut rest = (string.get(1..string.len().saturating_sub(1))).unwrap_or_default();
+    let mut out = Vec::with_capacity(rest.len());
+    while let Some(at) = strings::index_of_char_usize(rest, b'\\') {
+        out.extend_from_slice(&rest[..at]);
+        let escaped = rest.get(at + 1).copied();
+        if !matches!(escaped, Some(b'"' | b'\'')) {
+            out.push(b'\\');
+        }
+        out.extend(escaped);
+        rest = rest.get(at + 2..).unwrap_or_default();
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
+/// The tokens of `file`, but for what the head of this file says. `before`: how long what is before the code is.
+/// `left_out`: see [`Check::code`].
+#[optimize(size)]
+fn read_tokens<'a>(
+    file: &'a File<'a>,
+    before: usize,
+    left_out: &[(usize, usize)],
+    reader: &mut Reader,
+) {
+    let mut left_out = left_out.iter().peekable();
+    // What a token is does not depend on the tokens next to it, which are free to change. A string that is none of these is a
+    // key, a type or the name of a module.
+    let mut values = starts_of(file, &[ExprTag::String], |_| true);
+    // `{ ["a"]: b }`: the tree has no expression for it.
+    for object in file.exprs_of_kind(ExprTag::Object) {
+        if let ExprKind::Object(properties) = object.kind() {
+            let keys = properties.iter().filter_map(|it| it.key());
+            let computed = keys.filter(|it| matches!(it.kind(), KeyKind::ComputedString(_)));
+            values.extend(computed.map(|it| it.inner_span(file).start));
+        }
+    }
+    crate::sort::sort(&mut values[..]);
+    // A word like `static` that is none of these is a modifier or a key.
+    let names = starts_of(file, &[ExprTag::Ident], |it| {
+        is_spelled_like_modifier(it.text())
+    });
+    // `` css`a {}` ``, `` /* HTML */ `<a></a>` ``, `` test.each`a | b` ``
+    let free_templates = starts_of(file, &[ExprTag::Template, ExprTag::String], |it| {
+        it.text().starts_with(b"`") && (is_in_another_language(it) || is_table(it))
+    });
+    // For each template that is open: whether it is one of those.
+    let mut templates = Vec::new();
+    let (mut previous, mut is_behind_key) = (None, false);
+    for token in file.tokens() {
+        let (text, at) = (
+            token.text(),
+            (token.start() as usize).saturating_sub(before),
+        );
+        let was_behind_key = std::mem::take(&mut is_behind_key);
+        while left_out.next_if(|it| it.1 <= at).is_some() {}
+        if left_out.peek().is_some_and(|it| it.0 <= at) {
+            is_behind_key = true;
+            continue;
+        }
+        match token.kind() {
+            TokenKind::Punctuator => match text {
+                b"(" | b")" | b"," | b";" => {}
+                b":" if was_behind_key => {}
+                b"|" | b"&" if !previous.is_some_and(ends_operand) => {}
+                _ => reader.exact(text),
+            },
+            TokenKind::String => {
+                // A key can get and lose its quotes. A value cannot: `"a"` is not `a`.
+                if values.binary_search(&token.start()).is_ok() {
+                    reader.mark(60);
+                }
+                reader.exact(&without_quotes(text));
+            }
+            TokenKind::Numeric => reader.exact(&format_trimmed_number(text)),
+            TokenKind::RegularExpression => {
+                let flags = strings::last_index_of_char(text, b'/').map_or(text.len(), |it| it + 1);
+                reader.exact(&text[..flags]);
+                reader.count(&text[flags..]);
+            }
+            TokenKind::Template => {
+                if text.starts_with(b"`") {
+                    templates.push(free_templates.binary_search(&token.start()).is_ok());
+                }
+                match templates.last() {
+                    Some(true) => reader.count(text),
+                    _ => reader.exact(text),
+                }
+                if text.len() > 1 && text.ends_with(b"`") {
+                    templates.pop();
+                }
+            }
+            // `static private` is `private static`.
+            TokenKind::Identifier | TokenKind::Keyword
+                if is_spelled_like_modifier(text)
+                    && names.binary_search(&token.start()).is_err() =>
+            {
+                reader.count(text)
+            }
+            _ if strings::contains_char(text, b'\\') => {
+                reader.exact(&without_unicode_escapes(text))
+            }
+            _ => reader.exact(text),
+        }
+        previous = Some(token);
     }
 }
 
@@ -590,9 +816,7 @@ pub(crate) fn has_same_content(
         signature(before, parsers, sensitivity),
         signature(after, parsers, sensitivity),
     ) {
-        // A comment in an expression is not counted. It is behind the expression once the parentheses go that it was in:
-        // `{a ? b : (c // d\n)}`.
-        (Some(before), Some(after)) => before.0 == after.0 && before.1 <= after.1,
+        (Some(before), Some(after)) => before == after,
         _ => false,
     }
 }

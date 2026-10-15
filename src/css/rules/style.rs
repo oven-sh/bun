@@ -40,8 +40,8 @@ impl<R> StyleRule<R> {
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Hash the full `PropertyId` (tag + prefix + custom-name bytes) so
-        // distinct custom properties don't collide into one dedup bucket.
+        // Hash the `PropertyId` (tag + custom name) so distinct custom
+        // properties don't collide into one dedup bucket.
         for decl in self.declarations.declarations.iter() {
             decl.property_id().hash(&mut hasher);
         }

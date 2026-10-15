@@ -896,12 +896,12 @@ impl PartialEq for PropertyId {
 
 impl Eq for PropertyId {}
 
-// Hash must agree with `eq`: tag + prefix + custom-name bytes.
+// Agrees with `eq`. The prefix is not hashed: ids that differ only in the
+// prefix are rare, and `eq` tells them apart.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
-        self.prefix().bits().hash(h);
         if let PropertyId::Custom(name) = self {
             h.write(name.as_str());
         }

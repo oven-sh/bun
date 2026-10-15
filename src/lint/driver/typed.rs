@@ -31,7 +31,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
+use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -477,7 +477,7 @@ fn check_and_lint_in(
         keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused) =
+    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused, without_include) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
             (
                 report.is_case_sensitive,
@@ -485,8 +485,25 @@ fn check_and_lint_in(
                 report.diagnostics,
                 report.incomplete,
                 report.refused,
+                report.without_include,
             )
         });
+    let mut noted = context.without_include.lock();
+    for program in without_include.into_iter().filter(is_out_of_proportion) {
+        let config_path = to_native(&program.config_path).to_vec();
+        // Each pass of `--fix` finds it again.
+        if noted.iter().any(|it| it.config_path == config_path) {
+            continue;
+        }
+        // As they are spelled by who named them.
+        let places = (program.files.iter()).filter_map(|it| by_path.get(it, is_case_sensitive));
+        noted.push(WithoutInclude {
+            config_path,
+            files: places.map(|at| files[indices[at]].path.to_vec()).collect(),
+            ..program
+        });
+    }
+    drop(noted);
     // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
     let mut is_refused = vec![false; indices.len()];
     for refused in &refused {
@@ -523,6 +540,12 @@ fn check_and_lint_in(
         }
     }
     (results, is_refused)
+}
+
+/// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
+/// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
+fn is_out_of_proportion(program: &WithoutInclude) -> bool {
+    program.included >= 1000 && program.included >= 100 * program.files.len()
 }
 
 /// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's

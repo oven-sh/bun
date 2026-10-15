@@ -60,6 +60,9 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) skipped_in_comments: &'c Guarded<Vec<Box<[u8]>>>,
     /// The files in which the type checker ran out of stack, so that the rules that need types may have missed something.
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
+    /// The programs that were out of proportion to the files that were linted in them: see `typed::is_out_of_proportion`.
+    /// With the paths of the operating system.
+    pub(crate) without_include: &'c Guarded<Vec<bun_sema_driver::WithoutInclude>>,
     /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     /// The files and blocks that [may be misread](may_be_misread), with nobody there to read them.

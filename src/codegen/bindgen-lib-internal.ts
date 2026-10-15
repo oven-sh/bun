@@ -35,7 +35,7 @@ export function structLayout(fields: readonly Layout[]): Layout {
   return { size: roundUp(size, align), align };
 }
 
-/** `ExternVariant<...>`: `{ union data; uint8_t tag; }`. */
+/** `{ union data; uint8_t tag; }`. */
 export function variantLayout(alternatives: readonly Layout[]): Layout {
   const align = Math.max(...alternatives.map(a => a.align));
   const union = { size: roundUp(Math.max(...alternatives.map(a => a.size)), align), align };
@@ -1135,9 +1135,9 @@ export class DictionaryType extends NamedType {
       if (Object.hasOwn(given, member.name)) field = given[member.name];
       else if (member.type instanceof DefaultType) field = member.type.value;
       else assert(member.type.permitsUndefined, `missing key: ${member.name}`);
-      return `.${member.internalName} = ${member.type.toCpp(field)}`;
+      return `value.${member.internalName} = ${member.type.toCpp(field)};`;
     });
-    return `${this.cpp} { ${fields.join(", ")} }`;
+    return `[] { ${this.cpp} value; ${fields.join(" ")} return value; }()`;
   }
   /** Every member can be left out. */
   get hasDefault(): boolean {
@@ -1215,7 +1215,7 @@ export class UnionType extends NamedType {
   toCpp(value: unknown): string {
     const unit = this.alternatives.find(a => a.type instanceof UnitType && a.type.tsType === String(value));
     assert(unit, `${this.name}: only null or undefined can be a default`);
-    return `${this.idlType}::ImplementationType { ${unit.type.toCpp(value)} }`;
+    return `[] { ${this.cpp} value; value.tag = ${this.alternatives.indexOf(unit)}; return value; }()`;
   }
   toRust(value: unknown, scope: RustScope): string {
     const unit = this.alternatives.find(

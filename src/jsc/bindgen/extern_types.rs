@@ -17,7 +17,7 @@ pub fn adopt_string(ptr: ExternString) -> bun_core::String {
     string
 }
 
-/// `ExternVariant<ExternNullPtr, T>`, which is what `std::optional<T>` lowers to.
+/// What `std::optional<T>` lowers to.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExternOptional<T: Copy> {

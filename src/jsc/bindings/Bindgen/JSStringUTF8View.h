@@ -12,7 +12,8 @@ class JSStringUTF8View {
     WTF_MAKE_NONCOPYABLE(JSStringUTF8View);
 
 public:
-    JSStringUTF8View() = default;
+    // Not `= default`: value-initialization would zero the buffer first.
+    JSStringUTF8View() {}
     JSStringUTF8View(JSStringUTF8View&&) = default;
     JSStringUTF8View& operator=(JSStringUTF8View&&) = default;
     explicit JSStringUTF8View(WTF::ASCIILiteral literal)

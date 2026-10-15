@@ -1,7 +1,6 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -11,7 +10,6 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/Ref.h>
 #include <wtf/RefPtr.h>
-#include "ExternUnion.h"
 #include "JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
@@ -61,43 +59,27 @@ template<> struct ExternTraits<std::monostate> {
     }
 };
 
-template<typename... Args>
-struct ExternVariant {
-    ExternUnion<Args...> data;
+template<typename T>
+struct ExternOptional {
+    union {
+        ExternNullPtr none;
+        T some;
+    } data;
     std::uint8_t tag;
-
-    static_assert(sizeof...(Args) > 0);
-    static_assert(sizeof...(Args) - 1 <= std::numeric_limits<std::uint8_t>::max());
-    static_assert(std::is_trivially_copyable_v<ExternUnion<Args...>>);
-};
-
-template<typename... Args>
-struct ExternTraits<std::variant<Args...>> {
-    using ExternType = ExternVariant<typename ExternTraits<Args>::ExternType...>;
-
-    static ExternType convertToExtern(std::variant<Args...>&& cppValue)
-    {
-        ExternType result;
-        result.tag = static_cast<std::uint8_t>(cppValue.index());
-        [&]<std::size_t... indices>(std::index_sequence<indices...>) {
-            static_cast<void>(((cppValue.index() == indices && (result.data.template set<indices>(ExternTraits<Args>::convertToExtern(std::move(*std::get_if<indices>(&cppValue)))), true)) || ...));
-        }(std::index_sequence_for<Args...> {});
-        return result;
-    }
 };
 
 template<typename T>
 struct ExternTraits<std::optional<T>> {
-    using ExternType = ExternVariant<ExternNullPtr, typename ExternTraits<T>::ExternType>;
+    using ExternType = ExternOptional<typename ExternTraits<T>::ExternType>;
 
     static ExternType convertToExtern(std::optional<T>&& cppValue)
     {
         ExternType result;
         result.tag = cppValue.has_value();
         if (cppValue)
-            result.data.template set<1>(ExternTraits<T>::convertToExtern(std::move(*cppValue)));
+            result.data.some = ExternTraits<T>::convertToExtern(std::move(*cppValue));
         else
-            result.data.template set<0>(ExternNullPtr {});
+            result.data.none = ExternNullPtr {};
         return result;
     }
 };

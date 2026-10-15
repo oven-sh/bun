@@ -221,6 +221,9 @@ function humanReadableEnum(type: EnumType): string {
   return `${quoted.slice(0, -1).join(", ")}, or ${quoted.at(-1)}`;
 }
 
+/** Value-initialization zeroes a struct whose constructor is implicit, and these hold the buffers of string views. */
+const cppDefaultConstructor = (name: string) => `    ${name}() {}`;
+
 function cppHeaderForUnion(type: UnionType): string {
   const { name, alternatives } = type;
   const idlTypes = alternatives.map(a => a.type.idlType).join(", ");
@@ -228,28 +231,62 @@ function cppHeaderForUnion(type: UnionType): string {
   const cases = choices.map((choice, index) => {
     if (choice.length === 0) return "";
     const attempts = choice.map(i => {
-      const alternative = alternatives[i].type;
-      const slot = `result.template emplace<${i}>`;
-      if (alternative.kinds !== "any" && alternative.refusesSomeOfItsKinds)
-        return `if (auto converted = ::Bun::tryConvertIDL<${alternative.idlType}>(lexicalGlobalObject, value, ctx)) {
-    ${slot}(::std::move(*converted));
+      const alternative = alternatives[i];
+      const member = `result.${alternative.name}`;
+      if (alternative.type.kinds !== "any" && alternative.type.refusesSomeOfItsKinds)
+        return `if (auto converted = ::Bun::tryConvertIDL<${alternative.type.idlType}>(lexicalGlobalObject, value, ctx)) {
+    ${member} = ::std::move(*converted);
+    result.tag = ${i};
     return;
 }`;
-      const convert = alternative.convertsInPlace
-        ? alternative.cppConvertInto(`${slot}()`, "value", "ctx", "")
-        : `${slot}(::Bun::convertIDL<${alternative.idlType}>(lexicalGlobalObject, value, ctx));`;
-      return `scope.release();\n${convert}\nreturn;`;
+      if (alternative.type instanceof UnitType) return `result.tag = ${i};\nreturn;`;
+      const convert = alternative.type.convertsInPlace
+        ? alternative.type.cppConvertInto(member, "value", "ctx", "")
+        : `${member} = ::Bun::convertIDL<${alternative.type.idlType}>(lexicalGlobalObject, value, ctx);`;
+      return `result.tag = ${i};\nscope.release();\n${convert}\nreturn;`;
     });
     const refused = attempts.at(-1)!.endsWith("return;") ? "" : "\n    break;";
     return `case ${index}: {\n${indent(attempts.join("\n"), 4)}${refused}\n}`;
   });
   const canMatchNothing = cases.some(text => text.length === 0 || text.endsWith("break;\n}"));
+  const held = alternatives.filter(a => !(a.type instanceof UnitType));
   return `
 namespace Bun {
-namespace Bindgen::Generated {
-struct IDL${name} : ::Bun::IDLOrderedUnion<${idlTypes}> {};
-using ${name} = IDL${name}::ImplementationType;
-${layoutAssert(`ExternTraits<${name}>::ExternType`, type)}
+namespace Bindgen {
+namespace Generated {
+// A member for each alternative, so that the one \`tag\` names is converted where it stays.
+struct ${name} {
+${cppDefaultConstructor(name)}
+${held.map(a => `    ${implementationType(a.type)} ${a.name};`).join("\n")}
+    ::std::uint8_t tag;
+};
+struct Extern${name} {
+    union {
+${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+    } data;
+    ::std::uint8_t tag;
+};
+${layoutAssert(`Extern${name}`, type)}
+struct IDL${name} : ::WebCore::IDLType<${name}> {};
+}
+template<> struct ExternTraits<Generated::${name}> {
+    using ExternType = Generated::Extern${name};
+    static ExternType convertToExtern(Generated::${name}&& value)
+    {
+        ExternType result;
+        result.tag = value.tag;
+        switch (value.tag) {
+${held
+  .map(
+    a => `        case ${alternatives.indexOf(a)}:
+            result.data.${a.name} = ExternTraits<${implementationType(a.type)}>::convertToExtern(::std::move(value.${a.name}));
+            break;`,
+  )
+  .join("\n")}
+        }
+        return result;
+    }
+};
 }
 template<> struct IDLHumanReadableName<Bindgen::Generated::IDL${name}> : IDLHumanReadableName<::Bun::IDLOrderedUnion<${idlTypes}>> {};
 }
@@ -307,6 +344,7 @@ namespace Bun {
 namespace Bindgen {
 namespace Generated {
 struct ${name} {
+${cppDefaultConstructor(name)}
 ${type.members.map(member => `    ${implementationType(member.type)} ${member.internalName};`).join("\n")}
 };
 struct Extern${name} {

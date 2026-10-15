@@ -20,14 +20,6 @@ pub(crate) fn code_point_at(s: &[u8], i: usize) -> (u32, usize) {
     }
 }
 
-/// Where the code point starts that `i` is in the middle of. `i` itself if it is not.
-pub(crate) fn code_point_start(s: &[u8], i: usize) -> usize {
-    (1..=3)
-        .filter_map(|back| i.checked_sub(back))
-        .find(|start| code_point_at(s, *start).1 > i - start)
-        .unwrap_or(i)
-}
-
 #[inline]
 pub(crate) fn lead_surrogate(cp: u32) -> u32 {
     0xD800 + ((cp - 0x10000) >> 10)

@@ -667,7 +667,7 @@ pub fn install_with_manager(
             return Err(crate::package_manager_real::run_tasks::failed_request_error());
         }
 
-        manager.verify_resolutions(log_level);
+        manager.verify_resolutions(log_level, !had_errors_before_cleaning_lockfile);
 
         let mut moved_by_overrides: Vec<PackageID> = Vec::new();
         if super::package_json_write_back::edit_after_resolve(manager)? && !manager.options.dry_run
@@ -2294,7 +2294,7 @@ fn reresolve_rows_outside_overrides(
 
     let before_clean = clean_lockfile(manager, log_level)?;
     *root = *manager.lockfile.packages.get(0);
-    manager.verify_resolutions(log_level);
+    manager.verify_resolutions(log_level, false);
     Ok(moved_targets_after_clean(
         &before_clean,
         &manager.lockfile,

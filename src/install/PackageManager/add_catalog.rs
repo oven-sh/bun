@@ -8,11 +8,12 @@ use bun_core::fmt::for_terminal;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
 
+use bun_install::dedupe::applied_override;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{
-    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
+    Dependency, DependencyID, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
 };
 use bun_install_types::DependencyGroup;
 use bun_paths::path_buffer_pool;
@@ -27,7 +28,7 @@ use super::add_remove_with_filter::{
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
 use super::update_package_json_and_install::print_package_json_into_cache_entry;
-use super::workspace_package_json_cache::MapEntry;
+use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -1114,4 +1115,128 @@ pub(crate) fn edit_root_after_install(
     }
     alphabetize_appended(root_package_json, adds, &appended);
     Ok(changed)
+}
+
+/// Whether `--cwd` is on the command line. The shell that gets a pasted line is not in that directory.
+fn cwd_was_typed() -> bool {
+    bun_core::argv()
+        .into_iter()
+        .any(|arg| arg == b"--cwd" || arg.starts_with(b"--cwd="))
+}
+
+/// Prints, below the failed rows of an install, one `bun add --catalog` line that adds every missing catalog entry.
+/// The package.json that `bun add` edits from here has to declare each name as that `catalog:` reference already: the command then changes nothing but the catalog.
+#[cold]
+#[inline(never)]
+pub(crate) fn print_repair_line(manager: &mut PackageManager) {
+    // A failed run writes no package.json. The entries that `bun add --catalog` added and the fields that a migration copied are in memory only, so `bun add` does not start from the package.json files that this run resolved.
+    if cwd_was_typed()
+        || !manager.catalog_add.adds.is_empty()
+        || !manager.migrated_package_json_moves.is_empty()
+    {
+        return;
+    }
+
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolutions = lockfile.packages.items_resolution();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let package_ids = lockfile.buffers.resolutions.as_slice();
+    let end = lockfile.packages.len() as PackageID;
+    let root_name_hash = lockfile.packages.items_name_hash()[0];
+
+    let mut missing: Vec<&Dependency> = Vec::new();
+    for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
+        let features = manager.options.dependency_features(resolutions[owner].tag);
+        for (i, dep) in list.get(dependencies).iter().enumerate() {
+            let dep_id = list.off as usize + i;
+            // The rows that `verify_resolutions` reports.
+            if package_ids[dep_id] < end
+                || dep.behavior.is_peer()
+                || dep.behavior.is_optional()
+                || !dep.behavior.is_enabled(features)
+            {
+                continue;
+            }
+
+            if dep.version.tag != dependency::Tag::Catalog {
+                return;
+            }
+            let catalog = dep.version.catalog().slice(buf);
+            // `bun add --catalog` refuses the name of the root and of a workspace. An override sends the row elsewhere, unless it names the catalog of the row.
+            let addable = lockfile
+                .catalogs
+                .get_ref(buf, *dep.version.catalog(), dep.name)
+                .is_none()
+                && (CatalogMap::same_name(catalog, b"")
+                    || lockfile
+                        .catalogs
+                        .groups
+                        .keys()
+                        .iter()
+                        .any(|group| group.slice(buf) == catalog))
+                && dep.name_hash != root_name_hash
+                && !lockfile.workspace_paths.contains(&dep.name_hash)
+                && applied_override(lockfile, dep_id as DependencyID, dep).is_none_or(|rule| {
+                    let to = rule.version();
+                    to.tag == dependency::Tag::Catalog
+                        && CatalogMap::same_name(to.catalog().slice(buf), catalog)
+                });
+            if !addable {
+                return;
+            }
+            missing.push(dep);
+        }
+    }
+    let Some(first) = missing.first() else {
+        return;
+    };
+    let first_catalog = first.version.catalog().slice(buf);
+    let one_name = missing.iter().all(|dep| dep.name_hash == first.name_hash);
+    // `bun add` puts each name at its latest version. With several names, one paste would move every range that bun.lock has for them.
+    if !one_name && manager.summary.catalogs_changed {
+        return;
+    }
+
+    let log = manager.log_mut();
+    let GetResult::Entry(edited_by_bun_add) = manager.workspace_package_json_cache.get_with_path(
+        log,
+        manager.original_package_json_path.as_bytes(),
+        GetJSONOptions {
+            init_reset_store: false,
+            ..Default::default()
+        },
+    ) else {
+        return;
+    };
+    let declared_as_written = |dep: &&Dependency| {
+        existing_slot(&edited_by_bun_add.root, dep.name.slice(buf)).is_some_and(|slot| {
+            references_flag_group(slot.slice(), dep.version.catalog().slice(buf))
+        })
+    };
+    if !missing.iter().all(declared_as_written) {
+        return;
+    }
+
+    let mut line: Vec<u8> = b"  bun add --catalog".to_vec();
+    // A name that its package.json declares keeps the catalog of the declaration, whatever the flag names.
+    if !CatalogMap::same_name(first_catalog, b"")
+        && missing
+            .iter()
+            .all(|dep| dep.version.catalog().slice(buf) == first_catalog)
+    {
+        line.push(b'=');
+        line.extend_from_slice(first_catalog);
+    }
+    for (i, dep) in missing.iter().enumerate() {
+        if missing[..i]
+            .iter()
+            .any(|earlier| earlier.name_hash == dep.name_hash)
+        {
+            continue;
+        }
+        line.push(b' ');
+        line.extend_from_slice(dep.name.slice(buf));
+    }
+    bun_core::pretty_errorln!("{}", BStr::new(&line));
 }

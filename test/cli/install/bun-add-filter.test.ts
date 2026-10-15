@@ -2815,7 +2815,8 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
 
   {
     const { stderr, exitCode } = await run(["add", "a-dep@catalog:", "--filter", "api"], dir);
-    expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+    // No `bun add --catalog a-dep` line: from the root, that command adds a-dep to the root, not to api.
+    expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n");
     expect(exitCode).toBe(1);
   }
 
@@ -2825,6 +2826,6 @@ test.concurrent("a catalog: range that resolves to nothing names the missing cat
   // The same package.json state reached by hand fails the same way under bun install.
   await write(pkgPath(dir, "api"), JSON.stringify({ name: "api", dependencies: { "a-dep": "catalog:" } }));
   const { stderr, exitCode } = await run(["install"], dir);
-  expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n  bun add --catalog a-dep\n");
+  expect(stderr).toBe("error: a-dep@catalog: is not in the catalog\n");
   expect(exitCode).toBe(1);
 });

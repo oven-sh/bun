@@ -67,6 +67,10 @@ function writeRegistryProject(files: Record<string, string>, registryUrl: string
   });
 }
 
+// The failed rows of an install and the command lines that are printed with them.
+const rowsAndCommands = (stderr: string) =>
+  stderr.split("\n").filter(line => /^error: \S+@/.test(line) || line.startsWith("  bun "));
+
 beforeAll(async () => {
   [catalogRegistry] = await Promise.all([serveRegistry(catalogManifests), registry.start()]);
 });
@@ -1160,14 +1164,15 @@ describe.concurrent("errors", () => {
     );
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain(
-      'error: a-dep@catalog:aaaaaaaaaaaaaaaaa: there is no catalog named "aaaaaaaaaaaaaaaaa" in the root package.json\n',
-    );
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    // No `bun add --catalog no-deps` line: that command fails on the a-dep row.
+    expect(rowsAndCommands(err)).toEqual([
+      'error: a-dep@catalog:aaaaaaaaaaaaaaaaa: there is no catalog named "aaaaaaaaaaaaaaaaa" in the root package.json',
+      "error: no-deps@catalog: is not in the catalog",
+    ]);
     expect(exitCode).not.toBe(0);
   });
 
-  test.concurrent("a package missing from an existing named catalog suggests bun add --catalog=<name>", async () => {
+  test.concurrent("packages missing from two existing catalogs get one bun add --catalog line", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -1185,11 +1190,12 @@ describe.concurrent("errors", () => {
     });
 
     const { err, exitCode } = await failingInstall(packageDir);
-    expect(err).toContain(
-      'error: no-deps@catalog:tools is not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
-    );
-    expect(err).toContain("error: left-pad@catalog:default is not in the catalog\n  bun add --catalog left-pad\n");
-    expect(err).not.toContain("there is no catalog named");
+    // Each name keeps the catalog of its declaration, so the line names no catalog.
+    expect(rowsAndCommands(err)).toEqual([
+      "error: left-pad@catalog:default is not in the catalog",
+      'error: no-deps@catalog:tools is not in catalog "tools"',
+      "  bun add --catalog left-pad no-deps",
+    ]);
     expect(exitCode).not.toBe(0);
   });
 
@@ -1212,7 +1218,8 @@ describe.concurrent("errors", () => {
 
     const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain("error: Invalid dependency version\n");
-    expect(err).toContain("error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps\n");
+    // No `bun add --catalog no-deps` line: that command reads the same entry and fails on it.
+    expect(err).toEndWith("error: no-deps@catalog: is not in the catalog\n");
     expect(exitCode).not.toBe(0);
   });
 
@@ -2247,16 +2254,19 @@ describe("peer dependencies", () => {
   });
 });
 
-// `bun install` advises `bun add --catalog <name>` only where that command accepts the name and the entry is missing.
+// `bun install` prints one `bun add --catalog` line below the failed rows, and only when `bun add` from the directory of the command changes nothing but the catalog.
 describe("bun add --catalog advice for a failed catalog: dependency", () => {
   const note =
     'note: catalogs require a "workspaces" field in the root package.json, and bun used "<dir>/package.json" as the root, which has none';
-  const advice = "error: no-deps@catalog: is not in the catalog\n  bun add --catalog no-deps";
+  const row = "error: no-deps@catalog: is not in the catalog";
+  const advice = `${row}\n  bun add --catalog no-deps`;
 
-  function project(files: Record<string, object>) {
+  function project(files: Record<string, object | string>) {
     return writeRegistryProject(
       {
-        ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+        ...Object.fromEntries(
+          Object.entries(files).map(([path, json]) => [path, typeof json === "string" ? json : JSON.stringify(json)]),
+        ),
         "vendor/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
         "vendor/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
       },
@@ -2449,15 +2459,443 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
         "packages/lib/package.json": { name: "lib" },
       });
 
-      expect(await run(String(dir), ["install"])).toEqual({
+      // No `bun add --catalog=tools no-deps` line: that command fails on the lib row and on the mono row.
+      expect(await run(join(String(dir), "packages", "app"), ["install"])).toEqual({
         err: [
           "error: lib@catalog: is not in the catalog",
           'error: mono@catalog:tools is not in catalog "tools"',
           'error: no-deps@catalog:tools is not in catalog "tools"',
-          "  bun add --catalog=tools no-deps",
         ].join("\n"),
         exitCode: 1,
       });
+    });
+
+    test.concurrent("--silent prints nothing", async () => {
+      using dir = soloRoot({ workspaces: [], dependencies: { "no-deps": "catalog:" } });
+
+      expect(await run(String(dir), ["install", "--silent"])).toEqual({ err: "", exitCode: 1 });
+    });
+  });
+
+  // Not concurrent: each case runs two or three installs, and a debug build does not finish twenty of them at a time within the default timeout.
+  describe("one line below the rows", () => {
+    type Files = Record<string, object | string>;
+    const solo = (extra: object) => ({ name: "mono", workspaces: [], ...extra });
+    const mono = (extra: object = {}) => ({ name: "mono", workspaces: ["packages/*"], ...extra });
+    const twoCatalogs = (extra: object) => ({
+      name: "mono",
+      workspaces: { catalog: {}, catalogs: { tools: {} } },
+      ...extra,
+    });
+    const leafRow = "error: leaf@catalog: is not in the catalog";
+    const toolsRow = 'error: no-deps@catalog:tools is not in catalog "tools"';
+    const both = { leaf: "^2.0.0", "no-deps": "^2.0.0" };
+    const two = { "no-deps": "catalog:", leaf: "catalog:" };
+    const appDev = { name: "app", devDependencies: { "no-deps": "catalog:" } };
+    const optionalPeer = {
+      peerDependencies: { "does-not-exist": "1.0.0" },
+      peerDependenciesMeta: { "does-not-exist": { optional: true } },
+    };
+
+    async function packageJsons(dir: string, files: Files) {
+      const paths = Object.keys(files).filter(path => path.endsWith("package.json"));
+      return Object.fromEntries(
+        await Promise.all(paths.map(async path => [path, await file(join(dir, path)).json()] as const)),
+      );
+    }
+
+    const dependencyLists = (all: Record<string, any>) =>
+      Object.values(all).map(json => [
+        json.dependencies,
+        json.devDependencies,
+        json.optionalDependencies,
+        json.peerDependencies,
+      ]);
+
+    // [title, files, directory of the command, command, stderr, every package.json after the last line of stderr is pasted in that directory]
+    const repairs: [string, Files, string, string, string[], Files][] = [
+      [
+        "two rows of one owner",
+        { "package.json": solo({ dependencies: two }) },
+        ".",
+        "install",
+        [leafRow, row, "  bun add --catalog leaf no-deps"],
+        { "package.json": solo({ dependencies: two, catalog: both }) },
+      ],
+      [
+        "two rows of one owner in two catalogs",
+        { "package.json": twoCatalogs({ dependencies: { "no-deps": "catalog:tools", leaf: "catalog:" } }) },
+        ".",
+        "install",
+        [leafRow, toolsRow, "  bun add --catalog leaf no-deps"],
+        {
+          "package.json": {
+            name: "mono",
+            workspaces: { catalog: { leaf: "^2.0.0" }, catalogs: { tools: { "no-deps": "^2.0.0" } } },
+            dependencies: { "no-deps": "catalog:tools", leaf: "catalog:" },
+          },
+        },
+      ],
+      [
+        "two rows of one owner in one named catalog",
+        {
+          "package.json": {
+            name: "mono",
+            workspaces: { catalogs: { tools: {} } },
+            dependencies: { "no-deps": "catalog:tools", leaf: "catalog:tools" },
+          },
+        },
+        ".",
+        "install",
+        ['error: leaf@catalog:tools is not in catalog "tools"', toolsRow, "  bun add --catalog=tools leaf no-deps"],
+        {
+          "package.json": {
+            name: "mono",
+            workspaces: { catalogs: { tools: both } },
+            dependencies: { "no-deps": "catalog:tools", leaf: "catalog:tools" },
+          },
+        },
+      ],
+      [
+        "one name that fails in the root and in a member, from the root",
+        { "package.json": mono({ dependencies: { "no-deps": "catalog:" } }), "packages/app/package.json": appDev },
+        ".",
+        "install",
+        [row, row, "  bun add --catalog no-deps"],
+        {
+          "package.json": mono({ dependencies: { "no-deps": "catalog:" }, catalog: { "no-deps": "^2.0.0" } }),
+          "packages/app/package.json": appDev,
+        },
+      ],
+      [
+        "a name that its owner declares in two dependency groups",
+        {
+          "package.json": solo({
+            devDependencies: { "no-deps": "catalog:" },
+            peerDependencies: { "no-deps": "catalog:" },
+          }),
+        },
+        ".",
+        "install",
+        [row, "  bun add --catalog no-deps"],
+        {
+          "package.json": solo({
+            devDependencies: { "no-deps": "catalog:" },
+            peerDependencies: { "no-deps": "catalog:" },
+            catalog: { "no-deps": "^2.0.0" },
+          }),
+        },
+      ],
+      [
+        "a member's row, from the member",
+        { "package.json": mono(), "packages/app/package.json": appDev },
+        "packages/app",
+        "install",
+        [row, "  bun add --catalog no-deps"],
+        { "package.json": mono({ catalog: { "no-deps": "^2.0.0" } }), "packages/app/package.json": appDev },
+      ],
+      [
+        "a row next to an optional peer that the registry does not have",
+        { "package.json": solo({ dependencies: { "no-deps": "catalog:" }, ...optionalPeer }) },
+        ".",
+        "install",
+        [row, "  bun add --catalog no-deps"],
+        {
+          "package.json": solo({
+            dependencies: { "no-deps": "catalog:" },
+            ...optionalPeer,
+            catalog: { "no-deps": "^2.0.0" },
+          }),
+        },
+      ],
+      [
+        "a row that an override sends to the catalog of the row",
+        { "package.json": solo({ dependencies: { "no-deps": "catalog:" }, overrides: { "no-deps": "catalog:" } }) },
+        ".",
+        "install",
+        [row, "  bun add --catalog no-deps"],
+        {
+          "package.json": solo({
+            dependencies: { "no-deps": "catalog:" },
+            overrides: { "no-deps": "catalog:" },
+            catalog: { "no-deps": "^2.0.0" },
+          }),
+        },
+      ],
+    ];
+
+    test.each(repairs)("%s: the line repairs the install", async (_, files, cwd, command, err, after) => {
+      using dir = project(files);
+      const typedIn = join(String(dir), cwd);
+
+      expect(await run(typedIn, command.split(" "))).toEqual({ err: err.join("\n"), exitCode: 1 });
+
+      const pasted = await run(typedIn, err.at(-1)!.trim().split(" ").slice(1));
+      expect(await packageJsons(String(dir), files)).toEqual(after);
+      expect(pasted.exitCode).toBe(0);
+      await runBunInstall(installEnv(String(dir)), String(dir), { savesLockfile: false });
+    });
+
+    // With a bun.lock on disk. `added` is what the second package.json adds to the first.
+    async function installThenEdit(first: object, added: object) {
+      const dir = project({ "package.json": first });
+      await runBunInstall(installEnv(String(dir)), String(dir));
+      await write(join(String(dir), "package.json"), JSON.stringify({ ...first, ...added }));
+      return dir;
+    }
+    const installed = (dir: string, name: string) =>
+      file(join(dir, "node_modules", name, "package.json"))
+        .json()
+        .then(json => json.version);
+
+    test("new references in a project that has a bun.lock: the line repairs the install", async () => {
+      using dir = await installThenEdit(
+        solo({ catalog: { "no-deps": "1.0.0" }, dependencies: { "no-deps": "catalog:" } }),
+        {
+          dependencies: { "no-deps": "catalog:" },
+          devDependencies: { leaf: "catalog:", "needs-leaf-2": "catalog:" },
+        },
+      );
+
+      expect(await run(String(dir), ["ci"])).toEqual({
+        err: [
+          leafRow,
+          "error: needs-leaf-2@catalog: is not in the catalog",
+          "  bun add --catalog leaf needs-leaf-2",
+        ].join("\n"),
+        exitCode: 1,
+      });
+
+      expect((await run(String(dir), ["add", "--catalog", "leaf", "needs-leaf-2"])).exitCode).toBe(0);
+      expect((await file(join(String(dir), "package.json")).json()).catalog).toEqual({
+        leaf: "^2.0.0",
+        "no-deps": "1.0.0",
+        "needs-leaf-2": "^1.0.0",
+      });
+      await runBunInstall(installEnv(String(dir)), String(dir), { savesLockfile: false });
+    });
+
+    const lostEntries = solo({ catalog: { leaf: "1.0.0", "no-deps": "1.0.0" }, dependencies: two });
+
+    test("several names that bun.lock has other ranges for: no line", async () => {
+      using dir = await installThenEdit(lostEntries, { catalog: {} });
+
+      expect(await run(String(dir), ["install"])).toEqual({ err: [leafRow, row].join("\n"), exitCode: 1 });
+
+      // The command that is not printed puts both packages at their latest version.
+      expect((await run(String(dir), ["add", "--catalog", "leaf", "no-deps"])).exitCode).toBe(0);
+      expect([await installed(String(dir), "leaf"), await installed(String(dir), "no-deps")]).toEqual([
+        "2.0.0",
+        "2.0.0",
+      ]);
+    });
+
+    test("one name that bun.lock has another range for: the line is printed", async () => {
+      using dir = await installThenEdit(lostEntries, { catalog: { leaf: "1.0.0" } });
+
+      expect(await run(String(dir), ["install"])).toEqual({ err: advice, exitCode: 1 });
+    });
+
+    // [title, files, directory of the command, command, the failed rows, the command that is not printed, what that command does when pasted there]
+    const rowsOnly: [string, Files, string, string, string[], string, "exits 1" | "edits a dependency list"][] = [
+      [
+        "a member's row, from the root",
+        { "package.json": mono(), "packages/app/package.json": appDev },
+        ".",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "a member's row, from another member",
+        { "package.json": mono(), "packages/app/package.json": appDev, "packages/lib/package.json": { name: "lib" } },
+        "packages/lib",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "the root's row, from a member",
+        {
+          "package.json": mono({ dependencies: { "no-deps": "catalog:" } }),
+          "packages/app/package.json": { name: "app" },
+        },
+        "packages/app",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "rows of two owners under two names",
+        {
+          "package.json": mono({ dependencies: { leaf: "catalog:" } }),
+          "packages/app/package.json": { name: "app", dependencies: { "no-deps": "catalog:" } },
+        },
+        ".",
+        "install",
+        [leafRow, row],
+        "add --catalog leaf no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "a member's row, from the root with --cwd",
+        { "package.json": mono(), "packages/app/package.json": appDev },
+        ".",
+        "install --cwd packages/app",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "a member's row, from the root with --cwd=",
+        { "package.json": mono(), "packages/app/package.json": appDev },
+        ".",
+        "install --cwd=packages/app",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "bun add --catalog of one of two failed rows",
+        { "package.json": solo({ dependencies: two }) },
+        ".",
+        "add --catalog leaf",
+        [row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "an entry under another name that the catalog parser rejects",
+        {
+          "package.json": {
+            name: "mono",
+            workspaces: { catalog: { leaf: ".:" } },
+            dependencies: { "no-deps": "catalog:" },
+          },
+        },
+        ".",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "a catalog: row of a registry package",
+        { "package.json": solo({ dependencies: { "no-deps": "catalog:", "wants-leaf-dep": "1.0.0" } }) },
+        ".",
+        "install",
+        [row, "error: leaf@catalog: failed to resolve"],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "a row with the name of a workspace",
+        {
+          "package.json": mono(),
+          "packages/app/package.json": { name: "app", dependencies: { lib: "catalog:", "no-deps": "catalog:" } },
+          "packages/lib/package.json": { name: "lib" },
+        },
+        "packages/app",
+        "install",
+        ["error: lib@catalog: is not in the catalog", row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "a row with the name of the root",
+        {
+          "package.json": mono(),
+          "packages/app/package.json": { name: "app", dependencies: { mono: "catalog:", "no-deps": "catalog:" } },
+        },
+        "packages/app",
+        "install",
+        ["error: mono@catalog: is not in the catalog", row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "an override that sends the row to another catalog",
+        { "package.json": twoCatalogs({ dependencies: { leaf: "catalog:" }, overrides: { leaf: "catalog:tools" } }) },
+        ".",
+        "install",
+        [leafRow],
+        "add --catalog leaf",
+        "exits 1",
+      ],
+      [
+        "a root that takes its workspaces from pnpm-workspace.yaml",
+        {
+          "package.json": { name: "mono", dependencies: { "no-deps": "catalog:" } },
+          "pnpm-workspace.yaml": "packages:\n  - packages/*\ncatalog:\n  leaf: ^1.0.0\n",
+        },
+        ".",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+      [
+        "a name that its owner declares as a range first",
+        {
+          "package.json": solo({ dependencies: { "no-deps": "^1.0.0" }, devDependencies: { "no-deps": "catalog:" } }),
+        },
+        ".",
+        "install",
+        [row],
+        "add --catalog no-deps",
+        "edits a dependency list",
+      ],
+      [
+        "a name that its owner declares in two catalogs",
+        {
+          "package.json": twoCatalogs({
+            dependencies: { "no-deps": "catalog:" },
+            devDependencies: { "no-deps": "catalog:tools" },
+          }),
+        },
+        ".",
+        "install",
+        [toolsRow, row],
+        "add --catalog no-deps",
+        "exits 1",
+      ],
+    ];
+
+    test.each(rowsOnly)("%s: no line", async (_, files, cwd, command, rows, withheld, outcome) => {
+      using dir = project(files);
+      const typedIn = join(String(dir), cwd);
+
+      const { err, exitCode } = await run(typedIn, command.split(" "));
+      expect(rowsAndCommands(err)).toEqual(rows);
+      expect(exitCode).toBe(1);
+
+      const before = await packageJsons(String(dir), files);
+      const pasted = await run(typedIn, withheld.split(" "));
+      const after = await packageJsons(String(dir), files);
+      if (outcome === "exits 1") {
+        expect({ after, exitCode: pasted.exitCode }).toEqual({ after: before, exitCode: 1 });
+      } else {
+        expect(dependencyLists(after)).not.toEqual(dependencyLists(before));
+      }
+    });
+
+    test("a row next to an optional dependency that the registry does not have: the line repairs the install", async () => {
+      using dir = project({
+        "package.json": solo({
+          dependencies: { "no-deps": "catalog:" },
+          optionalDependencies: { "does-not-exist": "1.0.0" },
+        }),
+      });
+
+      const { err, exitCode } = await run(String(dir), ["install"]);
+      expect(rowsAndCommands(err)).toEqual([row, "  bun add --catalog no-deps"]);
+      expect(exitCode).toBe(1);
+
+      expect((await run(String(dir), ["add", "--catalog", "no-deps"])).exitCode).toBe(0);
+      expect((await file(join(String(dir), "package.json")).json()).catalog).toEqual({ "no-deps": "^2.0.0" });
     });
   });
 });

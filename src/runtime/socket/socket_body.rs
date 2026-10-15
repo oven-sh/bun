@@ -26,7 +26,7 @@ use bun_jsc::SysErrorJsc;
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
-use crate::socket::{SSLConfig, SSLConfigFromJs};
+use crate::socket::{DialTarget, SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
@@ -3274,6 +3274,63 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// `_handle.connect(req, address, port)`, or `connect(req, path)` for a
+    /// pipe: node:net dials through the handle the way Node's TCPWrap and
+    /// PipeWrap do, so code that replaces the method on the handle (an
+    /// interceptor) takes over the dial. The peer is the positional target.
+    /// `req` carries the rest of the dial options (`tls`, `pauseOnConnect`,
+    /// `localAddress`, `localPort`, the handler table and its `data`), and
+    /// the handlers complete `req.oncomplete`. Returns 0: a dial that fails
+    /// at the syscall reports through `connectError` inside this call.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn connect(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding!();
+        let [req, address, port] = callframe.arguments_as_array::<3>();
+        if !address.is_string() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected \"address\" to be a string"))
+            );
+        }
+        let address = address.to_utf8(global)?;
+        let target = if port.is_undefined() {
+            DialTarget::Unix(address)
+        } else {
+            let port: u16 = global.validate_integer_range(
+                port,
+                0u16,
+                jsc::IntegerRange {
+                    min: 0,
+                    max: 65535,
+                    field_name: b"port",
+                    ..Default::default()
+                },
+            )?;
+            DialTarget::Host {
+                host: address,
+                port,
+            }
+        };
+        let this_ptr = ptr::from_ref(this).cast_mut();
+        let (tcp, tls) = if SSL {
+            (None, Some(this_ptr.cast::<TLSSocket>()))
+        } else {
+            (Some(this_ptr.cast::<TCPSocket>()), None)
+        };
+        super::listener::Listener::connect_inner(
+            &global.js_thread_of_caller(callframe),
+            tcp,
+            tls,
+            req,
+            super::listener::Dialer::NetHandle,
+            Some(target),
+        )?;
+        Ok(JSValue::from(0i32))
     }
 
     #[bun_jsc::host_fn(method)]

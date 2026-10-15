@@ -22,7 +22,7 @@ use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    DialTarget, Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -264,7 +264,8 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server, None)?;
         // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
         // `Listener` clones out of it.
         //
@@ -1120,7 +1121,7 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn connect(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
-        Self::connect_inner(cx, None, None, opts)
+        Self::connect_inner(cx, None, None, opts, Dialer::Promise, None)
     }
 
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
@@ -1129,13 +1130,15 @@ impl Listener {
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
         opts: JSValue,
+        dialer: Dialer,
+        target: Option<DialTarget>,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // Dialing would report: a port that refuses (a listener the same script just made is one,
         // closed at birth) fails inside the call, and a loop that redials on failure would never
         // yield, where it did while the graph was live and the port accepted.
         if cx.context().is_stopped() {
-            return Ok(jsc::JSPromise::create(cx.global()).to_js());
+            return Ok(dialer.promise(cx, None));
         }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(cx
@@ -1146,7 +1149,8 @@ impl Listener {
 
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
-        let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client)?;
+        let mut socket_config =
+            SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client, target)?;
         // No JS wrapper holds the handlers cell until `connect_finish` creates
         // the socket's; the option getters below run user JS that can GC.
         let handlers = Rc::clone(&socket_config.handlers);
@@ -1261,9 +1265,7 @@ impl Listener {
 
                 let mut ssl_taken = socket_config.ssl.take();
 
-                let promise = jsc::JSPromise::create(cx.global());
-                let promise_value = promise.to_js();
-                handlers.set_promise(cx.global(), promise_value);
+                let promise_value = dialer.promise(cx, Some(&handlers));
 
                 if ssl_enabled {
                     let tls: bun_ptr::ThisPtr<TLSSocket> = if let Some(prev_ptr) = prev_maybe_tls {
@@ -1483,9 +1485,7 @@ impl Listener {
         let pause_on_connect = socket_config.pause_on_connect;
         let mut ssl_taken = socket_config.ssl.take();
 
-        let promise = jsc::JSPromise::create(cx.global());
-        let promise_value = promise.to_js();
-        handlers.set_promise(cx.global(), promise_value);
+        let promise_value = dialer.promise(cx, Some(&handlers));
 
         // Note: `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` —
         // dispatched to a const-generic helper for monomorphization.
@@ -1583,6 +1583,34 @@ impl Listener {
         out.put(global, b"address", address_js);
         out.put(global, b"port", port_js);
         Ok(JSValue::UNDEFINED)
+    }
+}
+
+/// Who dials, and so how the outcome is reported.
+#[derive(Clone, Copy)]
+pub(crate) enum Dialer {
+    /// `Bun.connect()` and the fd adoption of node:net: the returned promise
+    /// settles with the socket or the connect error.
+    Promise,
+    /// node:net's `_handle.connect()` / `connect6()`: the handler table's
+    /// `open` / `connectError` complete `req.oncomplete`, so no promise is made.
+    NetHandle,
+}
+
+impl Dialer {
+    /// The connect promise for `Promise`, stored in the handlers cell so the
+    /// socket can settle it. `UNDEFINED` for a handle dial.
+    fn promise(self, cx: &bun_jsc::JsThread<'_>, handlers: Option<&Rc<Handlers>>) -> JSValue {
+        match self {
+            Dialer::Promise => {
+                let promise_value = jsc::JSPromise::create(cx.global()).to_js();
+                if let Some(handlers) = handlers {
+                    handlers.set_promise(cx.global(), promise_value);
+                }
+                promise_value
+            }
+            Dialer::NetHandle => JSValue::UNDEFINED,
+        }
     }
 }
 

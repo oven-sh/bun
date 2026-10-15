@@ -497,6 +497,7 @@ impl SocketConfig {
         global: &JSGlobalObject,
         generated: SocketOptions<'_>,
         mode: SocketMode,
+        target: Option<DialTarget>,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
@@ -550,43 +551,15 @@ impl SocketConfig {
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
+        } else if let Some(target) = target {
+            match target {
+                DialTarget::Unix(path) => result.set_unix(global, path)?,
+                DialTarget::Host { host, port } => result.set_host(global, host, Some(port))?,
+            }
         } else if let Some(unix) = generated.unix_ {
-            if unix.length() == 0 {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
-            }
-            result.hostname_or_unix = unix.into_utf8();
-            let slice = result.hostname_or_unix.slice();
-            if slice.starts_with(b"file://")
-                || slice.starts_with(b"unix://")
-                || slice.starts_with(b"sock://")
-            {
-                let without_prefix = slice[7..].to_vec();
-                result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
-            }
+            result.set_unix(global, unix.into_utf8())?;
         } else if let Some(hostname) = generated.hostname {
-            if hostname.length() == 0 {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
-            }
-            result.hostname_or_unix = hostname.into_utf8();
-            let slice = result.hostname_or_unix.slice();
-            if bun_core::strings::contains_char(slice, 0) {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "\"hostname\" must not contain null bytes"
-                )));
-            }
-            result.port = Some(match generated.port {
-                Some(p) => p,
-                None => match bun_url::URL::parse(slice).get_port() {
-                    Some(p) => p,
-                    None => {
-                        return Err(
-                            global.throw_invalid_arguments(format_args!("Missing \"port\""))
-                        );
-                    }
-                },
-            });
+            result.set_host(global, hostname.into_utf8(), generated.port)?;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""
@@ -595,14 +568,71 @@ impl SocketConfig {
         Ok(result)
     }
 
+    fn set_unix(&mut self, global: &JSGlobalObject, unix: Utf8Bytes<'static>) -> JsResult<()> {
+        if unix.is_empty() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path"))
+            );
+        }
+        self.hostname_or_unix = unix;
+        let slice = self.hostname_or_unix.slice();
+        if slice.starts_with(b"file://")
+            || slice.starts_with(b"unix://")
+            || slice.starts_with(b"sock://")
+        {
+            let without_prefix = slice[7..].to_vec();
+            self.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
+        }
+        Ok(())
+    }
+
+    fn set_host(
+        &mut self,
+        global: &JSGlobalObject,
+        hostname: Utf8Bytes<'static>,
+        port: Option<u16>,
+    ) -> JsResult<()> {
+        if hostname.is_empty() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\""))
+            );
+        }
+        self.hostname_or_unix = hostname;
+        let slice = self.hostname_or_unix.slice();
+        if bun_core::strings::contains_char(slice, 0) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "\"hostname\" must not contain null bytes"
+            )));
+        }
+        self.port = Some(match port {
+            Some(p) => p,
+            None => match bun_url::URL::parse(slice).get_port() {
+                Some(p) => p,
+                None => {
+                    return Err(global.throw_invalid_arguments(format_args!("Missing \"port\"")));
+                }
+            },
+        });
+        Ok(())
+    }
+
     pub(crate) fn from_js(
         vm: &'static VirtualMachine,
         opts: JSValue,
         global_object: &JSGlobalObject,
         mode: SocketMode,
+        target: Option<DialTarget>,
     ) -> JsResult<SocketConfig> {
         SocketOptions::from_js(global_object, opts, |generated| {
-            Self::from_generated(vm, global_object, generated, mode)
+            Self::from_generated(vm, global_object, generated, mode, target)
         })
     }
+}
+
+/// The peer of a dial named apart from the options object: node:net's
+/// `_handle.connect(req, address, port)` / `connect(req, path)` pass it
+/// positionally, like Node's TCPWrap and PipeWrap.
+pub(crate) enum DialTarget {
+    Host { host: Utf8Bytes<'static>, port: u16 },
+    Unix(Utf8Bytes<'static>),
 }

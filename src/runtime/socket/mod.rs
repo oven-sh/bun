@@ -85,7 +85,7 @@ pub(crate) use ssl_config::{
 // submodules compile, re-export instead so
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
-pub(crate) use handlers::{Handlers, SocketConfig};
+pub(crate) use handlers::{DialTarget, Handlers, SocketConfig};
 pub(crate) use listener::Listener;
 pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;

@@ -34,6 +34,7 @@ import {
   // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
+import os from "node:os";
 import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 
@@ -3582,4 +3583,160 @@ it.skipIf(isWindows || isMusl).each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+});
+
+// Node dials through the handle: `_handle.connect(req, address, port)`,
+// `connect6(...)` and `connect(req, path)` for a pipe, completed through
+// `req.oncomplete`. An interceptor (@mswjs/interceptors 0.45, msw 3) replaces
+// those methods on the handle at "connectionAttempt" to take over the dial.
+// https://github.com/oven-sh/bun/issues/44551
+describe("connect through the handle", () => {
+  it.each([
+    ["connect", { host: "127.0.0.1", port: 1 }, ["127.0.0.1", 1]],
+    ["connect6", { host: "::1", port: 1 }, ["::1", 1]],
+    ["connect", { path: join(socket_domain, "handle-connect.sock") }, [join(socket_domain, "handle-connect.sock")]],
+  ])("%s %o is a method of the handle and a replacement takes over the dial", async (method, options, expected) => {
+    const socket = new Socket();
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<{ thisValue: unknown; req: any; args: unknown[] }>();
+      socket.on("error", reject);
+      socket.on("connect", () => reject(new Error("the replacement was bypassed")));
+      socket.once("connectionAttempt", () => {
+        expect(typeof socket._handle.connect).toBe("function");
+        expect(typeof socket._handle.connect6).toBe("function");
+        socket._handle[method] = function (req, ...args) {
+          resolve({ thisValue: this, req, args });
+        };
+      });
+      socket.connect(options);
+      const { thisValue, req, args } = await promise;
+      expect(thisValue).toBe(socket._handle);
+      expect(args).toEqual(expected);
+      expect(socket.connecting).toBe(true);
+
+      socket.removeAllListeners("connect");
+      const connected = once(socket, "connect");
+      req.oncomplete(0, socket._handle, req, true, true);
+      await connected;
+      expect(socket.connecting).toBe(false);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("a replacement that forwards to the handle's own connect dials for real", async () => {
+    const server = createServer(connection => connection.end("hello")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = new Socket();
+    try {
+      const calls: unknown[] = [];
+      socket.once("connectionAttempt", () => {
+        const handle = socket._handle;
+        const original = handle.connect;
+        handle.connect = function (req, address, port) {
+          const err = original.call(this, req, address, port);
+          calls.push([address, port, err]);
+          return err;
+        };
+      });
+      socket.connect(server.address().port, "127.0.0.1");
+      const [data] = await once(socket, "data");
+      expect(String(data)).toBe("hello");
+      expect(calls).toEqual([["127.0.0.1", server.address().port, 0]]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("a replacement that forwards a different address and port dials that peer", async () => {
+    const listen = () => {
+      const server = createServer(connection => connection.end(String(server.address().port))).listen(0, "127.0.0.1");
+      return server;
+    };
+    const first = listen();
+    const second = listen();
+    await Promise.all([once(first, "listening"), once(second, "listening")]);
+    const socket = new Socket();
+    try {
+      socket.once("connectionAttempt", () => {
+        const handle = socket._handle;
+        const original = handle.connect;
+        handle.connect = function (req) {
+          return original.call(this, req, "127.0.0.1", second.address().port);
+        };
+      });
+      socket.connect(first.address().port, "127.0.0.1");
+      const [data] = await once(socket, "data");
+      expect(String(data)).toBe(String(second.address().port));
+      expect(socket.remotePort).toBe(second.address().port);
+    } finally {
+      socket.destroy();
+      first.close();
+      second.close();
+    }
+  });
+
+  it("a replacement that swaps in a passthrough connection's handle delivers its data", async () => {
+    const server = createServer(connection => connection.end("hello")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address();
+    const socket = new Socket();
+    const events: string[] = [];
+    try {
+      // The pattern of @mswjs/interceptors: the handle records the dial and
+      // never connects, a second socket dials, its handle replaces the first
+      // one and the replaced handle is closed.
+      const requests: unknown[] = [];
+      let passthrough: Socket;
+      socket.once("connectionAttempt", () => {
+        socket._handle.connect = socket._handle.connect6 = req => void requests.push(req);
+        passthrough = createConnection(port, "127.0.0.1");
+        socket._read = () => passthrough.resume();
+        passthrough.on("connect", () => {
+          const replaced = socket._handle;
+          socket._handle = passthrough._handle;
+          replaced.close();
+          socket.connecting = false;
+          socket.emit("connect");
+        });
+        passthrough.on("data", chunk => socket.push(chunk));
+        passthrough.on("end", () => socket.push(null));
+      });
+      for (const name of ["connect", "data", "end", "close"]) socket.on(name, () => events.push(name));
+      const received = new Promise<string>((resolve, reject) => {
+        socket.on("data", chunk => resolve(String(chunk)));
+        // Closing the replaced handle must not close the socket it no longer belongs to.
+        socket.on("close", () => reject(new Error(`closed before data: ${events.join(",")}`)));
+      });
+      socket.connect(port, "127.0.0.1");
+      expect(await received).toBe("hello");
+      await once(socket, "end");
+      expect(events).toEqual(["connect", "data", "end"]);
+      expect(requests).toHaveLength(1);
+      expect(socket._handle).toBe(passthrough!._handle);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  it("an errno returned by a replacement destroys the socket with a connect error", async () => {
+    const socket = new Socket();
+    try {
+      socket.once("connectionAttempt", () => {
+        socket._handle.connect = () => -os.constants.errno.EACCES;
+      });
+      socket.connect({ host: "127.0.0.1", port: 1 });
+      const [error] = await once(socket, "error");
+      expect(error).toMatchObject({
+        syscall: "connect",
+        errno: -os.constants.errno.EACCES,
+        address: "127.0.0.1",
+        port: 1,
+      });
+    } finally {
+      socket.destroy();
+    }
+  });
 });

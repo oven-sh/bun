@@ -2488,22 +2488,27 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
 
 const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
 let dtUnknownReaddirShim: Promise<string> | undefined;
+let removedDirReaddirShim: Promise<string> | undefined;
 
-async function compileDtUnknownReaddirShim(): Promise<string> {
+/** Compiles test/fixtures/<name>-shim.c to a library for LD_PRELOAD. */
+async function compileReaddirShim(name: string, helper: string, defines: string[] = []): Promise<string> {
   const cc = which("cc") || which("clang") || which("gcc");
-  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
-  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
-  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  if (!cc) throw new Error(`${helper}: no C compiler (cc/clang/gcc) found in $PATH`);
+  const shim = join(tmpdirSync(`${name}-`), "shim.so");
+  const source = join(import.meta.dir, "fixtures", `${name}-shim.c`);
   const proc = Bun.spawn({
-    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    cmd: [cc, "-shared", "-fPIC", "-O2", ...defines, "-o", shim, source, "-ldl"],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0)
-    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  if (exitCode !== 0) throw new Error(`${helper}: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
   return shim;
+}
+
+function envWithPreload(shim: string): NodeJS.Dict<string> {
+  return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
 }
 
 /**
@@ -2526,8 +2531,41 @@ export const dtUnknownReaddir = {
    * with the returned env.
    */
   async env(): Promise<NodeJS.Dict<string>> {
-    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
-    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+    const defines = [`-DMARKER="${dtUnknownReaddirMarker}"`];
+    const shim = await (dtUnknownReaddirShim ??= compileReaddirShim("dt-unknown-readdir", "dtUnknownReaddir", defines));
+    return envWithPreload(shim);
+  },
+};
+
+/**
+ * Runs bun beside something that removes the directories bun reads, with no
+ * race: `env(log)` preloads a shim that acts from inside `getdents64`. It
+ * removes a directory named `vanish-before-read` or `vanish-mid-read`, so that
+ * the kernel fails the read with ENOENT, and it fails every read of a directory
+ * named `read-fails-eio` with EIO. It appends a line to `log` each time; assert
+ * on `actions()`, otherwise a test here passes vacuously if bun ever stops
+ * issuing `getdents64` through libc's `syscall()` wrapper.
+ */
+export const removedDirReaddir = {
+  /** glibc with a C compiler. bun-musl is statically linked: LD_PRELOAD cannot load the shim. */
+  get available(): boolean {
+    return isGlibc && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  /** Compiles the shim the first time it is called. */
+  async env(log: string): Promise<NodeJS.Dict<string>> {
+    const shim = await (removedDirReaddirShim ??= compileReaddirShim("removed-dir-readdir", "removedDirReaddir"));
+    return { ...envWithPreload(shim), REMOVED_DIR_READDIR_LOG: log };
+  },
+  /** What the shim did, sorted: `<name of the directory> <its path below root>`. */
+  actions(log: string, root: string): string[] {
+    if (!fs.existsSync(log)) return [];
+    const prefix = fs.realpathSync(root) + sep;
+    return fs
+      .readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map(line => line.replace(prefix, ""))
+      .sort();
   },
 };
 

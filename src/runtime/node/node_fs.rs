@@ -6438,7 +6438,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
+    /// Gone or not enterable since the parent listed it. (The Linux and FreeBSD iterators end a gone directory's listing.)
     fn readdir_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }

@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  removedDirReaddir,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -6251,67 +6252,16 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   expect(proc.exitCode).toBe(0);
 });
 
-// A subdirectory can be removed between the moment the recursive walk lists it
-// in its parent and the moment the walk reads it. The walk skipped the
-// subdirectory when its open failed with ENOENT, but when the removal landed
-// after the open, the kernel reported ENOENT from getdents64(2) and the whole
-// call failed (readdirSync blamed the root). libc's readdir(3), and so node,
-// report that ENOENT as the end of the directory; bun reads with the raw
-// syscall and sees it. A concurrent deleter is not deterministic, so
-// LD_PRELOAD a shim that plays one from inside getdents64: the marked
-// directories are really removed and the kernel itself produces the ENOENT.
-// bun issues getdents64 through libc's syscall(), which is the interposable
-// symbol on this path. glibc-only, same as the statfs shim above.
-it.skipIf(!isGlibc || !cc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
+// A directory can be removed after bun opened it and before bun has read it to
+// the end: by a concurrent deleter, or between the moment a recursive walk
+// lists a subdirectory and the moment the walk reads it. Linux then answers
+// getdents64(2) with ENOENT. libc's readdir(3), and so node, report that as
+// the end of the directory. A concurrent deleter is not deterministic, so
+// `removedDirReaddir` preloads a shim that plays one from inside getdents64:
+// the marked directories are really removed and the kernel itself produces
+// the ENOENT.
+it.skipIf(!removedDirReaddir.available)("a directory that is removed while it is read ends its listing", async () => {
   using dir = tempDir("readdir-vanishing-subdir", {
-    "shim.c": `
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <limits.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-
-static long (*next_syscall)(long, ...);
-
-long syscall(long nr, ...) {
-  va_list ap;
-  va_start(ap, nr);
-  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
-  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
-  va_end(ap);
-  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
-  if (nr == SYS_getdents64) {
-    int fd = (int)a1;
-    char link[64], target[PATH_MAX];
-    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
-    ssize_t n = readlink(link, target, sizeof target - 1);
-    if (n > 0) {
-      target[n] = 0;
-      const char *base = strrchr(target, '/');
-      base = base ? base + 1 : target;
-      if (strcmp(base, "vanish-before-read") == 0) {
-        // Removed before the first read: that read fails with ENOENT.
-        rmdir(target);
-      } else if (strcmp(base, "vanish-mid-read") == 0) {
-        // Removed once the first read handed out its entries: the read that
-        // would report the end of the directory fails with ENOENT instead.
-        // (After the rmdir the link reads "... (deleted)", so this branch
-        // is not taken again.)
-        long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
-        if (rc > 0) {
-          unlinkat(fd, "inner.txt", 0);
-          rmdir(target);
-        }
-        return rc;
-      }
-    }
-  }
-  return next_syscall(nr, a1, a2, a3, a4, a5, a6);
-}
-`,
     "child.js": `
 const fs = require("node:fs");
 const path = require("node:path");
@@ -6329,6 +6279,16 @@ function makeDoomedRoot(parent) {
   fs.mkdirSync(root, { recursive: true });
   return root;
 }
+// The doomed directory is empty here: "vanish-mid-read" also removes a file
+// the walk has listed, and rm reports that from its unlink, not from the read.
+function makeRmTree(root, depth = 0) {
+  let dir = root;
+  for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
+  fs.mkdirSync(path.join(dir, "keep"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "keep", "file.txt"), "x");
+  fs.mkdirSync(path.join(dir, "vanish-before-read"));
+  return root;
+}
 const names = entries => entries.map(String).sort();
 const direntNames = (root, entries) =>
   entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
@@ -6339,6 +6299,7 @@ const outcome = async fn => {
     return { code: e.code, path: e.path };
   }
 };
+const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left: fs.existsSync(root) });
 
 (async () => {
   const out = {};
@@ -6360,32 +6321,39 @@ const outcome = async fn => {
   );
   out.asyncTypesLeft = fs.readdirSync(root);
 
-  // Only subdirectories are skipped. A read error on the root itself is still
-  // returned, recursive or not.
+  // The root itself: it has no entries left to list.
   root = makeDoomedRoot("root-sync");
   out.rootSync = await outcome(() => fs.readdirSync(root, { recursive: true }));
   root = makeDoomedRoot("root-async");
   out.rootAsync = await outcome(() => fs.promises.readdir(root, { recursive: true }));
   root = makeDoomedRoot("root-plain");
   out.rootPlain = await outcome(() => fs.readdirSync(root));
+  // Every other read error is still returned.
+  root = path.join("root-eio", "read-fails-eio");
+  fs.mkdirSync(root, { recursive: true });
+  out.rootEio = await outcome(() => fs.readdirSync(root));
+
+  // Recursive rm removes the rest of the tree, with and without force.
+  for (const force of [true, false]) {
+    const key = force ? "Force" : "";
+    root = makeRmTree("rm-sync" + key);
+    out["rmSync" + key] = await removed(root, () => fs.rmSync(root, { recursive: true, force }));
+    root = makeRmTree("rm-async" + key);
+    out["rmAsync" + key] = await removed(root, () => fs.promises.rm(root, { recursive: true, force }));
+    // Deeper than the 16 directories the walk keeps open, so that its other
+    // loop reads the doomed directory.
+    root = makeRmTree("rm-deep" + key, 20);
+    out["rmDeep" + key] = await removed(root, () => fs.rmSync(root, { recursive: true, force }));
+  }
   console.log(JSON.stringify(out));
 })();
 `,
   });
 
-  const soPath = path.join(String(dir), "shim.so");
-  const compile = Bun.spawnSync({
-    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
-    env: bunEnv,
-  });
-  if (compile.exitCode !== 0) {
-    throw new Error(`Failed to build readdir race shim:\n${compile.stderr.toString()}`);
-  }
-
-  const existing = bunEnv.LD_PRELOAD;
+  const log = path.join(String(dir), "shim.log");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "child.js"],
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
+    env: await removedDirReaddir.env(log),
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -6401,8 +6369,22 @@ const outcome = async fn => {
     "vanish-mid-read",
     "vanish-mid-read/inner.txt",
   ];
-  // The `*Left` lists prove that the shim removed both marked directories
-  // while the walk ran. If it did not interpose, they are still there.
+  const gone = { error: null, left: false };
+  const deep = (root: string) => path.join(root, ...Array.from({ length: 20 }, (_, i) => "level" + i));
+  const trees = ["async", "async-types", "sync", "sync-types"];
+  // What the shim did: if it did not interpose, nothing here was removed.
+  expect(removedDirReaddir.actions(log, String(dir))).toEqual(
+    [
+      "read-fails-eio root-eio/read-fails-eio",
+      ...[
+        ...trees,
+        ...["root-async", "root-plain", "root-sync"],
+        ...["rm-async", "rm-asyncForce", "rm-sync", "rm-syncForce"],
+        ...[deep("rm-deep"), deep("rm-deepForce")],
+      ].map(root => `vanish-before-read ${root}/vanish-before-read`),
+      ...trees.map(root => `vanish-mid-read ${root}/vanish-mid-read`),
+    ].sort(),
+  );
   expect(JSON.parse(stdout)).toEqual({
     sync: walked,
     syncLeft: ["keep"],
@@ -6412,11 +6394,58 @@ const outcome = async fn => {
     asyncLeft: ["keep"],
     asyncTypes: walked,
     asyncTypesLeft: ["keep"],
-    rootSync: { code: "ENOENT", path: path.join("root-sync", "vanish-before-read") },
-    rootAsync: { code: "ENOENT", path: path.join("root-async", "vanish-before-read") },
-    rootPlain: { code: "ENOENT", path: path.join("root-plain", "vanish-before-read") },
+    rootSync: [],
+    rootAsync: [],
+    rootPlain: [],
+    rootEio: { code: "EIO", path: path.join("root-eio", "read-fails-eio") },
+    rmSyncForce: gone,
+    rmAsyncForce: gone,
+    rmDeepForce: gone,
+    rmSync: gone,
+    rmAsync: gone,
+    rmDeep: gone,
   });
   expect(exitCode).toBe(0);
+});
+
+// /proc/self/fd/<n> names a directory that was removed after it was opened,
+// so the same kernel answer is reachable with no shim and no race.
+it.skipIf(!isLinux)("a directory that was removed after it was opened reads as empty", async () => {
+  using dir = tempDir("readdir-removed-after-open", {});
+  const fds: number[] = [];
+  const removed = (name: string) => {
+    const p = path.join(String(dir), name);
+    fs.mkdirSync(p);
+    const fd = fs.openSync(p, "r");
+    fds.push(fd);
+    fs.rmdirSync(p);
+    return `/proc/self/fd/${fd}`;
+  };
+  try {
+    const opened = fs.opendirSync(removed("opendir"));
+    const copy = path.join(String(dir), "copy");
+    fs.cpSync(removed("cp") + "/", copy, { recursive: true });
+    expect({
+      readdirSync: fs.readdirSync(removed("sync")),
+      withFileTypes: fs.readdirSync(removed("types"), { withFileTypes: true }),
+      promise: await fs.promises.readdir(removed("promise")),
+      recursiveSync: fs.readdirSync(removed("recursive-sync"), { recursive: true }),
+      recursivePromise: await fs.promises.readdir(removed("recursive-promise"), { recursive: true }),
+      opendir: opened.readSync(),
+      cpSync: fs.readdirSync(copy),
+    }).toEqual({
+      readdirSync: [],
+      withFileTypes: [],
+      promise: [],
+      recursiveSync: [],
+      recursivePromise: [],
+      opendir: null,
+      cpSync: [],
+    });
+    opened.closeSync();
+  } finally {
+    for (const fd of fds) fs.closeSync(fd);
+  }
 });
 
 it("fs.Stat constructor", () => {

@@ -148,9 +148,37 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
     }
 }
 
+/// `getdents64(2)` (FreeBSD: `getdents`) into `buf`: the byte count written, 0 at the end of the directory. `None`: the
+/// directory was removed after it was opened. The kernel answers ENOENT then. As in glibc and musl `readdir(3)`, that
+/// is the end of the listing and not an error.
+/// SAFETY: `buf` must be writable for `len` bytes.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[inline]
+pub unsafe fn getdents64(fd: Fd, buf: *mut u8, len: usize) -> Maybe<Option<usize>> {
+    #[cfg(target_os = "freebsd")]
+    unsafe extern "C" {
+        // The `libc` crate binds neither `getdents` nor `getdirentries` on FreeBSD.
+        fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
+    }
+    // SAFETY: caller contract.
+    #[cfg(target_os = "freebsd")]
+    let rc = unsafe { getdents(fd.native(), buf, len) };
+    // SAFETY: caller contract.
+    #[cfg(not(target_os = "freebsd"))]
+    let rc = unsafe { linux_syscall::getdents64(fd.native(), buf, len) };
+    if rc < 0 {
+        let e = last_errno();
+        if e == libc::ENOENT {
+            return Ok(None);
+        }
+        return Err(Error::from_code_int(e, Tag::getdents64));
+    }
+    Ok(Some(rc as usize))
+}
+
 pub mod dir_iterator {
     use super::{EntryKind, Fd, Result};
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     use super::{Error, Tag};
     use bun_paths::OSPathChar;
 
@@ -341,12 +369,14 @@ pub mod dir_iterator {
 
     // ── Linux / Android ──────────────────────────────────────────────────
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
-    // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
+    // `super::getdents64` issues the syscall by number, not through libc `readdir(3)`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     struct State {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        /// The listing ended because the directory was removed.
+        removed: bool,
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl State {
@@ -356,28 +386,23 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                removed: false,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
                 if self.index >= self.end_index {
-                    // glibc doesn't expose getdents64; go straight to the syscall.
-                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        super::linux_syscall::getdents64(
-                            dir.native(),
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                        )
+                    // SAFETY: buf is valid for BUF_SIZE bytes.
+                    let read = unsafe { super::getdents64(dir, self.buf.as_mut_ptr(), BUF_SIZE) }?;
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
                     };
-                    if rc < 0 {
-                        return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                 }
                 // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
                 //                         u8 d_type; char d_name[]; }
@@ -533,27 +558,16 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            unsafe extern "C" {
-                fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
-            }
             loop {
                 if self.index >= self.end_index {
                     // SAFETY: buf is valid for BUF_SIZE bytes.
-                    let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
-                    if rc < 0 {
-                        let e = super::last_errno();
-                        // FreeBSD reports ENOENT when iterating an unlinked
-                        // but still-open directory.
-                        if e == libc::ENOENT {
-                            return Ok(None);
-                        }
-                        return Err(Error::from_code_int(e, Tag::getdents64));
-                    }
-                    if rc == 0 {
+                    let read = unsafe { super::getdents64(dir, self.buf.as_mut_ptr(), BUF_SIZE) }?;
+                    let n = read.unwrap_or(0);
+                    if n == 0 {
                         return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                 }
                 // FreeBSD 12+ `struct dirent` (ino64):
                 //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
@@ -787,6 +801,18 @@ pub mod dir_iterator {
         #[inline]
         pub fn dir(&self) -> Fd {
             self.dir
+        }
+        /// The listing ended because the directory was removed after it was opened. Linux and Android only.
+        #[inline]
+        pub fn dir_was_removed(&self) -> bool {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                self.state.removed
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            {
+                false
+            }
         }
         /// Windows-only kernel-side name filter (passed to `NtQueryDirectoryFile`).
         /// On POSIX this is a no-op; callers must filter themselves.

@@ -3249,6 +3249,8 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     "\\c": "",
     "C:\\d": "",
     "w\\d/z": "",
+    "e\\/z": "",
+    "e/z": "",
   });
   symlinkSync("dir/sub", join(String(dir), "link"));
 
@@ -3296,6 +3298,8 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     out.push(await run(""));
     process.chdir("w\\\\d");
     out.push(await run("."), await run("z"));
+    process.chdir("../e\\\\");
+    out.push(await run("."), await run("z"));
     console.log(JSON.stringify(out));
   `;
 
@@ -3315,8 +3319,22 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     row("", "ENOENT realpath"),
     row("/w\\d", "/w\\d"),
     row("/w\\d/z", "/w\\d/z"),
+    row("/e\\", "/e\\"),
+    row("/e\\/z", "/e\\/z"),
   ]);
   expect(exitCode).toBe(0);
+});
+
+it("promises.realpath is realpath.native", async () => {
+  const { root } = path.parse(process.cwd());
+  expect(await promises.realpath(root)).toBe(realpathSync.native(root));
+  expect(await promises.realpath(root)).toEndWith(path.sep);
+
+  using dir = tempDir("fs-promises-realpath", {});
+  await expect(promises.realpath(join(String(dir), "nope"))).rejects.toMatchObject({
+    code: "ENOENT",
+    syscall: "realpath",
+  });
 });
 
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows

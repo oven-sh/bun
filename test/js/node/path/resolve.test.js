@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import assert from "node:assert";
+import fs from "node:fs";
 // import child from "node:child_process";
 import path from "node:path";
 // import fixtures from "./common/fixtures.js";
@@ -199,5 +200,24 @@ describe("path.resolve", () => {
     // On Windows, paths use backslash; on POSIX, forward slash
     const expectedEnding = isWindows ? "\\c" : "/c";
     assert.ok(result.endsWith(expectedEnding));
+  });
+
+  test.skipIf(isWindows)("a backslash at the end of the cwd is part of its name", () => {
+    using dir = tempDir("resolve-backslash-cwd", { "e\\/z": "" });
+
+    const proc = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const path = require("node:path");
+         console.log(JSON.stringify([path.resolve("z"), path.resolve("."), path.relative("..", "z")]));`,
+      ],
+      env: bunEnv,
+      cwd: path.join(String(dir), "e\\"),
+    });
+
+    const cwd = fs.realpathSync(String(dir)) + "/e\\";
+    expect(JSON.parse(proc.stdout.toString())).toEqual([cwd + "/z", cwd, "e\\/z"]);
+    expect(proc.exitCode).toBe(0);
   });
 });

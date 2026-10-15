@@ -2453,6 +2453,45 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
   }
 });
 
+test.concurrent(
+  "--isolate parses the source of an internal module for the first file that loads it, and for no other",
+  async () => {
+    const file = `
+    import { test, expect } from "bun:test";
+    import { internalModulesCompiledFromSource } from "bun:internal-for-testing";
+
+    test("loads node:zlib", () => {
+      const before = internalModulesCompiledFromSource();
+      const zlib = require("node:zlib");
+      expect(zlib.gunzipSync(zlib.gzipSync("text")).toString()).toBe("text");
+      zlib.changedByAFile = (zlib.changedByAFile ?? 0) + 1;
+      console.log(JSON.stringify({ parsedAny: internalModulesCompiledFromSource() > before, changes: zlib.changedByAFile }));
+    });
+  `;
+    using dir = tempDir("isolate-internal-modules", { "a.test.ts": file, "b.test.ts": file, "c.test.ts": file });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(line => line.startsWith("{"));
+    // Every file still gets a module object of its own.
+    expect({ stderr, files: lines.map(line => JSON.parse(line)) }).toEqual({
+      stderr: expect.stringContaining("3 pass"),
+      files: [
+        { parsedAny: true, changes: 1 },
+        { parsedAny: false, changes: 1 },
+        { parsedAny: false, changes: 1 },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 describe.concurrent("the SourceProvider cache skips files that use import.meta.glob() or macros", () => {
   // One size below and one above the RuntimeTranspilerCache's minimum file size.
   const padding = { small: "", large: Buffer.alloc("// padding\n".length * 6000, "// padding\n").toString() };

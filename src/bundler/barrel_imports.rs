@@ -14,9 +14,8 @@ use bun_ast::{ImportKind, import_record};
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
-use crate::Index;
 use crate::bundle_v2::BundleV2;
-use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
+use crate::bundle_v2::bv2_impl::PluginAnswer;
 use crate::parse_task;
 
 bun_core::declare_scope!(barrel, hidden);
@@ -366,46 +365,8 @@ struct BarrelWorkItem<'a> {
 /// Resolve the records the BFS just un-deferred in one barrel (`un_deferred`,
 /// ascending indices), schedule their modules, and patch their source indices.
 fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u32]) -> i32 {
-    let idx = barrel_idx as usize;
-    let target = this.graph.ast.items_target()[idx];
-    let loader = this.graph.input_files.items_loader()[idx];
-    // Move the column cells out so the `&mut self` method calls below don't
-    // alias borrows into `graph.ast` / `graph.input_files`.
-    let heap = this.graph.heap;
-    let mut barrel_ir = core::mem::replace(
-        &mut this.graph.ast.items_import_records_mut()[idx],
-        bun_alloc::ArenaVec::new_in(heap),
-    );
-    let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
-    let source_path: &'static [u8] = source.path.text;
-
-    let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
-        import_records: &mut barrel_ir,
-        source: &source,
-        loader,
-        target,
-        only_records: Some(un_deferred),
-    });
-
-    this.graph.input_files.items_source_mut()[idx] = source;
-
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
-
-    this.patch_import_record_source_indices(
-        &mut barrel_ir,
-        PatchImportRecordsCtx {
-            source_index: Index::init(barrel_idx),
-            source_path,
-            loader,
-            target,
-            only_records: Some(un_deferred),
-            ..Default::default()
-        },
-    );
-
-    this.graph.ast.items_import_records_mut()[idx] = barrel_ir;
-
-    scheduled
+    let target = this.graph.ast.items_target()[barrel_idx as usize];
+    this.resolve_records_of_parsed_file(barrel_idx, target, un_deferred, PluginAnswer::NotAsked)
 }
 
 /// After a new file's import records are patched with source_indices,

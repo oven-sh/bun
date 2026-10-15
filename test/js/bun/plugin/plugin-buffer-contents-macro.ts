@@ -5,7 +5,6 @@
 
 declare global {
   var contents: ArrayBufferView | ArrayBuffer | SharedArrayBuffer | string;
-  var result: { contents: unknown } | undefined;
   // The length of the string that a string `contents` was cut from.
   var cutFromLength: number;
 }
@@ -45,16 +44,13 @@ export function mutated(how: string) {
   return storage().byteLength === 0;
 }
 
-// Makes the JSString of a string `contents` take its own copy of the
-// characters, as any use of it as a property key does. Then drops the string
-// that `contents` was cut from, collects, and allocates strings of that size,
-// so that the freed characters are written again.
+// Uses a string `contents` as a property key, which makes its JSString take
+// its own copy of the characters. Then collects, and allocates strings of the
+// size of the string that `contents` was cut from, so that the characters it
+// pointed into are freed and written again.
 export function atomize() {
   const key: Record<string, number> = {};
   key[globalThis.contents as string] = 1;
-  globalThis.result!.contents = undefined;
-  globalThis.result = undefined;
-  globalThis.contents = "";
   const garbage: string[] = [];
   for (let i = 0; i < 2; i++) {
     Bun.gc(true);

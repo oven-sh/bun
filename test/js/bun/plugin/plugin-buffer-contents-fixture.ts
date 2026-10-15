@@ -340,7 +340,10 @@ if (mode === "mutate") {
 } else if (mode === "limit") {
   // A parser takes a source of less than 2 GiB. The pages of this buffer are never written or read.
   const buffer = new ArrayBuffer(2 ** 31);
-  const contents: Record<string, ArrayBufferView | ArrayBuffer> = { "Uint8Array": new Uint8Array(buffer), "ArrayBuffer": buffer };
+  const contents: Record<string, ArrayBufferView | ArrayBuffer> = {
+    "Uint8Array": new Uint8Array(buffer),
+    "ArrayBuffer": buffer,
+  };
   plugin({
     name: "contents of 2 GiB",
     setup(build) {
@@ -367,7 +370,8 @@ if (mode === "mutate") {
   // substring: its JSString points into the characters of the string it was
   // cut from, and is the only reference to that string. The macro makes the
   // JSString take its own copy, so the collector frees the characters that the
-  // transpiler reads. The transpiler needs a reference of its own to them.
+  // transpiler reads, while the plugin still has `contents`. The transpiler
+  // needs a reference of its own to the characters.
   const literals = Array.from({ length: 8 }, (_, i) => `a string literal that the printer reads back, number ${i}`);
   // Not more than 2048 characters: JSC copies a substring of that length when it becomes a property key.
   const body = [
@@ -386,8 +390,9 @@ if (mode === "mutate") {
     ["build.module require", "string-module-5", "require"],
   ];
 
-  // The substrings are cut in an earlier turn of the event loop, so that no
-  // frame that is live during the load ever held the string they were cut from.
+  // The substrings are cut in an earlier turn of the event loop. When onLoad
+  // cuts them, the string they were cut from is still alive at the collection
+  // in four of the five forms, and those forms then show nothing.
   const substrings: string[] = [];
   await new Promise<void>(resolve =>
     setImmediate(() => {
@@ -401,10 +406,7 @@ if (mode === "mutate") {
   );
   await new Promise(resolve => setImmediate(resolve));
 
-  const next = () => {
-    globalThis.contents = substrings.pop()!;
-    return (globalThis.result = { contents: globalThis.contents, loader: "ts" });
-  };
+  const next = () => ({ contents: (globalThis.contents = substrings.pop()!), loader: "ts" });
   plugin({
     name: "string contents",
     setup(build) {

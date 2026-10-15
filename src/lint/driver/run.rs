@@ -963,6 +963,8 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
+        // Recorded as the loader's mistake, which is printed next.
+        let _ = of_cwd.as_ref().map(|it| loader.check_wildcards(it));
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
             self.out.exit_code = 2;

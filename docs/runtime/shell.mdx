@@ -386,6 +386,22 @@ echo ${TOKEN:+--token $TOKEN}
 
 Bun Shell does not expand a glob or braces in `word`: `${NAME:-*}` is `*`.
 
+Bun Shell does not support the other parameter forms of a POSIX shell, such as `${NAME%pattern}`, `${#NAME}`, `${NAME:=word}`, `$@` and `$#`. A script that has one of them does not run. Bun Shell reports the form before the first command:
+
+```sh strip.sh icon="file-code"
+echo start
+echo ${FILE%.txt}
+```
+
+```sh terminal icon="terminal"
+bun ./strip.sh
+```
+
+```txt
+error: Failed to run strip.sh due to error Parameter expansion `${FILE%.txt}` is not supported.
+note: single quotes or `\$` keep the characters as text. `bun run --shell=system`, or `[run] shell = "system"` in bunfig.toml, runs package.json scripts in the system shell.
+```
+
 `$?` is the exit code that Bun Shell gave the statement, or the `&&` or `||` operand, that ran last. Bun Shell does not give the same exit code as other shells in these cases:
 
 - An assignment from a command substitution reports `0`: after `x=$(false)`, `$?` is `0`.

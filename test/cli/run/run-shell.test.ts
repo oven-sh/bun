@@ -94,6 +94,26 @@ describe.concurrent("run-shell", () => {
     });
   });
 
+  test("bun run --shell=bun reports a parameter form that it does not expand, before the first command", async () => {
+    using dir = tempDir("run-shell-package-params", {
+      "package.json": JSON.stringify({
+        name: "shell-params",
+        scripts: { strip: "echo start && echo ${npm_package_name%-params}" },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", "--silent", "strip"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Parameter expansion `${npm_package_name%-params}` is not supported.\nnote: ");
+    expect(exitCode).toBe(1);
+  });
+
   test("invalid syntax reports the error correctly", async () => {
     const dir = tmpdirSync("bun-shell-test-error");
     mkdirSync(dir, { recursive: true });

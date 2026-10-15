@@ -56,6 +56,11 @@ describe("bun exec", () => {
     exec("echo ${NAME:-$(touch ran)}; ls")
       .stdout("value\n")
       .runAsTest("a $(...) in a word that is not used does not run");
+    exec("echo start; echo ${NAME%e}")
+      .exitCode(1)
+      .stdout("")
+      .stderr({ contains: "Parameter expansion `${NAME%e}` is not supported.\nnote: " })
+      .runAsTest("a form that the shell does not expand stops the script before its first command");
   });
 
   describe("--help works", () => {

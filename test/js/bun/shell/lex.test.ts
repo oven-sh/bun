@@ -887,11 +887,6 @@ describe("lex shell", () => {
       words({ ParamBegin: { op: ":-", quoted: false } }, { Var: "X" }, { Text: "a;b|c>d" }, { ParamEnd: {} }),
     ],
     [
-      "an operator word with no closing brace is text",
-      "echo ${X:-a",
-      words({ Text: "$" }, { BraceBegin: {} }, { Text: "X:-a" }, { Delimit: {} }),
-    ],
-    [
       "$$( is a $ and a $(",
       "echo $$(true)",
       words({ Text: "$" }, { CmdSubstBegin: {} }, { Text: "true" }, { Delimit: {} }, { CmdSubstEnd: {} }),
@@ -903,6 +898,14 @@ describe("lex shell", () => {
     ],
   ])("parameter expansion: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
+  test.each([
+    ["a form that is not supported", "echo ${X%y}", "Parameter expansion `${X%y}` is not supported.\nnote: "],
+    ["a special parameter that is not supported", "echo $@", "Special parameter `$@` is not supported.\nnote: "],
+    ["an operator word with no closing brace", "echo ${X:-a", "Unclosed parameter expansion\nnote: "],
+  ])("parameter expansion error: %s", (_name, source, message) => {
+    expect(() => lex({ raw: [source] })).toThrow(message);
   });
 
   describe("errors", async () => {

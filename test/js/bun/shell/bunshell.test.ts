@@ -1414,39 +1414,130 @@ booga"
           .ensureTempDir()
           .stdout("1\n")
           .runAsTest("a $(...) in a word that is not used does not run");
-        sh("echo ${SHELL_TEST_UNSET:-${SET%x}} ${SHELL_TEST_UNSET:-a${#SET}b}")
-          .stdout("${SET%x} a${#SET}b\n")
-          .runAsTest("a form the shell does not expand stays text in the word");
-        sh("echo ${SHELL_TEST_UNSET:-a b")
-          .stdout("${SHELL_TEST_UNSET:-a b\n")
-          .runAsTest("without a closing brace it is text");
-        sh("echo ${A:-${B:-${C:-x").stdout("${A:-${B:-${C:-x\n").runAsTest("nested without a closing brace it is text");
         sh("echo '${X:-d}' \\${X:-d} $\\{X:-d}")
           .stdout("${X:-d} ${X:-d} ${X:-d}\n")
           .runAsTest("quoted or escaped stays text");
-        // The lexer nests 128 deep. A form past that is text, with its brace.
-        sh(`echo ${"${SHELL_TEST_UNSET:-".repeat(130)}x${"}".repeat(130)}`)
-          .stdout("${SHELL_TEST_UNSET:-${SHELL_TEST_UNSET:-x}}\n")
-          .runAsTest("nested past the depth limit");
+      });
+
+      const note =
+        'note: single quotes or `\\$` keep the characters as text. `bun run --shell=system`, or `[run] shell = "system"` in bunfig.toml, runs package.json scripts in the system shell.';
+      const unsupported = (...forms: string[]) =>
+        [...forms.map(form => `Parameter expansion \`${form}\` is not supported.`), note].join("\n");
+      // The message of the error that `run` throws. The `$` tag parses the script before it returns.
+      const thrown = (run: () => unknown) => {
+        try {
+          run();
+        } catch (e) {
+          return (e as Error).message;
+        }
+      };
+      const parseError = (src: string) => thrown(() => $`${{ raw: src }}`);
+
+      describe("a parameter form that the shell does not expand is an error", () => {
+        test.each([
+          ["remove a suffix", "${FILE%.txt}"],
+          ["remove the longest suffix", "${FILE%%.*}"],
+          ["remove a prefix", "${FILE#*/}"],
+          ["remove the longest prefix", "${FILE##*/}"],
+          ["length", "${#FILE}"],
+          ["indirect", "${!FILE}"],
+          ["assign a default", "${FILE:=w}"],
+          ["assign a default when not set", "${FILE=w}"],
+          ["fail when empty", "${FILE:?w}"],
+          ["fail when not set", "${FILE?w}"],
+          ["replace", "${FILE/a/b}"],
+          ["substring", "${FILE:1:2}"],
+          ["upper case", "${FILE^^}"],
+          ["no parameter", "${}"],
+          ["a space before the name", "${ FILE}"],
+          ["an argument number over 255", "${256}"],
+          ["a special parameter in braces", "${@}"],
+          ["a nested form in the body", "${FILE:=${OTHER}}"],
+        ])("%s", (_name, form) => {
+          expect(parseError(`echo ${form}`)).toBe(unsupported(form));
+          expect(parseError(`echo "${form}"`)).toBe(unsupported(form));
+        });
+
+        test.each([
+          ["all arguments", "$@"],
+          ["all arguments as one word", "$*"],
+          ["the argument count", "$#"],
+          ["the last background process", "$!"],
+          ["the option flags", "$-"],
+        ])("%s", (_name, param) => {
+          const message = `Special parameter \`${param}\` is not supported.\n${note}`;
+          expect(parseError(`echo ${param}`)).toBe(message);
+          expect(parseError(`echo "${param}"`)).toBe(message);
+        });
+
+        test("each form has its error once in a row, then one note", () => {
+          expect(parseError("echo ${A%x} ${A%x} $@ ${B#y}")).toBe(
+            [
+              "Parameter expansion `${A%x}` is not supported.",
+              "Special parameter `$@` is not supported.",
+              "Parameter expansion `${B#y}` is not supported.",
+              note,
+            ].join("\n"),
+          );
+        });
+
+        test("in a $(...) and in the word of a form", () => {
+          expect(parseError("echo $(echo ${A%x})")).toBe(unsupported("${A%x}"));
+          expect(parseError("echo ${A:-${B%x}}")).toBe(unsupported("${B%x}"));
+          expect(parseError('echo "${A:-$(echo ${B%x})}"')).toBe(unsupported("${B%x}"));
+        });
+
+        test("without a closing brace", () => {
+          const unclosed = `Unclosed parameter expansion\n${note}`;
+          expect(parseError("echo ${")).toBe(unclosed);
+          expect(parseError("echo ${A")).toBe(unclosed);
+          expect(parseError("echo ${A%x")).toBe(unclosed);
+          expect(parseError("echo ${A:-b c")).toBe(unclosed);
+          expect(parseError('echo "${A:-b"')).toBe(unclosed);
+          expect(parseError("echo ${A:-${B:-${C:-x")).toBe(unclosed);
+        });
+
+        test("the error shows the first 40 bytes of a long form", () => {
+          expect(parseError(`echo \${A%${"x".repeat(60)}}`)).toBe(unsupported(`\${A%${"x".repeat(36)}...`));
+          // It does not cut a character in two: 39 bytes here.
+          expect(parseError(`echo \${A%x${"é".repeat(30)}}`)).toBe(unsupported(`\${A%x${"é".repeat(17)}...`));
+          expect(parseError("echo ${A%x\ny}")).toBe(unsupported("${A%x..."));
+        });
+
+        test("nested past the depth limit", () => {
+          // The lexer nests 128 deep, as for `$(`.
+          const src = `echo ${"${SHELL_TEST_UNSET:-".repeat(130)}x${"}".repeat(130)}`;
+          expect(parseError(src)).toMatch(/depth ?exceeded/i);
+        });
+
+        sh('echo $ a$ "$" "$ b" $= $% $/ $. $: $+ $^ $\'x\' $"x" $[x]')
+          .stdout("$ a$ $ $ b $= $% $/ $. $: $+ $^ $x $x $[x]\n")
+          .runAsTest("a $ before any other character is text");
+        sh("echo '${A%x}' \\${A%x} $\\{A%x} '$@' \\$@ \"\\$#\" '$*' \\$! \\$-")
+          .stdout("${A%x} ${A%x} ${A%x} $@ $@ $# $* $! $-\n")
+          .runAsTest("quoted or escaped stays text");
       });
 
       // An interpolated value is data. It does not name a parameter or an operator.
-      describe("an interpolated value in a braced form stays text", () => {
+      describe("an interpolated value in a braced form is not a name or an operator", () => {
         const env = { ...bunEnv, SHELL_TEST_SECRET: "hunter2" };
-        test("after ${", async () => {
-          const { stdout } = await $`echo ${{ raw: "${" }}${"SHELL_TEST_SECRET"}${{ raw: "}" }}`.env(env);
-          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET}\n");
+        test("after ${", () => {
+          expect(thrown(() => $`echo ${{ raw: "${" }}${"SHELL_TEST_SECRET"}${{ raw: "}" }}`)).toBe(
+            unsupported("${..."),
+          );
         });
-        test("after ${NAME", async () => {
-          const { stdout } = await $`echo ${{ raw: "${SHELL_TEST_" }}${"SECRET"}${{ raw: "}" }}`.env(env);
-          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET}\n");
+        test("after ${NAME", () => {
+          expect(thrown(() => $`echo ${{ raw: "${SHELL_TEST_" }}${"SECRET"}${{ raw: "}" }}`)).toBe(
+            unsupported("${SHELL_TEST_..."),
+          );
         });
-        test("as the operator", async () => {
-          const { stdout } =
-            await $`echo ${{ raw: "${SHELL_TEST_SECRET" }}${":+found"}${{ raw: "}" }} ${{ raw: "${SHELL_TEST_SECRET:" }}${"+found"}${{ raw: "}" }}`.env(
-              env,
-            );
-          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET:+found} ${SHELL_TEST_SECRET:+found}\n");
+        test("as the operator", () => {
+          expect(thrown(() => $`echo ${{ raw: "${SHELL_TEST_SECRET" }}${":+found"}${{ raw: "}" }}`)).toBe(
+            unsupported("${SHELL_TEST_SECRET..."),
+          );
+          expect(thrown(() => $`echo ${{ raw: "${SHELL_TEST_SECRET:" }}${"+found"}${{ raw: "}" }}`)).toBe(
+            unsupported("${SHELL_TEST_SECRET:..."),
+          );
         });
         test("in the word it is one argument", async () => {
           const { stdout } =

@@ -2318,15 +2318,8 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
-/// What `Lexer::eat_param` found after a `$`.
-enum ParamLex {
-    /// A parameter expansion: its tokens are pushed.
-    Matched,
-    /// No form the lexer expands: the `$` is text.
-    Text,
-    /// A `${param<op>word` that the input ends in: it is text, and so is each one that holds it.
-    Unclosed,
-}
+/// Follows the errors for the parameter forms that the lexer rejects.
+const PARAM_ERROR_NOTE: &[u8] = b"note: single quotes or `\\$` keep the characters as text. `bun run --shell=system`, or `[run] shell = \"system\"` in bunfig.toml, runs package.json scripts in the system shell.";
 
 /// Whether `Lexer::break_word` follows the text it flushes with a `Token::Delimit`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2377,12 +2370,6 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
-
-    /// Sorted source offsets of each `${param<op>word` with no `}`, so that it is not lexed as a word again.
-    pub(crate) param_unclosed: bun_alloc::ArenaVec<'bump, u32>,
-
-    /// In a `ParamWord`: how many `${` were left as text, whose `}` is text too.
-    pub(crate) param_text_braces: u32,
 }
 
 impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
@@ -2405,8 +2392,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
-            param_unclosed: bun_alloc::ArenaVec::new_in(bump),
-            param_text_braces: 0,
         }
     }
 
@@ -2452,11 +2437,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             delimit_quote: false,
             string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
-            param_unclosed: core::mem::replace(
-                &mut self.param_unclosed,
-                bun_alloc::ArenaVec::new_in(bump),
-            ),
-            param_text_braces: 0,
         };
         sublexer.chars.state = CharState::Normal;
         sublexer
@@ -2470,10 +2450,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
         self.js_string_ranges = core::mem::replace(
             &mut sublexer.js_string_ranges,
-            bun_alloc::ArenaVec::new_in(bump),
-        );
-        self.param_unclosed = core::mem::replace(
-            &mut sublexer.param_unclosed,
             bun_alloc::ArenaVec::new_in(bump),
         );
 
@@ -2786,10 +2762,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 if self.chars.state != word_state {
                                     break 'escaped;
                                 }
-                                if self.param_text_braces > 0 {
-                                    self.param_text_braces -= 1;
-                                    break 'escaped;
-                                }
                                 self.break_word(AddDelimiter::No)?;
                                 self.tokens.push(Token::ParamEnd);
                                 return Ok(());
@@ -2847,29 +2819,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
                             match var_tok.len() {
                                 0 => {
-                                    let in_param_word = matches!(
-                                        self.in_subshell,
-                                        Some(SubShellKind::ParamWord { .. })
-                                    );
-                                    match self.eat_param()? {
-                                        ParamLex::Matched => {}
-                                        // A word that holds an unclosed word has no `}` either.
-                                        ParamLex::Unclosed if in_param_word => {
-                                            self.tokens.push(Token::Eof);
-                                            return Ok(());
-                                        }
-                                        ParamLex::Text | ParamLex::Unclosed => {
-                                            // The `}` of a `${` that stays text does not end the word.
-                                            if in_param_word
-                                                && self.peek().is_some_and(|next| {
-                                                    !next.escaped && next.char == u32::from(b'{')
-                                                })
-                                            {
-                                                self.param_text_braces += 1;
-                                            }
-                                            self.append_char_to_str_pool(u32::from(b'$'))?;
-                                            self.break_word(AddDelimiter::No)?;
-                                        }
+                                    if !self.eat_param()? {
+                                        self.append_char_to_str_pool(u32::from(b'$'))?;
+                                        self.break_word(AddDelimiter::No)?;
                                     }
                                 }
                                 1 => 'blk: {
@@ -3103,8 +3055,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     self.add_error(b"Unclosed command substitution")
                 }
                 SubShellKind::Normal => self.add_error(b"Unclosed subshell"),
-                // No `}`: `eat_braced_param` sees this `Eof` and lexes the `${` again as text.
-                SubShellKind::ParamWord { .. } => self.tokens.push(Token::Eof),
+                SubShellKind::ParamWord { .. } => {
+                    self.add_param_error(&[b"Unclosed parameter expansion"])
+                }
             }
             return Ok(());
         }
@@ -3330,11 +3283,17 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+    /// Fails when a sublexer here would nest too deep.
+    fn check_subshell_depth(&mut self) -> Result<(), LexerError> {
         if self.subshell_depth >= MAX_SUBSHELL_DEPTH {
             self.add_error(b"Subshell nesting depth exceeded");
             return Err(LexerError::SubshellDepthExceeded);
         }
+        Ok(())
+    }
+
+    fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+        self.check_subshell_depth()?;
 
         if kind == SubShellKind::Dollar {
             // Eat the open paren
@@ -3634,14 +3593,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    /// After a `$` with no name: lexes `$?`, `$$`, `${param}` and `${param<op>word}`, or consumes nothing.
-    fn eat_param(&mut self) -> Result<ParamLex, LexerError> {
+    /// After a `$` with no name: lexes `$?`, `$$`, `${param}` and `${param<op>word}`. `false`: the `$` is text.
+    fn eat_param(&mut self) -> Result<bool, LexerError> {
         let mut chars = self.chars;
         let Some(first) = chars.eat() else {
-            return Ok(ParamLex::Text);
+            return Ok(false);
         };
         if first.escaped {
-            return Ok(ParamLex::Text);
+            return Ok(false);
         }
         let special = match u8::try_from(first.char) {
             Ok(b'?') => ast::SpecialParam::ExitCode,
@@ -3654,88 +3613,33 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 ast::SpecialParam::Pid
             }
             Ok(b'{') => return self.eat_braced_param(chars),
-            _ => return Ok(ParamLex::Text),
+            Ok(b'@' | b'*' | b'#' | b'!' | b'-') => {
+                self.reject_param(false);
+                return Ok(false);
+            }
+            _ => return Ok(false),
         };
         self.chars = chars;
         self.tokens.push(Token::SpecialParam(special));
-        Ok(ParamLex::Matched)
+        Ok(true)
     }
 
-    /// `chars` is past the `${`. Consumes and writes nothing unless the form is complete.
+    /// `chars` is past the `${`. `false`: the form is rejected and the `$` is text.
     fn eat_braced_param(
         &mut self,
         mut chars: ShellCharIter<'bump, ENCODING>,
-    ) -> Result<ParamLex, LexerError> {
-        fn byte(c: Option<InputChar>) -> Option<u8> {
-            let c = c.filter(|c| !c.escaped)?;
-            u8::try_from(c.char).ok()
-        }
-
-        let name_start = chars.cursor_pos();
-        let param: Token = match byte(chars.peek()) {
-            Some(b'?') => {
-                let _ = chars.eat();
-                Token::SpecialParam(ast::SpecialParam::ExitCode)
-            }
-            Some(b'$') => {
-                let _ = chars.eat();
-                Token::SpecialParam(ast::SpecialParam::Pid)
-            }
-            Some(b'0'..=b'9') => {
-                let mut n: u32 = 0;
-                while let Some(digit @ b'0'..=b'9') = byte(chars.peek()) {
-                    let _ = chars.eat();
-                    n = n * 10 + u32::from(digit - b'0');
-                    if n > u32::from(u8::MAX) {
-                        return Ok(ParamLex::Text);
-                    }
-                }
-                Token::VarArgv(n as u8)
-            }
-            Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => {
-                while let Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') = byte(chars.peek())
-                {
-                    let _ = chars.eat();
-                }
-                // A range in the source until `push_param` copies the name.
-                Token::Var(TextRange {
-                    start: name_start as u32,
-                    end: chars.cursor_pos() as u32,
-                })
-            }
-            _ => return Ok(ParamLex::Text),
+    ) -> Result<bool, LexerError> {
+        let Some((param, op)) = Self::braced_param_head(&mut chars) else {
+            self.reject_param(true);
+            return Ok(false);
         };
-        let op = match byte(chars.eat()) {
-            Some(b'}') => None,
-            Some(b':') => match byte(chars.eat()) {
-                Some(b'-') => Some(ast::ParamOp::DefaultIfEmpty),
-                Some(b'+') => Some(ast::ParamOp::AlternateIfNotEmpty),
-                _ => return Ok(ParamLex::Text),
-            },
-            Some(b'-') => Some(ast::ParamOp::DefaultIfUnset),
-            Some(b'+') => Some(ast::ParamOp::AlternateIfSet),
-            _ => return Ok(ParamLex::Text),
-        };
-
         let Some(op) = op else {
             self.chars = chars;
             self.push_param(param);
-            return Ok(ParamLex::Matched);
+            return Ok(true);
         };
 
-        // The position after the `$` names this word in `param_unclosed`.
-        let dollar = self.chars.cursor_pos() as u32;
-        if self.subshell_depth >= MAX_SUBSHELL_DEPTH
-            || self.param_unclosed.binary_search(&dollar).is_ok()
-        {
-            return Ok(ParamLex::Text);
-        }
-        let before = self.make_snapshot();
-        let tokens_len = self.tokens.len();
-        let strpool_len = self.strpool.len();
-        let errors_len = self.errors.len();
-        let js_string_ranges_len = self.js_string_ranges.len();
-
+        self.check_subshell_depth()?;
         let quote_state = self.chars.state;
         let quoted = quote_state == CharState::Double;
         self.chars = chars;
@@ -3748,20 +3652,126 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         sublexer.lex()?;
         self.continue_from_sublexer(&mut sublexer);
         self.chars.state = quote_state;
+        Ok(true)
+    }
 
-        // A `ParamWord` lexer that found no `}` ends with `Eof`.
-        if matches!(self.tokens.last(), Some(Token::Eof)) {
-            self.tokens.truncate(tokens_len);
-            self.strpool.truncate(strpool_len);
-            self.errors.truncate(errors_len);
-            self.js_string_ranges.truncate(js_string_ranges_len);
-            self.backtrack(&before);
-            if let Err(at) = self.param_unclosed.binary_search(&dollar) {
-                self.param_unclosed.insert(at, dollar);
-            }
-            return Ok(ParamLex::Unclosed);
+    /// Eats the parameter of a `${`, then its `}` (no operator) or its operator. `None`: a form the lexer rejects.
+    fn braced_param_head(
+        chars: &mut ShellCharIter<'bump, ENCODING>,
+    ) -> Option<(Token, Option<ast::ParamOp>)> {
+        fn byte(c: Option<InputChar>) -> Option<u8> {
+            let c = c.filter(|c| !c.escaped)?;
+            u8::try_from(c.char).ok()
         }
-        Ok(ParamLex::Matched)
+
+        let name_start = chars.cursor_pos();
+        let param = match byte(chars.peek())? {
+            b'?' => {
+                let _ = chars.eat();
+                Token::SpecialParam(ast::SpecialParam::ExitCode)
+            }
+            b'$' => {
+                let _ = chars.eat();
+                Token::SpecialParam(ast::SpecialParam::Pid)
+            }
+            b'0'..=b'9' => {
+                let mut n: u32 = 0;
+                while let Some(digit @ b'0'..=b'9') = byte(chars.peek()) {
+                    let _ = chars.eat();
+                    n = n * 10 + u32::from(digit - b'0');
+                    if n > u32::from(u8::MAX) {
+                        return None;
+                    }
+                }
+                Token::VarArgv(n as u8)
+            }
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+                while let Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') = byte(chars.peek())
+                {
+                    let _ = chars.eat();
+                }
+                // A range in the source until `push_param` copies the name.
+                Token::Var(TextRange {
+                    start: name_start as u32,
+                    end: chars.cursor_pos() as u32,
+                })
+            }
+            _ => return None,
+        };
+        let op = match byte(chars.eat())? {
+            b'}' => None,
+            b':' => match byte(chars.eat())? {
+                b'-' => Some(ast::ParamOp::DefaultIfEmpty),
+                b'+' => Some(ast::ParamOp::AlternateIfNotEmpty),
+                _ => return None,
+            },
+            b'-' => Some(ast::ParamOp::DefaultIfUnset),
+            b'+' => Some(ast::ParamOp::AlternateIfSet),
+            _ => return None,
+        };
+        Some((param, op))
+    }
+
+    /// Adds an error for the parameter form whose `$` was just eaten: `$` and one character, or `${` to its `}`.
+    fn reject_param(&mut self, braced: bool) {
+        const MAX_SHOWN: usize = 40;
+        let src = &self.chars.src_bytes()[self.chars.cursor_pos() - 1..];
+        if !braced {
+            return self.add_param_error(&[
+                b"Special parameter `",
+                &src[..2],
+                b"` is not supported.",
+            ]);
+        }
+        let mut depth = 0u32;
+        let mut i = 1;
+        while i < src.len().min(MAX_SHOWN) {
+            match src[i] {
+                b'\\' => i += 1,
+                b'{' => depth += 1,
+                b'}' if depth == 1 => {
+                    return self.add_param_error(&[
+                        b"Parameter expansion `",
+                        &src[..=i],
+                        b"` is not supported.",
+                    ]);
+                }
+                b'}' => depth -= 1,
+                b'\n' | SPECIAL_JS_CHAR => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        if i >= src.len() {
+            return self.add_param_error(&[b"Unclosed parameter expansion"]);
+        }
+        while src[i] & 0xC0 == 0x80 {
+            i -= 1;
+        }
+        self.add_param_error(&[
+            b"Parameter expansion `",
+            &src[..i],
+            b"...` is not supported.",
+        ]);
+    }
+
+    /// Adds the error `parts`, once when it repeats, and keeps one `PARAM_ERROR_NOTE` after a run of these errors.
+    fn add_param_error(&mut self, parts: &[&[u8]]) {
+        let message = parts.concat();
+        let strpool = self.strpool.as_slice();
+        let mut last = self
+            .errors
+            .iter()
+            .rev()
+            .map(|error| error.msg.slice(strpool));
+        if last.next() == Some(PARAM_ERROR_NOTE) {
+            if last.next() == Some(message.as_slice()) {
+                return;
+            }
+            self.errors.pop();
+        }
+        self.add_error(&message);
+        self.add_error(PARAM_ERROR_NOTE);
     }
 
     /// Pushes a parameter token. A `Var` from `eat_braced_param` is a source range: its name is copied here.

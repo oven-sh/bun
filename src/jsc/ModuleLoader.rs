@@ -253,9 +253,7 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
-/// The namespace and path that `onLoad` is asked about for `key`, if it is asked. A key in the `file`
-/// namespace needs an extension: under `bun test` the loader asks before the builtin lookup, and a bare
-/// builtin key (`ws`, `bun`) must not reach a catch-all `onLoad`.
+/// The namespace and path that `onLoad` is asked about for `key`, if it is: a bare builtin key (`ws`) is not.
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
     has_extension_or_namespace(key).then(|| namespace_and_path(key))
 }

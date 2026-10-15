@@ -5309,8 +5309,7 @@ impl VirtualMachine {
                 if let Some(name) = global.resolve_virtual_module(&answer, source) {
                     return Ok(Ok(name));
                 }
-                // A bare name that an `onLoad` could serve may also be a package's in the registry.
-                // It is the plugin's own, and not installed, if `onResolve` answers about it as well.
+                // A bare name an `onLoad` could serve is the plugin's own, not a registry package's, if `onResolve` claims it too.
                 let answer_utf8 = answer.to_utf8();
                 let is_bare = bun_resolver::is_package_path(&answer_utf8)
                     && ModuleLoader::on_load_namespace_and_path(&answer_utf8)

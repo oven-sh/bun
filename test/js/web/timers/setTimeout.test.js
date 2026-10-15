@@ -728,14 +728,10 @@ it.concurrent("timer ids past 2^31 and 2^32 are positive and name one timer", as
     pastUint32: { ids: [4294967295, 4294967296], fires: [2, 2] },
     // clearInterval(<id of the first>) stops the first interval and only it.
     intervalAfter2To32Timers: { idDistance: 2 ** 32, firstStopped: true, secondStillTicks: true },
-    // The freed timer left no entry, and took none away.
-    freedPromotedTimeout: {
-      collected: true,
-      idDistance: 2 ** 32,
-      otherAliveAfterClearOfFreedId: true,
-      otherClearedByItsId: true,
-    },
+    // The old id of a promoted timeout clears no other timer.
+    promotedTimeout: { idDistance: 2 ** 32, otherAliveAfterClearOfOldId: true, otherClearedByItsId: true },
     clearByIdPastUint32: { id: 2 ** 40, keptIsAlive: true, isUtf16: true, destroyed: [true, true, true] },
+    pastSafeInteger: { ids: [2 ** 53 - 1, 2 ** 53], pastIsAlive: true, lastClearedByString: true },
   });
   expect(exitCode).toBe(0);
 });

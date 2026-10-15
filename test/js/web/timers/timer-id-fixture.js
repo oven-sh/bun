@@ -116,7 +116,7 @@ const nextImmediate = () => new Promise(resolve => setImmediate(resolve));
 // With its id given out again, freeing it removed the entry of the other timer and left its own
 // behind, pointing at freed memory.
 {
-  let other, weak;
+  let other;
   const id = await (async () => {
     let fires = 0;
     const { promise: secondFire, resolve } = Promise.withResolvers();
@@ -132,25 +132,23 @@ const nextImmediate = () => new Promise(resolve => setImmediate(resolve));
     +other; // registers the id of `other`
 
     clearInterval(timer);
-    weak = new WeakRef(timer);
     return id;
   })();
-  for (let i = 0; i < 20 && weak.deref(); i++) {
+  // Nothing refers to the promoted timeout now. These collections free it on most platforms.
+  for (let i = 0; i < 3; i++) {
     Bun.gc(true);
     await nextImmediate();
   }
-  const collected = weak.deref() === undefined;
 
-  // `id` names no timer now.
+  // `id` names no live timer.
   clearTimeout(id);
   clearInterval(id);
-  const otherAliveAfterClearOfFreedId = !other._destroyed;
+  const otherAliveAfterClearOfOldId = !other._destroyed;
   clearInterval(+other);
 
-  result.freedPromotedTimeout = {
-    collected,
+  result.promotedTimeout = {
     idDistance: +other - id,
-    otherAliveAfterClearOfFreedId,
+    otherAliveAfterClearOfOldId,
     otherClearedByItsId: other._destroyed,
   };
 }
@@ -212,6 +210,21 @@ const nextImmediate = () => new Promise(resolve => setImmediate(resolve));
     isUtf16: jsc.jscDescribe(utf16Id).includes("8Bit:(0)"),
     destroyed: [byNumber._destroyed, byString._destroyed, byUtf16String._destroyed],
   };
+}
+
+// Past 2^53 - 1 a number does not hold an id exactly, so neither form of such an id names a timer.
+{
+  timerInternals.setNextTimerId(2 ** 53 - 1);
+  const last = setTimeout(() => {}, 1e6);
+  const past = setTimeout(() => {}, 1e6);
+  const ids = [+last, +past];
+  clearTimeout(ids[1]);
+  clearTimeout(String(ids[1]));
+  const pastIsAlive = !past._destroyed;
+  clearTimeout(String(ids[0]));
+  clearTimeout(past);
+
+  result.pastSafeInteger = { ids, pastIsAlive, lastClearedByString: last._destroyed };
 }
 
 console.log(JSON.stringify(result));

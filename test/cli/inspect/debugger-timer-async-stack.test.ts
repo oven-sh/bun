@@ -105,8 +105,6 @@ async function asyncStackTraceSchedulers() {
   }
 }
 
-// The timeout is for debug builds: there the inspected script takes about 4 s, most of it to
-// load bun:internal-for-testing.
 test("a timer callback gets its own async stack trace when another timer's id is 2^32 higher", async () => {
   expect(await asyncStackTraceSchedulers()).toEqual({
     schedulers: {
@@ -115,4 +113,4 @@ test("a timer callback gets its own async stack trace when another timer's id is
     },
     idDistances: [2 ** 32, 2 ** 32],
   });
-}, 30_000);
+});

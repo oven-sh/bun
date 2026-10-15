@@ -269,12 +269,15 @@ impl All {
         ))
     }
 
+    /// The largest id that a JS number holds exactly. Neither form of a larger id names a timer.
+    const MAX_ID: u64 = bun_jsc::MAX_SAFE_INTEGER as u64;
+
     /// The id a JS number names, whether JSC holds it as an int32 or as a double.
     fn timer_id_from_number(value: JSValue) -> Option<u64> {
         let number = value.as_number();
         // `as` saturates and maps NaN to 0: the range and round trip reject those and fractions.
         let id = number as i64;
-        ((1..=bun_jsc::MAX_SAFE_INTEGER).contains(&id) && id as f64 == number).then_some(id as u64)
+        ((1..=Self::MAX_ID as i64).contains(&id) && id as f64 == number).then_some(id as u64)
     }
 
     /// The timer `id` names for the running script, removed from the map
@@ -381,6 +384,9 @@ impl All {
                     }
                     accumulator
                 };
+                if parsed > Self::MAX_ID {
+                    return Ok(());
+                }
                 let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, parsed) else {
                     return Ok(());
                 };
@@ -594,7 +600,7 @@ pub(crate) mod internal_bindings {
             current,
             bun_jsc::IntegerRange {
                 min: i128::from(current),
-                max: i128::from(bun_jsc::MAX_SAFE_INTEGER),
+                max: i128::from(All::MAX_ID),
                 field_name: b"id",
                 always_allow_zero: false,
             },

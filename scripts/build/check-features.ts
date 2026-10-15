@@ -149,9 +149,13 @@ if (!sections.some(text => text.startsWith("Format: COFF"))) {
 
 let [functionsSeen, symbolsSeen] = [0, 0];
 const [outside, foreign] = [new Set<string>(), new Set<string>()];
+const stretchAt = (address: number) => stretches.find(it => it.start <= address && address < it.end);
 for (const [address, isCode, symbol] of symbols) {
-  const islands = definersOf(symbol);
-  const stretch = stretches.find(it => it.start <= address && address < it.end);
+  // lld moves an instruction that a Cortex-A53 gets wrong where it is (--fix-cortex-a53-843419) to a patch nearby, which it
+  // names by the address of the instruction. It is of what the instruction is of.
+  const patched = /^__CortexA53843419_([0-9A-F]+)$/.exec(symbol);
+  const islands = patched ? new Set([stretchAt(parseInt(patched[1]!, 16))?.island ?? 0]) : definersOf(symbol);
+  const stretch = stretchAt(address);
 
   // What several define, an inline variable of a header for one, is where the linker put the copy it kept.
   const [island] = islands?.size === 1 ? islands : [0];

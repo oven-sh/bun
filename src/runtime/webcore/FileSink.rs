@@ -303,6 +303,43 @@ pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
 }
 
 impl FileSink {
+    /// The `--isolate` sweep before the swap reached this stdio sink. The file's socket close
+    /// handlers still run after that sweep and may write here, so it stays open: it is recorded
+    /// for [`rearm_for_retire`](Self::rearm_for_retire). Returns false outside that sweep.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink`.
+    unsafe fn keep_for_retire(this: *mut FileSink) -> bool {
+        let state = crate::jsc_hooks::runtime_state();
+        if state.is_null() {
+            return false;
+        }
+        // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends here.
+        let Some(kept) = (unsafe { &mut (*state).stdio_sinks_kept_for_retire }) else {
+            return false;
+        };
+        // SAFETY: caller contract. The ref keeps `this` live until `rearm_for_retire`.
+        unsafe { (*this).ref_() };
+        kept.push(core::ptr::NonNull::new(this).expect("sink"));
+        true
+    }
+
+    /// Arms a sink [`keep_for_retire`](Self::keep_for_retire) recorded on the root context again,
+    /// for the swap's sweep after it retires the realm, and releases the record's ref.
+    ///
+    /// # Safety
+    /// `this` came from `keep_for_retire` in this sweep; it must not be used after the call.
+    pub(crate) unsafe fn rearm_for_retire(
+        this: *mut FileSink,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
+    ) {
+        // SAFETY: caller contract; the ref taken in `keep_for_retire` keeps `this` live
+        // until the trailing `deref`, its last use.
+        unsafe {
+            bun_jsc::AbortHandle::arm_owner(this, vm.root_context());
+            FileSink::deref(this);
+        }
+    }
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
     /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
@@ -1701,7 +1738,9 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
                 bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::Disposed)
             )
         {
-            let _ = (*this).end(None);
+            if !FileSink::keep_for_retire(this) {
+                let _ = (*this).end(None);
+            }
             return;
         }
         (*this).done.set(true);

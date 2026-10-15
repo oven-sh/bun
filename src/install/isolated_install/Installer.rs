@@ -593,10 +593,56 @@ impl<'a> Installer<'a> {
         None
     }
 
+    /// The entry's package directory from the project's root: its path in `PendingScripts`.
+    fn pending_scripts_key(&self, entry_id: StoreEntryId) -> Vec<u8> {
+        let mut path = AutoRelPath::init();
+        self.append_store_path(&mut path, entry_id);
+        path.slice().to_vec()
+    }
+
+    /// Main thread, before the task that places an entry's package in this project's store starts.
+    /// Lists what a failed script discards: a trusted entry.
+    pub(crate) fn list_pending_scripts(&mut self, entry_id: StoreEntryId) {
+        let is_trusted = self.is_trusted(entry_id);
+        self.tasks[entry_id.get() as usize].trusted = Some(is_trusted);
+        if is_trusted {
+            (self.manager().pending_scripts.borrow_mut())
+                .begin(entry_id.get(), b"", || self.pending_scripts_key(entry_id));
+        }
+    }
+
+    /// Main thread, before the walk, for the records of an install that died. An entry of this pass
+    /// that it listed goes, and the walk places it again. One that is not trusted any more stays.
+    #[cold]
+    pub(crate) fn discard_left_pending(&self) {
+        let pending = &self.manager().pending_scripts;
+        for index in 0..self.store.entries.len() {
+            let entry_id = StoreEntryId::from(index as u32);
+            let tag = self.resolution(entry_id).tag;
+            if self.entry_uses_global_store(entry_id)
+                || !(tag.can_enqueue_install_task() || tag == ResolutionTag::Folder)
+            {
+                continue;
+            }
+            let key = self.pending_scripts_key(entry_id);
+            if !pending.borrow().is_stale(&key) {
+                continue;
+            }
+            if self.is_trusted(entry_id) {
+                self.delete_store_copy(entry_id);
+            } else {
+                pending.borrow_mut().forget_stale(&key);
+            }
+        }
+    }
+
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+        if state != CompleteState::Fail {
+            (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
+        }
 
         if let Some(node) = self.install_node.as_mut() {
             node.complete_one();
@@ -734,6 +780,7 @@ impl<'a> Installer<'a> {
                 || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
             {
                 self.delete_store_copy(entry_id);
+                (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
             }
         }
     }
@@ -893,6 +940,8 @@ pub struct Task {
     pub(crate) relink: Relink,
     /// A relink task goes on to the lifecycle script steps. See `Installer::is_newly_trusted`.
     pub(crate) newly_trusted: bool,
+    /// `Installer::is_trusted`, if the main thread has looked it up for `PendingScripts`.
+    pub(crate) trusted: Option<bool>,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
 }
@@ -1172,7 +1221,7 @@ impl Task {
         let pkg_metas = pkgs.items_meta();
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
-        let is_trusted = installer.is_trusted(self.entry_id);
+        let is_trusted = (self.trusted).unwrap_or_else(|| installer.is_trusted(self.entry_id));
 
         if pkg_res.tag != ResolutionTag::Workspace && !is_trusted {
             // Before the early returns below, like the hoisted installer.

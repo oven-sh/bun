@@ -1948,6 +1948,9 @@ pub(crate) fn install_isolated_packages(
 
         break 'is_new_bun_modules true;
     };
+    // A `node_modules/.bun` that is new has no record of an earlier install beside it.
+    let lists_pending_scripts = manager.lists_pending_scripts();
+    (manager.pending_scripts.get_mut()).load(lists_pending_scripts, !is_new_bun_modules);
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
@@ -2019,6 +2022,7 @@ pub(crate) fn install_isolated_packages(
                 result: installer::Result::None,
                 relink: installer::Relink::Off,
                 newly_trusted: false,
+                trusted: None,
                 blocked_scripts: 0,
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2104,6 +2108,10 @@ pub(crate) fn install_isolated_packages(
             }
         }
 
+        if installer.manager().pending_scripts.borrow().has_stale() {
+            installer.discard_left_pending();
+        }
+
         // add the pending task count upfront
         installer
             .manager_mut()
@@ -2185,6 +2193,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
                     }
+                    installer.list_pending_scripts(entry_id);
                     installer.start_task(entry_id);
                 }
 
@@ -2279,6 +2288,9 @@ pub(crate) fn install_isolated_packages(
                         installer.set_step(entry_id, Step::Done);
                         installer.on_task_complete(entry_id, CompleteState::Skipped);
                         continue;
+                    }
+                    if !uses_global_store {
+                        installer.list_pending_scripts(entry_id);
                     }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
@@ -2432,6 +2444,11 @@ pub(crate) fn install_isolated_packages(
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
         installer.record_update_request_trust();
+        (installer.manager().pending_scripts.borrow_mut()).finish(
+            !workspace_filters.is_empty()
+                || !install_root_dependencies
+                || packages_to_install.is_some(),
+        );
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

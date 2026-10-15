@@ -15,7 +15,7 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -93,7 +93,6 @@ pub struct PackageInstaller<'a> {
     /// the tree ids a tree depends on before it can run the lifecycle scripts of it's immediate dependencies
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
-    pub(crate) unfinished_scripts: UnfinishedScripts,
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
@@ -458,6 +457,32 @@ fn abs_node_modules_path(
     abs
 }
 
+/// `node_modules/<folder_name>` of a tree, from the project's root: its path in `PendingScripts`.
+pub(crate) fn pending_scripts_key(
+    lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    folder_name: &[u8],
+) -> Vec<u8> {
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
+    rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+    let mut depth_buf = lockfile::tree::depth_buf_uninit();
+    let (rel, _) = lockfile::tree::relative_path_and_depth::<
+        { lockfile::tree::IteratorPathStyle::NodeModules },
+    >(
+        lockfile.buffers.trees.as_slice(),
+        lockfile.buffers.dependencies.as_slice(),
+        lockfile.buffers.string_bytes.as_slice(),
+        tree_id,
+        &mut rel_buf,
+        &mut depth_buf,
+    );
+    let mut key = Vec::with_capacity(rel.len() + 1 + folder_name.len());
+    key.extend_from_slice(rel.as_bytes());
+    key.push(SEP);
+    key.extend_from_slice(folder_name);
+    key
+}
+
 /// Of a workspace or `link:` package only the link goes.
 pub(crate) fn remove_placed_package(
     lockfile: &Lockfile,
@@ -564,6 +589,67 @@ impl<'a> PackageInstaller<'a> {
         // `*self`; the install pass is single-threaded so no concurrent `&mut
         // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
         unsafe { &mut *self.progress }
+    }
+
+    fn is_trusted(
+        &self,
+        package_id: PackageID,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        (self.trusted_dependencies_from_update_requests).contains(&package_id)
+            || (self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
+    }
+
+    /// A package of the current tree has no script to run.
+    fn forget_pending_scripts(&self, folder_name: &[u8]) {
+        (self.manager().pending_scripts.borrow_mut()).done(self.current_tree_id, folder_name);
+    }
+
+    /// Before the walk, for the records of an install that died. A placement of this pass that it
+    /// listed goes, and the walk places it again. One whose scripts are not to run any more stays.
+    #[cold]
+    pub(crate) fn discard_left_pending(&self) {
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pending = &self.manager().pending_scripts;
+        let mut trees = lockfile::tree::Iterator::<
+            { lockfile::tree::IteratorPathStyle::NodeModules },
+        >::from_slices(
+            lockfile.buffers.trees.as_slice(),
+            lockfile.buffers.hoisted_dependencies.as_slice(),
+            dependencies,
+            string_buf,
+        );
+        while let Some(node_modules) = trees.next(None) {
+            for &dependency_id in node_modules.dependencies {
+                let alias = dependencies[dependency_id as usize].name.slice(string_buf);
+                let key = pending_scripts_key(lockfile, node_modules.tree_id, alias);
+                if !pending.borrow().is_stale(&key) {
+                    continue;
+                }
+                let package_id = resolutions[dependency_id as usize];
+                let Some(resolution) = self.resolutions.get(package_id as usize) else {
+                    continue;
+                };
+                if resolution.tag != resolution::Tag::Root
+                    && (resolution.tag == resolution::Tag::Workspace
+                        || self.is_trusted(
+                            package_id,
+                            alias,
+                            self.names[package_id as usize].slice(string_buf),
+                            resolution,
+                        ))
+                {
+                    remove_placed_package(lockfile, node_modules.tree_id, alias);
+                } else {
+                    pending.borrow_mut().forget_stale(&key);
+                }
+            }
+        }
     }
 
     /// Increments the number of installed packages for the current tree and runs available scripts
@@ -926,7 +1012,6 @@ impl<'a> PackageInstaller<'a> {
             output_in_foreground,
             Some(InstallCtx::Hoisted {
                 tree_id: entry.tree_id,
-                unfinished: std::rc::Rc::clone(&self.unfinished_scripts),
             }),
         ) {
             self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
@@ -1180,21 +1265,28 @@ impl<'a> PackageInstaller<'a> {
 
     /// Whether the files of a package of the current tree, if it lacks them, can be left to the pool.
     fn can_defer_link(&self, alias: &[u8], pkg_name: &[u8], package_id: PackageID) -> bool {
+        self.can_defer_untrusted_link(alias, package_id)
+            // It is placed and its scripts are listed in one step: a failed install removes what is listed.
+            && !self.is_trusted(
+                package_id,
+                alias,
+                pkg_name,
+                &self.resolutions[package_id as usize],
+            )
+    }
+
+    fn can_defer_untrusted_link(&self, alias: &[u8], package_id: PackageID) -> bool {
         let Some(deferred) = &self.deferred else {
             return false;
         };
         let tree_id = self.current_tree_id;
-        let resolution = &self.resolutions[package_id as usize];
-        resolution.tag.can_enqueue_install_task()
+        self.resolutions[package_id as usize].tag.can_enqueue_install_task()
             && (deferred.tree_dirs.len() < DeferredLinks::MAX_TREES
                 || (deferred.tree_dirs.iter()).any(|open| open.tree_id == tree_id))
             && !deferred.shared_trees.is_set(tree_id as usize)
             && !may_fold(alias)
             // Two that are as fast as each other replace each other's packages all the time.
             && !(self.staging_lock.as_ref()).is_some_and(|lock| lock.is_busy)
-            // It is placed and its scripts are listed in one step: a failed install removes what is listed.
-            && !(self.trusted_dependencies_from_update_requests).contains(&package_id)
-            && !(self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
     }
 
     fn defer_link(&mut self, job: package_install::LinkJob) {
@@ -1309,6 +1401,8 @@ impl<'a> PackageInstaller<'a> {
                 is_pending_package_install,
                 job.tree_dir,
                 job.result.into_inner().expect("linked").report(),
+                false,
+                false,
             );
             while let Some((_, event)) = events.next_if(|(after, _)| *after == index + 1) {
                 let (DeferredEvent::Count(tree_id) | DeferredEvent::Install { tree_id, .. }) =
@@ -2024,6 +2118,27 @@ impl<'a> PackageInstaller<'a> {
             };
             let destination_dir = Dir::borrow(&destination_fd);
 
+            // `Some(true)`: `can_defer_link` has found it not trusted.
+            let is_trusted_through_update_request = can_defer_link.is_none()
+                && (self.trusted_dependencies_from_update_requests).contains(&package_id);
+            let is_trusted = is_trusted_through_update_request
+                || (can_defer_link.is_none()
+                    && self.lockfile().has_trusted_dependency(
+                        alias.slice(string_buf!()),
+                        pkg_name.slice(string_buf!()),
+                        resolution,
+                    ));
+            if resolution.tag != resolution::Tag::Root
+                && (resolution.tag == resolution::Tag::Workspace || is_trusted)
+            {
+                // Before it is placed: an install that dies from here on leaves the record.
+                let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
+                let folder = alias.slice(string_buf!());
+                (self.manager().pending_scripts.borrow_mut()).begin(tree_id, folder, || {
+                    pending_scripts_key(lockfile, tree_id, folder)
+                });
+            }
+
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
                     installer.install_from_link(self.skip_delete, destination_dir)
@@ -2135,11 +2250,8 @@ impl<'a> PackageInstaller<'a> {
                     let copy = (self.copy_trees)
                         .is_set_allow_out_of_bound(self.current_tree_id as usize, false);
                     if can_defer_link.unwrap_or_else(|| {
-                        self.can_defer_link(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            package_id,
-                        )
+                        !is_trusted
+                            && self.can_defer_untrusted_link(alias.slice(string_buf!()), package_id)
                     }) {
                         return self.defer_link(package_install::LinkJob {
                             tree_id: self.current_tree_id,
@@ -2183,6 +2295,8 @@ impl<'a> PackageInstaller<'a> {
                 is_pending_package_install,
                 destination_fd,
                 install_result,
+                is_trusted,
+                is_trusted_through_update_request,
             );
         } else {
             if self.manager().options.offline
@@ -2243,6 +2357,8 @@ impl<'a> PackageInstaller<'a> {
         is_pending_package_install: bool,
         destination_fd: Fd,
         install_result: package_install::InstallResult,
+        is_trusted: bool,
+        is_trusted_through_update_request: bool,
     ) {
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
@@ -2273,15 +2389,6 @@ impl<'a> PackageInstaller<'a> {
                         .add(dependency_id)
                         .unwrap_or_oom();
                 }
-
-                let is_trusted_through_update_request =
-                    (self.trusted_dependencies_from_update_requests).contains(&package_id);
-                let is_trusted = is_trusted_through_update_request
-                    || self.lockfile().has_trusted_dependency(
-                        alias.slice(string_buf!()),
-                        pkg_name.slice(string_buf!()),
-                        resolution,
-                    );
 
                 if resolution.tag != resolution::Tag::Root
                     && (resolution.tag == resolution::Tag::Workspace || is_trusted)
@@ -2477,6 +2584,7 @@ impl<'a> PackageInstaller<'a> {
                     bstr::BStr::new(pkg_name.slice(string_buf)),
                 );
             }
+            self.forget_pending_scripts(alias.slice(string_buf));
             return;
         }
 
@@ -2532,7 +2640,11 @@ impl<'a> PackageInstaller<'a> {
             trusted,
         ) {
             Ok(Some(list)) => list,
-            Ok(None) => return false,
+            Ok(None) => {
+                self.forget_pending_scripts(folder_name);
+                return false;
+            }
+            // It stays listed: the next install reads its scripts again.
             Err(err) => {
                 self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
                 return false;
@@ -2545,6 +2657,7 @@ impl<'a> PackageInstaller<'a> {
             .do_
             .contains(Options::Do::RUN_SCRIPTS)
         {
+            self.forget_pending_scripts(folder_name);
             return false;
         }
 
@@ -2567,9 +2680,11 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
-        self.unfinished_scripts
-            .borrow_mut()
-            .push((self.current_tree_id, scripts_list.package_name.clone()));
+        // Listed already unless it was in place: then its scripts run for a name that is trusted now.
+        let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
+        (self.manager().pending_scripts.borrow_mut()).begin(tree_id, folder_name, || {
+            pending_scripts_key(lockfile, tree_id, folder_name)
+        });
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
             tree_id: self.current_tree_id,

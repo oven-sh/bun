@@ -34,11 +34,11 @@ struct WebSocketHandshake {
         memcpy(keyAndGuid + 24, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", 36);
 
         uint8_t digest[SHA_DIGEST_LENGTH];
-        SHA1(keyAndGuid, sizeof(keyAndGuid), digest);
+        ::SHA1(keyAndGuid, sizeof(keyAndGuid), digest);
 
         /* EVP_EncodeBlock appends a NUL, which doesn't fit in output */
         uint8_t encoded[28 + 1];
-        EVP_EncodeBlock(encoded, digest, sizeof(digest));
+        ::EVP_EncodeBlock(encoded, digest, sizeof(digest));
         memcpy(output, encoded, 28);
     }
 };

@@ -3,7 +3,7 @@
 //! wildcard that sets every rule of a plugin: see [`expand_wildcards`].
 
 use crate::bunfig::RuleOfBunfig;
-use crate::cli::{Options, Wildcard, merge};
+use crate::cli::{Options, Wildcard};
 use crate::configs::{CATEGORIES, is_category, plugin_longhand, severity_name};
 use crate::print_config::object;
 use crate::{Linter, fs, paths};
@@ -205,79 +205,34 @@ pub(crate) fn check_rules(
     if only_of_plugins.is_some() {
         return Ok(());
     }
-    // Which setting wins depends on the file, so a rule that is set by name anywhere isn't checked as part of a wildcard.
-    let of_overrides = options.overrides.iter().flat_map(|it| &it.rules);
-    let set_by_name = filters.iter().chain(&options.rule).chain(of_overrides);
-    let set_by_name: Vec<&[u8]> = set_by_name.map(|it| &it.0[..]).collect();
     let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
-    let wildcards = options.wildcards.iter().chain(of_overrides);
-    check_wildcards(linter, plugins, wildcards, &set_by_name)
+    let mut wildcards = options.wildcards.iter().chain(of_overrides);
+    wildcards.try_for_each(|it| check_wildcard(linter.registry(), plugins, it))
 }
 
-/// Returns the first mistake in `wildcards`: an unknown plugin, an invalid severity, options, or a rule that can't be turned
-/// on without options. `set_by_name` has the IDs of the rules that have a setting of their own.
-fn check_wildcards<'a>(
-    linter: &Linter,
+/// Returns a mistake if `wildcard` names a plugin that doesn't exist. Turning off a plugin that Bun left out on purpose is
+/// fine, like turning off one of its rules.
+fn check_wildcard(
+    registry: &Registry,
     js_plugins: &[NamedPlugin],
-    wildcards: impl Iterator<Item = &'a Wildcard>,
-    set_by_name: &[&[u8]],
+    wildcard: &Wildcard,
 ) -> Result<(), Mistake> {
-    let registry = linter.registry();
-    for wildcard in wildcards {
-        let (id, plugin, place) = (&wildcard.id[..], wildcard.plugin(), wildcard.place.as_ref());
-        let key_at = place.map(|it| it.key_at);
-        let parts: &[Json] = match &wildcard.setting {
-            Json::Array(items) => items,
-            setting => std::slice::from_ref(setting),
-        };
-        let severity = parts.first().and_then(severity_of);
-        let ids = rules_of_plugin(registry, js_plugins, plugin);
-        if ids.is_empty() {
-            // Turning off a plugin that Bun left out on purpose is fine, like turning off one of its rules.
-            let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
-            if is_left_out && severity == Some(Severity::Off) {
-                continue;
-            }
-            let named_by = place.map_or(NamedBy::Flag, |_| NamedBy::Bunfig);
-            let message = match similar_plugin(registry, js_plugins, plugin) {
-                Some(similar) => {
-                    let hint = [b"Did you mean \"", similar, b"/*\"?"].concat();
-                    [b"Unknown plugin \"", plugin, b"\"\n  ", &hint].concat()
-                }
-                None => unknown_rule(registry, id, named_by),
-            };
-            return Err(Mistake::new(message, key_at));
-        }
-        let Some(severity) = severity else {
-            let at = place.map(|it| it.place.items.first().unwrap_or(&it.place).at);
-            let message = invalid_severity(id, parts.first().unwrap_or(&Json::Null));
-            return Err(Mistake::new(message, at));
-        };
-        if parts.len() > 1 {
-            let hint: &[u8] = b"Set the options of a rule under its own name";
-            let message = [b"\"", id, b"\" takes no options\n  ", hint].concat();
-            let at = place.map(|it| it.place.find(&[Step::Index(1)], false));
-            return Err(Mistake::new(message, at));
-        }
-        if severity == Severity::Off {
-            continue;
-        }
-        // Each rule the wildcard turns on gets the same checks as a rule that is named. Some rules require options.
-        let is_same = |a: &[u8], b: &[u8]| match registry.find_by_any_name(a) {
-            Some(rule) => (registry.find_by_any_name(b)).is_some_and(|it| std::ptr::eq(it, rule)),
-            None => a == b,
-        };
-        let is_set_by_name = |id: &[u8]| set_by_name.iter().any(|it| is_same(it, id));
-        let turned_on = ids.into_iter().filter(|it| !is_set_by_name(it));
-        let turned_on: Vec<_> = turned_on.map(|it| (it, wildcard.setting.clone())).collect();
-        if let Err(mistake) = check(linter, js_plugins, &turned_on, &[], None) {
-            let hint: &[u8] =
-                b"\" turns it on. Set the rule under its own name, with options or to \"off\"";
-            let message = [&mistake.message[..], b"\n  \"", id, hint].concat();
-            return Err(Mistake::new(message, key_at));
-        }
+    let (id, plugin) = (&wildcard.id[..], wildcard.plugin());
+    let is_left_out = !matches!(registry.why_missing(id), Missing::Unknown(_));
+    if is_left_out || !rules_of_plugin(registry, js_plugins, plugin).is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let message = match similar_plugin(registry, js_plugins, plugin) {
+        Some(similar) => {
+            let hint = [b"Did you mean \"", similar, b"/*\"?"].concat();
+            [b"Unknown plugin \"", plugin, b"\"\n  ", &hint].concat()
+        }
+        None => {
+            let named_by = wildcard.key_at.map_or(NamedBy::Flag, |_| NamedBy::Bunfig);
+            unknown_rule(registry, id, named_by)
+        }
+    };
+    Err(Mistake::new(message, wildcard.key_at))
 }
 
 /// `places` has the bunfig.toml locations of the first `places.len()` rules. The rest came from `--rule`.
@@ -440,9 +395,6 @@ fn turns_on_typed_rule(registry: &Registry, object: &Json) -> bool {
 ///
 /// The core rule also runs on TypeScript if only it accepts the options, or if the typescript-eslint version needs type
 /// information and won't get it. See [`Types`].
-///
-/// A wildcard ([`expand_wildcards`]) is about one plugin, so it sets a paired rule in that rule's own language only.
-/// `"@typescript-eslint/*" = "off"` leaves `no-unused-vars` on in JavaScript files.
 pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types) -> Vec<Json> {
     let id = |meta: &'static Meta| RuleId::Known(meta).to_vec();
     let off = || severity_name(Severity::Off);
@@ -452,11 +404,7 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
         Types::WhenNeeded => objects.iter().any(|it| turns_on_typed_rule(registry, it)),
     };
     let mut split = Vec::with_capacity(objects.len());
-    for mut object in objects {
-        let is_wildcard = object.get(IS_WILDCARD).is_some();
-        if let Json::Object(entries) = &mut object {
-            entries.retain(|it| it.0 != IS_WILDCARD);
-        }
+    for object in objects {
         let rules = object.get(b"rules").and_then(Json::as_object);
         // The two rules of each pair, and the setting found under each name.
         let mut pairs: Vec<([&'static Meta; 2], [Option<&Json>; 2])> = Vec::new();
@@ -481,24 +429,15 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             split.push(object);
             continue;
         }
-        let (mut in_typescript, mut outside_typescript) = (Vec::new(), Vec::new());
+        let mut in_typescript = Vec::new();
         for ([base, extension], [of_base, of_extension]) in pairs {
-            let (for_javascript, for_typescript) = match is_wildcard {
-                true => (of_base, of_extension),
-                false => (of_base.or(of_extension), of_extension.or(of_base)),
-            };
-            if let Some(for_javascript) = for_javascript {
-                // The TypeScript object below overrides this one, except for a wildcard, which may not have one.
-                let rules = match is_wildcard {
-                    true => &mut outside_typescript,
-                    false => &mut everywhere,
-                };
-                rules.push((id(base), for_javascript.clone()));
-                rules.push((id(extension), off()));
-            }
-            let Some(for_typescript) = for_typescript else {
+            let (Some(for_javascript), Some(for_typescript)) =
+                (of_base.or(of_extension), of_extension.or(of_base))
+            else {
                 continue;
             };
+            everywhere.push((id(base), for_javascript.clone()));
+            everywhere.push((id(extension), off()));
             let given = for_typescript.as_array().and_then(|it| it.get(1..));
             let takes = |it| mistake_in_options(it, b"", given.unwrap_or_default()).is_none();
             let can_run = has_types || !extension.requires_types;
@@ -534,16 +473,6 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
             second.extend(object.get(key).map(|it| (key, it.clone())));
         }
         second.push((b"rules", Json::Object(in_typescript)));
-        let ignores = object.get(b"ignores").and_then(Json::as_array);
-        let ignores = ignores.unwrap_or_default().iter().cloned();
-        let mut third = vec![(
-            &b"ignores"[..],
-            Json::Array(ignores.chain([typescript()]).collect()),
-        )];
-        for key in [&b"files"[..], b"basePath", b"$globsOfBun", b"$framework"] {
-            third.extend(object.get(key).map(|it| (key, it.clone())));
-        }
-        third.push((b"rules", Json::Object(outside_typescript)));
         let Some(mut first) = object.into_object() else {
             continue;
         };
@@ -551,9 +480,6 @@ pub(crate) fn split_pairs(registry: &Registry, objects: Vec<Json>, types: Types)
         first.push((b"rules".to_vec(), Json::Object(everywhere)));
         split.push(Json::Object(first));
         split.push(crate::print_config::object(second));
-        if is_wildcard {
-            split.push(crate::print_config::object(third));
-        }
     }
     split
 }
@@ -634,25 +560,35 @@ fn similar_plugin<'a>(
     (closest.filter(|it| it.0 <= prefix.len().max(3) / 3)).map(|it| it.1)
 }
 
-/// The first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A` / `-W` / `-D`.
+/// The first wildcard in `[lint.rules]`, `[[lint.overrides]]`, `--rule` or `-A`.
 pub(crate) fn first_wildcard(options: &Options) -> Option<&Wildcard> {
     let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
     options.wildcards.iter().chain(of_overrides).next()
 }
 
-/// Config object key for its [`Wildcard`]s, as an object from ID to setting. [`expand_wildcards`] replaces it.
+/// Config object key for the IDs of its [`Wildcard`]s. [`expand_wildcards`] replaces it.
 pub(crate) const WILDCARDS: &[u8] = b"$wildcards";
-/// Marks a config object that [`expand_wildcards`] made. [`split_pairs`] removes it.
-const IS_WILDCARD: &[u8] = b"$isWildcard";
 
-/// Moves the [`WILDCARDS`] of each config object into a new object that sets every rule of those plugins. The new object
-/// matches the same files and goes first, so the single rules of the original object override it. Call before
-/// [`split_pairs`].
+/// Moves the [`WILDCARDS`] of each config object into a new object that turns off every rule of those plugins. The new
+/// object matches the same files and goes first, so the single rules of the original object override it.
+///
+/// Call after [`split_pairs`]. A wildcard is about one plugin, so `"@typescript-eslint/*"` must not turn `no-unused-vars` off
+/// in JavaScript files, which naming `@typescript-eslint/no-unused-vars` does.
 pub(crate) fn expand_wildcards(
     registry: &Registry,
     js_plugins: &[NamedPlugin],
     objects: Vec<Json>,
 ) -> Vec<Json> {
+    let selects_files = |key: &[u8]| {
+        let keys: [&[u8]; 5] = [
+            b"files",
+            b"ignores",
+            b"basePath",
+            b"$globsOfBun",
+            b"$framework",
+        ];
+        keys.contains(&key)
+    };
     let mut expanded = Vec::with_capacity(objects.len());
     for mut object in objects {
         let entries = match &mut object {
@@ -663,28 +599,15 @@ pub(crate) fn expand_wildcards(
             expanded.push(object);
             continue;
         };
-        let wildcards = entries.remove(at).1.into_object().unwrap_or_default();
-        let mut rules = Vec::new();
-        for (id, setting) in wildcards {
-            let plugin = Wildcard::plugin_of(&id).unwrap_or_default();
-            let ids = rules_of_plugin(registry, js_plugins, plugin).into_iter();
-            merge(&mut rules, ids.map(|id| (id, setting.clone())).collect());
-        }
-        let selects_files = |key: &[u8]| {
-            let keys: [&[u8]; 5] = [
-                b"files",
-                b"ignores",
-                b"basePath",
-                b"$globsOfBun",
-                b"$framework",
-            ];
-            keys.contains(&key)
-        };
-        let mut of_wildcards: Vec<_> =
+        let wildcards = entries.remove(at).1;
+        let ids = wildcards.as_array().unwrap_or_default().iter();
+        let plugins = ids.filter_map(|it| Wildcard::plugin_of(it.as_str()?));
+        let rules = plugins.flat_map(|it| rules_of_plugin(registry, js_plugins, it));
+        let rules = rules.map(|id| (id, severity_name(Severity::Off)));
+        let mut turned_off: Vec<_> =
             (entries.iter().filter(|it| selects_files(&it.0)).cloned()).collect();
-        of_wildcards.push((IS_WILDCARD.to_vec(), Json::Bool(true)));
-        of_wildcards.push((b"rules".to_vec(), Json::Object(rules)));
-        expanded.push(Json::Object(of_wildcards));
+        turned_off.push((b"rules".to_vec(), Json::Object(rules.collect())));
+        expanded.push(Json::Object(turned_off));
         expanded.push(object);
     }
     expanded

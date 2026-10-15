@@ -222,7 +222,7 @@ complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the w
 complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and TypeScript" -f
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this config file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a config file"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule, or a plugin's rules: --rule 'eqeqeq: [error, smart]', --rule 'unicorn/*: off'"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Set a rule, or turn off a plugin: --rule 'eqeqeq: [error, smart]', --rule 'unicorn/*: off'"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rules" -d "List the built-in rules"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "explain" -r -d "Print the documentation of a rule"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "init" -d "Add a [lint] section to bunfig.toml"

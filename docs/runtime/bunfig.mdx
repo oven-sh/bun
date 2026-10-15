@@ -436,21 +436,22 @@ Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Ev
 "no-restricted-imports" = ["error", { paths = ["lodash"] }]
 ```
 
-Use `*` as the rule name to set every rule of a plugin. A setting for a single rule overrides the wildcard, in either order.
+Use `*` as the rule name to turn off every rule of a plugin. In the same table, a setting for a single rule overrides the wildcard, in either order.
 
 ```toml title="bunfig.toml" icon="settings"
 [lint.rules]
 "jsx-a11y/*" = "off"
-"unicorn/*" = "warn"
-"unicorn/no-null" = "off"
+"unicorn/*" = "off"
+"unicorn/no-null" = "warn"
 ```
 
-- A wildcard takes a severity and no options. If it turns on a rule that requires options, `bun lint` reports an error that names the rule. Set that rule under its own name.
+- A wildcard can only be `"off"`. To turn rules on, name them or use [`lint.categories`](#lint-categories).
+- [`lint.overrides`](#lint-overrides) and flags apply after `[lint.rules]`. A wildcard there also turns off a rule that `[lint.rules]` sets by name.
 - A wildcard works with Bun's own lint config. If the working directory has an ESLint or oxlint config, `bun lint` rejects the wildcard. Files under a config file in a nested directory follow that file, and the wildcard doesn't apply to them.
 
 Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
 
-A wildcard is about one plugin, so it sets such a rule in one language. `"@typescript-eslint/*" = "off"` turns `no-unused-vars` off in TypeScript files and leaves it on in JavaScript files. `"eslint/*"` does the opposite.
+A wildcard is about one plugin, so it turns such a rule off in one language. `"@typescript-eslint/*" = "off"` turns `no-unused-vars` off in TypeScript files and leaves it on in JavaScript files. `"eslint/*" = "off"` does the opposite.
 
 A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
 

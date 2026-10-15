@@ -968,22 +968,24 @@ fn rules(table: &Expr) -> Result<Rules, Refusal> {
             Data::EArray(items) => items.slice().first().unwrap_or(setting),
             _ => setting,
         };
-        severity_of(&rule.name, first)?;
-        let written = json_of(setting)?;
-        let place = RuleOfBunfig {
-            key_at: rule.at.start.max(0) as usize,
-            setting: written.clone(),
-            place: Place::of(setting),
-        };
+        let key_at = rule.at.start.max(0) as usize;
         if Wildcard::plugin_of(&rule.name).is_some() {
+            if bun_lint::linter::severity_of(&json_of(first)?) != Some(Severity::Off) {
+                return refuse(first.loc, &[&Wildcard::must_be_off(&rule.name)]);
+            }
             wildcards.push(Wildcard {
                 id: rule.name,
-                setting: written,
-                place: Some(place),
+                key_at: Some(key_at),
             });
             continue;
         }
-        places.push(place);
+        severity_of(&rule.name, first)?;
+        let written = json_of(setting)?;
+        places.push(RuleOfBunfig {
+            key_at,
+            setting: written.clone(),
+            place: Place::of(setting),
+        });
         rules.push((rule.name, written));
     }
     Ok((rules, places, wildcards))

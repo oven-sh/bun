@@ -530,13 +530,10 @@ fn rules_of(options: &Options, cwd: &[u8]) -> Vec<(Vec<u8>, Json)> {
     rules
 }
 
-/// `wildcards` as the value of [`native::WILDCARDS`]. A later wildcard for the same plugin replaces an earlier one.
+/// `wildcards` as the value of [`native::WILDCARDS`].
 fn wildcards_of(wildcards: &[Wildcard]) -> Json {
-    let mut entries = Vec::new();
-    for it in wildcards {
-        merge(&mut entries, vec![(it.id.clone(), it.setting.clone())]);
-    }
-    Json::Object(entries)
+    let ids = wildcards.iter().map(|it| Json::String(it.id.clone()));
+    Json::Array(ids.collect())
 }
 
 /// The config format to write an override in.
@@ -1738,8 +1735,12 @@ impl<'l> Loader<'l> {
         )];
         let mut of_user = native::categories(self.linter.registry(), self.options);
         of_user.extend(self.added(b"/", Shape::Native));
-        let of_user = native::expand_wildcards(self.linter.registry(), &plugins, of_user);
-        objects.extend(self.split_pairs(of_user));
+        let of_user = self.split_pairs(of_user);
+        objects.extend(native::expand_wildcards(
+            self.linter.registry(),
+            &plugins,
+            of_user,
+        ));
         let mut config = self.flat(b"/", Json::Array(objects), false, plugins)?;
         // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {
@@ -2128,8 +2129,7 @@ impl<'l> Loader<'l> {
             &self.describe(of_cwd.flavor, of_cwd.file.as_deref()),
         ]
         .concat();
-        let at = wildcard.place.as_ref().map(|it| it.key_at);
-        Err(self.fatal(native::Mistake::new(message, at)))
+        Err(self.fatal(native::Mistake::new(message, wildcard.key_at)))
     }
 
     /// Prefixes `why`, ESLint's message about an invalid config, with a line that says where the mistake is. That's `file`

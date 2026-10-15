@@ -1194,7 +1194,7 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
   });
 });
 
-describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
+describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () => {
   const { general, react, next, jest, vitest } = reportedBy;
   const everything = { ...frameworkFiles, "package.json": dependsOn("jest", "next", "react", "vitest") };
   const found = async (bunfig: string, args: string[] = [], files: Record<string, string> = everything) =>
@@ -1244,80 +1244,12 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
       [`"typescript/*" = "off"`, [inJavaScript]],
       [`"eslint/*" = "off"`, [inTypeScript]],
       [`"eslint/*" = "off"\n"@typescript-eslint/*" = "off"`, []],
-      // Turning one plugin on doesn't report the problem twice in either language.
-      [`"eslint/*" = "error"`, [inJavaScript, inTypeScript]],
-      [`"@typescript-eslint/*" = "error"`, [inJavaScript, inTypeScript]],
       // Naming the rule still sets both, and overrides the wildcards.
-      [`"eslint/*" = "error"\n"@typescript-eslint/*" = "error"\n"no-unused-vars" = "off"`, []],
       [`"eslint/*" = "off"\n"@typescript-eslint/*" = "off"\n"no-unused-vars" = "error"`, [inJavaScript, inTypeScript]],
-    ])("%j only sets it in that plugin's language", async (lines, expected) => {
+    ])("%j only turns it off in that plugin's language", async (lines, expected) => {
       const all = await found(`[lint]\ntypeAware = false\n[lint.rules]\n${lines}\n`, [], files);
       expect(all.filter(it => it.endsWith("no-unused-vars"))).toEqual(expected);
     });
-  });
-
-  // A format rule needs `[fmt]`, so `bun lint` keeps looking for it in the bunfig.toml files above, and one it can't parse
-  // is an error. For other rules `[fmt]` is optional, and the search ends there quietly.
-  test.each([
-    ["no-var", 0],
-    ["bun/format", 2],
-    ["bun/*", 2],
-    ["prettier/prettier", 2],
-    ["prettier/*", 2],
-  ])("%s looks for [fmt] like the format rule it includes", async (id, expected) => {
-    const files = { "bunfig.toml": "[fmt\n", "project/a.js": "export const a = 1;\n" };
-    const run = async (bunfig: string, args: string[]) =>
-      (await lint({ ...files, "project/bunfig.toml": bunfig }, args, "project")).exitCode;
-    const override = `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "${id}" = "error" }\n`;
-    expect(
-      await Promise.all([
-        run(`[lint.rules]\n"${id}" = "error"\n`, []),
-        run(`[lint]\nignorePatterns = []\n`, ["--rule", `${id}: error`]),
-        run(override, []),
-      ]),
-    ).toEqual([expected, expected, expected]);
-  });
-
-  test("a wildcard can't turn on a rule that requires options", async () => {
-    const files = { "a.js": `import "fs";\n` };
-    const run = (lines: string) => lint({ ...files, "bunfig.toml": `[lint.rules]\n${lines}\n` }, ["-f", "json"]);
-    const [alone, withOptions, off, allOff] = await Promise.all([
-      run(`"import/*" = "error"`),
-      run(`"import/*" = "error"\n"import/enforce-node-protocol-usage" = ["error", "always"]`),
-      run(`"import/*" = "error"\n"import/enforce-node-protocol-usage" = "off"`),
-      run(`"import/*" = "off"`),
-    ]);
-    expect(alone.stderr).toContain(
-      `error: import/enforce-node-protocol-usage needs at least 1 option\n  "import/*" turns it on. Set the rule under its own name, with options or to "off"\n    at bunfig.toml:2:1\n`,
-    );
-    expect(alone.exitCode).toBe(2);
-    // The rule can be set by name in any place: which setting wins depends on the file.
-    const rule = "import/enforce-node-protocol-usage";
-    const wildcard = `[lint.rules]\n"import/*" = "error"\n`;
-    const inOverride = (lines: string) => `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { ${lines} }\n`;
-    const elsewhere = await Promise.all([
-      lint({ ...files, "bunfig.toml": wildcard }, ["-A", rule, "-f", "json"]),
-      lint({ ...files, "bunfig.toml": wildcard }, ["--rule", `${rule}: off`, "-f", "json"]),
-      lint(files, ["--rule", "import/*: error", "-A", rule, "-f", "json"]),
-      lint({ ...files, "bunfig.toml": wildcard + inOverride(`"${rule}" = "off"`) }, ["-f", "json"]),
-      lint({ ...files, "bunfig.toml": `[lint.rules]\n"${rule}" = "off"\n${inOverride(`"import/*" = "error"`)}` }, [
-        "-f",
-        "json",
-      ]),
-    ]);
-    for (const { stdout, stderr } of elsewhere) {
-      expect(stderr).not.toContain("error:");
-      expect(problems(stdout).filter(it => it.endsWith(rule))).toEqual([]);
-    }
-    const ofTheRule = (stdout: string) => problems(stdout).filter(it => it.endsWith("enforce-node-protocol-usage"));
-    expect(ofTheRule(withOptions.stdout)).toEqual(["a.js:1 import/enforce-node-protocol-usage"]);
-    expect(ofTheRule(off.stdout)).toEqual([]);
-    expect(problems(allOff.stdout)).toEqual([]);
-  });
-
-  test("error turns the plugin on without a category and without the framework", async () => {
-    const files = { ...frameworkFiles, "package.json": dependsOn() };
-    expect(await found(`[lint.rules]\n"nextjs/*" = "error"\n`, [], files)).toEqual(next);
   });
 
   test("a single rule overrides the wildcard, whichever is written first", async () => {
@@ -1331,21 +1263,21 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
   test("--rule overrides [lint.rules], for wildcards and single rules alike", async () => {
     const altText = ["page.jsx:1 jsx-a11y/alt-text"];
     const single = (severity: string) => `[lint.rules]\n"jsx-a11y/alt-text" = "${severity}"\n`;
-    const wildcard = (severity: string) => `[lint.rules]\n"jsx-a11y/*" = "${severity}"\n`;
-    const both = `[lint.rules]\n"jsx-a11y/*" = "warn"\n"jsx-a11y/alt-text" = "error"\n`;
+    const wildcard = `[lint.rules]\n"jsx-a11y/*" = "off"\n`;
+    const both = `${wildcard}"jsx-a11y/alt-text" = "error"\n`;
     expect(
       await Promise.all([
         // A wildcard flag beats a single rule in the file, with or without a wildcard in the file.
         found(single("error"), ["--rule", "jsx-a11y/*: off"]),
         found(both, ["--rule", "jsx-a11y/*: off"]),
         // A single-rule flag beats a wildcard in the file.
-        found(wildcard("off"), ["--rule", "jsx-a11y/alt-text: error"]),
+        found(wildcard, ["--rule", "jsx-a11y/alt-text: error"]),
         // Between two flags, the single rule wins in either order.
         found(single("off"), ["--rule", "jsx-a11y/*: off", "--rule", "jsx-a11y/alt-text: error"]),
         found(single("off"), ["--rule", "jsx-a11y/alt-text: error", "--rule", "jsx-a11y/*: off"]),
         // A wildcard flag for one plugin leaves the file's rules for other plugins alone.
         found(single("error"), ["--rule", "unicorn/*: off"]),
-        // -A, -W and -D are flags like --rule.
+        // -A and -D are flags like --rule.
         found(single("off"), ["-D", "jsx-a11y/alt-text", "--rule", "jsx-a11y/*: off"]),
         found(single("off"), ["--rule", "jsx-a11y/alt-text: error", "-A", "jsx-a11y/*"]),
         found(single("error"), ["-A", "jsx-a11y/*"]),
@@ -1365,33 +1297,11 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
     const plugin = `const rule = { create: context => ({ Program: node => context.report({ node, message: "found" }) }) };
 export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     const files = { "a.js": "export {};\n", "demo.js": plugin };
-    const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n`;
-    expect(await found(`${load}[lint.rules]\n"demo/*" = "error"\n`, [], files)).toEqual([
-      "a.js:1 demo/one",
-      "a.js:1 demo/two",
-    ]);
-    expect(await found(`${load}[lint.rules]\n"demo/*" = "error"\n"demo/two" = "off"\n`, [], files)).toEqual([
-      "a.js:1 demo/one",
-    ]);
-  });
-
-  test("it checks the rules of a JavaScript plugin against their schemas", async () => {
-    const plugin = `const create = context => ({ Program: node => context.report({ node, message: "found" }) });
-const needsOption = { type: "array", items: [{ enum: ["always", "never"] }], minItems: 1, maxItems: 1 };
-export default { meta: { name: "demo" }, rules: { one: { create }, strict: { meta: { schema: needsOption }, create } } };\n`;
-    const files = { "a.js": "export {};\n", "demo.js": plugin };
-    const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n"demo/*" = "error"\n`;
-    const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": load });
-    expect(stderr).toContain(
-      `error: Invalid options for demo/strict\n  Value [] should NOT have fewer than 1 items.\n  "demo/*" turns it on. Set the rule under its own name, with options or to "off"\n    at bunfig.toml:5:1\n`,
-    );
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(2);
-    expect(await found(`${load}"demo/strict" = ["error", "always"]\n`, [], files)).toEqual([
-      "a.js:1 demo/one",
-      "a.js:1 demo/strict",
-    ]);
-    expect(await found(`${load}"demo/strict" = "off"\n`, [], files)).toEqual(["a.js:1 demo/one"]);
+    const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n`;
+    const named = `${load}"demo/one" = "error"\n"demo/two" = "error"\n`;
+    expect(await found(named, [], files)).toEqual(["a.js:1 demo/one", "a.js:1 demo/two"]);
+    expect(await found(named, ["--rule", "demo/*: off"], files)).toEqual([]);
+    expect(await found(`${load}"demo/*" = "off"\n"demo/two" = "error"\n`, [], files)).toEqual(["a.js:1 demo/two"]);
   });
 
   test.each([
@@ -1402,8 +1312,9 @@ export default { meta: { name: "demo" }, rules: { one: { create }, strict: { met
       `Unknown rule "perfectionist/*"\n  To use a rule from an ESLint plugin, add the plugin`,
     ],
     [`"/*" = "off"`, `Unknown rule "/*"`],
-    [`"nextjs/*" = "always"`, `"always" is not a valid severity for nextjs/*\n  Expected "off", "warn", or "error"`],
-    [`"nextjs/*" = ["error", {}]`, `"nextjs/*" takes no options\n  Set the options of a rule under its own name`],
+    [`"nextjs/*" = "always"`, `"nextjs/*" can only be "off"\n`],
+    [`"nextjs/*" = "warn"`, `"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`],
+    [`"nextjs/*" = ["error", {}]`, `"nextjs/*" can only be "off"\n`],
   ])("%s is rejected", async (line, message) => {
     const { stdout, stderr, exitCode } = await lint({ ...everything, "bunfig.toml": `[lint.rules]\n${line}\n` });
     expect(stderr).toContain(message);
@@ -1411,6 +1322,16 @@ export default { meta: { name: "demo" }, rules: { one: { create }, strict: { met
     expect(stdout).toBe("");
     expect(exitCode).toBe(2);
   });
+
+  test.each([[["--rule", "nextjs/*: error"]], [["-W", "nextjs/*"]], [["-D", "nextjs/*"]]])(
+    "%j is rejected",
+    async args => {
+      const { stdout, stderr, exitCode } = await lint(everything, args);
+      expect(stderr).toContain(`"nextjs/*" can only be "off"\n  To turn rules on, name them or use [lint.categories]`);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(2);
+    },
+  );
 
   // Only native mode expands wildcards. With another config for the working directory they would silently do nothing.
   describe.each([
@@ -1433,7 +1354,6 @@ export default { meta: { name: "demo" }, rules: { one: { create }, strict: { met
 
     test.each([
       [`[lint.rules]\n"unicorn/*" = "off"\n`, "2:1"],
-      [`[lint.rules]\n"unicorn/*" = "error"\n`, "2:1"],
       [`[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "unicorn/*" = "off" }\n`, "3:11"],
     ])("%j is rejected", async (bunfig, at) => {
       const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": bunfig });
@@ -1467,14 +1387,15 @@ export default { meta: { name: "demo" }, rules: { one: { create }, strict: { met
     ["packages/legacy/.oxlintrc.json", `{ "rules": { "no-debugger": "error" } }\n`],
     ["packages/legacy/eslint.config.js", `export default [{ rules: { "no-debugger": "error" } }];\n`],
   ])("a nested %s doesn't fail the run, and the wildcard applies to the rest of the project", async (name, config) => {
-    // ES5, which is what ESLint 8 parses by default. No tool's defaults include unicorn/no-null.
-    const code = "debugger;\nvar nothing = null;\n";
+    // ES5, which is what ESLint 8 parses by default.
+    const code = "debugger;\nvar thenable = { then: function () {} };\n";
     const files = { "a.js": code, "packages/legacy/b.js": code, [name]: config };
-    const bunfig = `[lint.rules]\n"unicorn/*" = "error"\n`;
+    const bunfig = `[lint.categories]\ncorrectness = "error"\n[lint.rules]\n"unicorn/*" = "off"\n`;
     const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": bunfig }, ["-f", "json"]);
     expect(stderr).not.toContain("error:");
-    const found = problems(stdout).filter(it => /no-debugger|no-null/.test(it));
-    expect(found).toEqual(["a.js:1 no-debugger", "a.js:2 unicorn/no-null", "b.js:1 no-debugger"]);
+    const found = problems(stdout).filter(it => /no-debugger|unicorn/.test(it));
+    expect(found.filter(it => it.startsWith("a.js"))).toEqual(["a.js:1 no-debugger"]);
+    expect(found).toContain("b.js:1 no-debugger");
     expect(exitCode).toBe(1);
   });
 });

@@ -771,7 +771,7 @@ _bun_lint_completion() {
         '--config[Use this config file instead of looking for one]:config:_files' \
         '-c[Use this config file instead of looking for one]:config:_files' \
         '--no-config-lookup[Do not look for a config file]' \
-        '--rule[Set a rule, or a plugin'"'"'s rules\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"', --rule '"'"'unicorn/*\: off'"'"']:rule' \
+        '--rule[Set a rule, or turn off a plugin\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"', --rule '"'"'unicorn/*\: off'"'"']:rule' \
         '--rules[List the built-in rules]' \
         '--explain[Print the documentation of a rule]:explain' \
         '--init[Add a \[lint\] section to bunfig.toml]' \

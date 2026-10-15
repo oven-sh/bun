@@ -3,6 +3,7 @@
 
 use crate::args::{Argument, Group, Param, error};
 pub use crate::args::{Help, UsageError};
+use crate::paths;
 use bun_clap as clap;
 use bun_core::strings;
 
@@ -55,6 +56,10 @@ const OPTIONS: &[Param] = &[
     clap::param!("--sort-tailwindcss              Sort Tailwind CSS classes"),
     clap::param!("--sort-package-json             Sort the keys of <b>package.json<r>"),
     clap::param!("--jsdoc                         Format JSDoc comments"),
+    clap::param!(
+        "--svelte                        Format Svelte components <d>(default without a Prettier or oxfmt config)<r>"
+    ),
+    clap::param!("--no-svelte                     Do not format Svelte components"),
 ];
 
 const FILES: &[Param] = &[
@@ -256,7 +261,7 @@ pub enum LogLevel {
 /// One entry of `[[fmt.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
-    /// Globs matched against the path relative to the working directory. A glob without a slash matches the file name.
+    /// Globs matched against the path relative to where bunfig.toml is. A glob without a slash matches the file name.
     pub files: Vec<Vec<u8>>,
     pub excluded: Vec<Vec<u8>>,
     /// Same format as [`Options::format`].
@@ -301,6 +306,14 @@ pub struct Options {
     pub ignore_path: Option<Vec<Vec<u8>>>,
     /// Lines of an ignore file that is in the working directory.
     pub ignore_pattern: Vec<Vec<u8>>,
+    /// How many of them, the first, are of bunfig.toml: lines of an ignore file that is where that file is.
+    pub ignore_patterns_of_bunfig: usize,
+    /// The bunfig that was read, or would have been: a path from the working directory.
+    pub bunfig: Vec<u8>,
+    /// It has a `[fmt]` section, which was read.
+    pub has_section_of_bunfig: bool,
+    /// `bun --config=<path>` names it.
+    pub is_bunfig_named: bool,
     /// `--staged`, `--changed`
     pub only: Option<crate::git::Only>,
     pub with_node_modules: bool,
@@ -357,6 +370,10 @@ impl Default for Options {
             config_precedence: Precedence::default(),
             ignore_path: None,
             ignore_pattern: Vec::new(),
+            ignore_patterns_of_bunfig: 0,
+            bunfig: b"bunfig.toml".to_vec(),
+            has_section_of_bunfig: false,
+            is_bunfig_named: false,
             only: None,
             with_node_modules: false,
             error_on_unmatched_pattern: true,
@@ -419,6 +436,7 @@ pub(crate) fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
         b"sort-tailwindcss" => b"sortTailwindcss",
         b"sort-package-json" => b"sortPackageJson",
         b"jsdoc" => b"jsdoc",
+        b"svelte" => b"svelte",
         b"insert-final-newline" => b"insertFinalNewline",
         _ => return None,
     })
@@ -597,6 +615,41 @@ impl Options {
     /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
+    }
+
+    /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
+    /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
+    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
+        self.bunfig = paths::from_native(path);
+        self.has_section_of_bunfig = true;
+        self.is_bunfig_named = is_named;
+        self.ignore_patterns_of_bunfig = self.ignore_pattern.len();
+        let directory = paths::dirname(&self.bunfig).to_vec();
+        if directory != b"." && !is_named {
+            let files = self.ignore_path.iter_mut().flatten();
+            for it in self.config.iter_mut().chain(files) {
+                let written = paths::from_native(it);
+                if !paths::is_absolute(&written) {
+                    *it = paths::join_normalized(&directory, &written);
+                }
+            }
+        }
+        self
+    }
+
+    /// The bunfig.toml above the working directory whose `[fmt]` was found.
+    pub(crate) fn bunfig_above(&self) -> Option<&[u8]> {
+        let is_above = paths::dirname(&self.bunfig) != b"." && !self.is_bunfig_named;
+        (is_above && self.has_section_of_bunfig).then_some(&self.bunfig)
+    }
+
+    /// Where the paths and the patterns in bunfig.toml start: where the file is. `--config` can name a file that is kept
+    /// anywhere, and then it is the working directory.
+    pub(crate) fn start_of_bunfig(&self, cwd: &[u8]) -> Vec<u8> {
+        match self.is_bunfig_named {
+            true => cwd.to_vec(),
+            false => paths::dirname(&paths::resolve(cwd, &self.bunfig)).to_vec(),
+        }
     }
 
     /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::format`].

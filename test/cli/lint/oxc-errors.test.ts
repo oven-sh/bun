@@ -2518,6 +2518,60 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           " | await expression not allowed in formal parameter |  | 41+9 await expression not allowed in formal parameter",
         ],
       ],
+      // `this` and the key of an index signature are no formal parameters.
+      ["ts", "function g(this: { [await 1]: 2 }) {}", []],
+      ["ts", "let g: (this: { [await 1]: 2 }) => void;", []],
+      ["ts", "type T = { [i: { [await 1]: 2 }]: 1 };", []],
+      ["ts", "class C { [i: { [await 1]: 2 }]: 1 }", []],
+      ["ts", "async function f() { let g: { [i: { [await (k)]: 2 }]: 1 }; }", []],
+      ["ts", "async function f() { let g: (this: { [await (k)]: 2 }) => void; }", []],
+      ["ts", "function* f() { let g: (this: { [yield k]: 2 }) => void; }", []],
+      // The parameter around them is one, and a signature in its type does not end it.
+      [
+        "ts",
+        "function g(a: (this: { [await 1]: 2 }) => void) {}",
+        [
+          " | await expression not allowed in formal parameter |  | 24+7 await expression not allowed in formal parameter",
+        ],
+      ],
+      [
+        "ts",
+        "function g(a: { [i: { [await 1]: 2 }]: 1 }) {}",
+        [
+          " | await expression not allowed in formal parameter |  | 23+7 await expression not allowed in formal parameter",
+        ],
+      ],
+      [
+        "ts",
+        "function g(a: (b: X) => { [await 1]: 2 }) {}",
+        [
+          " | await expression not allowed in formal parameter |  | 27+7 await expression not allowed in formal parameter",
+        ],
+      ],
+      [
+        "ts",
+        "function g(a: <T extends { [await 1]: 2 }>() => void) {}",
+        [
+          " | await expression not allowed in formal parameter |  | 28+7 await expression not allowed in formal parameter",
+        ],
+      ],
+      [
+        "ts",
+        "function g(a: { [i: string]: { [await 1]: 2 } }) {}",
+        [
+          " | await expression not allowed in formal parameter |  | 32+7 await expression not allowed in formal parameter",
+        ],
+      ],
+      // In a file that nothing makes a module it is a call of `await`, as beside the type.
+      ["ts", "let g: (a: { [await (k)]: 2 }) => void;", []],
+      ["ts", "let g: { m(a: { [await (k)]: 2 }): void };", []],
+      [
+        "ts",
+        "let g: (a: { [await (k)]: 2 }) => void; export {};",
+        [
+          " | await expression not allowed in formal parameter |  | 14+9 await expression not allowed in formal parameter",
+        ],
+      ],
       ["ts", "async function f() { let g: (a: typeof await) => void; }", []],
       ["ts", "async function f() { let g: (a: number) => { [await (k)]: number }; }", []],
       [

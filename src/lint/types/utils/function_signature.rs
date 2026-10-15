@@ -32,6 +32,19 @@ impl<'a> FunctionSignature<'a> {
     /// `FunctionSignature.create(checker, tsNode)`, for a call, a `new` or a tagged template.
     /// A call that resolves to no signature has no parameters.
     pub fn create(ts_node: impl Located<'a>) -> FunctionSignature<'a> {
+        Self::with_rest_type(ts_node, rest_type_of_base_constraint)
+    }
+
+    /// tsgolint's `newFunctionSignature(typeChecker, node)` of `no_unsafe_argument.go`: the rest
+    /// type is its `getRestType()`.
+    pub fn new_function_signature(ts_node: impl Located<'a>) -> FunctionSignature<'a> {
+        Self::with_rest_type(ts_node, get_rest_type)
+    }
+
+    fn with_rest_type(
+        ts_node: impl Located<'a>,
+        rest_type_kind: fn(Type<'a>) -> RestTypeKind<'a>,
+    ) -> FunctionSignature<'a> {
         let ts_node = ts_node.to_ts_node();
         let mut param_types = SmallVec::new();
         let mut rest_type = None;
@@ -45,15 +58,7 @@ impl<'a> FunctionSignature<'a> {
                 .next()
                 .is_some_and(is_rest_parameter_declaration)
             {
-                let constrained_type = ty.get_base_constraint_of_type().unwrap_or(ty);
-                let kind = match constrained_type.is_tuple_type() {
-                    true => RestTypeKind::Tuple(constrained_type.get_type_arguments()),
-                    false => RestTypeKind::ArrayOrOther(
-                        constrained_type
-                            .get_number_index_type()
-                            .unwrap_or(constrained_type),
-                    ),
-                };
+                let kind = rest_type_kind(ty);
                 rest_type = Some(RestType { index, kind });
                 break;
             }
@@ -92,5 +97,30 @@ impl<'a> FunctionSignature<'a> {
             }
             RestTypeKind::ArrayOrOther(ty) => Some(ty),
         }
+    }
+}
+
+/// typescript-eslint: of the base constraint, the elements of a tuple, or else the number index type.
+fn rest_type_of_base_constraint<'a>(ty: Type<'a>) -> RestTypeKind<'a> {
+    let constrained_type = ty.get_base_constraint_of_type().unwrap_or(ty);
+    match constrained_type.is_tuple_type() {
+        true => RestTypeKind::Tuple(constrained_type.get_type_arguments()),
+        false => RestTypeKind::ArrayOrOther(
+            constrained_type
+                .get_number_index_type()
+                .unwrap_or(constrained_type),
+        ),
+    }
+}
+
+/// tsgolint's `getRestType()`: only an array or a tuple is taken apart, and no constraint is
+/// looked at. A type parameter, a union and an interface that extends `Array` stay as they are.
+fn get_rest_type<'a>(ty: Type<'a>) -> RestTypeKind<'a> {
+    if ty.is_array_type() {
+        return RestTypeKind::ArrayOrOther(ty.get_type_arguments().get(0).unwrap_or(ty));
+    }
+    match ty.is_tuple_type() {
+        true => RestTypeKind::Tuple(ty.get_type_arguments()),
+        false => RestTypeKind::ArrayOrOther(ty),
     }
 }

@@ -4,6 +4,7 @@
 use crate::linter::globals::{ConfigGlobals, Tables, environment};
 use crate::options::Json;
 use bun_sema::resolve::{Dialect, ScriptKind};
+use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock};
 
 /// ESLint's `languageOptions.sourceType`.
@@ -274,6 +275,35 @@ fn source_type_of(value: Option<&Json>) -> Option<SourceType> {
 }
 
 impl LanguageOptions {
+    /// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each `env` that is on what can only be read and then
+    /// what can be written, then what `globals` has. A name that `globals` has is only there, and not at all if it's `"off"`. Unlike
+    /// oxlint's own rules, plugins only have `Array` and the like if the `env` called `builtin` is on. oxlint goes through the `env`s and
+    /// through `globals` in the order of a hash map. Here it's by their names.
+    /// A native rule that has to answer as a rule of a plugin does asks this, and not `File::global`, which
+    /// has the variables of oxlint's own rules.
+    pub fn globals_of_oxlint_plugins(&self) -> Vec<(Box<[u8]>, Global)> {
+        let own = &self.own_globals;
+        let is_own = |name: &[u8]| own.binary_search_by(|it| (*it.0).cmp(name)).is_ok();
+        let mut all: Vec<(Box<[u8]>, Global)> = Vec::new();
+        let mut index_of: FxHashMap<&'static [u8], usize> = FxHashMap::default();
+        for env in &self.envs {
+            let variables = environment(env, Tables::Oxlint).into_iter().flatten();
+            let variables: Vec<_> = variables.filter(|it| !is_own(it.0)).collect();
+            for wanted in [Global::Readonly, Global::Writable] {
+                for &(name, setting) in variables.iter().filter(|it| it.1 == wanted) {
+                    // The one that is there keeps its place.
+                    let at = *index_of.entry(name).or_insert_with(|| {
+                        all.push((name.into(), setting));
+                        all.len() - 1
+                    });
+                    all[at].1 = setting;
+                }
+            }
+        }
+        all.extend(own.iter().filter(|it| it.1 != Global::Off).cloned());
+        all
+    }
+
     pub const LATEST_ECMA_VERSION: u32 = 2026;
 
     /// ESLint's `normalizeEcmaVersionForLanguageOptions`.

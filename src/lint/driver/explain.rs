@@ -319,7 +319,7 @@ fn find(registry: &Registry, name: &[u8]) -> Result<&'static Meta, Vec<u8>> {
             .concat());
         }
     }
-    .ok_or_else(|| native::unknown_rule(registry, name))
+    .ok_or_else(|| native::unknown_rule(registry, name, native::NamedBy::Explain))
 }
 
 /// `--explain <rule>`. Returns the rendered docs page for `name`, or the error message to print.

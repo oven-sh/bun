@@ -1,13 +1,12 @@
 use bstr::BStr;
-use bun_paths::AutoAbsPath;
 use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile_real::{CatalogMap, Lockfile};
-use crate::{PackageID, PackageNameHash, ResolutionTag};
+use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock, join_top_level_dir};
+use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -16,11 +15,33 @@ pub(crate) fn workspace_is_missing_on_disk(
     let Some(workspace_path) = lockfile.workspace_paths.get(&workspace_name_hash).copied() else {
         return false;
     };
-    let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-    let _ =
-        package_json_path.append(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()));
-    let _ = package_json_path.append(b"package.json");
+    let Some(mut package_json_path) = join_top_level_dir(&[
+        workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
+        b"package.json",
+    ]) else {
+        return true;
+    };
     !bun_sys::exists_z(package_json_path.slice_z())
+}
+
+/// Not for a local package's edge: that is an error (`exit_if_survivor_depends_on_missing`).
+pub(crate) fn skips_link_to_pruned_workspace(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    dependent: PackageID,
+    dep: &Dependency,
+    target: PackageID,
+) -> bool {
+    let pruned = &manager.summary.pruned_workspaces;
+    if pruned.is_empty() || !bun_lock::may_stay_unresolved(dep) {
+        return false;
+    }
+    let pkgs = lockfile.packages.slice();
+    let resolutions = pkgs.items_resolution();
+    // A registry package can share the name of a pruned workspace.
+    resolutions[target as usize].tag == ResolutionTag::Workspace
+        && pruned.contains(&pkgs.items_name_hash()[target as usize])
+        && !resolutions[dependent as usize].tag.is_local_package()
 }
 
 pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path: &[u8]) -> bool {
@@ -32,12 +53,21 @@ pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path:
         .any(|path| path.slice(string_bytes) == workspace_path)
 }
 
+/// A package whose package.json is on disk in this checkout.
+pub(crate) struct Survivor {
+    pub(crate) name: String,
+    pub(crate) dependencies: DependencySlice,
+    /// Its rows in the loaded lockfile.
+    pub(crate) recorded: DependencySlice,
+}
+
 pub(crate) fn exit_if_survivor_depends_on_missing(
     from_lockfile: &Lockfile,
     missing: &[PackageID],
     to_lockfile: &Lockfile,
-    to_root_dependencies: DependencySlice,
-    survivors: &[(String, DependencySlice)],
+    root: &Survivor,
+    survivors: &[Survivor],
+    frozen: bool,
     silent: bool,
 ) {
     let pkgs = from_lockfile.packages.slice();
@@ -48,54 +78,65 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     let to_buf = to_lockfile.buffers.string_bytes.as_slice();
     let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
-    let missing_target = |dep: &Dependency| -> Option<PackageID> {
-        if dep.version.tag != DependencyVersionTag::Workspace {
+    let missing_target = |dep: &Dependency, recorded: DependencySlice| -> Option<PackageID> {
+        if dep.version.tag == DependencyVersionTag::Workspace {
+            if let Some(&id) = missing
+                .iter()
+                .find(|&&id| name_hashes[id as usize] == dep.name_hash)
+            {
+                return Some(id);
+            }
+        }
+        // A frozen install must not ask the registry for a workspace's name; a plain one resolves.
+        if !frozen {
             return None;
         }
-        missing
+        let rows = recorded.begin() as usize..recorded.end() as usize;
+        from_lockfile.buffers.dependencies[rows.clone()]
             .iter()
-            .copied()
-            .find(|&id| name_hashes[id as usize] == dep.name_hash)
+            .zip(&from_lockfile.buffers.resolutions[rows])
+            .find(|(from_dep, _)| {
+                from_dep.name_hash == dep.name_hash && from_dep.behavior == dep.behavior
+            })
+            .map(|(_, &bound)| bound)
+            .filter(|bound| missing.contains(bound))
     };
 
     let mut found = false;
-    for dep in to_root_dependencies.get(to_deps) {
-        if dep.behavior.is_workspace() {
-            continue;
-        }
-        let Some(target) = missing_target(dep) else {
-            continue;
-        };
-        found = true;
-        if silent {
-            continue;
-        }
-        let target = target as usize;
-        debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
-        bun_core::pretty_errorln!(
-            "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-            BStr::new(names[target].slice(from_buf)),
-            BStr::new(pkg_res[target].workspace().slice(from_buf)),
-        );
-    }
-
-    for (name, slice) in survivors {
-        for dep in slice.get(to_deps) {
-            let Some(target) = missing_target(dep) else {
+    // One line for a name that a package lists in two groups.
+    let mut reported: Vec<PackageID> = Vec::new();
+    for (i, survivor) in core::iter::once(root).chain(survivors).enumerate() {
+        reported.clear();
+        for dep in survivor.dependencies.get(to_deps) {
+            if dep.behavior.is_workspace() {
+                continue;
+            }
+            let Some(target) = missing_target(dep, survivor.recorded) else {
                 continue;
             };
             found = true;
-            if silent {
+            if silent || reported.contains(&target) {
                 continue;
             }
+            reported.push(target);
             let target = target as usize;
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-                BStr::new(name.slice(to_buf)),
-                BStr::new(names[target].slice(from_buf)),
-                BStr::new(pkg_res[target].workspace().slice(from_buf)),
-            );
+            let target_name = BStr::new(names[target].slice(from_buf));
+            let target_path = BStr::new(pkg_res[target].workspace().slice(from_buf));
+            if i == 0 {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+                    target_name,
+                    target_path,
+                );
+            } else {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+                    BStr::new(survivor.name.slice(to_buf)),
+                    target_name,
+                    target_path,
+                );
+            }
         }
     }
 

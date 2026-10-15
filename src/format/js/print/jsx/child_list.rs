@@ -358,6 +358,27 @@ impl<'a> Children<'a> {
     }
 }
 
+/// `{/* prettier-ignore */}`. `empty_expression`: what is in the braces.
+fn has_ignore_comment<'a>(empty_expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let comments = f.comments();
+    (comments
+        .of_node(AstNodes::JSXEmptyExpression(empty_expression))
+        .dangling
+        .iter())
+    .any(|comment| comments.is_suppression_comment(comment))
+}
+
+/// ```jsx
+/// {/* prettier-ignore */}
+///
+/// <b   c />
+/// ```
+///
+/// Prettier copies the element. oxfmt formats it.
+fn empty_line_ends_ignore_comment(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Formats the children of `jsx`. `forced_break`: it is known that they are on lines of their own.
 pub(super) fn format_children<'a>(
     jsx: Jsx<'a>,
@@ -407,8 +428,8 @@ pub(super) fn format_children<'a>(
                     // For Prettier it is about an element or a fragment. For oxfmt about `{e}` too.
                     let is_suppressed = is_after_ignore_comment
                         && (matches!(node.0.kind(), ExprKind::Jsx(_)) || children.is_oxfmt);
-                    is_after_ignore_comment = matches!(node.0.kind(), ExprKind::Missing)
-                        && f.comments().is_suppressed(node.span().end);
+                    is_after_ignore_comment =
+                        matches!(node.0.kind(), ExprKind::Missing) && has_ignore_comment(node.0, f);
                     let format_node = format_with(|f| match is_suppressed {
                         true => FormatSuppressedNode(node.span()).fmt(f),
                         false => node.fmt(f),
@@ -457,7 +478,10 @@ pub(super) fn format_children<'a>(
         }
         match separator == Separator::HardLine && is_after_line_break {
             // The printer makes one line break of two in a row.
-            true => multiline.write_separator(&empty_line(), f),
+            true => {
+                is_after_ignore_comment &= !empty_line_ends_ignore_comment(f);
+                multiline.write_separator(&empty_line(), f);
+            }
             false if is_mdx_block && separator == Separator::JsxWhitespace => {
                 multiline.write_separator(&Separator::Line, f)
             }

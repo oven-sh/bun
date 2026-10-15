@@ -1,5 +1,6 @@
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -158,12 +159,12 @@ struct Frame<'a> {
 #[derive(Default)]
 pub struct State<'a> {
     stack: Vec<Frame<'a>>,
-    /// By `Segment::id`, for the reachable segments of async functions and generators.
-    segment_info: FxHashMap<u32, SegmentInfo<'a>>,
+    /// For the reachable segments of async functions and generators.
+    segment_info: IdMap<Segment<'a>, SegmentInfo<'a>>,
     /// The current segments where the `ChainExpression` that is being left is left.
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
-    assignment_references: FxHashMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
+    assignment_references: IdMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
     /// Where the `await` and the `yield` expressions of the file start, in ascending order.
     pauses: Option<Vec<u32>>,
 }
@@ -318,13 +319,13 @@ impl RequireAtomicUpdates {
         }
         let mut info = SegmentInfo::default();
         for prev_segment in segment.prev_segments() {
-            if let Some(prev) = state.segment_info.get(&prev_segment.id()) {
+            if let Some(prev) = state.segment_info.get(prev_segment) {
                 info.outdated_read_variables
                     .extend(&prev.outdated_read_variables);
                 info.fresh_read_variables.extend(&prev.fresh_read_variables);
             }
         }
-        state.segment_info.insert(segment.id(), info);
+        state.segment_info.insert(segment, info);
     }
 
     fn on_identifier<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -357,7 +358,7 @@ impl RequireAtomicUpdates {
 
         if reference.is_read() && !write_expr.is_some_and(is_right_of_plain_assignment) {
             for segment in code_path.current_segments() {
-                if let Some(info) = state.segment_info.get_mut(&segment.id()) {
+                if let Some(info) = state.segment_info.get_mut(segment) {
                     info.fresh_read_variables.insert(variable);
                     // What is freshly read again is no longer outdated.
                     info.outdated_read_variables.remove(&variable);
@@ -371,8 +372,7 @@ impl RequireAtomicUpdates {
         {
             state
                 .assignment_references
-                .entry(write_expr)
-                .or_default()
+                .get_or_insert_with(write_expr, SmallVec::new)
                 .push((reference, variable));
         }
     }
@@ -392,7 +392,7 @@ impl RequireAtomicUpdates {
 
         if matches!(e.tag(), ExprTag::Await | ExprTag::Yield) {
             for segment in code_path.current_segments() {
-                if let Some(info) = state.segment_info.get_mut(&segment.id()) {
+                if let Some(info) = state.segment_info.get_mut(segment) {
                     info.outdated_read_variables
                         .extend(info.fresh_read_variables.drain());
                 }
@@ -403,7 +403,7 @@ impl RequireAtomicUpdates {
         if state.assignment_references.is_empty() || e.is_angle_bracket_assertion() {
             return;
         }
-        let Some(references) = state.assignment_references.remove(&e) else {
+        let Some(references) = state.assignment_references.remove(e) else {
             return;
         };
         let Some(assignment) = assignment_of(e) else {
@@ -416,7 +416,7 @@ impl RequireAtomicUpdates {
             .unwrap_or_else(|| code_path.current_segments());
         for (reference, variable) in references {
             let is_outdated = segments.iter().any(|segment| {
-                let info = cx.state.segment_info.get(&segment.id());
+                let info = cx.state.segment_info.get(*segment);
                 info.is_some_and(|it| it.outdated_read_variables.contains(&variable))
             });
             if !is_outdated {

@@ -132,6 +132,14 @@ impl<'a> Func<'a> {
         !matches!(self.raw().body, hir::FnBody::None)
     }
 
+    /// TypeScript's `NodeFlags.HasImplicitReturn` of a body that is a block: the binder's flow
+    /// reaches its end. tsgolint asks this, where ESLint asks [`Func::is_end_reachable`].
+    #[inline]
+    pub fn has_implicit_return(self) -> bool {
+        let info = self.file.bound.fns.get(self.id.idx());
+        info.is_some_and(|info| info.end != bun_sema::bind::UNREACHABLE)
+    }
+
     /// The statements of a body that is a block.
     #[inline]
     pub fn body_statements(self) -> Option<List<'a, Stmt<'a>>> {
@@ -920,6 +928,7 @@ impl<'a> Class<'a> {
     pub fn body_span(self) -> Span {
         // The last thing before the `{`.
         let head_end = (self.implements().last().map(|ty| ty.span().end))
+            .or_else(|| self.flow_mixins().last().map(|ty| ty.span().end))
             .or_else(|| self.extends_args().angle_brackets_span().map(|it| it.end))
             .or_else(|| self.extends().map(|e| e.outer_span().end))
             .or_else(|| self.type_params().angle_brackets_span().map(|it| it.end))
@@ -1217,6 +1226,15 @@ impl<'a> Prop<'a> {
     #[inline]
     pub fn is_import_attribute(self) -> bool {
         self.file.is_import_attribute(self.id)
+    }
+
+    /// Keywords and decorators, in source order. All but the `async` of a method are errors.
+    pub fn modifiers(self) -> List<'a, Modifier<'a>> {
+        let all = self.file.hir.modifiers_of_props;
+        match all.binary_search_by_key(&self.id.0, |it| it.0.0) {
+            Ok(at) => List::run(self.file, all[at].1),
+            Err(_) => List::empty(self.file),
+        }
     }
 
     /// From its first token: `async`, `get`, `set`, `*`, `...`, or the name.

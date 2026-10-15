@@ -805,6 +805,85 @@ describe.concurrent("comments", () => {
     "react/rules-of-hooks": "error",
   });
 
+  // Both tools' comments count when neither tool's config is there.
+  test.each(["eslint", "oxlint"])("%s-disable in every form", async tool => {
+    const code = `// ${tool}-disable-next-line no-debugger
+debugger;
+debugger; // ${tool}-disable-line no-debugger
+/* ${tool}-disable no-debugger */
+debugger;
+/* ${tool}-enable no-debugger */
+debugger;
+// ${tool}-disable-next-line
+debugger;
+// ${tool}-disable-next-line eslint/no-debugger -- with a reason
+debugger;
+// ${tool}-disable-next-line typescript/no-explicit-any
+export const a: any = 1;
+// ${tool}-disable-next-line unicorn/no-null
+debugger;
+`;
+    const { stdout, exitCode } = await lint({ "a.ts": code, ...rules }, ["-f", "json"]);
+    // The last comment is for another rule, so it is unused.
+    expect(problems(stdout)).toEqual(["a.ts:7 no-debugger", "a.ts:14 null", "a.ts:15 no-debugger"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["eslint", "oxlint"])("// %s-disable is for the rest of the file, up to the next -enable", async tool => {
+    const code = `debugger;\n// ${tool}-disable no-debugger\ndebugger;\ndebugger;\n// ${tool}-enable no-debugger\ndebugger;\n`;
+    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:1 no-debugger", "a.js:6 no-debugger"]);
+  });
+
+  test.each(["eslint", "oxlint"])("an unused %s-disable comment is called what it is called", async tool => {
+    const files = {
+      "a.js": `// ${tool}-disable-next-line no-debugger\nexport const a = 1;\n/* ${tool}-enable no-debugger */\n`,
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--report-unused-disable-directives"]);
+    expect(stdout).toContain(
+      `:1:1: Unused ${tool}-disable directive (no problems were reported from 'no-debugger'). [Error]`,
+    );
+    expect(stdout).toContain(
+      `:3:1: Unused ${tool}-enable directive (no matching ${tool}-disable directives were found for 'no-debugger'). [Error]`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("the comments of the two can be mixed", async () => {
+    const code = `/* oxlint-disable no-debugger */\ndebugger;\n/* eslint-enable no-debugger */\ndebugger;\n`;
+    const { stdout } = await lint({ "a.js": code }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:4 no-debugger"]);
+  });
+
+  test("the rules about comments pass over the comments of both", async () => {
+    const code = `// oxlint-disable-next-line no-debugger
+debugger;
+debugger; // oxlint-disable-line no-debugger
+// eslint-disable-next-line no-debugger
+debugger;
+debugger; // eslint-disable-line no-debugger
+// another
+`;
+    const rules = { "capitalized-comments": "error", "no-inline-comments": "error", "no-debugger": "error" } as const;
+    const flat = { "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n` };
+    const [alone, fixed, withEslint] = await Promise.all([
+      lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json"]),
+      // A capital letter would end what the comment does.
+      lint({ "a.js": code, ...bunfig(rules) }, ["-f", "json", "--fix-dry-run"]),
+      lint({ "a.js": code, ...flat }, ["-f", "json"]),
+    ]);
+    expect(problems(alone.stdout)).toEqual(["a.js:7 capitalized-comments"]);
+    expect(JSON.parse(fixed.stdout)[0].output).toBe(code.replace("another", "Another"));
+    expect(problems(withEslint.stdout)).toEqual([
+      "a.js:1 capitalized-comments",
+      "a.js:2 no-debugger",
+      "a.js:3 capitalized-comments",
+      "a.js:3 no-debugger",
+      "a.js:3 no-inline-comments",
+      "a.js:7 capitalized-comments",
+    ]);
+  });
+
   test("eslint-disable accepts every name of a rule", async () => {
     const code = `// eslint-disable-next-line unicorn/no-null
 export const a = null;
@@ -1003,7 +1082,7 @@ export default [{ files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaF
 
 describe.concurrent("unknown rules", () => {
   const source = { "a.js": "debugger;\n" };
-  const cases: [written: string, said: string][] = [
+  const cases: [written: string, said: string, saidToFlag?: string][] = [
     // Typos in a core rule, a plugin rule, and a plugin name.
     ["no-vra", `Unknown rule "no-vra"\n  Did you mean "no-var"?`],
     ["eslint/no-vra", `Unknown rule "eslint/no-vra"\n  Did you mean "eslint/no-var"?`],
@@ -1030,17 +1109,40 @@ describe.concurrent("unknown rules", () => {
     ["no-null", `Unknown rule "no-null"\n  Did you mean "unicorn/no-null"?`],
     ["react-hooks/jsx-key", `Unknown rule "react-hooks/jsx-key"\n  Did you mean "react/jsx-key"?`],
     // Nothing is close enough to suggest.
-    ["foo/bar-baz", `Unknown rule "foo/bar-baz"`],
+    [
+      "foo/bar-baz",
+      `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, add the plugin to plugins in [lint]`,
+      `Unknown rule "foo/bar-baz"\n  To use a rule from an ESLint plugin, load the plugin with --plugin`,
+    ],
+    // The plugin is there already.
+    [
+      "react/only-in-the-package",
+      `Unknown rule "react/only-in-the-package"\n  react is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "react-js", specifier = "eslint-plugin-react" }]`,
+    ],
+    [
+      "typescript/only-in-the-package",
+      `Unknown rule "typescript/only-in-the-package"\n  typescript is built in and has no rule of that name\n  To run a rule of the package, load it under another name in [lint]: plugins = [{ name = "typescript-js", specifier = "@typescript-eslint/eslint-plugin" }]`,
+    ],
+    // No package has them.
+    ["bun/only-in-the-package", `Unknown rule "bun/only-in-the-package"`],
+    ["oxc/only-in-the-package", `Unknown rule "oxc/only-in-the-package"`],
+    ["eslint/only-in-the-package", `Unknown rule "eslint/only-in-the-package"`],
     ["perfectly-fine", `Unknown rule "perfectly-fine"`],
     // Rules that bun lint leaves out on purpose.
     ["indent", `"indent" is a formatting rule\n  bun fmt does that`],
     ["eslint/semi", `"eslint/semi" is a formatting rule\n  bun fmt does that`],
     ["@stylistic/quotes", `"@stylistic/quotes" is a formatting rule\n  bun fmt does that`],
-    ["jsdoc/require-param", `"jsdoc/require-param" is not supported\n  bun lint has no jsdoc rules`],
-    ["vue/no-dupe-keys", `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules`],
+    [
+      "jsdoc/require-param",
+      `"jsdoc/require-param" is not supported\n  bun lint has no jsdoc rules. To run eslint-plugin-jsdoc, add it to plugins in [lint]`,
+    ],
+    [
+      "vue/no-dupe-keys",
+      `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
+    ],
   ];
 
-  test.each(cases)("%s is rejected", async (written, said) => {
+  test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
     const [inFile, byFlag] = await Promise.all([
       lint({
         ...source,
@@ -1055,7 +1157,7 @@ describe.concurrent("unknown rules", () => {
     });
     expect(byFlag).toEqual({
       stdout: "",
-      stderr: `error: ${said}\n`,
+      stderr: `error: ${saidToFlag}\n`,
       exitCode: 2,
     });
   });
@@ -1198,6 +1300,17 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
   const source = { "a.js": "export default null;\n" };
   const flat = (rules: unknown) => ({
     "eslint.config.mjs": `export default [{ rules: ${JSON.stringify(rules)} }];\n`,
+  });
+
+  test("to an ESLint config, oxlint-disable and // eslint-disable are ordinary comments", async () => {
+    const code = `// oxlint-disable-next-line no-debugger\ndebugger;\n// eslint-disable no-debugger\ndebugger;\n// eslint-disable-next-line no-debugger\ndebugger;\n`;
+    const legacy = { root: true, rules: { "no-debugger": "error" } };
+    const [inFlat, inLegacy] = await Promise.all([
+      lint({ "a.js": code, ...flat({ "no-debugger": "error" }) }, ["-f", "json"]),
+      lint({ "a.js": code, ".eslintrc.json": JSON.stringify(legacy) }, ["-f", "json"]),
+    ]);
+    expect(problems(inFlat.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
+    expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
   });
 
   test("an ESLint config still has to declare its plugins", async () => {

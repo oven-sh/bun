@@ -17,7 +17,7 @@ import assert from "node:assert";
 import { kMaxLength } from "node:buffer";
 import { execFile } from "node:child_process";
 import { Stream } from "node:stream";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 import vm from "node:vm";
 
 // `new Buffer(x)` and `Buffer(x)` do not type-check.
@@ -682,21 +682,28 @@ describe("a valueOf() that every value of a kind reaches", () => {
     "an array after Object.freeze(Object.prototype)": ["0102,0102,0102", "6869,6869,6869"],
   };
 
+  // Malloc=1 makes JavaScriptCore use the system allocator, so an ASAN build reports a read of a freed view.
+  const env = { ...process.env, NODE_NO_WARNINGS: "1", BUN_DEBUG_QUIET_LOGS: "1", Malloc: "1" };
+  const childResult = Promise.withResolvers<{ results: unknown; stderr: string; code: unknown }>();
   // The child starts when this file loads, so it runs while the tests above do.
-  const child = new Promise<{ results: unknown; stderr: string; code: unknown }>(resolve => {
-    // The timeout ends a child whose Buffer.from() never returns.
-    const options = { timeout: 20_000, env: { ...process.env, NODE_NO_WARNINGS: "1", Malloc: "1" } };
-    execFile(process.execPath, ["-e", `process.noDeprecation = true;${script}`], options, (error, stdout, stderr) => {
+  const child = execFile(
+    process.execPath,
+    ["-e", `process.noDeprecation = true;${script}`],
+    { env },
+    (error, stdout, stderr) => {
       let results: unknown = stdout;
       try {
         results = JSON.parse(stdout);
       } catch {}
-      resolve({ results, stderr: error ? stderr : "", code: error ? (error.code ?? error.signal) : 0 });
-    });
+      childResult.resolve({ results, stderr: error ? stderr : "", code: error ? (error.code ?? error.signal) : 0 });
+    },
+  );
+  after(() => {
+    child.kill();
   });
 
   test("every result is the one Node gives", async () => {
-    assert.deepStrictEqual(await child, { results: expected, stderr: "", code: 0 });
+    assert.deepStrictEqual(await childResult.promise, { results: expected, stderr: "", code: 0 });
   });
 });
 

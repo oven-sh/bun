@@ -5301,6 +5301,34 @@ maybe(() => { return f; });
         expect(exitCode).toBe(1);
       });
 
+      // A promise that is declared in a project is only one in the program of that project. The tsconfig.json at the top has no
+      // `include`, so it includes everything. Without the flag this is what oxlint 1.87.0 with tsgolint 7.0.2003 does. There the
+      // flag does not change the program of a file.
+      test.each([
+        ["no --tsconfig: the first tsconfig.json upwards that includes the file", [], ["1:1", "2:1"]],
+        ["one beside the nearest that includes more", ["--tsconfig", "packages/a/all.json"], ["2:1"]],
+        ["one that does not include the file: nothing further up is asked", ["--tsconfig", "packages/a/src.json"], []],
+      ])(
+        "the project of a file that the nearest tsconfig.json does not include, with %s",
+        async (_, flags, expected) => {
+          const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+          const { stdout } = await lint(
+            {
+              ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+              "tsconfig.json": JSON.stringify({ compilerOptions, exclude: ["dist"] }),
+              "other/top.d.ts": "declare const ofTheTop: Promise<void>;\n",
+              "packages/a/tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+              "packages/a/all.json": JSON.stringify({ extends: "./tsconfig.json", include: ["**/*"] }),
+              "packages/a/src.json": JSON.stringify({ extends: "./tsconfig.json", include: ["src"] }),
+              "packages/a/src/a.d.ts": "declare const ofThePackage: Promise<void>;\n",
+              "packages/a/config.ts": "ofTheTop;\nofThePackage;\nexport {};\n",
+            },
+            ["-f", "unix", "--type-aware", ...flags, "packages/a"],
+          );
+          expect([...stdout.matchAll(/^packages\/a\/config\.ts:(\d+:\d+): /gm)].map(it => it[1])).toEqual(expected);
+        },
+      );
+
       // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
       describe("a file of two projects is to each what the options of the project make of it", () => {
         const project = (more: object, include: string[]) =>

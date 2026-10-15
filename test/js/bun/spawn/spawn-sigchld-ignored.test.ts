@@ -111,7 +111,13 @@ describe.skipIf(!launcherIgnoresSigchld)("bun started with SIGCHLD ignored", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect({ stderr: await compile.stderr.text(), exitCode: await compile.exited }).toEqual({
+    const [compileStdout, compileStderr, compileExitCode] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    expect({ stdout: compileStdout, stderr: compileStderr, exitCode: compileExitCode }).toEqual({
+      stdout: "",
       stderr: "",
       exitCode: 0,
     });

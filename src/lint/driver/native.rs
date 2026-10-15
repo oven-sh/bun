@@ -205,18 +205,22 @@ pub(crate) fn check_rules(
     if only_of_plugins.is_some() {
         return Ok(());
     }
-    check_wildcards(linter, plugins, &options.wildcards, &options.rule)?;
-    let mut overrides = options.overrides.iter();
-    overrides.try_for_each(|it| check_wildcards(linter, plugins, &it.wildcards, &it.rules))
+    // Which setting wins depends on the file, so a rule that is set by name anywhere isn't checked as part of a wildcard.
+    let of_overrides = options.overrides.iter().flat_map(|it| &it.rules);
+    let set_by_name = filters.iter().chain(&options.rule).chain(of_overrides);
+    let set_by_name: Vec<&[u8]> = set_by_name.map(|it| &it.0[..]).collect();
+    let of_overrides = options.overrides.iter().flat_map(|it| &it.wildcards);
+    let wildcards = options.wildcards.iter().chain(of_overrides);
+    check_wildcards(linter, plugins, wildcards, &set_by_name)
 }
 
 /// Returns the first mistake in `wildcards`: an unknown plugin, an invalid severity, options, or a rule that can't be turned
-/// on without options. `rules` are the single rules set in the same place, which override the wildcards.
-fn check_wildcards(
+/// on without options. `set_by_name` has the IDs of the rules that have a setting of their own.
+fn check_wildcards<'a>(
     linter: &Linter,
     js_plugins: &[NamedPlugin],
-    wildcards: &[Wildcard],
-    rules: &[(Vec<u8>, Json)],
+    wildcards: impl Iterator<Item = &'a Wildcard>,
+    set_by_name: &[&[u8]],
 ) -> Result<(), Mistake> {
     let registry = linter.registry();
     for wildcard in wildcards {
@@ -263,7 +267,7 @@ fn check_wildcards(
             Some(rule) => (registry.find_by_any_name(b)).is_some_and(|it| std::ptr::eq(it, rule)),
             None => a == b,
         };
-        let is_set_by_name = |id: &[u8]| rules.iter().any(|it| is_same(&it.0, id));
+        let is_set_by_name = |id: &[u8]| set_by_name.iter().any(|it| is_same(it, id));
         let turned_on = ids.into_iter().filter(|it| !is_set_by_name(it));
         let turned_on: Vec<_> = turned_on.map(|it| (it, wildcard.setting.clone())).collect();
         if let Err(mistake) = check(linter, js_plugins, &turned_on, &[], None) {

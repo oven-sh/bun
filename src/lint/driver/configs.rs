@@ -339,14 +339,14 @@ pub(crate) fn inherit_frameworks(
     own: Option<Frameworks>,
     is_repository_root: bool,
 ) -> Frameworks {
-    let inherited = match is_repository_root {
+    let parent = match is_repository_root {
         true => Frameworks::empty(),
-        false => parent & Frameworks::TEST_RUNNERS,
+        false => parent,
     };
     match own {
         // With both runners' plugins on, each problem would be reported twice.
         Some(own) if own.intersects(Frameworks::TEST_RUNNERS) => own,
-        Some(own) => own | inherited,
+        Some(own) => own | (parent & Frameworks::TEST_RUNNERS),
         None => parent,
     }
 }

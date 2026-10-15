@@ -7,12 +7,13 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-async function lint(files: Record<string, string>, args: string[] = []) {
+/** Runs `bun lint ...args` in a temp directory containing `files`, or in its subdirectory `cwd`. */
+async function lint(files: Record<string, string>, args: string[] = [], cwd = ".") {
   using dir = tempDir("bun-lint-native", files);
   await using proc = spawn({
     cmd: [bunExe(), "lint", ...args],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: join(String(dir), cwd),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1128,41 +1129,57 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
     expect(await found(names)).toEqual(expected);
   });
 
-  test("a test runner is not inherited from a package.json outside the repository", async () => {
+  describe("a package.json outside the repository", () => {
     const inside = (directory: string) =>
       Object.fromEntries(Object.entries(frameworkFiles).map(([name, text]) => [`${directory}/${name}`, text]));
-    const files = {
-      "bunfig.toml": correctnessAndPerf,
-      "package.json": dependsOn("jest"),
-      "project/bunfig.toml": correctnessAndPerf,
-      "project/package.json": dependsOn("lodash"),
-      ...inside("project"),
-      "project/nested/package.json": dependsOn("lodash"),
-      ...inside("project/nested"),
+    const repository = { "project/.git/HEAD": "ref: refs/heads/main\n" };
+    /** Lints `project` three ways. Detection walks up from inside it, and the directory walk goes down into it from above. */
+    const runs = async (files: Record<string, string>) => {
+      const names = Object.keys(files).filter(it => /\.jsx?$/.test(it));
+      const results = await Promise.all([
+        lint(files, ["-f", "json"], "project"),
+        lint(files, [...names.map(it => it.replace("project/", "")), "-f", "json"], "project"),
+        lint(files, ["project", "-f", "json"]),
+      ]);
+      for (const { stderr, exitCode } of results) {
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(1);
+      }
+      return results.map(it => problems(it.stdout));
     };
-    const run = async (files: Record<string, string>, cwd: string, args: string[]) => {
-      using dir = tempDir("bun-lint-native", files);
-      await using proc = spawn({
-        cmd: [bunExe(), "lint", ...args, "-f", "json"],
-        env: bunEnv,
-        cwd: join(String(dir), cwd),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      return problems(await proc.stdout.text());
-    };
-    const names = ["util.js", "sum.test.js", "nested/util.js", "nested/sum.test.js"];
-    // Detection walks up from inside the project, and the directory walk goes down into it from above.
-    const runs = (files: Record<string, string>) =>
-      Promise.all([run(files, "project", []), run(files, "project", names), run(files, ".", ["project"])]);
-    const inherited = sorted(general, general, jest, jest);
-    expect(await runs(files)).toEqual([inherited, inherited, inherited]);
-    const bounded = sorted(general, general);
-    expect(await runs({ ...files, "project/.git/HEAD": "ref: refs/heads/main\n" })).toEqual([
-      bounded,
-      bounded,
-      bounded,
-    ]);
+
+    test("doesn't give its test runner to a package in the repository", async () => {
+      const files = {
+        "bunfig.toml": correctnessAndPerf,
+        "package.json": dependsOn("jest"),
+        "project/bunfig.toml": correctnessAndPerf,
+        "project/package.json": dependsOn("lodash"),
+        ...inside("project"),
+        "project/nested/package.json": dependsOn("lodash"),
+        ...inside("project/nested"),
+      };
+      const inherited = sorted(general, general, jest, jest);
+      expect(await runs(files)).toEqual([inherited, inherited, inherited]);
+      const bounded = sorted(general, general);
+      expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
+    });
+
+    test("doesn't decide for a repository that has none at its root", async () => {
+      const files = {
+        "bunfig.toml": correctnessAndPerf,
+        "package.json": dependsOn("jest", "next", "react"),
+        "project/bunfig.toml": correctnessAndPerf,
+        // No package.json up to the root of the repository.
+        ...inside("project/scripts"),
+        // Its own package.json decides about the frameworks, and would inherit a test runner.
+        "project/backend/package.json": dependsOn("lodash"),
+        ...inside("project/backend"),
+      };
+      const outside = sorted(general, general, jest, jest, next, react);
+      expect(await runs(files)).toEqual([outside, outside, outside]);
+      const bounded = sorted(general, general);
+      expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
+    });
   });
 
   test("--print-config detects frameworks from the file's path", async () => {
@@ -1249,17 +1266,8 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
     ["prettier/*", 2],
   ])("%s looks for [fmt] like the format rule it includes", async (id, expected) => {
     const files = { "bunfig.toml": "[fmt\n", "project/a.js": "export const a = 1;\n" };
-    const run = async (bunfig: string, args: string[]) => {
-      using dir = tempDir("bun-lint-native", { ...files, "project/bunfig.toml": bunfig });
-      await using proc = spawn({
-        cmd: [bunExe(), "lint", ...args],
-        env: bunEnv,
-        cwd: join(String(dir), "project"),
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      return await proc.exited;
-    };
+    const run = async (bunfig: string, args: string[]) =>
+      (await lint({ ...files, "project/bunfig.toml": bunfig }, args, "project")).exitCode;
     const override = `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { "${id}" = "error" }\n`;
     expect(
       await Promise.all([
@@ -1283,6 +1291,24 @@ describe.concurrent(`"plugin/*" sets every rule of a plugin`, () => {
       `error: import/enforce-node-protocol-usage needs at least 1 option\n  "import/*" turns it on. Set the rule under its own name, with options or to "off"\n    at bunfig.toml:2:1\n`,
     );
     expect(alone.exitCode).toBe(2);
+    // The rule can be set by name in any place: which setting wins depends on the file.
+    const rule = "import/enforce-node-protocol-usage";
+    const wildcard = `[lint.rules]\n"import/*" = "error"\n`;
+    const inOverride = (lines: string) => `[[lint.overrides]]\nfiles = ["*.js"]\nrules = { ${lines} }\n`;
+    const elsewhere = await Promise.all([
+      lint({ ...files, "bunfig.toml": wildcard }, ["-A", rule, "-f", "json"]),
+      lint({ ...files, "bunfig.toml": wildcard }, ["--rule", `${rule}: off`, "-f", "json"]),
+      lint(files, ["--rule", "import/*: error", "-A", rule, "-f", "json"]),
+      lint({ ...files, "bunfig.toml": wildcard + inOverride(`"${rule}" = "off"`) }, ["-f", "json"]),
+      lint({ ...files, "bunfig.toml": `[lint.rules]\n"${rule}" = "off"\n${inOverride(`"import/*" = "error"`)}` }, [
+        "-f",
+        "json",
+      ]),
+    ]);
+    for (const { stdout, stderr } of elsewhere) {
+      expect(stderr).not.toContain("error:");
+      expect(problems(stdout).filter(it => it.endsWith(rule))).toEqual([]);
+    }
     const ofTheRule = (stdout: string) => problems(stdout).filter(it => it.endsWith("enforce-node-protocol-usage"));
     expect(ofTheRule(withOptions.stdout)).toEqual(["a.js:1 import/enforce-node-protocol-usage"]);
     expect(ofTheRule(off.stdout)).toEqual([]);
@@ -1347,6 +1373,25 @@ export default { meta: { name: "demo" }, rules: { one: rule, two: rule } };\n`;
     expect(await found(`${load}[lint.rules]\n"demo/*" = "error"\n"demo/two" = "off"\n`, [], files)).toEqual([
       "a.js:1 demo/one",
     ]);
+  });
+
+  test("it checks the rules of a JavaScript plugin against their schemas", async () => {
+    const plugin = `const create = context => ({ Program: node => context.report({ node, message: "found" }) });
+const needsOption = { type: "array", items: [{ enum: ["always", "never"] }], minItems: 1, maxItems: 1 };
+export default { meta: { name: "demo" }, rules: { one: { create }, strict: { meta: { schema: needsOption }, create } } };\n`;
+    const files = { "a.js": "export {};\n", "demo.js": plugin };
+    const load = `[lint]\nplugins = ["./demo.js"]\nignorePatterns = ["demo.js"]\n[lint.rules]\n"demo/*" = "error"\n`;
+    const { stdout, stderr, exitCode } = await lint({ ...files, "bunfig.toml": load });
+    expect(stderr).toContain(
+      `error: Invalid options for demo/strict\n  Value [] should NOT have fewer than 1 items.\n  "demo/*" turns it on. Set the rule under its own name, with options or to "off"\n    at bunfig.toml:5:1\n`,
+    );
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(2);
+    expect(await found(`${load}"demo/strict" = ["error", "always"]\n`, [], files)).toEqual([
+      "a.js:1 demo/one",
+      "a.js:1 demo/strict",
+    ]);
+    expect(await found(`${load}"demo/strict" = "off"\n`, [], files)).toEqual(["a.js:1 demo/one"]);
   });
 
   test.each([

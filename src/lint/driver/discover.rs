@@ -340,10 +340,10 @@ fn search(
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
             // The listing already tells us whether there's a package.json, so most directories inherit the answer.
             let has_package = || entries.iter().any(|it| it.name == b"package.json");
-            let decides =
-                !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn && has_package();
+            let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
+            let decides = detects && has_package();
             let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
-            let is_repository_root = decides
+            let is_repository_root = detects
                 && entries
                     .iter()
                     .any(|it| matches!(&it.name[..], b".git" | b".jj"));

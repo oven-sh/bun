@@ -4280,8 +4280,7 @@ impl VirtualMachine {
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
-        // This VM's own `configure_defines` has read the default `.env` files its options allow.
-        // A `Bun.build`, a macro VM, a dev server or a Worker that gets this loader reads no more.
+        // This VM has read the default `.env` files its options allow: nothing on this loader reads more.
         env.close_default_files();
         let map = &mut env.map;
 

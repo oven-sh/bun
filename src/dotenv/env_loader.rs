@@ -141,10 +141,7 @@ pub struct Loader {
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
-    /// Once set, `load` reads no default `.env` file into this loader, whatever its caller asks.
-    /// Set by the VM that owns the loader at the end of its boot, and by a transpiler whose
-    /// options exclude the default files. Atomic: build threads call `load` on a VM's loader.
-    /// `Relaxed`: it is only ever set, and no other memory is ordered against it.
+    /// Once set, `load` reads no default `.env` file. Only ever set, by the loader's owner, so `Relaxed`.
     default_files_closed: AtomicBool,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
@@ -548,8 +545,7 @@ impl Loader {
         }
     }
 
-    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read
-    /// twice, and the default files closed if they are closed here.
+    /// A `Worker`'s loader: the map, the explicit files marked loaded so a pipe is read once, and the closed bit.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,

@@ -2134,8 +2134,7 @@ impl Default for Env {
 }
 
 impl Env {
-    /// Whether these options leave the default `.env` files on: no `--no-env-file` (or bunfig
-    /// `env = false`), and no `--env-file`, which replaces them.
+    /// No `--no-env-file` or bunfig `env = false`, and no `--env-file`, which replaces the default files.
     pub fn loads_default_files(&self) -> bool {
         !self.disable_default_env_files && self.files.is_empty()
     }

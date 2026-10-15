@@ -38,6 +38,7 @@ pub(crate) struct ReadmeInfo {
 }
 
 /// Where the files are that `"bin"` and `"directories.bin"` name.
+#[derive(Clone, Copy)]
 pub(crate) enum PackageFiles<'a> {
     /// The folder that was packed.
     Folder { root: Fd, abs_path: &'a [u8] },

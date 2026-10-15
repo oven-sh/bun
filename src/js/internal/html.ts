@@ -7,9 +7,7 @@ const argv = process.argv;
 // `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
 
-// `undefined` if `arg` is the path of a page. Otherwise `arg` is a pattern, and these are the pages that match it.
-// `bun --check` asks the same function, and repeats the rest of what decides which pages are served: `check_main` in
-// src/runtime/cli/run_command.rs, `pages_of` and `imports_of_page` in src/runtime/cli/check_command.rs.
+// `undefined` if `arg` is the path of a page, else the pages that match it. `pages_of` in check_command.rs asks too.
 const pagesOf: (arg: string, cwd: string) => string[] | undefined = $newRustFunction("html_pages.rs", "jsPagesOf", 2);
 
 const env = Bun.env;

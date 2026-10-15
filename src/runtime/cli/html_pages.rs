@@ -1,6 +1,4 @@
-//! Whether an argument of `bun ./index.html './pages/*.html'` is the path of a page or a pattern, and the pages
-//! that the pattern matches. src/js/internal/html.ts asks to serve the pages, and `bun --check` to type check
-//! their scripts before that.
+//! Whether an argument of `bun ./index.html './pages/*.html'` is a page or a pattern, for html.ts and `bun --check`.
 
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
@@ -41,8 +39,7 @@ pub(crate) fn pages_of(cwd: &[u8], text: &[u8]) -> Result<Pages, bun_core::Error
     Ok(Pages::Matched { pages, error })
 }
 
-/// Whether `text` is the path of a file that it does not match as a pattern: `{a,b}/index.html` matches
-/// `a/index.html`, and not the file with that name. A pattern that matches its own text finds that file too.
+/// Whether `text` is the path of a file that it does not match as a pattern: `{a,b}/x.html` matches `a/x.html`.
 fn names_file(cwd: &[u8], text: &[u8]) -> bool {
     if bun_glob::r#match(text, text).matches() {
         return false;
@@ -63,8 +60,7 @@ fn names_file(cwd: &[u8], text: &[u8]) -> bool {
     )
 }
 
-/// `pagesOf(arg, cwd)` of src/js/internal/html.ts: `undefined` if `arg` is the path of a page, else the paths of
-/// the pages that it matches.
+/// `pagesOf(arg, cwd)` of src/js/internal/html.ts: `undefined` for the path of a page, else the pages that match.
 #[bun_jsc::host_fn]
 pub(crate) fn js_pages_of(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [arg, cwd] = callframe.arguments_as_array::<2>();

@@ -535,7 +535,11 @@ var access = function access(path, mode, callback?) {
       throw err;
     }
   },
-  readdirSync = fs.readdirSync.bind(fs),
+  // Two arguments only: the binding takes a third (`unsorted`) that is for
+  // the `Dir` class and must not be reachable from user code.
+  readdirSync = function readdirSync(path, options) {
+    return fs.readdirSync(path, options);
+  } as typeof import("node:fs").readdirSync,
   readFileSync = fs.readFileSync.bind(fs),
   fdatasyncSync = fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
@@ -1061,6 +1065,16 @@ function opendirNotDirError(path) {
 // which run the eager path check with an async stat instead.
 const kAlreadyValidated = Symbol("kAlreadyValidated");
 
+// The readdir binding takes a third argument that keeps the kernel order.
+// Only `Dir` passes it: node does not sort a `Dir`.
+type DirReaddirOptions = {
+  withFileTypes: true;
+  encoding: BufferEncoding | "buffer" | undefined;
+  recursive: boolean | undefined;
+};
+type DirReaddirSync = (path: PathLike, options: DirReaddirOptions, unsorted: true) => DirentType[];
+type DirReaddir = (path: PathLike, options: DirReaddirOptions, unsorted: true) => Promise<DirentType[]>;
+
 class Dir {
   /**
    * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
@@ -1140,11 +1154,15 @@ class Dir {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
 
-    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
-      withFileTypes: true,
-      encoding: this.#options?.encoding,
-      recursive: this.#options?.recursive,
-    }));
+    let entries = (this.#entries ??= (fs.readdirSync as DirReaddirSync)(
+      this.#path,
+      {
+        withFileTypes: true,
+        encoding: this.#options?.encoding,
+        recursive: this.#options?.recursive,
+      },
+      true,
+    ));
     return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
   }
 
@@ -1168,13 +1186,15 @@ class Dir {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     const entries = this.#entries;
     if (entries) return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
-    return fs
-      .readdir(this.#path, {
+    return (fs.readdir as DirReaddir)(
+      this.#path,
+      {
         withFileTypes: true,
         encoding: this.#options?.encoding,
         recursive: this.#options?.recursive,
-      })
-      .then(this.#onReaddir.bind(this));
+      },
+      true,
+    ).then(this.#onReaddir.bind(this));
   }
 
   #onReaddir(entries) {

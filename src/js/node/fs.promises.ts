@@ -306,7 +306,11 @@ const exports = {
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
-  readdir: asyncWrap(fs.readdir, "readdir"),
+  // Two arguments only: the binding takes a third (`unsorted`) that is for
+  // the `Dir` class and must not be reachable from user code.
+  readdir: async function readdir(path, options) {
+    return fs.readdir(path, options);
+  } as typeof import("node:fs/promises").readdir,
   readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);

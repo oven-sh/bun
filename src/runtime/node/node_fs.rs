@@ -2258,6 +2258,7 @@ mod _async_tasks {
         pub(crate) _args: ThreadIsolated<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
+        pub(crate) sorted: bool,
         /// The completion token, finished by whichever subtask ends the scan.
         pub(crate) done: Option<bun_jsc::Completion<Self>>,
 
@@ -2454,6 +2455,7 @@ mod _async_tasks {
         ) -> JSValue {
             let tag = args.tag();
             let encoding = args.encoding;
+            let sorted = !args.unsorted;
             let result_list = match tag {
                 ret::ReaddirTag::Files => ResultListEntryValue::Files(Vec::new()),
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
@@ -2478,6 +2480,7 @@ mod _async_tasks {
                     _args: args,
                     tag,
                     encoding,
+                    sorted,
                     done: None,
                     has_result: AtomicBool::new(false),
                     subtask_count: AtomicUsize::new(1),
@@ -3551,6 +3554,10 @@ pub(crate) mod args {
         pub(crate) encoding: Encoding,
         pub(crate) with_file_types: bool,
         pub(crate) recursive: bool,
+        /// Keep the kernel order instead of node's sorted `scandir` order.
+        /// Set only by `fs.opendir` (`Dir` reads through the readdir
+        /// binding): node does not sort a `Dir`.
+        pub(crate) unsorted: bool,
     }
     impl Readdir<'_> {
         pub(crate) fn tag(&self) -> ret::ReaddirTag {
@@ -3575,6 +3582,7 @@ pub(crate) mod args {
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
+            let mut unsorted = false;
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 match val.js_type() {
@@ -3595,12 +3603,18 @@ pub(crate) mod args {
                         }
                     }
                 }
+                // The public `fs.readdir*` wrappers take two arguments, so
+                // only the `Dir` class reaches this one.
+                if let Some(flag) = arguments.next_eat() {
+                    unsorted = flag == JSValue::TRUE;
+                }
             }
             Ok(Readdir {
                 path,
                 encoding,
                 with_file_types,
                 recursive,
+                unsorted,
             })
         }
     }
@@ -6356,7 +6370,7 @@ impl NodeFS {
 
         let mut dirent_path = BunString::DEAD;
 
-        let mut iterator = DirIterator::WrappedIterator::init(fd);
+        let mut iterator = DirIterator::ReaddirIterator::init(fd, !args.unsorted);
         loop {
             let current = match iterator.next() {
                 Err(err) => return Err(err.with_path(args.path.slice())),
@@ -6513,7 +6527,7 @@ impl NodeFS {
             }
         });
 
-        let mut iterator = DirIterator::WrappedIterator::init(fd);
+        let mut iterator = DirIterator::ReaddirIterator::init(fd, async_task.sorted);
         let mut dirent_path_prev = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
         let mut dirent_spill: Vec<u8> = Vec::new();
@@ -6704,7 +6718,7 @@ impl NodeFS {
                 }
             });
 
-            let mut iterator = DirIterator::WrappedIterator::init(fd);
+            let mut iterator = DirIterator::ReaddirIterator::init(fd, !args.unsorted);
             let mut dirent_path_prev = BunString::DEAD;
 
             loop {

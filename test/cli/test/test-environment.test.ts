@@ -1374,6 +1374,24 @@ describe.concurrent("test environment with the real", () => {
     },
   );
 
+  test.each(["jsdom", "happy-dom"])(
+    "%s: with --isolate=modules every file has all the names of its window",
+    async name => {
+      const file = `
+      // ${VITEST} ${name}
+      test("names", () => {
+        console.log(typeof getSelection, typeof customElements, typeof CSSStyleSheet, Object.getOwnPropertyNames(globalThis).length);
+      });
+    `;
+      using dir = project({ "a.test.js": file, "b.test.js": file, "c.test.js": file, "d.test.js": file });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
+      expect(stdout[0]).toStartWith("function object function ");
+      expect(stdout).toEqual([stdout[0], stdout[0], stdout[0], stdout[0]]);
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   const dom = `
     import { test, expect, afterAll } from "bun:test";
     import { body } from "./screen.js";

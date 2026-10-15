@@ -170,7 +170,7 @@ function isSrcSubdir(src, dest) {
 
 type BigIntStats = import("node:fs").BigIntStats;
 
-// A dest directory on the current recursion path; stat stays null for one this copy made until it is needed.
+// A dest directory on the current recursion path. `stat` is null for one this copy made, until it is needed.
 interface CpFrame {
   stat: BigIntStats | null;
   path: string;

@@ -7,7 +7,6 @@
 // rebuilt from the lockfile, and enough filler packages that the comparison's
 // sort does not fall back to a stable insertion sort.
 import { expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -44,53 +43,16 @@ function makeGraph(fillerCount: number, shiftPrefix: string): { pkgs: Graph; roo
   return { pkgs, root };
 }
 
-async function serveGraph(pkgs: Graph, tarballDir: string) {
-  const tarballs = new Map<string, Promise<Uint8Array>>();
-  const makeTarball = (name: string, version: string) => {
-    const key = `${name}@${version}`;
-    let pending = tarballs.get(key);
-    if (!pending) {
-      pending = (async () => {
-        const spec = pkgs[name][version];
-        const pkgJson: any = { name, version };
-        if (spec.dependencies) pkgJson.dependencies = spec.dependencies;
-        if (spec.peerDependencies) {
-          pkgJson.peerDependencies = spec.peerDependencies;
-          if (spec.optionalPeers?.length) {
-            pkgJson.peerDependenciesMeta = Object.fromEntries(spec.optionalPeers.map(p => [p, { optional: true }]));
-          }
-        }
-        const tmp = join(tarballDir, `${name}-${version}.tgz`);
-        try {
-          await Bun.Archive.write(tmp, { "package/package.json": JSON.stringify(pkgJson) }, { compress: "gzip" });
-          return new Uint8Array(await Bun.file(tmp).arrayBuffer());
-        } finally {
-          rmSync(tmp, { force: true });
-        }
-      })();
-      tarballs.set(key, pending);
-    }
-    return pending;
-  };
-
+function serveGraph(pkgs: Graph) {
   const server = Bun.serve({
     port: 0,
-    async fetch(req) {
+    fetch(req) {
       const path = decodeURIComponent(new URL(req.url).pathname).replace(/^\//, "");
-      const tbMatch = path.match(/^(.+)\/-\/.+-(\d[^/]*)\.tgz$/);
-      if (tbMatch) {
-        const [, name, version] = tbMatch;
-        if (!pkgs[name]?.[version]) return new Response("not found", { status: 404 });
-        return new Response((await makeTarball(name, version)) as any);
-      }
       const versions = pkgs[path];
       if (!versions) return new Response("not found", { status: 404 });
       const out: any = { name: path, versions: {}, "dist-tags": {} };
       let latest = "";
       for (const [version, spec] of Object.entries(versions)) {
-        const tb = await makeTarball(path, version);
-        const sha512 = new Bun.CryptoHasher("sha512").update(tb).digest();
-        const sha1 = new Bun.CryptoHasher("sha1").update(tb).digest();
         const v: any = { name: path, version };
         if (spec.dependencies) v.dependencies = spec.dependencies;
         if (spec.peerDependencies) {
@@ -99,10 +61,13 @@ async function serveGraph(pkgs: Graph, tarballDir: string) {
             v.peerDependenciesMeta = Object.fromEntries(spec.optionalPeers.map(p => [p, { optional: true }]));
           }
         }
+        // The installs below are --lockfile-only, so no tarball is ever
+        // fetched and integrity is never verified; the Lockfile::eql
+        // comparison under test uses (tree path, name, resolution version).
+        const sha512 = new Bun.CryptoHasher("sha512").update(`${path}@${version}`).digest("base64");
         v.dist = {
           tarball: `http://localhost:${server.port}/${path}/-/${path}-${version}.tgz`,
-          integrity: `sha512-${Buffer.from(sha512).toString("base64")}`,
-          shasum: Buffer.from(sha1).toString("hex"),
+          integrity: `sha512-${sha512}`,
         };
         out.versions[version] = v;
         latest = version;
@@ -121,20 +86,22 @@ for (const [fillerCount, shiftPrefix] of [
 ] as const) {
   test.concurrent(`frozen lockfile accepts a freshly generated lockfile (${fillerCount} fillers)`, async () => {
     const { pkgs, root } = makeGraph(fillerCount, shiftPrefix);
-    using tarballDir = tempDir(`i36577-tarballs-${fillerCount}`, {});
-    await using server = await serveGraph(pkgs, String(tarballDir));
+    await using server = serveGraph(pkgs);
 
     using dir = tempDir(`i36577-${fillerCount}`, {
       "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: root }),
-      "bunfig.toml": `[install]\ncache = "cache"\nregistry = "http://localhost:${server.port}/"\nsaveTextLockfile = true\n`,
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\nsaveTextLockfile = true\n`,
     });
-    mkdirSync(join(String(dir), "cache"), { recursive: true });
+    // The two concurrent cases install overlapping package names, so each
+    // needs its own cache. BUN_INSTALL_CACHE_DIR (set by the CI runner)
+    // takes precedence over bunfig [install].cache, so override it here.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 
     const run = async (args: string[]) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
         cwd: String(dir),
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -142,11 +109,11 @@ for (const [fillerCount, shiftPrefix] of [
       return { out, err, code };
     };
 
-    let r = await run(["install"]);
+    let r = await run(["install", "--lockfile-only"]);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
 
-    r = await run(["install", "--frozen-lockfile"]);
+    r = await run(["install", "--frozen-lockfile", "--lockfile-only"]);
     expect(r.err).not.toContain("lockfile had changes");
     expect(r.code).toBe(0);
   });

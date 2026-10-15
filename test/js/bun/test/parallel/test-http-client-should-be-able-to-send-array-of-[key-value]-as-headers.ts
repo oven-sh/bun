@@ -4,7 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
-const { promise, resolve } = Promise.withResolvers();
+const { promise, resolve } = Promise.withResolvers<[http.IncomingMessage, http.ServerResponse]>();
 await using server = http.createServer((req, res) => {
   resolve([req, res]);
 });
@@ -19,7 +19,7 @@ http.get({
     ["host", "127.0.0.1"],
     ["host", "127.0.0.2"],
     ["host", "127.0.0.3"],
-  ],
+  ] as any,
 });
 
 const [req, res] = await promise;

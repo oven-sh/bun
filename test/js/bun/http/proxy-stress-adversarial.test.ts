@@ -556,14 +556,13 @@ describe("interleaved proxy/direct", () => {
         // option was passed.
         if (!viaProxy) expect(totalBytesUp()).toBe(before);
       }
-      // 3 proxied requests → at least 1 CONNECT, at most 3.
-      expect(proxy.connectCount()).toBeGreaterThanOrEqual(1);
-      expect(proxy.connectCount()).toBeLessThanOrEqual(3);
-      // http-proxy: 3 sequential keepalive proxied requests reuse one
-      // tunnel deterministically. A proxied request that silently
-      // bypassed the proxy would leave this at 0; a direct request that
-      // opened its own CONNECT would push it above 1.
-      if (!proxyTls) expect(proxy.connectCount()).toBe(1);
+      // 3 sequential keepalive proxied requests reuse one tunnel. A proxied
+      // request that silently bypassed the proxy would leave this at 0; a
+      // direct request that opened its own CONNECT, or a tunnel pooled
+      // where the next proxied request does not look (laxTls has a `ca`,
+      // so with an https proxy both the tunnel and the direct sockets live
+      // in that config's own TLS context), would push it above 1.
+      expect(proxy.connectCount()).toBe(1);
     });
   }
 });

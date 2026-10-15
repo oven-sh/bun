@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -191,6 +192,49 @@ describe("bundler", () => {
         stdout: "./lib/second/test.file",
       },
     ],
+  });
+  itBundled("naming/EntryNamingTarget", {
+    files: {
+      "/src/entry.js": /* js */ `
+        console.log(1);
+      `,
+    },
+    root: "/src",
+    target: "bun",
+    entryNaming: "[target]/[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir)).toEqual(["bun"]);
+    },
+    run: {
+      file: "/out/bun/entry.js",
+      stdout: "1",
+    },
+  });
+  itBundled("naming/AssetNamingTarget", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import file from "./data.file";
+        console.log(file);
+      `,
+      "/src/data.file": `
+        this is a file
+      `,
+    },
+    root: "/src",
+    target: "bun",
+    assetNaming: "[target]/[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    loader: {
+      ".file": "file",
+    },
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["bun", "entry.js"]);
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "./bun/data.file",
+    },
   });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,

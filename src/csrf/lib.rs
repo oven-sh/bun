@@ -18,10 +18,7 @@ pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 /// Error types for CSRF operations
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    InvalidToken,
-    ExpiredToken,
     TokenCreationFailed,
-    DecodingFailed,
 }
 bun_core::impl_tag_error!(Error);
 
@@ -35,8 +32,6 @@ pub struct GenerateOptions<'a> {
     pub session_id: &'a [u8],
     /// How long the token should be valid (in milliseconds)
     pub expires_in_ms: u64, // = DEFAULT_EXPIRATION_MS
-    /// Format to encode the token in
-    pub encoding: TokenFormat, // = .base64url
     /// Algorithm to use for signing
     pub algorithm: Algorithm, // = DEFAULT_ALGORITHM
 }

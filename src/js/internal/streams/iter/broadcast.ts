@@ -47,20 +47,55 @@ const kOnBufferDrained = Symbol("kOnBufferDrained");
 // Broadcast Implementation
 // =============================================================================
 
+interface BroadcastOptions {
+  __proto__?: null;
+  highWaterMark?: number;
+  backpressure?: string;
+  signal?: AbortSignal;
+}
+
+interface ResolvedBroadcastOptions {
+  __proto__?: null;
+  highWaterMark: number;
+  backpressure: string;
+  signal: AbortSignal | undefined;
+}
+
+interface BroadcastIteratorResult {
+  __proto__?: null;
+  done: boolean;
+  value: Uint8Array[] | undefined;
+}
+
+interface BroadcastConsumerState {
+  __proto__?: null;
+  cursor: number;
+  resolve: ((result: BroadcastIteratorResult) => void) | null;
+  reject: ((reason: unknown) => void) | null;
+  detached: boolean;
+}
+
+interface PendingDrain {
+  __proto__?: null;
+  resolve: (canWrite: boolean) => void;
+  reject: (reason: unknown) => void;
+}
+
 class BroadcastImpl {
+  declare [kOnBufferDrained]: (() => void) | null;
   #buffer = new RingBuffer();
   #bufferStart = 0;
-  #consumers = new Set();
-  #waiters = []; // Consumers with pending resolve (subset of #consumers)
+  #consumers = new Set<BroadcastConsumerState>();
+  #waiters: BroadcastConsumerState[] = []; // Consumers with pending resolve (subset of #consumers)
   #ended = false;
-  #error = null;
+  #error: unknown = null;
   #cancelled = false;
-  #options;
-  #writer = null;
+  #options: ResolvedBroadcastOptions;
+  #writer: BroadcastWriter | null = null;
   #cachedMinCursor = 0;
   #cachedMinCursorConsumers = 0;
 
-  constructor(options) {
+  constructor(options: ResolvedBroadcastOptions) {
     this.#options = options;
     this[kOnBufferDrained] = null;
   }
@@ -104,7 +139,7 @@ class BroadcastImpl {
   }
 
   #createRawConsumer() {
-    const state = {
+    const state: BroadcastConsumerState = {
       __proto__: null,
       // Start at the oldest buffered entry so late-joining consumers
       // can read data already in the buffer.
@@ -169,7 +204,7 @@ class BroadcastImpl {
               return kDone;
             }
 
-            const { promise, resolve, reject } = PromiseWithResolvers();
+            const { promise, resolve, reject } = PromiseWithResolvers<BroadcastIteratorResult>();
             state.resolve = resolve;
             state.reject = reject;
             self.#waiters.push(state);
@@ -190,7 +225,7 @@ class BroadcastImpl {
     };
   }
 
-  cancel(reason) {
+  cancel(reason?) {
     if (this.#cancelled) return;
     this.#cancelled = true;
     this.#ended = true; // Prevents [kAbort]() from redundantly iterating consumers
@@ -391,7 +426,7 @@ class BroadcastWriter {
   #closed;
   #aborted = false;
   #pendingWrites = new RingBuffer();
-  #pendingDrains = [];
+  #pendingDrains: PendingDrain[] = [];
 
   static {
     // Used in wireBroadcastWriteSignal ensure the signal listener can be
@@ -414,7 +449,7 @@ class BroadcastWriter {
     const desired = this.desiredSize;
     if (desired === null) return null;
     if (desired > 0) return Promise.resolve(true);
-    const { promise, resolve, reject } = PromiseWithResolvers();
+    const { promise, resolve, reject } = PromiseWithResolvers<boolean>();
     this.#pendingDrains.push({ __proto__: null, resolve, reject });
     return promise;
   }
@@ -541,7 +576,7 @@ class BroadcastWriter {
     return this.#totalBytes;
   }
 
-  fail(reason) {
+  fail(reason?) {
     if (this.#isClosedOrAborted()) return;
     this.#aborted = true;
     this.#closed = Promise.resolve(this.#totalBytes);
@@ -656,7 +691,7 @@ function onBroadcastCancel(broadcastImpl, signal) {
  * @param {{ highWaterMark?: number, backpressure?: string, signal?: AbortSignal }} [options]
  * @returns {{ writer: Writer, broadcast: Broadcast }}
  */
-function broadcast(options = { __proto__: null }) {
+function broadcast(options: BroadcastOptions = { __proto__: null }) {
   validateObject(options, "options");
   const { highWaterMark = kMultiConsumerDefaultHWM, backpressure = "strict", signal } = options;
   validateInteger(highWaterMark, "options.highWaterMark");

@@ -1,7 +1,7 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 pub mod error;
@@ -92,6 +92,8 @@ pub mod thread_pool;
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
+pub mod bytecode_order;
+pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]
@@ -119,6 +121,12 @@ pub mod linker_context {
 
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
+
+    #[path = "mergeSmallChunks.rs"]
+    pub mod merge_small_chunks;
+
+    #[path = "crossChunkNames.rs"]
+    pub mod cross_chunk_names;
 
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
@@ -237,7 +245,6 @@ pub(crate) use bun_ast::{Index, IndexInt};
 pub mod options {
     pub use super::OutputFile;
     pub use super::options_impl::*;
-    pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
     pub(crate) use super::output_file::Options as OutputFileInit;
@@ -246,6 +253,8 @@ pub mod options {
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
+    /// The type behind `BundleOptions::transform_options`.
+    pub use bun_options_types::schema::api::TransformOptions;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -268,6 +277,25 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        /// Ahead-of-time bytecode for an internal module (node:fs etc.) a --compile executable uses; `dest_path` is the
+        /// InternalModuleRegistry id in decimal.
+        #[strum(serialize = "builtin-bytecode")]
+        BuiltinBytecode,
+        /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
+        #[strum(serialize = "bytecode-string-table")]
+        BytecodeStringTable,
+        /// `--compile --bytecode` with a payload order file: the one payload holding every chunk's bytecode
+        /// (`bytecode_order::LinkedPayload`). Each chunk's `Bytecode` file then has no bytes, and says where its cache entry is
+        /// in it (`OutputFile::bytecode_entry_offset`).
+        #[strum(serialize = "bytecode-payload")]
+        BytecodePayload,
+        /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
+        #[strum(serialize = "module-info-string-table")]
+        ModuleInfoStringTable,
+        /// The pre-resolved ES module graph of a --compile executable (`prelinked_module_graph::build`), consumed by
+        /// JSC's module loader (`JSC::PrelinkedModuleGraph`).
+        #[strum(serialize = "prelinked-module-graph")]
+        PrelinkedModuleGraph,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -281,6 +309,11 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::BuiltinBytecode
+                    | OutputKind::BytecodeStringTable
+                    | OutputKind::BytecodePayload
+                    | OutputKind::ModuleInfoStringTable
+                    | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )
@@ -292,14 +325,6 @@ pub mod options {
     pub use crate::bake_types::Side;
 
     pub use crate::bake_types::Framework;
-
-    // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT
-    // redefined here — the `pub use super::options_impl::*` glob above exposes
-    // the single canonical defs (options.rs:1141/2493/2501/2722). The previous
-    // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
-    // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
-    // heap allocation from `member_list_to_components_if_different`
-    // without `Box::leak`.
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
@@ -364,7 +389,7 @@ bun_dispatch::link_interface! {
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;
-        fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
+        fn blob_store_path(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
         fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
         fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];
         fn blob_deinit(blob: options::OpaqueBlob);

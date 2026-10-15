@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+// oxfmt-ignore
+const a = [1, 2];
+// prettier-ignore
+const b  =  [1,2];
+const c = {
+  // oxfmt-ignore
+  d: 1,
+  /* prettier-ignore */
+  e:   1,
+};
+const f = (
+  <div>
+    {/* oxfmt-ignore */}
+    <a b="c" />
+  </div>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// oxfmt-ignore
+const a = [1, 2];
+// prettier-ignore
+const b  =  [1,2];
+const c = {
+  // oxfmt-ignore
+  d: 1,
+  /* prettier-ignore */
+  e:   1,
+};
+const f = (
+  <div>
+    {/* oxfmt-ignore */}
+    <a b="c" />
+  </div>
+);
+
+===================== End =====================

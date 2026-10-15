@@ -333,18 +333,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let b = self.contents[q];
             let run = self.run(j);
             if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
-                if self.contents[q..hi]
-                    .iter()
-                    .any(|&b| matches!(b, b'\n' | b'\r'))
-                {
+                if strings::contains_any(&self.contents[q..hi], b"\n\r") {
                     return true;
                 }
                 hi = q;
                 continue;
             }
-            return self.contents[q + 1..hi]
-                .iter()
-                .any(|&b| matches!(b, b'\n' | b'\r'));
+            return strings::contains_any(&self.contents[q + 1..hi], b"\n\r");
         }
         false
     }
@@ -603,12 +598,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 b'/' => match rest.get(i + 1) {
                     Some(b'/') => {
                         i += 2;
-                        while i < rest.len() && !matches!(rest[i], b'\n' | b'\r') {
-                            i += 1;
-                        }
+                        i += strings::index_of_any(&rest[i..], b"\n\r").unwrap_or(rest.len() - i);
                     }
                     Some(b'*') => {
-                        let Some(close) = rest[i + 2..].windows(2).position(|w| w == b"*/") else {
+                        let Some(close) = strings::index_of(&rest[i + 2..], b"*/") else {
                             return false;
                         };
                         i += 2 + close + 2;
@@ -1074,11 +1067,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     ) -> PResult<(f64, usize)> {
         let n = t.len();
         let mut i = prefix_len;
-        let mut value: f64 = 0.0;
+        let mut integer = bun_core::fmt::RadixInteger::default();
         let mut is_first = true;
         let mut is_invalid_legacy_octal = false;
         let mut last_underscore_end: usize = usize::MAX;
-        let base = radix as f64;
+        let bits_per_digit = radix.trailing_zeros();
         while i < n {
             let c = t[i];
             let digit: u32 = match c {
@@ -1122,7 +1115,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 }
                 _ => break,
             };
-            value = value * base + digit as f64;
+            integer.push_digit(bits_per_digit, digit);
             i += 1;
             is_first = false;
         }
@@ -1132,6 +1125,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
             return Err(self.syntax_err_at(pos));
         }
+        let mut value = integer.to_f64();
         if is_invalid_legacy_octal {
             let text = &t[..i];
             let s = core::str::from_utf8(text).expect("ascii");

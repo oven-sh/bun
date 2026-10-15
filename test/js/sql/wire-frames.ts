@@ -27,6 +27,17 @@ export async function listeningServer(
   return { port: (server.address() as net.AddressInfo).port, server };
 }
 
+/**
+ * What was written to a loopback socket of this process before the call has been read when it resolves: a read that
+ * is due is done in the next turn of the event loop, and to open and close a connection takes more than one.
+ */
+export async function loopbackFence(): Promise<void> {
+  const { port, server } = await listeningServer(socket => void socket.on("error", () => {}));
+  const socket = net.connect(port, "127.0.0.1", () => socket.end());
+  await once(socket, "close");
+  server.close();
+}
+
 /** Reserve and immediately release a port so connecting to it is refused. */
 export async function closedPort(): Promise<number> {
   const { port, server } = await listeningServer(() => {});
@@ -441,11 +452,13 @@ export const pgHold = Symbol("pgHold");
  * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
  * returns is written back in order after the whole chunk has been parsed.
  * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
+ * `held()` resolves when the client has read what came before the `pgHold`.
  */
 export async function pgMockServer(
   respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
-): Promise<{ port: number; server: net.Server; release(): void }> {
+): Promise<{ port: number; server: net.Server; held(): Promise<void>; release(): void }> {
   const releases = new Set<() => void>();
+  let holding = Promise.withResolvers<void>();
   const { port, server } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let startup = true;
@@ -474,10 +487,19 @@ export async function pgMockServer(
         }
       });
       if (out.length) socket.write(Buffer.concat(out));
+      if (held && out.length) loopbackFence().then(holding.resolve);
     });
     socket.on("error", () => {});
   });
-  return { port, server, release: () => releases.forEach(release => release()) };
+  return {
+    port,
+    server,
+    held: () => holding.promise,
+    release() {
+      holding = Promise.withResolvers();
+      releases.forEach(release => release());
+    },
+  };
 }
 
 export type PgScramExchange = {
@@ -626,13 +648,15 @@ export async function pgScramServer(options: {
  * unchanged and in order; only the segmentation of the backend stream differs.
  * After `holdAfterError()`, the proxy forwards the backend stream up to the end
  * of the next ErrorResponse and keeps back what follows, the ReadyForQuery of
- * the failed query first, until `release()`.
+ * the failed query first, until `release()`. `held()` resolves when the client
+ * has read that ErrorResponse.
  */
 export async function pgHoldingProxy(
   upstreamHost: string,
   upstreamPort: number,
-): Promise<{ port: number; server: net.Server; holdAfterError(): void; release(): void }> {
+): Promise<{ port: number; server: net.Server; holdAfterError(): void; held(): Promise<void>; release(): void }> {
   let armed = false;
+  let holding = Promise.withResolvers<void>();
   const releases = new Set<() => void>();
   const { port, server } = await listeningServer(client => {
     const upstream = net.connect(upstreamPort, upstreamHost);
@@ -660,6 +684,7 @@ export async function pgHoldingProxy(
       }
       buffered = buffered.subarray(end);
       if (out.length) client.write(Buffer.concat(out));
+      if (held && out.length) loopbackFence().then(holding.resolve);
     });
     client.on("close", () => {
       releases.delete(release);
@@ -672,7 +697,11 @@ export async function pgHoldingProxy(
   return {
     port,
     server,
-    holdAfterError: () => void (armed = true),
+    holdAfterError() {
+      armed = true;
+      holding = Promise.withResolvers();
+    },
+    held: () => holding.promise,
     release: () => releases.forEach(release => release()),
   };
 }

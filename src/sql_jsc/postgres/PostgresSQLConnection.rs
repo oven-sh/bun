@@ -1283,8 +1283,14 @@ impl PostgresSQLConnection {
         self.transaction_status.get() != b'I'
     }
 
+    /// Also while a request that user code has seen rejected can still change it.
     pub fn get_in_transaction(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(self.is_in_transaction())
+        JSValue::js_boolean(
+            self.is_in_transaction()
+                || self
+                    .current()
+                    .is_some_and(|head| head.flags.get().discard_response),
+        )
     }
 
     fn close(&self) {
@@ -2121,8 +2127,9 @@ impl PostgresSQLConnection {
                     if request.flags.get().discard_response {
                         // The end of the response it was kept in flight for.
                         self.count(&request, RequestCounter::None);
-                        request.status.set(QueryStatus::Fail);
+                        let request = request.ref_guard();
                         self.discard_request(&request);
+                        request.end_rejected(self.global());
                     } else if request.flags.get().retry == Retry::AtReadyForQuery {
                         self.requeue_head();
                     } else if request.status.get() == QueryStatus::PartialResponse {
@@ -2711,7 +2718,7 @@ impl PostgresSQLConnection {
                     }
                 }
                 self.update_has_pending_activity();
-                request.reject_in_flight(js_err, self.global());
+                request.reject_at_ready_for_query(js_err, self.global());
             }
             MessageType::PortalSuspended => {
                 reader.skip_message()?;

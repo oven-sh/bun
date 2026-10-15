@@ -66,7 +66,7 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,
-    /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
+    /// It failed while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     pub(crate) cancel: Cancel,
     /// Written by `PostgresSQLConnection::count` alone.
@@ -215,14 +215,46 @@ impl PostgresSQLQuery {
 
     /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        let err = self.kept_error().unwrap_or(err);
         self.status.set(Status::Fail);
         self.reject(err, global_object);
     }
 
     /// Rejects now. `status`, the counter and the queue head stay until its `ReadyForQuery`.
     pub(crate) fn reject_in_flight(&self, err: JSValue, global_object: &JSGlobalObject) {
+        if self.is_rejected() {
+            return;
+        }
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
+    }
+
+    /// The server has ended it and says next what became of the transaction. User code hears of the
+    /// failure then, as it hears of a result.
+    pub(crate) fn reject_at_ready_for_query(&self, err: JSValue, global_object: &JSGlobalObject) {
+        if self.is_rejected() {
+            return;
+        }
+        self.update_flags(|f| f.discard_response = true);
+        if let Some(this_value) = self.this_value.get().try_get() {
+            js::pending_value_set_cached(this_value, global_object, err);
+        }
+    }
+
+    /// The `ReadyForQuery` of a request with `discard_response`.
+    pub(crate) fn end_rejected(&self, global_object: &JSGlobalObject) {
+        self.status.set(Status::Fail);
+        if let Some(err) = self.kept_error() {
+            self.reject(err, global_object);
+        }
+    }
+
+    /// What `reject_at_ready_for_query` put in the place of the rows. `reject` does nothing a second time.
+    fn kept_error(&self) -> Option<JSValue> {
+        if !self.flags.get().discard_response {
+            return None;
+        }
+        js::pending_value_get_cached(self.this_value.get().try_get()?)
     }
 
     pub(crate) fn is_rejected(&self) -> bool {

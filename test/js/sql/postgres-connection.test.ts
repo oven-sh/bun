@@ -31,6 +31,7 @@ import {
   pgDecodeBind,
   pgErrorResponse,
   pgHold,
+  pgHoldingProxy,
   pgMockServer,
   pgParameterDescription,
   pgParseComplete,
@@ -352,6 +353,129 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
   });
 });
 
+/**
+ * Simple queries only. A text with "nowhere" fails, and its ReadyForQuery waits for `release()`. After "begin" that
+ * leaves the session in a failed transaction. A text with "pg_sleep" is answered by `wake()`.
+ */
+async function sessionsServer() {
+  const sockets: net.Socket[] = [];
+  const failed = new WeakSet<net.Socket>();
+  const asked: number[] = [];
+  const asleep = Promise.withResolvers<net.Socket>();
+  const mock = await pgMockServer((type, body, socket) => {
+    if (type !== "Q") return;
+    if (!sockets.includes(socket)) sockets.push(socket);
+    asked.push(sockets.indexOf(socket));
+    if (body.includes("pg_sleep")) return asleep.resolve(socket);
+    if (body.includes("nowhere")) {
+      if (body.includes("begin")) failed.add(socket);
+      return [pgErrorResponse(noTable), pgHold, pgReadyForQuery(failed.has(socket) ? "E" : "I")];
+    }
+    return failed.has(socket)
+      ? [pgErrorResponse({ S: "ERROR", C: "25P02", M: "current transaction is aborted" }), pgReadyForQuery("E")]
+      : [pgCommandComplete("SELECT 0"), pgReadyForQuery()];
+  });
+  return {
+    ...mock,
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    sockets,
+    /** The session, from 0, that each query went to. */
+    asked,
+    asleep: asleep.promise,
+    wake: async () =>
+      void (await asleep.promise).write(Buffer.concat([pgCommandComplete("SELECT 1"), pgReadyForQuery()])),
+    [Symbol.dispose]: () => void mock.server.close(),
+  };
+}
+const noTable = { S: "ERROR", C: "42P01", M: 'relation "nowhere" does not exist' };
+const noTableError = { code: "ERR_POSTGRES_SERVER_ERROR", errno: "42P01", message: noTable.M };
+
+// The server flushes an ErrorResponse, so the ReadyForQuery, which says what became of the transaction, can come in a
+// later read.
+describe("a query that failed", () => {
+  test("rejects at its ReadyForQuery", async () => {
+    using server = await sessionsServer();
+    await using sql = new SQL(server.url, { max: 1 });
+    let rejected = false;
+    const query = settled(sql.unsafe("select * from nowhere").simple()).finally(() => (rejected = true));
+    await server.held();
+    expect(rejected).toBe(false);
+    server.release();
+    expect(await query).toEqual(noTableError);
+  });
+
+  test("rejects with the error of the server when the connection is lost before its ReadyForQuery", async () => {
+    using server = await sessionsServer();
+    await using sql = new SQL(server.url, { max: 1 });
+    const query = settled(sql.unsafe("select * from nowhere").simple());
+    await server.held();
+    server.sockets[0].destroy();
+    expect(await query).toEqual(noTableError);
+  });
+
+  test.each([
+    [
+      "in a transaction that it began leaves a connection that nobody gets",
+      "select 1; begin; select * from nowhere",
+      1,
+    ],
+    ["outside a transaction leaves a connection that the next query gets", "select 1; select * from nowhere", 0],
+  ])("%s", async (_, text, next) => {
+    using server = await sessionsServer();
+    await using sql = new SQL(server.url, { max: 2 });
+    const query = settled(sql.unsafe(text).simple());
+    await server.held();
+    server.release();
+    expect([await query, await settled(sql.unsafe("select 2").simple()), server.asked]).toEqual([
+      noTableError,
+      [],
+      [0, next],
+    ]);
+  });
+});
+
+// Without BackendKeyData there is no CancelRequest: cancel() rejects and the server goes on with the text.
+test.each([1, 2])(
+  "a reserved connection that comes back while a cancelled text runs is given to nobody (max: %i)",
+  async max => {
+    using server = await sessionsServer();
+    await using sql = new SQL(server.url, { max });
+    const reserved = await sql.reserve();
+    const query = reserved.unsafe("begin; select pg_sleep(60)").simple().execute();
+    await server.asleep;
+    query.cancel();
+    expect(await settled(query)).toMatchObject({ code: "ERR_POSTGRES_QUERY_CANCELLED" });
+    reserved.release();
+    expect([await settled(sql.unsafe("select 2").simple()), server.asked]).toEqual([[], [0, 1]]);
+  },
+);
+
+test("a connection that is kept back for a cancelled text is given out again when the server has ended the text", async () => {
+  using server = await sessionsServer();
+  await using sql = new SQL(server.url, { max: 2 });
+  // The other connection of the pool. It asks nothing, so the mock does not count it.
+  await using _ = await sql.reserve();
+  const cancelled: any = sql.unsafe("select pg_sleep(60)").simple().execute();
+  const adapter = cancelled[Object.getOwnPropertySymbols(cancelled).find(symbol => symbol.description === "adapter")!];
+  const inTransaction = () => adapter.connections.map((pooled: any) => pooled.connection.inTransaction);
+  await server.asleep;
+  const behind = settled(sql.unsafe("select 2").simple().execute());
+  const seen = [inTransaction()];
+
+  cancelled.cancel();
+  expect(await settled(cancelled)).toMatchObject({ code: "ERR_POSTGRES_QUERY_CANCELLED" });
+  seen.push(inTransaction());
+  const waits = settled(sql.unsafe("select 3").simple());
+  await server.wake();
+  expect([await behind, await waits, server.asked]).toEqual([[], [], [0, 0, 0]]);
+  seen.push(inTransaction());
+  expect(seen).toEqual([
+    [false, false],
+    [false, true],
+    [false, false],
+  ]);
+});
+
 const cancelKey = [4242, 13371337] as const;
 const canceled = { S: "ERROR", C: "57014", M: "canceling statement due to user request" };
 const canceledError = { code: "ERR_POSTGRES_SERVER_ERROR", errno: "57014", message: canceled.M };
@@ -623,7 +747,8 @@ describe.concurrent("cancel()", () => {
   });
 
   // The server deals with a CancelRequest before it hangs up. Until then the request can stop whatever the backend runs,
-  // and on a pool that is the query of the next caller.
+  // and on a pool that is the query of the next caller. The client waits 5 s for that: a run that needs longer from
+  // cancel() to the fence finds the second batch written.
   test("the session writes nothing until the server has closed the second connection", async () => {
     await using server = await cancelServer({ second: "stays open" });
     await using sql = new SQL(server.url, { max: 1 });
@@ -978,6 +1103,57 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       reserved.release();
 
       expect((await sql`select pg_backend_pid() as pid`)[0].pid).not.toBe(pid);
+    });
+
+    describe("that comes in a later read than the ErrorResponse", () => {
+      async function split(max: number) {
+        await container.ready;
+        const proxy = await pgHoldingProxy(container.host, container.port);
+        const sql = new SQL(`postgres://bun_sql_test@127.0.0.1:${proxy.port}/bun_sql_test`, { max });
+        return {
+          proxy,
+          sql,
+          async [Symbol.asyncDispose]() {
+            await sql.close({ timeout: 0 });
+            proxy.server.close();
+          },
+        };
+      }
+
+      test.each([1, 2])(
+        "a reserved connection that a cancelled text left in a failed transaction is given to nobody (max: %i)",
+        async max => {
+          await using session = await split(max);
+          const { proxy, sql } = session;
+          await using observer = await connect();
+          const reserved = await sql.reserve();
+          const [{ pid }] = await reserved`select pg_backend_pid() as pid`;
+          const query = reserved.unsafe("begin; select pg_sleep(60)").simple().execute();
+          const released = settled(query).then(error => (reserved.release(), error));
+          await asleep(observer, pid);
+
+          proxy.holdAfterError();
+          query.cancel();
+          await proxy.held();
+          proxy.release();
+          expect(await released).toEqual(canceledError);
+          for (let caller = 0; caller < 2; caller++) {
+            expect(await settled(sql`select 1 as x`)).toEqual([{ x: 1 }]);
+          }
+        },
+      );
+
+      test("a connection that a query on the pool left in a failed transaction is given to nobody", async () => {
+        await using session = await split(2);
+        const { proxy, sql } = session;
+        await sql`select 1`;
+        proxy.holdAfterError();
+        const query = settled(sql.unsafe("select 1; begin; select * from nowhere; commit").simple());
+        await proxy.held();
+        proxy.release();
+        expect(await query).toEqual(noTableError);
+        expect(await settled(sql`select 1 as x`)).toEqual([{ x: 1 }]);
+      });
     });
   });
 

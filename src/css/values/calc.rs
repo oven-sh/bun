@@ -308,6 +308,18 @@ impl<V: CalcValue> Calc<V> {
             other => return Err(location.new_unexpected_token_error(other)),
         };
 
+        // An identifier carries the rounding error of a conversion, which a step amplifies. hypot() folds a negative argument wrong (#38639).
+        let no_ident = |_: &[u8]| None;
+        let has_step = matches!(
+            unit,
+            CalcUnit::Round | CalcUnit::Mod | CalcUnit::Rem | CalcUnit::Sign | CalcUnit::Hypot
+        );
+        let parse_ident: ParseIdent<'_, V> = if has_step && !input.flags.must_fold() {
+            &no_ident
+        } else {
+            parse_ident
+        };
+
         match unit {
             CalcUnit::Calc => {
                 let calc = input.parse_nested_block(|i| Self::parse_sum(i, parse_ident))?;
@@ -611,8 +623,9 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        // Parse nested calc() and other math functions.
-        match input.try_parse(Self::parse) {
+        // Parse nested calc() and other math functions. An identifier is a number in them.
+        let nested_ident = Self::number_ident(parse_ident);
+        match input.try_parse(|i| Self::parse_with(i, &nested_ident)) {
             Ok(calc) => match calc {
                 Calc::Function(f) => {
                     return match *f {
@@ -623,7 +636,7 @@ impl<V: CalcValue> Calc<V> {
                 other => return Ok(other),
             },
             Err(e) => {
-                // A math function token can only be parsed by `Self::parse`.
+                // A math function token can only be parsed by `Self::parse_with`.
                 // If that failed, none of the alternatives below can succeed
                 // either, so return the error rather than falling through:
                 // `V::parse` would re-enter the same nested block through
@@ -722,7 +735,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     /// Projects `Calc<V>::Number` idents into `Calc<W>::Number` for the
-    /// number-only sub-parsers (trig, atan2, numeric).
+    /// number-only sub-parsers (trig, atan2, numeric) and for nested functions.
     fn number_ident<'a, W>(
         parse_ident: ParseIdent<'a, V>,
     ) -> impl Fn(&[u8]) -> Option<Calc<W>> + 'a {

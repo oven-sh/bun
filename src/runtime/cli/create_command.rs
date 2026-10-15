@@ -1039,8 +1039,8 @@ impl CreateCommand {
 
         if run_tasks {
             // `bun` in a task is this bun, as it is for the install below.
-            let path = RunCommand::path_for_run(env_loader, b"", None, destination, true)?;
-            env_loader.map.put(b"PATH", &path)?;
+            let path = RunCommand::path_for_run(env_loader, b"", destination, true)?;
+            env_loader.map.put(b"PATH", path.as_bytes())?;
             env_loader
                 .map
                 .put(b"npm_package_name", bun_paths::basename(destination))?;

@@ -103,6 +103,74 @@ describe.concurrent.skipIf(!isLinux)("a working directory close to PATH_MAX", ()
   });
 });
 
+// The directories bun prepends come first, then the PATH the process inherited. With no
+// PATH in the environment, nothing may follow bun's directories: even a lone delimiter is
+// an empty entry, and an empty PATH entry means the current directory.
+describe.skipIf(isWindows)("PATH of a script", () => {
+  function fixture() {
+    const dir = tempDir("run-script-path", {
+      "package.json": JSON.stringify({ name: "p", scripts: { mk: "tsc", path: 'echo "[$PATH]"' } }),
+      // Not in any PATH directory: it only runs if the cwd is searched for commands.
+      "tsc": '#!/bin/sh\necho ran >> "$PLANTED"\n',
+      // A local bin that looks for `tsc` on the PATH it was given.
+      "node_modules/.bin/foo": "#!/bin/sh\ntsc\n",
+    });
+    chmodSync(join(String(dir), "tsc"), 0o755);
+    chmodSync(join(String(dir), "node_modules/.bin/foo"), 0o755);
+    return dir;
+  }
+
+  async function run(cwd: string, args: readonly string[], PATH: string | undefined) {
+    const { PATH: _inherited, ...env } = bunEnv;
+    const planted = join(cwd, "planted-ran");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...env, ...(PATH === undefined ? {} : { PATH }), PLANTED: planted },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, planted: existsSync(planted) };
+  }
+
+  const entryPoints = [
+    ["run", "mk"],
+    ["mk"],
+    ["run", "foo"],
+    ["foo"],
+    ["x", "foo"],
+    ["run", "--filter", "*", "mk"],
+    ["run", "--parallel", "mk"],
+    ["run", "--sequential", "mk"],
+  ];
+  test.concurrent.each(entryPoints.map(args => [args.join(" "), args] as const))(
+    "bun %s with PATH unset does not search the cwd for commands",
+    async (_name, args) => {
+      using dir = fixture();
+      const { planted } = await run(String(dir), args, undefined);
+      expect(planted).toBe(false);
+    },
+  );
+
+  test.concurrent("with PATH unset, nothing follows the directories bun prepends", async () => {
+    using dir = fixture();
+    const { stdout } = await run(String(dir), ["run", "path"], undefined);
+    expect(stdout).toMatch(/^\[[^\]]*node_modules\/\.bin\]\n$/);
+  });
+
+  // A PATH that is set stays as it is, the empty string included: its empty entries are
+  // the caller's, not bun's.
+  test.concurrent.each(["/usr/bin:/bin", "", ":", "/usr/bin:"])(
+    "the inherited PATH %j follows bun's directories unchanged",
+    async inherited => {
+      using dir = fixture();
+      const { stdout } = await run(String(dir), ["run", "path"], inherited);
+      expect(stdout).toEndWith(`node_modules/.bin:${inherited}]\n`);
+    },
+  );
+});
+
 test.if(isWindows)("[windows] A file in drive root runs", async () => {
   const path = "C:\\root-file" + Math.random().toString().slice(2) + ".js";
   try {

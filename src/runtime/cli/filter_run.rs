@@ -835,7 +835,8 @@ pub(crate) fn run_scripts_with_filter(
 
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> =
-            RunCommand::path_for_run(this_transpiler.env_mut(), path, None, path, run_in_bun)?;
+            RunCommand::path_for_run(this_transpiler.env_mut(), path, path, run_in_bun)?
+                .into_bytes();
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()

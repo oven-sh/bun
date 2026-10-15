@@ -22,7 +22,7 @@ use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
-use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, RunPath, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
@@ -1823,16 +1823,14 @@ impl RunCommand {
             .map_err(Into::into)
     }
 
-    /// Prepends workspace
-    /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
-    /// PATH back through `original_path`.
+    /// Prepends workspace `.bin` dirs + the bun-node shim dir to `PATH`, puts
+    /// the result in the environment, and returns it.
     pub(crate) fn configure_path_for_run(
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
-        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<RunPath> {
         let mut package_json_dir: &[u8] = b"";
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
@@ -1843,42 +1841,34 @@ impl RunCommand {
             }
         }
 
-        let new_path = Self::path_for_run(
+        let run_path = Self::path_for_run(
             this_transpiler.env_mut(),
             package_json_dir,
-            original_path,
             cwd,
             force_using_bun,
         )?;
         this_transpiler
             .env_mut()
             .map
-            .put(b"PATH", &new_path)
+            .put(b"PATH", run_path.as_bytes())
             .unwrap_or_oom();
-        Ok(())
+        Ok(run_path)
     }
 
     /// Builds a new PATH with `node_modules/.bin` for each ancestor of `cwd`
-    /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
-    /// it as an owned buffer, and writes the original PATH out via
-    /// `original_path`.
+    /// (plus `package_json_dir` and the bun-node shim dir) prepended to the
+    /// inherited PATH. An environment with no PATH gets only the prepended
+    /// directories.
     pub(crate) fn path_for_run(
         env_loader: &mut DotEnv::Loader,
         package_json_dir: &[u8],
-        original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
-    ) -> crate::Result<Vec<u8>> {
+    ) -> crate::Result<RunPath> {
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
         // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
-        let path: Vec<u8> = env_loader
-            .get(b"PATH")
-            .map(<[u8]>::to_vec)
-            .unwrap_or_default();
-        if let Some(op) = original_path {
-            op.clone_from(&path);
-        }
+        let inherited: Option<Vec<u8>> = env_loader.get(b"PATH").map(<[u8]>::to_vec);
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
@@ -1897,7 +1887,7 @@ impl RunCommand {
         let mut needs_to_force_bun = force_using_bun || !found_node;
         let mut optional_bun_self_path: &[u8] = b"";
 
-        let mut new_path_len: usize = path.len() + 2;
+        let mut new_path_len: usize = inherited.as_ref().map_or(0, Vec::len) + 2;
 
         if !package_json_dir.is_empty() {
             new_path_len += package_json_dir.len() + 1;
@@ -1978,12 +1968,9 @@ impl RunCommand {
                 b"/node_modules/.bin",
                 b"\\node_modules\\.bin"
             ));
-            new_path.push(DELIMITER);
-
-            new_path.extend_from_slice(&path);
         }
 
-        Ok(new_path)
+        Ok(RunPath::new(new_path, inherited.as_deref()))
     }
 
     fn basename_or_bun(str: &[u8]) -> &[u8] {
@@ -2358,14 +2345,14 @@ impl RunCommand {
             ::core::mem::size_of::<Transpiler>(),
         );
         let force_using_bun = ctx.debug.run_in_bun;
-        let mut original_path: Vec<u8> = Vec::new();
-        Self::configure_path_for_run(
+        let run_path = Self::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            Some(&mut original_path),
             root_dir_info.abs_path,
             force_using_bun,
         )?;
+        // The system shell is looked up on the inherited PATH, not in `.bin`.
+        let shell_path = run_path.inherited().unwrap_or(b"");
         let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
             .map
@@ -2456,7 +2443,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
-                                Some(original_path.as_slice()),
+                                Some(shell_path),
                             )?;
                         }
 
@@ -2469,7 +2456,7 @@ impl RunCommand {
                             &passthrough,
                             silent,
                             use_system_shell,
-                            Some(original_path.as_slice()),
+                            Some(shell_path),
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
@@ -2484,7 +2471,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
-                                Some(original_path.as_slice()),
+                                Some(shell_path),
                             )?;
                         }
 
@@ -2619,22 +2606,17 @@ impl RunCommand {
         }
 
         // ── node_modules/.bin / system $PATH fallback ───────────────────────
-        // Search the prepended `.bin` dirs
-        // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
-        // search the whole stitched PATH.
+        // Search the prepended `.bin` dirs unless `--bun` was passed, in which
+        // case search the whole stitched PATH.
         {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;
-            let path = env_loader.get(b"PATH").unwrap_or(b"");
-            let mut path_for_which = path;
-            if bin_dirs_only {
-                if original_path.len() < path.len() {
-                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
-                } else {
-                    path_for_which = b"";
-                }
-            }
+            let path_for_which = if bin_dirs_only {
+                run_path.prepended()
+            } else {
+                env_loader.get(b"PATH").unwrap_or(b"")
+            };
 
             if !path_for_which.is_empty() {
                 let mut path_buf = bun_paths::path_buffer_pool::get();

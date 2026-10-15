@@ -425,6 +425,9 @@ pub fn dirname(p: &[u8]) -> Option<&[u8]> {
 #[path = "EnvPath.rs"]
 pub mod env_path;
 pub use env_path::EnvPath;
+#[path = "RunPath.rs"]
+pub mod run_path;
+pub use run_path::RunPath;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Windows path-prefix constants — relocated from

@@ -954,10 +954,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             let pkg_path_env = RunCommand::path_for_run(
                 this_transpiler.env_mut(),
                 &package.dir,
-                None,
                 &package.dir,
                 run_in_bun,
-            )?;
+            )?
+            .into_bytes();
             let pkg_name = package.display_name(resolve_root);
 
             matched_packages.push(MatchedPackage {
@@ -1034,7 +1034,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // Single-package mode: use the root package.json
         let run_in_bun = ctx.debug.run_in_bun;
         let path_env =
-            RunCommand::path_for_run(this_transpiler.env_mut(), b"", None, cwd, run_in_bun)?;
+            RunCommand::path_for_run(this_transpiler.env_mut(), b"", cwd, run_in_bun)?.into_bytes();
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {

@@ -626,7 +626,6 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
-        let mut original_path: Vec<u8> = Vec::new();
 
         let root_dir_info = Run::configure_env_for_run(
             ctx,
@@ -641,10 +640,9 @@ impl BunxCommand {
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
 
         let force_using_bun = ctx.debug.run_in_bun;
-        Run::configure_path_for_run(
+        let run_path = Run::configure_path_for_run(
             root_dir_info,
             this_transpiler,
-            Some(&mut original_path),
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -676,10 +674,10 @@ impl BunxCommand {
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
         }
 
-        let path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
+        let path: &[u8] = run_path.as_bytes();
 
         // What `configure_path_for_run` put in front of the original $PATH: the `*/node_modules/.bin` directories.
-        let local_bin_dirs: &[u8] = path.strip_suffix(original_path.as_slice()).unwrap_or(&path);
+        let local_bin_dirs: &[u8] = run_path.prepended();
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
@@ -743,11 +741,11 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
         let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
-            path.clone()
+            path.to_vec()
         } else {
             // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
+            for (i, segment) in strings::tokenize(path, &[DELIMITER]).enumerate() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
@@ -766,7 +764,7 @@ impl BunxCommand {
         let existing_cache_dir = Self::cache_dir(env_loader, &package_fmt, false);
         let existing_cache_dir: Option<&[u8]> = existing_cache_dir.as_deref();
         if let Some(bunx_cache_dir) = existing_cache_dir {
-            Self::prepend_to_path(env_loader, bunx_cache_dir, &path)?;
+            Self::prepend_to_path(env_loader, bunx_cache_dir, path)?;
             bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
         }
 
@@ -909,7 +907,7 @@ impl BunxCommand {
             Global::exit(1);
         };
         let bunx_cache_dir: &[u8] = &bunx_cache_dir;
-        Self::prepend_to_path(env_loader, bunx_cache_dir, &path)?;
+        Self::prepend_to_path(env_loader, bunx_cache_dir, path)?;
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         // Held through the install and the bin lookups, until exec. Unlockable: install without it.

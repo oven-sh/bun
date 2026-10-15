@@ -601,7 +601,7 @@ impl PmPkgCommand {
 
         let source = Source::init_path_string(key, data);
         let mut log = Log::init();
-        match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
+        match json::parse_utf8(&source, &mut log, cli_arena()) {
             Ok(expr) => expr,
             Err(_) => {
                 let reason: &[u8] = log

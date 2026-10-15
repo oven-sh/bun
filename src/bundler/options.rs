@@ -903,10 +903,13 @@ pub(crate) fn defines_from_transform_options(
                     } else if node_env == b"test" {
                         break 'brk Box::from(b"\"test\"".as_slice());
                     } else {
+                        use std::io::Write as _;
                         let mut v = Vec::with_capacity(node_env.len() + 2);
-                        v.push(b'"');
-                        v.extend_from_slice(node_env);
-                        v.push(b'"');
+                        let _ = write!(
+                            v,
+                            "{}",
+                            bun_core::fmt::format_json_string_utf8(node_env, Default::default())
+                        );
                         break 'brk v.into_boxed_slice();
                     }
                 }

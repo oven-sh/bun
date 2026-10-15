@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, integersThatNeedRounding } from "harness";
+import { bunEnv, bunExe, integersThatNeedRounding, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 test("Bun.JSONC exists", () => {
   expect(Bun.JSONC).toBeDefined();
@@ -433,6 +435,263 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
   }
 });
 
+function expectSyntaxError(doc: string, message: string) {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse(doc);
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown, JSON.stringify(doc)).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message, JSON.stringify(doc)).toBe(`JSONC Parse error: ${message}`);
+}
+
+describe("Bun.JSONC.parse with content after the root value", () => {
+  test.each([
+    ['{"a":1} garbage here', 'Expected end of file but found "garbage"'],
+    ['{"a":1}{"b":2}', 'Expected end of file but found "{"'],
+    ['{"a":1}\n{"b":2}\n', 'Expected end of file but found "{"'],
+    ['{"a":1},', 'Expected end of file but found ","'],
+    ['{"a":1}}', 'Expected end of file but found "}"'],
+    ["[1]]", 'Expected end of file but found "]"'],
+    ["[][]", 'Expected end of file but found "["'],
+    ["null true", 'Expected end of file but found "true"'],
+    ["1 2", 'Expected end of file but found "2"'],
+    ['"a" "b"', 'Expected end of file but found ""b""'],
+    ['{"a":1} 42', 'Expected end of file but found "42"'],
+    ['{"a":1} # tail', 'Expected end of file but found "#"'],
+    ['{"a":1} @@@@', 'Expected end of file but found "@@@@"'],
+    ['{"a":1};', 'Expected end of file but found ";"'],
+    ['{"a":1}\n<<<<<<< HEAD\n{"a":2}\n=======\n{"a":3}\n>>>>>>> feature\n', 'Expected end of file but found "<<<<<<<"'],
+  ])("%j throws a SyntaxError", (doc, message) => {
+    expect(() => JSON.parse(doc)).toThrow(SyntaxError);
+    expectSyntaxError(doc, message);
+  });
+
+  test("whitespace, a BOM and comments after the root value still parse", () => {
+    const roots: Array<[string, unknown]> = [
+      ['{"a":1}', { a: 1 }],
+      ["[1,2]", [1, 2]],
+      ['"s"', "s"],
+      ["12", 12],
+      ["true", true],
+      ["null", null],
+    ];
+    const tails = [
+      " ",
+      "\n",
+      "\r\n",
+      "\t \r\n\n",
+      "\uFEFF",
+      "\u00A0",
+      " \u2028\u2029",
+      " \f\v",
+      " // line comment",
+      " // line comment\n",
+      " /* block comment */",
+      "\n/* a */\n// b\n",
+      "\u00A0/* c */\u00A0",
+    ];
+    for (const [root, value] of roots) {
+      for (const tail of tails) {
+        expect(Bun.JSONC.parse(root + tail), JSON.stringify(root + tail)).toEqual(value);
+      }
+    }
+  });
+
+  // The structural index is filled in 8192-byte windows. A tail in a window
+  // that the root value does not reach is still an error.
+  test("the result does not depend on the distance between the root value and the tail", () => {
+    for (const distance of [0, 1, 100, 8000, 8184, 8185, 8192, 16384, 100_000]) {
+      const doc = '{"a":1}' + Buffer.alloc(distance, " ").toString();
+      expect(Bun.JSONC.parse(doc)).toEqual({ a: 1 });
+      expect(Bun.JSONC.parse(doc + "// comment")).toEqual({ a: 1 });
+      expect(Bun.JSONC.parse(doc + "/* comment */\n")).toEqual({ a: 1 });
+      expectSyntaxError(doc + "garbage", 'Expected end of file but found "garbage"');
+      expectSyntaxError(doc + '{"b":2}', 'Expected end of file but found "{"');
+      expectSyntaxError(doc + "/* never closed", 'Expected "*/" to terminate multi-line comment');
+      expectSyntaxError(doc + "/", "Unsupported syntax: Operators are not allowed in JSON");
+    }
+  });
+});
+
+// Every file below goes through the parser behind Bun.JSONC.parse.
+describe.concurrent("files with content after the root value", () => {
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr, cwd), exitCode };
+  }
+
+  const manifest =
+    '{"name":"first","version":"1.0.0","scripts":{"s":"echo SCRIPT_RAN"},"dependencies":{"dep":"file:./dep"}}';
+  const dep = '{"name":"dep","version":"1.0.0"}\n';
+
+  describe.each([
+    ["a word", " garbage here\n", "garbage", `1:${manifest.length + 2}`],
+    ["a second object", '\n{"name":"second","scripts":{"s":"echo SECOND_RAN"}}\n', "{", "2:1"],
+  ])("package.json followed by %s", (_label, tail, found, at) => {
+    const files = { "package.json": manifest + tail, "dep/package.json": dep };
+    const notParsed = "error: Failed to parse package.json: ParserError";
+    // These commands print the parse error with its place in the file, then their own line.
+    const parseError = (file: string, ownLine: string) =>
+      `error: Expected end of file but found "${found}"\n    at ${file}:${at}\n${ownLine}`;
+
+    test.each([
+      ["pm pkg set", ["pm", "pkg", "set", "description=hi"], notParsed],
+      ["pm pkg delete", ["pm", "pkg", "delete", "version"], notParsed],
+      ["pm version", ["pm", "version", "patch", "--no-git-tag-version"], notParsed],
+      ["add", ["add", "./dep"], "error: failed to read/parse package.json for workspace '': ParserError"],
+    ])("bun %s fails and does not rewrite it", async (_name, args, message) => {
+      using dir = tempDir("jsonc-content-after-root", files);
+      const { stderr, exitCode } = await bun(String(dir), ...args);
+      expect({
+        stderr,
+        manifest: await Bun.file(join(String(dir), "package.json")).text(),
+        exitCode,
+      }).toEqual({ stderr: message, manifest: manifest + tail, exitCode: 1 });
+    });
+
+    test.each([
+      [
+        "remove",
+        ["remove", "dep"],
+        parseError("<dir>/package.json", 'error: failed to parse package.json "<dir>/package.json": ParserError'),
+      ],
+      ["install", ["install"], parseError("<dir>/package.json", "ParserError: failed to parse '<dir>/package.json'")],
+      ["init", ["init", "-y"], parseError("package.json", notParsed)],
+    ])("bun %s fails, does not rewrite it and writes no other file", async (_name, args, message) => {
+      using dir = tempDir("jsonc-content-after-root", files);
+      const { stderr, exitCode } = await bun(String(dir), ...args);
+      expect(stderr).toEndWith(message);
+      expect({
+        manifest: await Bun.file(join(String(dir), "package.json")).text(),
+        entries: readdirSync(String(dir)).sort(),
+        exitCode,
+      }).toEqual({ manifest: manifest + tail, entries: ["dep", "package.json"], exitCode: 1 });
+    });
+
+    test("bun pm pkg get does not print a field of the first object", async () => {
+      using dir = tempDir("jsonc-content-after-root", files);
+      expect(await bun(String(dir), "pm", "pkg", "get", "name")).toEqual({
+        stdout: "",
+        stderr: "error: Failed to parse package.json: ParserError",
+        exitCode: 1,
+      });
+    });
+
+    test("bun run does not run a script of the first object", async () => {
+      using dir = tempDir("jsonc-content-after-root", files);
+      const { stdout, exitCode } = await bun(String(dir), "run", "s");
+      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    });
+  });
+
+  test.each([
+    ["data.json", '{"x":1} trailing junk\n', 'error: Expected end of file but found "trailing"'],
+    ["data.jsonc", '{"x":1} // a comment\n{"y":2}\n', 'error: Expected end of file but found "{"'],
+  ])("bun build fails on an imported %s", async (name, contents, message) => {
+    using dir = tempDir("jsonc-content-after-root", {
+      [name]: contents,
+      "entry.ts": `import data from "./${name}";\nconsole.log(JSON.stringify(data));\n`,
+    });
+    const { stdout, stderr, exitCode } = await bun(String(dir), "build", "entry.ts");
+    expect(stderr).toContain(message);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  test("an imported .jsonc file with comments after the root value still loads", async () => {
+    using dir = tempDir("jsonc-content-after-root", {
+      "data.jsonc": '{"x":1,} // a comment\n/* another */\n',
+      "entry.ts": `import data from "./data.jsonc";\nconsole.log(JSON.stringify(data));\n`,
+    });
+    expect(await bun(String(dir), "entry.ts")).toEqual({ stdout: '{"x":1}\n', stderr: "", exitCode: 0 });
+  });
+
+  test("bun build reports a tsconfig.json with content after the root value", async () => {
+    using dir = tempDir("jsonc-content-after-root", {
+      "tsconfig.json": '{"compilerOptions":{"paths":{"@alias/*":["./src/*"]}}} garbage\n',
+      "src/a.ts": `export const value = "aliased";\n`,
+      "entry.ts": `import { value } from "@alias/a";\nconsole.log(value);\n`,
+    });
+    const { stderr, exitCode } = await bun(String(dir), "build", "entry.ts");
+    expect(stderr).toContain('error: Expected end of file but found "garbage"');
+    expect(stderr).toContain("<dir>/tsconfig.json:1:56");
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun install --frozen-lockfile fails on a bun.lock with content after the root value", async () => {
+    using dir = tempDir("jsonc-content-after-root", { "package.json": manifest + "\n", "dep/package.json": dep });
+    expect((await bun(String(dir), "install")).exitCode).toBe(0);
+    const lockfile = join(String(dir), "bun.lock");
+    const lock = (await Bun.file(lockfile).text()) + "garbage\n";
+    await Bun.write(lockfile, lock);
+
+    const { stderr, exitCode } = await bun(String(dir), "install", "--frozen-lockfile");
+    expect(stderr).toContain('error: Expected end of file but found "garbage"');
+    expect({ lock: await Bun.file(lockfile).text(), exitCode }).toEqual({ lock, exitCode: 1 });
+  });
+});
+
+// A `--define` value goes through the same parser. A value that starts like
+// JSON is JSON to its end. `true`, `false`, `null` and `undefined` are keywords
+// only as the whole value: with other content behind the word, the value is an
+// auto-quoted string, like `hello world`.
+describe.concurrent("--define values with content after the value", () => {
+  async function build(value: string) {
+    using dir = tempDir("jsonc-define-value", { "entry.ts": "declare const X: unknown;\nconsole.log(X);\n" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--define", `X=${value}`, "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["7 days", "days", "  "],
+    ["1 2", "2", "  "],
+    ["5 * 1000", "*", "  "],
+    ['{"a":1} junk', "junk", "        "],
+    ['"a" + "b"', "+", "    "],
+    ["[1],", ",", "   "],
+  ])("%j is an error", async (value, found, indent) => {
+    const { stdout, stderr, exitCode } = await build(value);
+    expect(stderr).toStartWith(
+      `1 | ${value}\n    ${indent}^\nerror: Expected end of file but found "${found}"\n    at defines.json:1:${indent.length + 1}\n`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
+  test.each(["true false", "false || true", "true-color", "null x", "null;", "undefined x", "true /* open"])(
+    "%j is a string",
+    async value => {
+      expect(await build(value)).toEqual({
+        stdout: `// entry.ts\nconsole.log(${JSON.stringify(value)});\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each([
+    ["true ", "true"],
+    ["true // comment", "true"],
+    ["false /* comment */", "false"],
+    ["null\n", "null"],
+    ["undefined\t", "undefined"],
+  ])("%j is the keyword", async (value, keyword) => {
+    expect(await build(value)).toEqual({
+      stdout: `// entry.ts\nconsole.log(${keyword});\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("Bun.JSONC.parse builds objects the way JSON.parse does: index keys first, __proto__ own, keys of every kind", () => {
   const doc = `{"b":1,"0":2,"a":3,"__proto__":{"x":1},"ünï":4,"${"k".repeat(40)}":5,"1":6,"":7,"s":"","t":"x","u":"${"y".repeat(40)}","v":"ünï"}`;
   const parsed = Bun.JSONC.parse(doc) as any;
@@ -615,8 +874,8 @@ describe("structural index window seams", () => {
   test("closing brace at a window boundary followed by trailing garbage", () => {
     for (const offset of [WINDOW - 1, WINDOW, 2 * WINDOW - 1, 2 * WINDOW]) {
       const doc = docAt(offset, '{"k":1', "", "}", "@@@@");
-      expect(() => JSON.parse(doc)).toThrow();
-      expect(Bun.JSONC.parse(doc)).toEqual(Bun.JSONC.parse('{"k":1}@@@@'));
+      expect(() => JSON.parse(doc)).toThrow(SyntaxError);
+      expectSyntaxError(doc, 'Expected end of file but found "@@@@"');
     }
   });
 

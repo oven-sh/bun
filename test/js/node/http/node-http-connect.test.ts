@@ -2299,7 +2299,9 @@ test("CONNECT and upgrade do not hand a function that settles its argument to a 
         });
       }
       await new Promise(resolve => server.close(resolve));
-      console.log(JSON.stringify({ handedAny: handed.length > 0, settlers: handed.filter(settlesAPromise).map(fn => fn.name) }));
+      function own() {}
+      own.bind();
+      console.log(JSON.stringify({ recordsOwn: handed.includes(own), settlers: handed.filter(settlesAPromise).map(fn => fn.name) }));
       `,
     ],
     env: bunEnv,
@@ -2308,7 +2310,7 @@ test("CONNECT and upgrade do not hand a function that settles its argument to a 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: { handedAny: true, settlers: [] },
+    out: { recordsOwn: true, settlers: [] },
     stderr: "",
     exitCode: 0,
   });

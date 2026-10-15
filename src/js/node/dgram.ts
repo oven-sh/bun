@@ -63,7 +63,7 @@ const { deprecate } = require("internal/util/deprecate");
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
-const FunctionPrototypeBind = Function.prototype.bind;
+const FunctionPrototypeBind = Function.prototype.$bind;
 
 // Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
 // "SystemError", an enumerable `info` object, errno/syscall accessors that
@@ -1186,20 +1186,17 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(createAsyncDisposeClosedCallback(promise));
+  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
 
   return promise;
 };
 
-// Not bind(): user code can replace it, and would be handed a function that settles whatever it is given, unchecked.
-function createAsyncDisposeClosedCallback(promise) {
-  return err => {
-    if (err) {
-      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-    } else {
-      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-    }
-  };
+function onAsyncDisposeClosed(promise, err) {
+  if (err) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+  } else {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  }
 }
 
 function socketCloseNT(self) {

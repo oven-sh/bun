@@ -3006,6 +3006,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // `fn.$bind()` in built-in JS. A script can replace `Function.prototype.bind`, and is then handed every function it is called on.
+    functionPrototype()->putDirect(vm, builtinNames.bindPrivateName(), functionPrototype()->getDirect(vm, vm.propertyNames->bind), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     // These three are CommonJS-only and never reached on an ESM startup path; install
     // lazy getters so their source isn't parsed during global object construction.
     // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)

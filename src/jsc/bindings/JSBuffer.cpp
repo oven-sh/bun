@@ -578,6 +578,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGl
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
+// new Buffer()
 static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
@@ -4183,7 +4184,10 @@ static NEVER_INLINE JSC::EncodedJSValue constructBufferFromNumber(JSC::JSGlobalO
 // Node's Buffer(), called with or without `new`: https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L302-L312
 JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSValue distinguishingArg = callFrame->argument(0);
+    // Bun keeps an empty Buffer for a call with no argument. Node throws ERR_INVALID_ARG_TYPE.
+    if (!callFrame->argumentCount())
+        return constructBufferEmpty(lexicalGlobalObject);
+    JSValue distinguishingArg = callFrame->uncheckedArgument(0);
     if (distinguishingArg.isNumber())
         return constructBufferFromNumber(lexicalGlobalObject, distinguishingArg, callFrame->argument(1));
     return jsBufferConstructorFunction_fromBody(lexicalGlobalObject, distinguishingArg, callFrame->argument(1), callFrame->argument(2));

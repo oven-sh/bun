@@ -222,7 +222,6 @@ describe("the Buffer constructor converts what Buffer.from() converts", () => {
         form,
       );
       assert.throws(() => call({}), invalidArgType, form);
-      assert.throws(() => call(), invalidArgType, form);
     }
   });
 
@@ -238,7 +237,6 @@ describe("the Buffer constructor converts what Buffer.from() converts", () => {
 describe("the Buffer constructor rejects what Buffer.from() rejects", () => {
   // prettier-ignore
   const rejected: [string, () => unknown[]][] = [
-    ["no arguments", () => []],
     ["undefined", () => [undefined]],
     ["null", () => [null]],
     ["true", () => [true]],
@@ -415,7 +413,7 @@ describe("a detached view gives an empty Buffer", () => {
   ];
 
   function detached(View: (typeof views)[number], buffer = new ArrayBuffer(8)) {
-    const view = View === Buffer ? Buffer.from(buffer) : new View(buffer);
+    const view = View === Buffer ? Buffer.from(buffer) : new (View as Uint8ArrayConstructor)(buffer);
     buffer.transfer();
     return view;
   }
@@ -512,9 +510,11 @@ describe("Buffer.from", () => {
     assert.strictEqual(hex(from.call(null, [1, 2])), "0102");
   });
 
-  test("rejects a number", () => {
+  test("rejects a number and a call with no argument", () => {
     assert.throws(() => B.from(5), invalidArgType);
     assert.throws(() => new B.from(5), invalidArgType);
+    assert.throws(() => B.from(), invalidArgType);
+    assert.throws(() => new B.from(), invalidArgType);
   });
 });
 
@@ -573,7 +573,7 @@ describe("Buffer[Symbol.species]", () => {
   test("is a class: it needs `new` and a subclass gets its own prototype", () => {
     assert.throws(() => FastBuffer(3), TypeError);
     class Sub extends FastBuffer {}
-    const viaNew: any = new Sub(2);
+    const viaNew: any = new (Sub as any)(2);
     const viaReflect: any = Reflect.construct(FastBuffer, [arrayBuffer(), 1, 2], Sub);
     assert.deepStrictEqual(
       [
@@ -682,8 +682,15 @@ describe("a valueOf() that every value of a kind reaches", () => {
     "an array after Object.freeze(Object.prototype)": ["0102,0102,0102", "6869,6869,6869"],
   };
 
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_NO_WARNINGS: "1", BUN_DEBUG_QUIET_LOGS: "1" };
   // Malloc=1 makes JavaScriptCore use the system allocator, so an ASAN build reports a read of a freed view.
-  const env = { ...process.env, NODE_NO_WARNINGS: "1", BUN_DEBUG_QUIET_LOGS: "1", Malloc: "1" };
+  // WebKit has no such allocator on Windows: the child would trap when JavaScriptCore starts.
+  if (process.platform !== "win32") {
+    env.Malloc = "1";
+    // detect_leaks=0: with Malloc=1 the leak check reports what JavaScriptCore allocates once and never frees.
+    // symbolize=0: a report with symbols takes longer than the test has.
+    env.ASAN_OPTIONS = [process.env.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":");
+  }
   const childResult = Promise.withResolvers<{ results: unknown; stderr: string; code: unknown }>();
   // The child starts when this file loads, so it runs while the tests above do.
   const child = execFile(

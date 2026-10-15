@@ -3932,6 +3932,15 @@ it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer"
   expect(Buffer.from(new BigInt64Array(0)).length).toBe(0);
 });
 
+it("new Buffer() and Buffer() with no argument give an empty Buffer", () => {
+  // Node throws ERR_INVALID_ARG_TYPE here. Bun keeps the empty Buffer, for example for `new (class extends Buffer {})()`.
+  const buffers = [new Buffer(), Buffer(), new (class extends Buffer {})(), Reflect.construct(Buffer, [])];
+  expect(buffers.map(buffer => [Buffer.isBuffer(buffer), buffer.length])).toEqual(buffers.map(() => [true, 0]));
+  // An explicit undefined is an argument.
+  expect(() => new Buffer(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(() => Buffer.from()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+});
+
 it("Buffer.from(arrayLike) has no unwritten byte when the length getter answers less the next time", () => {
   for (const make of [x => Buffer.from(x), x => new Buffer(x), x => Buffer(x)]) {
     let reads = 0;

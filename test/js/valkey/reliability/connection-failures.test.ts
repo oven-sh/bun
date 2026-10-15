@@ -966,13 +966,13 @@ describe("Valkey: Recovering After fail()", () => {
   test.each(failedHandshakes)(
     "a reconnect whose HELLO gets %s is retried and the queue is answered by the next connection",
     async (_name, secondHello) => {
-      // Connection 1 is dropped by the server right after it answers PING,
+      // Connection 1 is dropped by the server instead of answering PING,
       // connection 2 is the retry whose handshake fails, connection 3 accepts.
       const fake = helloServer({
         HELLO: (connection, socket) => (connection === 2 ? secondHello(socket) : "+OK\r\n"),
         PING: (connection, socket) => {
           if (connection !== 1) return "+PONG\r\n";
-          socket.end("+PONG\r\n");
+          socket.end();
           return null;
         },
       });
@@ -981,25 +981,13 @@ describe("Valkey: Recovering After fail()", () => {
       try {
         let closes = 0;
         client.onclose = () => closes++;
-        const reconnected = Promise.withResolvers<void>();
         let connects = 0;
-        client.onconnect = () => {
-          if (++connects === 2) reconnected.resolve();
-        };
-        await client.connect();
-        expect(await client.ping()).toBe("PONG");
-        while (client.connected) await Bun.sleep(1);
+        client.onconnect = () => connects++;
+        await dropAndAwaitRetryDelay(client);
         // Queued during the outage: it rides out the failed attempt and is
-        // sent once connection 3 is up.
-        const queued = client.ping();
-        await reconnected.promise;
-        expect({
-          queued: await queued,
-          closes,
-          connects,
-          connected: client.connected,
-          connections: fake.connections,
-        }).toEqual({
+        // answered once connection 3 is up.
+        const queued = await client.ping();
+        expect({ queued, closes, connects, connected: client.connected, connections: fake.connections }).toEqual({
           queued: "PONG",
           closes: 0,
           connects: 2,

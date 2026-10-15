@@ -5995,7 +5995,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),
-    WTFStringImpl(bun_core::WTFStringImpl),
+    WTFStringImpl(bun_core::WTFString),
 }
 
 impl Any {
@@ -6027,8 +6027,7 @@ impl Any {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
-            Any::WTFStringImpl(str) => {
-                let s = super::body::wtf_impl(str);
+            Any::WTFStringImpl(s) => {
                 if s.ref_count() == 1 {
                     s.memory_cost()
                 } else {
@@ -6050,7 +6049,7 @@ impl Any {
     pub(crate) fn fast_size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
     }
@@ -6059,7 +6058,7 @@ impl Any {
     pub(crate) fn size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }
     }
@@ -6075,6 +6074,14 @@ impl Any {
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
 
 impl Any {
+    /// Moves the string out of the `WTFStringImpl` arm and leaves an empty `Blob`.
+    fn take_string(&mut self) -> BunString {
+        match core::mem::replace(self, Any::Blob(Blob::default())) {
+            Any::WTFStringImpl(string) => BunString::adopt_wtf_impl(string.into_raw()),
+            _ => unreachable!("Any::take_string on a variant that is not a string"),
+        }
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -6183,10 +6190,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
                 }
@@ -6228,9 +6233,7 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
-            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
-            // `*self = Any::Blob(default)` here previously leaked that ref).
+            // `Blob::create(.., true)` copied the bytes, so release the string.
             self.detach();
             return blob;
         }
@@ -6258,12 +6261,7 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
-                str.into_js(cx.global())
-            }
+            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }
     }
 
@@ -6296,10 +6294,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 jsc::ArrayBuffer::from_default_allocator(cx.global(), TYPED_ARRAY_VIEW, bytes)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
 
                 let out_bytes = str.to_utf8();
                 if out_bytes.is_owned() {
@@ -6319,7 +6315,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
+            Any::WTFStringImpl(s) => s.length() == 0,
         }
     }
 }
@@ -6354,7 +6350,7 @@ impl Any {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.shared_view(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_slice(),
+            Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }
     }
@@ -6384,9 +6380,7 @@ impl Any {
                 ib.bytes.shrink_to_fit();
                 *self = Any::Blob(Blob::default());
             }
-            Any::WTFStringImpl(s) => {
-                // `Any` owns one ref on the WTFStringImpl pointee.
-                super::body::wtf_impl(s).deref();
+            Any::WTFStringImpl(_) => {
                 *self = Any::Blob(Blob::default());
             }
         }

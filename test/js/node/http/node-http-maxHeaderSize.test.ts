@@ -38,7 +38,7 @@ test("maxHeaderSize", async () => {
       expect(response.status).toBe(431);
     }
   }
-  http.maxHeaderSize = 16 * 1024;
+  (http as any).maxHeaderSize = 16 * 1024;
   {
     using server = Bun.serve({
       port: 0,
@@ -67,7 +67,7 @@ test("maxHeaderSize", async () => {
     }
   }
 
-  http.maxHeaderSize = originalMaxHeaderSize;
+  (http as any).maxHeaderSize = originalMaxHeaderSize;
 });
 
 test("server.maxHeaderSize assigned after construction is not narrowed to a smaller limit", async () => {
@@ -77,7 +77,7 @@ test("server.maxHeaderSize assigned after construction is not narrowed to a smal
   // On arm64 the same happened to Infinity.
   async function statusFor(maxHeaderSize: number, headerValueLength: number) {
     const server = http.createServer((req, res) => res.end("ok"));
-    server.maxHeaderSize = maxHeaderSize;
+    (server as any).maxHeaderSize = maxHeaderSize;
     try {
       server.listen(0, "127.0.0.1");
       await once(server, "listening");

@@ -59,6 +59,11 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         let username_str = arguments[2].to_bun_string(global_object)?;
         let password_str = arguments[3].to_bun_string(global_object)?;
         let database_str = arguments[4].to_bun_string(global_object)?;
+        // A C string from here on: the resolver, SNI and the certificate check would see the name up to the NUL.
+        if bun_core::strings::contains_char(hostname_str.to_utf8().slice(), 0) {
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
+        }
         let modes = M::MODES;
         let ssl_mode = usize::try_from(arguments[5].to_int32())
             .ok()

@@ -99,10 +99,13 @@ impl<'p> Checker<'p, '_> {
         self.check_members_for_override_modifier(file, c, sym, base);
         for node in hir.ids(class.implements) {
             // `!IsEntityNameExpression(expr)`, whose type is the error type.
-            if let TypeNodeKind::Heritage(expression) = hir[node].kind {
-                let end = self.end_of_expr(file, expression);
+            if let TypeNodeKind::Heritage { expr, .. } = hir[node].kind {
+                let end = self.end_of_expr(file, expr);
                 self.error_at((file, hir[node].pos, end), 2500, &[]);
             }
+            // `checkTypeReferenceNode`. `checkSourceElement` does not visit the element:
+            // `c.currentNode` stays the class until the type arguments are visited.
+            self.check_type_node_worker(file, node);
             if !matches!(hir[node].kind, TypeNodeKind::Ref { .. }) {
                 continue;
             }
@@ -138,13 +141,6 @@ impl<'p> Checker<'p, '_> {
 
     /// `checkBaseTypeAccessibility`: TS2675. A class with a private constructor can only be extended inside its own declaration.
     fn check_base_type_accessibility(&mut self, file: FileId, c: ClassId, apparent: TypeId) {
-        let TypeData::Anon {
-            origin: Origin::ClassStatic(class),
-            ..
-        } = *self.data(apparent)
-        else {
-            return;
-        };
         let Some(&first) = self.signatures(apparent, true).first() else {
             return;
         };
@@ -152,10 +148,13 @@ impl<'p> Checker<'p, '_> {
         let hir = self.hir(file);
         if let Some((declared_in, func, _)) = self.sig_decl(declared)
             && self.hir(declared_in)[func].flags.contains(Flags::PRIVATE)
+            // `t.symbol`. tsgo dereferences nil for a type that has none.
+            && let Some(symbol) = self.symbol_of_type(apparent).and_then(|it| it.of_binder())
+            // `GetClassLikeDeclarationOfSymbol(t.symbol)` is nil for an interface.
             && !(self.enclosing_classes(file, hir[c].extends).into_iter())
-                .any(|around| self.class_sym(file, around) == class)
+                .any(|around| self.class_sym(file, around) == symbol)
         {
-            let name = super::errors_names_and_exports::fully_qualified_name(self, class, None);
+            let name = super::errors_names_and_exports::fully_qualified_name(self, symbol, None);
             self.error(
                 file,
                 hir.node(c).with(Part::Base),
@@ -217,10 +216,10 @@ impl<'p> Checker<'p, '_> {
         for node in hir.ids(hir[i].extends) {
             if matches!(
                 hir[node].kind,
-                TypeNodeKind::Error | TypeNodeKind::Heritage(_)
+                TypeNodeKind::Error | TypeNodeKind::Heritage { .. }
             ) {
                 let end = match hir[node].kind {
-                    TypeNodeKind::Heritage(expression) => self.end_of_expr(file, expression),
+                    TypeNodeKind::Heritage { expr, .. } => self.end_of_expr(file, expr),
                     _ => hir[node].end,
                 };
                 self.error_at((file, hir[node].pos, end), 2499, &[]);

@@ -13,7 +13,7 @@ use crate::resolve::{
     JsxEmit, ModuleKind, Options, combine_paths, displayed_path, ensure_path_is_non_module_name,
     get_relative_path_from_directory, get_root_length, path_is_relative, to_path,
 };
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 use bun_core::lexer;
 use bun_core::strings;
 use bun_paths::platform::Posix;
@@ -39,7 +39,7 @@ fn parsed_list(value: &Json) -> Option<&[Json]> {
 }
 
 /// `IsIdentifierText`
-fn is_identifier_text(text: &[u8]) -> bool {
+pub(crate) fn is_identifier_text(text: &[u8]) -> bool {
     let (first, size) = lexer::char_and_size(text, 0);
     lexer::is_identifier_start(first as u32)
         && lexer::end_of_run(text, size, lexer::is_type_script_identifier_part) == text.len()
@@ -193,6 +193,26 @@ pub struct Problem {
     pub related: Vec<(crate::program::FileId, u32, u32, u32)>,
 }
 
+/// What `Problem::span_in` finds for `Place::TopElement(name, spec)`, for every `spec` at once:
+/// thousands of entries of `files` can each be asked about.
+pub fn spans_of_top_elements(
+    file: &TsConfigSourceFile,
+    name: &[u8],
+) -> FxHashMap<Vec<u8>, (u32, u32)> {
+    let mut spans = FxHashMap::default();
+    let root = file.object_literal_expression();
+    let list = root.and_then(|root| file.property(root, name, None));
+    for e in list
+        .into_iter()
+        .flat_map(|p| file.elements(file.initializer(p)))
+    {
+        if let Some(spec) = file.convert_property_value_to_json(e).into_string() {
+            spans.entry(spec).or_insert_with(|| file.span(e));
+        }
+    }
+    spans
+}
+
 impl Problem {
     pub fn new(code: u32, args: &[&[u8]], at: Place) -> Problem {
         Problem {
@@ -272,7 +292,7 @@ pub(crate) fn relative_from_file(from: &[u8], to: &[u8], is_case_sensitive: bool
 /// `verifyProjectReferences`: the diagnostics for the projects `root` references, directly or
 /// transitively, each with the configuration file that references it. `resolved`:
 /// `configToProjectReference`, the project of the configuration file with a `tspath.Path`, if the
-/// file exists.
+/// file can be read.
 pub fn verify_project_references<'a>(
     root: &'a Project,
     resolved: &dyn Fn(&[u8]) -> Option<&'a Project>,

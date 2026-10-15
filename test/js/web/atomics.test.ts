@@ -260,7 +260,9 @@ describe("Atomics", () => {
       const buffer = new SharedArrayBuffer(16);
       const floatView = new Float32Array(buffer);
 
+      // @ts-expect-error
       expect(() => Atomics.store(floatView, 0, 1.5)).toThrow();
+      // @ts-expect-error
       expect(() => Atomics.load(floatView, 0)).toThrow();
     });
 

@@ -8,7 +8,7 @@
 //! nameresolver.go.
 
 use super::*;
-use crate::bind::{Decl, MemberOwner, PatParent, SymbolId};
+use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
 
 impl Checker<'_, '_> {
@@ -133,12 +133,17 @@ impl Checker<'_, '_> {
         sym: Sym,
         decls: &[(FileId, Decl)],
     ) {
-        let lists: Vec<(FileId, Span<TypeParamId>, u32)> = decls
+        // With `declaration.Name()`, which is nil for `export default class {}`.
+        let lists: Vec<(FileId, Span<TypeParamId>, Option<u32>)> = decls
             .iter()
             .filter_map(|&(f, d)| match d {
-                Decl::Class(c) => Some((f, self.hir(f)[c].type_params, self.hir(f)[c].name_pos)),
+                Decl::Class(c) => {
+                    let class = &self.hir(f)[c];
+                    let name = class.name.is_some().then_some(class.name_pos);
+                    Some((f, class.type_params, name))
+                }
                 Decl::Interface(i) => {
-                    Some((f, self.hir(f)[i].type_params, self.hir(f)[i].name_pos))
+                    Some((f, self.hir(f)[i].type_params, Some(self.hir(f)[i].name_pos)))
                 }
                 _ => None,
             })
@@ -181,7 +186,17 @@ impl Checker<'_, '_> {
         }
         if !identical {
             for l in lists.iter().filter(|l| l.0 == file) {
-                self.error_at((file, l.2, 0), 2428, &[Arg::Sym(sym)]);
+                match l.2 {
+                    Some(name) => {
+                        self.error_at((file, name, 0), 2428, &[Arg::Sym(sym)]);
+                    }
+                    // `c.error(nil, ..)`
+                    None => {
+                        let at = super::explain::NOWHERE;
+                        let diagnostic = self.new_diagnostic(at, 2428, &[Arg::Sym(sym)]);
+                        self.add_diagnostic_of(None, diagnostic);
+                    }
+                }
             }
         }
     }
@@ -209,33 +224,30 @@ impl Checker<'_, '_> {
                 // The local symbol of a module or a namespace also lists the declarations exported
                 // under the name.
                 if is_checked && bound.symbol_of_declaration(node).idx() == i {
+                    let current = CurrentNode::Node(file, self.hir(file).node(node));
+                    let saved = self.enter_source_element(current);
                     self.check_variable_like_declaration(file, node);
+                    self.current_source_element = saved;
                 }
             }
         }
     }
 
-    /// The end of `checkVariableLikeDeclaration`, starting at `t :=
-    /// c.convertAutoToAny(c.getTypeOfSymbol(symbol))`, except for the initializer.
+    /// The end of `checkVariableLikeDeclaration`, starting at `if ast.IsBigIntLiteral(name)`,
+    /// except for the initializer.
     pub(super) fn check_variable_like_declaration(&mut self, file: FileId, node: Decl) {
         let (own, hir) = ((file, node), self.hir(file));
         // The source text of the default library is not stored: there is no name to report.
         if hir.text.is_empty() {
             return;
         }
-        // `checkIndexConstraints` has resolved the members of a class or an interface before they
-        // are checked. `checkTypeLiteral` checks the members first.
-        let declarations = match node {
-            Decl::Member(m)
-                if matches!(
-                    self.bound(file).member_owner[m.idx()],
-                    MemberOwner::TypeLiteral(_)
-                ) =>
-            {
-                self.declarations_of_symbol_of_declaration(file, node)
-            }
-            _ => self.declarations_of_member(file, node),
-        };
+        if let Decl::Member(m) = node
+            && hir[m].key == PropKey::None
+            && is_bigint_literal_at(hir, hir[m].name_pos)
+        {
+            self.error_at((file, hir[m].name_pos, 0), 1539, &[]);
+        }
+        let declarations = self.declarations_of_symbol_of_checked_declaration(file, node);
         if declarations.len() < 2 {
             return;
         }
@@ -252,11 +264,13 @@ impl Checker<'_, '_> {
             Decl::Var(pat) | Decl::Param(pat) => (hir[pat].pos, self.end_of_pat(file, pat)),
             _ => return,
         };
+        let start = super::spans::start_of_error_range(hir, start, end);
         // `DeclarationNameToString`
-        let (at, name) = (
-            (file, start, end),
-            Arg::Bytes(&hir.text[start as usize..end as usize]),
-        );
+        let name: &[u8] = match start == end {
+            true => b"(Missing)",
+            false => &hir.text[start as usize..end as usize],
+        };
+        let (at, name) = ((file, start, end), Arg::Bytes(name));
         let differs = if value_declaration == own {
             declarations.iter().any(|&d| {
                 d != own
@@ -289,9 +303,9 @@ impl Checker<'_, '_> {
             return;
         }
         // `getTypeOfSymbol`: `getTypeOfAccessors` adds no optionality.
-        let t = if let Some(prototype) = self.get_type_of_prototype_property(symbol) {
-            prototype
-        } else if self.files().flags(symbol).intersects(SymFlags::ACCESSOR) {
+        let t = if self.files().flags(symbol).intersects(SymFlags::ACCESSOR)
+            || self.is_prototype_symbol(symbol)
+        {
             let ty = self.type_of_symbol(symbol);
             self.convert_auto_to_any(ty)
         } else {
@@ -314,24 +328,6 @@ impl Checker<'_, '_> {
         self.error_at(at, code, &args)
             .related_information
             .extend(related);
-    }
-
-    /// `getTypeOfPrototypeProperty`, if `symbol` has `SymbolFlagsPrototype`: it is the `prototype`
-    /// that `bindClassLikeDeclaration` puts among the exports of a class, which a static member of
-    /// that name declares too.
-    fn get_type_of_prototype_property(&mut self, symbol: Sym) -> Option<TypeId> {
-        let files = self.files();
-        if files.symbol(symbol).name != known::prototype {
-            return None;
-        }
-        let class = files.parent_of_symbol(symbol)?;
-        if !files.flags(class).contains(SymFlags::CLASS)
-            || files.export(class, known::prototype) != Some(files.canonical(symbol))
-        {
-            return None;
-        }
-        let constructor = self.type_of_symbol(class);
-        self.type_of_property(constructor, known::prototype)
     }
 
     /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For

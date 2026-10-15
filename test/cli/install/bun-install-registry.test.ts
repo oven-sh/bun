@@ -6765,14 +6765,14 @@ describe.concurrent("hoisting", async () => {
     test("peer * hoists the same version no matter which manifest the registry answers first", async () => {
       const { packageDir, packageJson, env } = await setupTest();
       // Proxy in front of the registry that forces the arrival order seen on slow
-      // CI machines: the a-dep manifest gets processed (so a-dep@1.0.1..1.0.9
-      // exist in the lockfile) before peer-a-dep-star's manifest arrives, and
+      // CI machines: peer-a-dep-star's manifest arrives after bun has read the
+      // manifest of a uses-a-dep-N (only those lead to a-dep), and
       // uses-a-dep-10's manifest (the one pinning a-dep@1.0.10) arrives after
       // peer-a-dep-star has been processed. Each held response is released by
       // a request bun only makes once the earlier step has happened, so no
       // timers are involved.
       const upstream = registryUrl().replace(/\/$/, "");
-      const aDepTarballRequested = Promise.withResolvers<void>();
+      const aDepRequested = Promise.withResolvers<void>();
       const peerTarballRequested = Promise.withResolvers<void>();
       using proxy = Bun.serve({
         port: 0,
@@ -6781,9 +6781,9 @@ describe.concurrent("hoisting", async () => {
         async fetch(req) {
           const { pathname } = new URL(req.url);
           const isTarball = pathname.includes("/-/");
-          if (pathname.startsWith("/a-dep/-/")) aDepTarballRequested.resolve();
+          if (pathname === "/a-dep") aDepRequested.resolve();
           if (pathname.startsWith("/peer-a-dep-star/-/")) peerTarballRequested.resolve();
-          if (pathname === "/peer-a-dep-star") await aDepTarballRequested.promise;
+          if (pathname === "/peer-a-dep-star") await aDepRequested.promise;
           if (pathname === "/uses-a-dep-10") await peerTarballRequested.promise;
 
           const res = await fetch(upstream + pathname, { headers: { accept: req.headers.get("accept") ?? "*/*" } });

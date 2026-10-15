@@ -1579,7 +1579,7 @@ pub(crate) fn bind_row(
                             report_manifest_failure(this, task_id, id, dependency, &name_str);
                             return Ok(Row::Done);
                         }
-                        // `--offline` already reported that no manifest is cached for this name.
+                        // Whoever marked the task as failed also reported why, as `--offline` does.
                         if this.network_task_has_failed(task_id) {
                             return Ok(Row::Done);
                         }
@@ -3869,10 +3869,9 @@ impl PackageManager {
         &mut self,
         task_id: Task::Id,
         mark: usize,
-        failure: package_manager_real::ManifestFailure,
+        mut failure: package_manager_real::ManifestFailure,
     ) {
-        let msgs = self.take_log_since(mark);
-        let failure = package_manager_real::ManifestFailure { msgs, ..failure };
+        failure.msgs = self.take_log_since(mark);
         let _ = self.manifest_failures.insert(task_id, failure);
         let _ = self.look_ahead.waiting.remove(&task_id);
     }

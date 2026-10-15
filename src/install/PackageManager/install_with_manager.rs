@@ -615,6 +615,12 @@ pub fn install_with_manager(
         manager.drain_dependency_list();
     }
 
+    // When everything came from the cache, the peers usually do too. Resolving them here keeps
+    // such an install from announcing a round of downloads that never happens.
+    if manager.pending_task_count() == 0 {
+        resolve_peers_without_waiting(manager)?;
+    }
+
     if manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
@@ -2267,6 +2273,16 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
         wait_for_everything_except_peers(manager)?;
     }
 
+    resolve_peers_without_waiting(manager)?;
+
+    if manager.pending_task_count() > 0 {
+        wait_for_peers(manager)?;
+    }
+    Ok(())
+}
+
+/// Resolves the deferred peers as far as that takes no request.
+fn resolve_peers_without_waiting(manager: &mut PackageManager) -> crate::Result<()> {
     // An error ends the install, so the peers are not worth another round of requests and retries.
     if manager.log_mut().has_errors() {
         return Ok(());
@@ -2282,10 +2298,6 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     while manager.has_peers_to_process() {
         manager.process_peer_dependency_list()?;
         manager.drain_dependency_list();
-    }
-
-    if manager.pending_task_count() > 0 {
-        wait_for_peers(manager)?;
     }
     Ok(())
 }

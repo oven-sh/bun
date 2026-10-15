@@ -5200,7 +5200,7 @@ describe.concurrent("bun-install", () => {
       name: "of a dependency, when bun reads the alias last",
       files: { "package.json": { name: "foo", dependencies: { holder: "1.0.0", kept: "^1.0.0" } } },
       registry: { holder, kept, short },
-      hold: { holder: "kept-1.0.0.tgz" },
+      hold: { holder: "kept" },
       packages: { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "holder/kept": "short@1.0.0" },
       requests: ["holder", "holder-1.0.0.tgz", "kept", "kept-1.0.0.tgz", "short", "short-1.0.0.tgz"],
     },

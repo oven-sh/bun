@@ -4026,15 +4026,15 @@ describe("loading bun.lock binds the edges of a package printed at several paths
   );
 });
 
-// A fresh install resolves transitive rows as their parents' manifests come back
-// from the registry, so whether some other version of a package exists yet when
-// a row is resolved depends on network timing. Once everything is resolved, the
+// Manifests come back from the registry in any order, and a fresh install has to
+// resolve the same versions whichever comes first. Once everything is resolved, the
 // versions the install added collapse onto the fewest that satisfy every range;
 // of those, a range takes the one the project itself depends on if it accepts
 // it, else the highest it accepts. Each shape below is installed
-// under arrival orders forced by holding one manifest back until a request that
-// can only be made once the other parent's row is resolved (the tarball of the
-// version it resolved to) has come in; every order has to write the same
+// under arrival orders forced by holding one manifest back until another request
+// has come in. Where there is one, that is a request bun can only make once it has
+// read the other parent's manifest: for the manifest of what that parent depends
+// on, or for the parent's tarball. Every order has to write the same
 // bun.lock. `z`, the package the rows disagree on, has 1.0.0, 1.0.5, 1.1.0 and 2.0.0.
 type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string> | string[]>>>;
 type Hold = { manifest: string; until: string };
@@ -4147,8 +4147,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
-      "b's manifest last": [{ manifest: "b", until: "/z-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/z" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
     },
     z: { "z": "z@1.0.0" },
   },
@@ -4161,8 +4161,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
-      "b's manifest last": [{ manifest: "b", until: "/z-1.0.5.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/z" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
     },
     z: { "z": "z@1.0.5" },
   },
@@ -4175,8 +4175,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-1.0.5.tgz" }],
-      "b's manifest last": [{ manifest: "b", until: "/z-2.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/z" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
     },
     z: { "z": "z@1.0.5" },
   },
@@ -4193,16 +4193,16 @@ it.each<OrderedShape>([
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", c: "1.0.0" } } },
     orders: {
       "a's manifest first": [
-        { manifest: "b", until: "/z-1.2.0.tgz" },
-        { manifest: "c", until: "/z-1.2.0.tgz" },
+        { manifest: "b", until: "/z" },
+        { manifest: "c", until: "/z" },
       ],
-      // a's row is resolved (against the one z there is) before a's tarball is requested.
+      // a's tarball is requested once a's manifest has been read.
       "b's, then a's, then c's": [
-        { manifest: "a", until: "/z-1.0.5.tgz" },
+        { manifest: "a", until: "/z" },
         { manifest: "c", until: "/a-1.0.0.tgz" },
       ],
       "c's, then a's, then b's": [
-        { manifest: "a", until: "/z-1.1.3.tgz" },
+        { manifest: "a", until: "/z" },
         { manifest: "b", until: "/a-1.0.0.tgz" },
       ],
     },
@@ -4218,8 +4218,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { b: "1.0.0", c: "1.0.0", z: "1.0.0" } } },
     orders: {
-      "b's manifest last": [{ manifest: "b", until: "/z-1.1.0.tgz" }],
-      // b's row is resolved (against the root's z alone) before b's tarball is requested.
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
+      // b's tarball is requested once b's manifest has been read.
       "c's manifest last": [
         { manifest: "b", until: "/z" },
         { manifest: "c", until: "/b-1.0.0.tgz" },
@@ -4239,8 +4239,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
-      "b's manifest last": [{ manifest: "b", until: "/z-1.1.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/z" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
     },
     z: { "z": "z@1.1.0" },
   },
@@ -4249,7 +4249,7 @@ it.each<OrderedShape>([
     manifests: { b: { "1.0.0": { dependencies: { z: "^1.0.0" } } }, z: zVersions },
     files: { "package.json": { name: "foo", dependencies: { b: "1.0.0", z: "1.0.0" } } },
     orders: {
-      "b's manifest last": [{ manifest: "b", until: "/z-1.0.0.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.0" },
@@ -4262,7 +4262,7 @@ it.each<OrderedShape>([
       "pkg/package.json": { name: "pkg", dependencies: { z: "1.0.0" } },
     },
     orders: {
-      "b's manifest last": [{ manifest: "b", until: "/z-1.0.0.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.0" },
@@ -4272,7 +4272,7 @@ it.each<OrderedShape>([
     manifests: { b: { "1.0.0": { dependencies: { z: "^1.0.0" } } }, z: zVersions },
     files: { "package.json": { name: "foo", dependencies: { b: "1.0.0", z: "~1.0.0" } } },
     orders: {
-      "b's manifest last": [{ manifest: "b", until: "/z-1.0.5.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.5" },
@@ -4289,7 +4289,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", c: "1.0.0", z: "~1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/c-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/c" }],
       "c's manifest last": [
         { manifest: "a", until: "/z" },
         { manifest: "c", until: "/a-1.0.0.tgz" },
@@ -4302,7 +4302,7 @@ it.each<OrderedShape>([
     manifests: { c: { "1.0.0": { dependencies: { z: "*" } } }, z: zVersions },
     files: { "package.json": { name: "foo", dependencies: { c: "1.0.0", z: "^1.0.0" } } },
     orders: {
-      "c's manifest last": [{ manifest: "c", until: "/z-1.1.0.tgz" }],
+      "c's manifest last": [{ manifest: "c", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/c-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
@@ -4336,7 +4336,7 @@ it.each<OrderedShape>([
       [`${exact}/package.json`]: { name: exact, dependencies: { z: "1.1.0" } },
     },
     orders: {
-      "c's manifest last": [{ manifest: "c", until: "/z-1.1.0.tgz" }],
+      "c's manifest last": [{ manifest: "c", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/c-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
@@ -4352,7 +4352,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/b-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
@@ -4367,7 +4367,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", c: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/c-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/c" }],
       "c's manifest last": [{ manifest: "c", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.0" },
@@ -4382,7 +4382,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/b-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
@@ -4399,7 +4399,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "m's manifest last": [{ manifest: "m", until: "/z-2.0.0.tgz" }],
+      "m's manifest last": [{ manifest: "m", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/m-1.0.0.tgz" }],
     },
     z: { "z": "z@2.0.0" },
@@ -4413,7 +4413,7 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/b-1.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/b" }],
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
@@ -4449,7 +4449,7 @@ it.each<OrderedShape>([
       "w/package.json": { name: "w", peerDependencies: { z: "latest" } },
     },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-1.0.5.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/z" }],
       "o's manifest last": [{ manifest: "o", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
@@ -4467,8 +4467,8 @@ it.each<OrderedShape>([
     },
     files: { "package.json": { name: "foo", dependencies: { h: "1.0.0", p: "1.0.0", r: "1.0.0" } } },
     orders: {
-      "h's manifest last": [{ manifest: "h", until: "/z-1.1.0.tgz" }],
-      // r's row waits for z's manifest behind h's.
+      "h's manifest last": [{ manifest: "h", until: "/z" }],
+      // Only h leads to y.
       "r's manifest last": [{ manifest: "r", until: "/y" }],
     },
     z: { "z": "z@1.1.0", "h/z": "z@1.0.0", "h/y/z": "z@1.0.5" },
@@ -4537,7 +4537,7 @@ it("an install that adds packages to a bun.lock writes the same bun.lock whichev
   using server = ordered.server;
   let expected: string | undefined;
   for (const [order, holds] of Object.entries<Hold[]>({
-    "b's manifest last": [{ manifest: "b", until: "/z-1.1.0.tgz" }],
+    "b's manifest last": [{ manifest: "b", until: "/c" }],
     "c's manifest last": [{ manifest: "c", until: "/b-1.0.0.tgz" }],
   })) {
     ordered.hold([]);

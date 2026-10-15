@@ -321,6 +321,17 @@ pub(crate) struct ManifestFailure {
     pub(crate) reported: FailureReport,
 }
 
+impl ManifestFailure {
+    /// For a failure that somebody else has reported. A dependency that needs the manifest then
+    /// gives up without a message of its own.
+    pub(crate) fn already_reported() -> Self {
+        ManifestFailure {
+            reported: FailureReport::Errored,
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for ManifestFailure {
     fn default() -> Self {
         ManifestFailure {

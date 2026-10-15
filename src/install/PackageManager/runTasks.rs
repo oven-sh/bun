@@ -702,6 +702,8 @@ fn run_tasks_erased(
                     // Handle non-retry-able errors.
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
+                        let _ = (manager.manifest_failures)
+                            .insert(task.task_id, ManifestFailure::already_reported());
                     } else {
                         // The dependency that reports it decides between error and warning.
                         let is_required = manager.is_network_task_required(task.task_id)
@@ -760,6 +762,8 @@ fn run_tasks_erased(
                             err.into(),
                             &task.url_buf,
                         );
+                        let _ = (manager.manifest_failures)
+                            .insert(task.task_id, ManifestFailure::already_reported());
 
                         return_network_task(task_ptr);
                         continue;
@@ -1194,6 +1198,8 @@ fn run_tasks_erased(
                             err,
                             &req.network.url_buf,
                         );
+                        let _ = (manager.manifest_failures)
+                            .insert(task.id, ManifestFailure::already_reported());
                     } else {
                         let log_mark = manager.log_mut().msgs.len();
                         bun_ast::add_error_pretty!(
@@ -2221,6 +2227,11 @@ impl PackageManager {
             {
                 break;
             }
+            // However a request ends, it leaves a manifest or a `ManifestFailure` for `bind_row` to
+            // find. A dependency that still waits here has been forgotten by one of those paths.
+            if Environment::CI_ASSERT {
+                unreachable!("a queued dependency waits for a task that is not pending");
+            }
             (self.lockfile.scratch.dependency_list_queue).finish_head_row();
         }
     }
@@ -2283,6 +2294,7 @@ fn leave_failure_to_dependencies(
     failure: ManifestFailure,
 ) -> crate::Result<bool> {
     let Some(waiting) = manager.task_queue.get_mut(&task_id).map(core::mem::take) else {
+        let _ = (manager.manifest_failures).insert(task_id, ManifestFailure::already_reported());
         return Ok(false);
     };
     manager.keep_manifest_failure(task_id, log_mark, failure);

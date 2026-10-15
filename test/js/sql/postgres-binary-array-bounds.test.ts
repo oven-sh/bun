@@ -200,3 +200,64 @@ test("a binary value of the wrong width rejects", async () => {
     0x01010101,
   ]);
 });
+
+const int32 = (...values: number[]) => {
+  const bytes = Buffer.alloc(values.length * 4);
+  values.forEach((value, i) => bytes.writeInt32BE(value, i * 4));
+  return bytes;
+};
+/** What array_send writes: dimensions, a flag, the type of the elements, a length and a lower bound for each dimension. */
+const int4Array = (lengths: number[], elements: Buffer, dimensions = lengths.length, element: number = OID.int4) => ({
+  typeOid: OID.int4_array,
+  format: 1 as const,
+  bytes: Buffer.concat([int32(dimensions, 0, element), ...lengths.map(length => int32(length, 1)), elements]),
+});
+const int4s = (...values: (number | null)[]) =>
+  Buffer.concat(values.map(value => (value === null ? int32(-1) : int32(4, value))));
+
+test("a binary array that is not one rejects", async () => {
+  const most = 0x7fffffff;
+  const malformed: Cell[] = [
+    { typeOid: OID.int4_array, format: 1, bytes: Buffer.alloc(0) },
+    { typeOid: OID.int4_array, format: 1, bytes: int32(1, 0) },
+    { typeOid: OID.int4_array, format: 1, bytes: int32(1, 0, OID.int4, 1) },
+    int4Array([], int4s(1), 7),
+    int4Array([], int4s(1), -1),
+    int4Array([], int4s(1), 0),
+    int4Array([1], int4s(1), 2),
+    int4Array([1], int4s(1), 1, OID.float8),
+    int4Array([0], int4s()),
+    int4Array([-1], int4s(1)),
+    int4Array([2], int4s(1)),
+    int4Array([1], int4s(1, 2)),
+    int4Array([1], Buffer.concat([int4s(1), Buffer.alloc(1)])),
+    // No room is made for what the message cannot hold.
+    int4Array([most], int4s(1)),
+    int4Array([most, most, most, most, most, most], int4s(1)),
+    int4Array([1, 1, 1, 1, 1, most], int4s(1)),
+    int4Array([2, 2], int4s(1, 2, 3)),
+    int4Array([2, 0], int4s()),
+    int4Array([1], int32(-2)),
+    int4Array([1], int32(0)),
+    int4Array([1], Buffer.concat([int32(3), Buffer.alloc(3)])),
+    int4Array([1], Buffer.concat([int32(8), Buffer.alloc(8)])),
+    int4Array([1], Buffer.concat([int32(4), Buffer.alloc(2)])),
+    int4Array([1], int32(most)),
+  ];
+  expect(
+    await decode([
+      ...malformed,
+      int4Array([], int4s()),
+      int4Array([3], int4s(1, null, -1)),
+      int4Array([2, 2], int4s(1, 2, 3, null)),
+    ]),
+  ).toEqual([
+    ...malformed.map(() => "ERR_POSTGRES_INVALID_BINARY_DATA"),
+    [],
+    [1, null, -1],
+    [
+      [1, 2],
+      [3, null],
+    ],
+  ]);
+});

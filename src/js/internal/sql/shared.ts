@@ -224,6 +224,20 @@ function isWordChar(c: number) {
   return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 36 || c >= 128;
 }
 
+/** Where the `--` comment of the line from `start` to `end` begins, or `end`. Dashes in quotes begin none. */
+function lineCommentStart(text: string, start: number, end: number): number {
+  for (let i = start; i < end; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 39 || c === 34 || c === 96) {
+      i = text.indexOf(text[i], i + 1);
+      if (i === -1 || i >= end) break;
+    } else if (c === 45 && text.charCodeAt(i + 1) === 45) {
+      return i;
+    }
+  }
+  return end;
+}
+
 /** Start of the last word that ends at or before `end`, or -1. Steps over quoted text and comments. */
 function lastWordStart(text: string, end: number): number {
   let i = end - 1;
@@ -234,8 +248,9 @@ function lastWordStart(text: string, end: number): number {
     } else if (c === 47 && text.charCodeAt(i - 1) === 42) {
       i = text.lastIndexOf("/*", i - 2);
     } else if (c === 10) {
-      const dashes = text.indexOf("--", text.lastIndexOf("\n", i - 1) + 1);
-      if (dashes !== -1 && dashes < i) i = dashes;
+      const lineStart = text.lastIndexOf("\n", i - 1) + 1;
+      const dashes = text.indexOf("--", lineStart);
+      if (dashes !== -1 && dashes < i) i = lineCommentStart(text, lineStart, i);
     } else if (isWordChar(c)) {
       break;
     }

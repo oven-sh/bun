@@ -200,16 +200,19 @@ describe("named statements", () => {
   // 65552 is 65536 + 16: a user-defined type, not bool.
   const columns = [
     ...[OID.bool, OID.int4, OID.float8, OID.timestamp, OID.timestamptz, OID.bytea],
-    ...[OID.numeric, OID.float4, OID.time, OID.int4_array, OID.float4_array, OID.text, 65552],
+    // int2[], int4[], float4[], float8[]
+    ...[1005, OID.int4_array, OID.float4_array, 1022],
+    // int8[] and text[] among them
+    ...[OID.numeric, OID.float4, OID.time, 1016, 1009, OID.text, 65552],
   ];
   const resultFormats = (stream: string[]) =>
     stream
       .filter(frame => frame.startsWith("42"))
       .map(frame => pgDecodeBind(Buffer.from(frame, "hex").subarray(5)).resultFormats);
 
-  test("bool, int4, float8, timestamp, timestamptz and bytea columns are asked for in binary, the rest in text", async () => {
+  test("the columns that have a decoder for it are asked for in binary, the rest in text", async () => {
     await sql.unsafe(`select $1 /* formats: params=${OID.int4} cols=${columns} */`, [1]);
-    expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]]);
+    expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]]);
   });
 
   test("values of an object through the sql() helper", async () => {

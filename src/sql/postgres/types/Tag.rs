@@ -148,7 +148,16 @@ impl Tag {
     pub fn is_binary_format_supported(self) -> bool {
         matches!(
             self,
-            Tag::bool | Tag::int4 | Tag::float8 | Tag::timestamp | Tag::timestamptz | Tag::bytea
+            Tag::bool
+                | Tag::int4
+                | Tag::float8
+                | Tag::timestamp
+                | Tag::timestamptz
+                | Tag::bytea
+                | Tag::int2_array
+                | Tag::int4_array
+                | Tag::float4_array
+                | Tag::float8_array
         )
     }
 

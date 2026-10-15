@@ -207,6 +207,12 @@ function suite(dialect: Dialect, url: () => string) {
       expect(ids(await sql`select id from ${table} where id not in ${sql([1, 3])} order by id`)).toEqual([2, 4, 5]);
       expect(ids(await sql`select id from ${table} where id in/* c */${sql([1, 3])} order by id`)).toEqual([1, 3]);
       expect(ids(await sql`select id from ${table} where b = 'x' and id in ${sql([{ id: 2 }], "id")}`)).toEqual([2]);
+
+      // Dashes in quotes on the line before the helper begin no comment.
+      expect(ids(await sql`select id from ${table} where b <> 'x--y' and id in\n${sql([1, 3])} order by id`)).toEqual([1, 3]); // prettier-ignore
+      expect(ids(await sql`select id from ${table} where b <> 'it''s--y' and id in\n${sql([1, 3])} order by id`)).toEqual([1, 3]); // prettier-ignore
+      expect(ids(await sql`select id from ${table} as ${sql("a--b")} where id in\n${sql([1, 3])} order by id`)).toEqual([1, 3]); // prettier-ignore
+      expect(ids(await sql`select id from ${table} where b <> 'x--y' and id in -- set 'it\n${sql([1, 3])} order by id`)).toEqual([1, 3]); // prettier-ignore
     });
 
     test("an upsert takes assignments", async () => {

@@ -277,10 +277,108 @@ fn parse_array(
     Ok(cell)
 }
 
+unsafe extern "C" {
+    /// What the shortest decimal form of `value` reads as, which is what the server prints for a float4.
+    safe fn Bun__Float32__toShortestDouble(value: f32) -> f64;
+}
+
+fn take<const SIZE: usize>(rest: &mut &[u8]) -> Result<[u8; SIZE]> {
+    let (head, tail) = rest
+        .split_first_chunk::<SIZE>()
+        .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    *rest = tail;
+    Ok(*head)
+}
+
+fn double(value: f64) -> JSValue {
+    JSValue::js_double_number(JSValue::purify_nan(value))
+}
+
+/// `length` elements: 4 bytes of size, -1 for a NULL, and the value.
+fn binary_numbers<const SIZE: usize>(
+    length: usize,
+    rest: &mut &[u8],
+    decode: impl Fn([u8; SIZE]) -> JSValue,
+) -> Result<SQLDataCell> {
+    let mut values: Vec<JSValue> = Vec::with_capacity(length);
+    for _ in 0..length {
+        let size = i32::from_be_bytes(take(rest)?);
+        values.push(if size == SIZE as i32 {
+            decode(take(rest)?)
+        } else if size == -1 {
+            JSValue::NULL
+        } else {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        });
+    }
+    Ok(SQLDataCell::numbers(values))
+}
+
+fn binary_level(element: types::Tag, lengths: &[usize], rest: &mut &[u8]) -> Result<SQLDataCell> {
+    use types::Tag as T;
+    let [length, inner @ ..] = lengths else {
+        return ArrayCells(Vec::new()).into_cell();
+    };
+    // An element takes 4 bytes or more: a length that the message cannot hold reserves nothing.
+    if *length > rest.len() / 4 {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    if !inner.is_empty() {
+        let mut cells = ArrayCells(Vec::with_capacity(*length));
+        for _ in 0..*length {
+            cells.0.push(binary_level(element, inner, rest)?);
+        }
+        return cells.into_cell();
+    }
+    match element {
+        T::int2 => binary_numbers(*length, rest, |bytes| {
+            JSValue::js_number_from_int32(i16::from_be_bytes(bytes).into())
+        }),
+        T::int4 => binary_numbers(*length, rest, |bytes| {
+            JSValue::js_number_from_int32(i32::from_be_bytes(bytes))
+        }),
+        T::float4 => binary_numbers(*length, rest, |bytes| {
+            double(Bun__Float32__toShortestDouble(f32::from_be_bytes(bytes)))
+        }),
+        T::float8 => binary_numbers(*length, rest, |bytes| double(f64::from_be_bytes(bytes))),
+        _ => Err(AnyPostgresError::UnknownFormatCode),
+    }
+}
+
+/// What the server's `array_send` writes.
+fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
+    let dimensions = u32::from_be_bytes(take(&mut rest)?) as usize;
+    let _has_nulls: [u8; 4] = take(&mut rest)?;
+    let oid = u32::from_be_bytes(take(&mut rest)?);
+    if dimensions > MAX_ARRAY_DIMENSIONS || types::Tag::from_oid(oid) != element {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let mut lengths = [0usize; MAX_ARRAY_DIMENSIONS];
+    for length in &mut lengths[..dimensions] {
+        // An array without elements has no dimensions.
+        *length = usize::try_from(i32::from_be_bytes(take(&mut rest)?))
+            .ok()
+            .filter(|&length| length > 0)
+            .ok_or(AnyPostgresError::InvalidBinaryData)?;
+        // JS arrays start at 0.
+        let _lower_bound: [u8; 4] = take(&mut rest)?;
+    }
+    let mut cell = binary_level(element, &lengths[..dimensions], &mut rest)?;
+    if !rest.is_empty() {
+        cell.deinit();
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    Ok(cell)
+}
+
 /// `Tag::is_binary_format_supported`, plus the types whose binary form is their text.
 fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
     use types::Tag as T;
     match tag {
+        T::int2_array => binary_array(T::int2, bytes),
+        T::int4_array => binary_array(T::int4, bytes),
+        T::float4_array => binary_array(T::float4, bytes),
+        T::float8_array => binary_array(T::float8, bytes),
         T::bool => Ok(SQLDataCell::bool(bytes.first() == Some(&1))),
         T::int4 => {
             let bytes: [u8; 4] = bytes

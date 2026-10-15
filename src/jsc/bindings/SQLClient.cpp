@@ -15,6 +15,8 @@
 #include <JavaScriptCore/GCDeferralContext.h>
 #include "GCDefferalContext.h"
 #include "wtf/Assertions.h"
+#include <wtf/dragonbox/dragonbox.h>
+#include <wtf/dtoa.h>
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
@@ -241,8 +243,18 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         // ArrayStorage when the global object is having a bad time.
         indexingType = array->indexingType();
-        for (uint32_t i = 0; i < length; i++)
-            array->initializeIndexWithoutBarrier(initializationScope, i, values[i], indexingType);
+        if (indexingType == ArrayWithDouble) {
+            auto doubles = array->butterfly()->contiguousDouble();
+            for (uint32_t i = 0; i < length; i++)
+                doubles.atUnsafe(i) = values[i].asNumber();
+        } else if (indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous) {
+            auto slots = array->butterfly()->contiguous();
+            for (uint32_t i = 0; i < length; i++)
+                slots.atUnsafe(i).setWithoutWriteBarrier(values[i]);
+        } else {
+            for (uint32_t i = 0; i < length; i++)
+                array->initializeIndexWithoutBarrier(initializationScope, i, values[i], indexingType);
+        }
         return array;
     }
     default: {
@@ -492,6 +504,37 @@ extern "C" EncodedJSValue SQL__createStatementDescription(JSC::JSGlobalObject* g
     statement->putDirect(vm, Identifier::fromString(vm, "types"_s), typesArray);
     statement->putDirect(vm, Identifier::fromString(vm, "columns"_s), columnsArray);
     return JSValue::encode(statement);
+}
+
+// What the shortest decimal form of `value` reads as: 0.1f gives 0.1, where a conversion gives 0.10000000149011612.
+extern "C" double Bun__Float32__toShortestDouble(float value)
+{
+    static constexpr double powersOfTen[] = {
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22
+    };
+    constexpr int32_t largestExactPower = std::size(powersOfTen) - 1;
+    if (!std::isfinite(value) || !value)
+        return value;
+
+    // As the server's float4out: a decimal halfway between two floats, which reads as `value` only when ties go to
+    // even, does not count. Ties to odd leave it out for an even significand, ties to even for an odd one.
+    namespace rounding = WTF::dragonbox::policy::decimal_to_binary_rounding;
+    auto decimal = std::bit_cast<uint32_t>(value) & 1
+        ? WTF::dragonbox::to_decimal(value, rounding::nearest_to_even)
+        : WTF::dragonbox::to_decimal(value, rounding::nearest_to_odd);
+    // A double holds the 9 digits at most and the power of ten exactly, so the one operation rounds once.
+    double result = decimal.significand;
+    if (decimal.exponent >= 0 && decimal.exponent <= largestExactPower)
+        result *= powersOfTen[decimal.exponent];
+    else if (decimal.exponent < 0 && decimal.exponent >= -largestExactPower)
+        result /= powersOfTen[-decimal.exponent];
+    else {
+        WTF::NumberToStringBuffer buffer;
+        size_t parsedLength;
+        return WTF::parseDouble(byteCast<Latin1Character>(WTF::numberToStringAndSize(value, buffer)), parsedLength);
+    }
+    return decimal.is_negative ? -result : result;
 }
 
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;

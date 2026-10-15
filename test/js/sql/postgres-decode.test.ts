@@ -279,7 +279,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
   // An element of an array of numbers is read by other code than a column. Three readers have to agree on every
   // value: the array's, the column's, and JS's own on the text that the server prints.
-  test.each(["float4", "float8", "int4"])(
+  test.each(["float4", "float8", "int4", "int2"])(
     "%s: an element of an array is the number that a column gives",
     async type => {
       await container.ready;
@@ -293,6 +293,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         return state >>> 0;
       };
       const edges = {
+        int2: "32767 -32768 9999 -10000",
         int4: "2147483647 -2147483648 999999999 1000000000 -999999999 -1000000000",
         // 15 digits are the most that the short way takes
         float4:
@@ -310,19 +311,23 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         bits.setUint32(4, random());
         const anyBits = i % 2 ? NaN : type === "float8" && i % 4 ? bits.getFloat64(0) : bits.getFloat32(0);
         if (type === "int4") values.push(String((random() | 0) >> (random() % 32)));
+        else if (type === "int2") values.push(String((random() << 16) >> (16 + (random() % 16))));
         else if (Number.isFinite(anyBits)) values.push(String(anyBits));
         // up to nine digits, the point anywhere among them
         else values.push(String(((random() % 10 ** (1 + (i % 9))) / 10 ** (random() % 10)) * (i % 3 ? 1 : -1)));
       }
       const list = "null," + values.map(value => `'${value}'`).join(",");
 
-      const elements = (await sql.unsafe(`select array[${list}]::${type}[] as v`))[0].v;
       const rows = await sql.unsafe(
         `select v, v::text as t from unnest(array[${list}]::${type}[]) with ordinality as u(v, i) order by i`,
       );
-      expect(elements.length).toBeGreaterThan(2000);
-      expect(elements.map(show)).toEqual(rows.map(row => show(row.v)));
-      expect(elements.map(show)).toEqual(rows.map(row => show(row.t === null ? null : Number(row.t))));
+      // In text, and in binary.
+      for (const path of ["simple", "second run"]) {
+        const elements = (await paths[path](sql, `array[${list}]::${type}[]`))[0].v;
+        expect(elements.length).toBeGreaterThan(2000);
+        expect(elements.map(show)).toEqual(rows.map(row => show(row.v)));
+        expect(elements.map(show)).toEqual(rows.map(row => show(row.t === null ? null : Number(row.t))));
+      }
     },
   );
 
@@ -385,6 +390,16 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       [`'a'::char(3)`, `"a  "`],
       [`'{"a":1}'::json`, `{a:1}`],
       [`null::int2`, `null`],
+      [`'{1,2}'::int4[]`, `[1,2]`],
+      [`'{-32768,null,32767}'::int2[]`, `[-32768,null,32767]`],
+      [`'{null}'::int4[]`, `[null]`],
+      [`'{}'::float8[]`, `[]`],
+      [`'{{1,2},{3,null}}'::int4[]`, `[[1,2],[3,null]]`],
+      [`'{{{{{{1},{2}}}}}}'::int2[]`, `[[[[[[1],[2]]]]]]`],
+      [`'[0:2]={1,2,3}'::int4[]`, `[1,2,3]`],
+      [`'[-1:0][5:6]={{1,2},{3,4}}'::float8[]`, `[[1,2],[3,4]]`],
+      [`'{0.1,-0,NaN,Infinity,-Infinity,1e-45,3.4028235e38,16777216,null}'::float4[]`, `[0.1,-0,NaN,Infinity,-Infinity,1e-45,3.4028235e+38,16777216,null]`], // prettier-ignore
+      [`'{0.1,-0,NaN,-Infinity,5e-324,1.7976931348623157e308}'::float8[]`, `[0.1,-0,NaN,-Infinity,5e-324,1.7976931348623157e+308]`], // prettier-ignore
       ...[
         `5::int2`,
         `7::int8`,
@@ -395,7 +410,8 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         `'03:04:05'::time`,
         `'11111111-1111-1111-1111-111111111111'::uuid`,
         `'{"a":1}'::jsonb`,
-        `'{1,2}'::int4[]`,
+        `'{1,2}'::int8[]`,
+        `'{a}'::text[]`,
       ].map(expression => [expression, "rejected: ERR_POSTGRES_UNKNOWN_FORMAT_CODE"] as [string, string]),
     ];
     const values: Table = [];

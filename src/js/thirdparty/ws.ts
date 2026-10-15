@@ -1818,7 +1818,9 @@ const clientHandlers: ClientHandlers = {
     const native = this[kNative] as NativeClient;
 
     clearTimeout(this[kHandshakeTimer]);
-    removeAbortListener(this._req!);
+    // `_req` is already null if the native client rejected a 101 that validateUpgrade() accepted.
+    const req = this._req;
+    if (req) removeAbortListener(req);
     detach(native);
     this[kNative] = null;
     this._req = null;

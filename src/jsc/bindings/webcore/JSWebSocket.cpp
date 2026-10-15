@@ -1017,13 +1017,16 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketOverStreamForWs, (JSGlobalObject * lex
         RETURN_IF_EXCEPTION(throwScope, {});
         JSValue clientNoContextTakeover = get(deflate, "clientNoContextTakeover"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
+        int32_t serverBits = serverMaxWindowBits.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        int32_t clientBits = clientMaxWindowBits.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         options.deflate = PerMessageDeflateParams {
-            static_cast<uint8_t>(serverMaxWindowBits.toInt32(lexicalGlobalObject)),
-            static_cast<uint8_t>(clientMaxWindowBits.toInt32(lexicalGlobalObject)),
+            static_cast<uint8_t>(serverBits),
+            static_cast<uint8_t>(clientBits),
             serverNoContextTakeover.toBoolean(lexicalGlobalObject),
             clientNoContextTakeover.toBoolean(lexicalGlobalObject),
         };
-        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *globalObject, *context, getDOMStructure<JSWebSocket>(vm, *globalObject), WebSocket::createOverStream(*context, WTF::move(options)), {}, owner, handlers));

@@ -476,6 +476,17 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       expect(conn.socketEvents).toEqual(["end"]);
     });
 
+    // npm ws ignores Sec-WebSocket-Version in a response. Bun's native client rejects it after the JS checks passed.
+    test.skipIf(!builtin)(
+      "a 101 with Sec-WebSocket-Version other than 13 emits 'error', then 'close' 1006",
+      async () => {
+        const respond = withExtraHeaders(["Sec-WebSocket-Version: 8"]);
+        await using client = await connectClient(implementation, {}, { respond });
+        await client.closed;
+        expect(client.events.map(withoutMessage)).toEqual(["upgrade 101 rs=0", "error Error rs=2", abnormalClose]);
+      },
+    );
+
     test("a response that isn't HTTP", async () => {
       await using client = await connectClient(implementation, {}, { respond: () => "garbage\r\n\r\n" });
       await client.closed;

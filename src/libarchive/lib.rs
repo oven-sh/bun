@@ -731,6 +731,15 @@ pub mod lib {
                 }
                 _ => {}
             }
+            match a.read_set_options(c"read_concatenated_archives") {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return IteratorResult::init_err(
+                        archive,
+                        b"failed to set option `read_concatenated_archives`",
+                    );
+                }
+                _ => {}
+            }
             match a.read_open_memory(tarball_bytes) {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(archive, b"failed to read tarball");
@@ -977,9 +986,15 @@ impl BufferReadStream {
         let _ = archive.read_support_format_gnutar();
         let _ = archive.read_support_filter_gzip();
 
-        if npm {
-            let _ = archive.read_set_options(c"npm");
-        }
+        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
+        // have been concatenated together.
+        // Without this option, only the contents of
+        // the first concatenated archive would be read.
+        let _ = archive.read_set_options(if npm {
+            c"npm"
+        } else {
+            c"read_concatenated_archives"
+        });
 
         archive.read_open_memory(self.buf())
     }

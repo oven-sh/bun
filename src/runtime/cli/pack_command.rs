@@ -3126,6 +3126,10 @@ pub(crate) mod bindings {
             archive.read_support_filter_gzip(),
             "support gzip compression",
         )?;
+        check(
+            archive.read_set_options(c"read_concatenated_archives"),
+            "set read_concatenated_archives option",
+        )?;
         check(archive.read_open_memory(&tarball), "open archive in memory")?;
 
         let mut archive_entry: *mut ArchiveEntry = core::ptr::null_mut();

@@ -112,10 +112,9 @@ export const libarchive: Dependency = {
     // Verify it, so a corrupted tarball fails the extract instead of
     // installing the corrupted bytes.
     "patches/libarchive/gzip-verify-trailer.patch",
-    // Two zero blocks end a tar, and the reader still reads the input to its
-    // end, so that the gzip trailer gets checked. Adds the tar reader option
-    // `npm`, which `bun install` sets: where tar readers differ in what they
-    // take for a file or for its name, do what npm's does.
+    // Adds the tar reader option `npm`, which `bun install` sets: where tar
+    // readers differ in what they take for a file, for its name or for the end
+    // of the archive, do what npm's does. Without the option nothing changes.
     "patches/libarchive/tar-npm-compat.patch",
   ],
 

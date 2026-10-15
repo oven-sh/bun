@@ -1786,25 +1786,25 @@ describe("Bun.Archive", () => {
       expect(await files.get("test.txt")!.text()).toBe("GC test content");
     });
 
-    // As in GNU tar and bsdtar without --ignore-zeros.
-    test("two zero blocks end the archive, whatever follows them", async () => {
-      const first = buildTarball([{ name: "a.txt", data: "first" }]);
-      const second = buildTarball([
-        { name: "a.txt", data: "second" },
-        { name: "b.txt", data: "second" },
+    // As `tar --ignore-zeros`: `cat a.tar b.tar` is read as one archive.
+    test.each([1, 2, 20])("reads the entries behind %d zero blocks", async blocks => {
+      const archive = new Bun.Archive(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("first")),
+          Buffer.alloc(blocks * 512),
+          ustarEntry("b.txt", Buffer.from("second")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const files = await archive.files();
+      expect(await Promise.all([...files].map(async ([name, file]) => [name, await file.text()]))).toEqual([
+        ["a.txt", "first"],
+        ["b.txt", "second"],
       ]);
-      for (const rest of [second, Buffer.from("not a block")]) {
-        const archive = new Bun.Archive(Buffer.concat([first, rest]));
-        const files = await archive.files();
-        expect(await Promise.all([...files].map(async ([name, file]) => [name, await file.text()]))).toEqual([
-          ["a.txt", "first"],
-        ]);
 
-        using dir = tempDir("archive-end", {});
-        expect(await archive.extract(String(dir))).toBe(1);
-        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
-        expect(readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("first");
-      }
+      using dir = tempDir("archive-zero-blocks", {});
+      expect(await archive.extract(String(dir))).toBe(2);
+      expect(readdirSync(String(dir)).sort()).toEqual(["a.txt", "b.txt"]);
     });
   });
 

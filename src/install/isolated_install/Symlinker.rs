@@ -9,6 +9,8 @@ pub(crate) struct Symlinker {
     pub(crate) real_len: usize,
     /// See `LinkedNodeModules`: a directory or a file in the way of `dest` stays, and the link fails.
     pub(crate) is_behind_link: bool,
+    /// Windows: the link's text is `fallback_junction_target`. See `LinkedNodeModules::resolve`.
+    pub(crate) is_absolute: bool,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
@@ -33,6 +35,9 @@ impl Symlinker {
             // the trailing NUL; bind the fallback first so all three borrows
             // are live disjointly when passed to `symlink_or_junction`.
             let fallback = self.fallback_junction_target.slice_z();
+            if self.is_absolute {
+                return bun_sys::symlink_or_junction(self.dest.slice_z(), fallback, None);
+            }
             return bun_sys::symlink_or_junction(
                 self.dest.slice_z(),
                 self.target.slice_z(),
@@ -130,7 +135,9 @@ impl Symlinker {
                 // libuv adds a trailing slash to junctions.
                 current_link = strings::without_trailing_slash(current_link);
 
-                if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
+                if !self.is_absolute
+                    && strings::eql_long(current_link, self.target.slice_z().as_bytes(), true)
+                {
                     return Ok(false);
                 }
 

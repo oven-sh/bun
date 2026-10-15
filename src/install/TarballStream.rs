@@ -632,10 +632,12 @@ impl TarballStream {
             }
         }
         let _ = archive.read_support_format_tar();
-        if npm {
-            // See patches/libarchive/tar-npm-compat.patch.
-            let _ = archive.read_set_options(c"npm");
-        }
+        // `npm`: see patches/libarchive/tar-npm-compat.patch.
+        let _ = archive.read_set_options(if npm {
+            c"npm"
+        } else {
+            c"read_concatenated_archives"
+        });
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
             return Err(crate::Error::Fail);

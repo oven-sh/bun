@@ -1844,7 +1844,7 @@ struct LinkedFolder {
     /// From the project.
     path: Box<[u8]>,
     abs_path: Box<[u8]>,
-    /// Empty: the link dangles.
+    /// Empty: the link dangles, or on Windows.
     real_path: Box<[u8]>,
 }
 
@@ -1870,7 +1870,11 @@ impl LinkedNodeModules {
             let mut abs_path = AutoAbsPath::init_top_level_dir();
             abs_path.append(path.slice()).assume_ok();
             linked.push(LinkedFolder {
-                real_path: LinkedMembers::real_path_of(path.slice()),
+                real_path: if cfg!(windows) {
+                    Box::default()
+                } else {
+                    LinkedMembers::real_path_of(path.slice())
+                },
                 abs_path: abs_path.slice().into(),
                 path: path.slice().into(),
             });
@@ -1886,6 +1890,10 @@ impl LinkedNodeModules {
 
     /// True if `path`, which is absolute, is one of them or below one: it then starts with what the
     /// link leads to. A relative link counts from where it really is.
+    ///
+    /// Not on Windows, where `path` stays: behind a junction a relative link counts from the path
+    /// that goes through the junction, behind a symlink from the real one. A link that leaves what
+    /// is behind either is absolute there.
     pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
         &self,
         path: &mut bun_paths::Path<u8, KIND, SEP>,

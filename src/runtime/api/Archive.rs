@@ -116,6 +116,7 @@ fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
     let _ = archive.read_support_filter_gzip();
+    let _ = archive.read_set_options(c"read_concatenated_archives");
 }
 
 /// Entry pathname as owned UTF-8 bytes. libarchive on Windows keeps a

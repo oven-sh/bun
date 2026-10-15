@@ -1811,6 +1811,51 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     }
   });
 
+  // Behind a junction Windows counts a relative link from the path that goes through the junction.
+  it.skipIf(!isWindows).each(["node_modules", "packages/a/node_modules"])(
+    "the links behind a junction at %s lead to their packages",
+    async folder => {
+      using root = tempDir("nm-junction", {
+        "elsewhere/.keep": "",
+        "repo/package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { a: "workspace:*", dep: "file:./dep.tgz" },
+        }),
+        "repo/packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { b: "workspace:*", dep: "file:../../dep.tgz" },
+        }),
+        "repo/packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      });
+      const repo = join(String(root), "repo");
+      await writeTarball(join(repo, "dep.tgz"), "dep", "1.0.0", "module.exports = 1");
+      await symlink(join(String(root), "elsewhere"), join(repo, folder), "junction");
+      const nameAt = async (...path: string[]) => (await Bun.file(join(repo, ...path, "package.json")).json()).name;
+
+      for (const expected of ["installed", "(no changes)"]) {
+        const { stdout, stderr, exitCode } = await install(repo);
+
+        expect(stderr).not.toContain("error:");
+        expect({
+          "node_modules/a": await nameAt("node_modules", "a"),
+          "node_modules/dep": await nameAt("node_modules", "dep"),
+          "packages/a/node_modules/b": await nameAt("packages", "a", "node_modules", "b"),
+          "packages/a/node_modules/dep": await nameAt("packages", "a", "node_modules", "dep"),
+        }).toEqual({
+          "node_modules/a": "a",
+          "node_modules/dep": "dep",
+          "packages/a/node_modules/b": "b",
+          "packages/a/node_modules/dep": "dep",
+        });
+        expect((await lstat(join(repo, folder))).isSymbolicLink()).toBe(true);
+        expect(stdout).toContain(expected);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+
   // With the global store an entry IS a link, to the one path bun computes for it. Nothing is read or
   // written through what is at its name, which is replaced.
   describe.each([

@@ -7,9 +7,9 @@
 +
 +	/*
 +	 * BUN PATCH: `npm` is the reader option of that name: read a
-+	 * package the way npm's own tar reader does. `null_blocks` counts
-+	 * the zero blocks in a row where a header is due; two of them end
-+	 * the archive, which `past_end` remembers.
++	 * package the way npm's own tar reader does. With it `null_blocks`
++	 * counts the zero blocks in a row where a header is due; two of them
++	 * end the archive, which `past_end` remembers.
 +	 */
 +	int			 npm;
 +	int			 null_blocks;
@@ -100,35 +100,34 @@
  			*unconsumed += 512;
 
  			if (h[0] == 0 && archive_block_is_null(h)) {
-@@ -937,16 +980,18 @@
+@@ -937,6 +980,18 @@
  					continue;
  				}
 
--				/* Try to consume a second all-null record, as well. */
--				/* If we can't, that's okay. */
--				tar_flush_unconsumed(a, unconsumed);
--				h = __archive_read_ahead(a, 512, NULL);
--				if (h != NULL && h[0] == 0 && archive_block_is_null(h))
--						__archive_read_consume(a, 512);
--
--				archive_clear_error(&a->archive);
--				TAR_HEADER_RETURN(ARCHIVE_EOF);
 +				/*
-+				 * BUN PATCH: two in a row end the archive.
-+				 * Upstream returns here; read on instead, to
-+				 * the end of the input, so that the filters
-+				 * get to check all of it. Nothing behind the
-+				 * end is an entry.
++				 * BUN PATCH: for npm two in a row end the
++				 * archive, and nothing behind them is an entry.
++				 * Read on to the end of the input, so that the
++				 * filters get to check all of it.
 +				 */
-+				if (++tar->null_blocks == 2)
-+					tar->past_end = 1;
-+				continue;
++				if (tar->npm) {
++					if (++tar->null_blocks == 2)
++						tar->past_end = 1;
++					continue;
++				}
++
+ 				/* Try to consume a second all-null record, as well. */
+ 				/* If we can't, that's okay. */
+ 				tar_flush_unconsumed(a, unconsumed);
+@@ -947,6 +1002,7 @@
+ 				archive_clear_error(&a->archive);
+ 				TAR_HEADER_RETURN(ARCHIVE_EOF);
  			}
 +			tar->null_blocks = 0;
 
  			/* This is NOT a null block, so it must be a valid header. */
  			if (!checksum(a, h)) {
-@@ -1127,7 +1172,10 @@
+@@ -1127,7 +1183,10 @@
  				a->archive.archive_format = ARCHIVE_FORMAT_TAR_GNUTAR;
  				a->archive.archive_format_name = "GNU tar format";
  				err2 = header_gnutar(a, tar, entry, h, unconsumed);
@@ -140,7 +139,7 @@
  				if (a->archive.archive_format != ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE) {
  					a->archive.archive_format = ARCHIVE_FORMAT_TAR_USTAR;
  					a->archive.archive_format_name = "POSIX ustar format";
-@@ -2619,6 +2667,15 @@
+@@ -2619,6 +2678,15 @@
  	const char *p;
  	int err = ARCHIVE_OK;
 
@@ -156,7 +155,7 @@
  	switch (key[0]) {
  	case 'G':
  		/* GNU.* extensions */
-@@ -3353,14 +3410,15 @@
+@@ -3353,14 +3421,15 @@
  			archive_entry_set_ctime(entry, t, 0);
  	}
 

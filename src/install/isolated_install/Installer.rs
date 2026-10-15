@@ -1890,6 +1890,7 @@ impl<'a> Installer<'a> {
             target: target.into_sep::<{ PathSeparators::ANY }>(),
             real_len,
             is_behind_link: false,
+            is_absolute: false,
             #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
         };
@@ -1953,13 +1954,14 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         // A relative link counts from where it really is: `node_modules` or a member can be a link.
         let is_linked = self.linked.resolve(&mut dest);
-        // Not on Windows: the real path may spell the root another way (drive, short names).
+        let linked_member = if !is_linked && pkg_res.tag == ResolutionTag::Workspace {
+            let path = lockfile.str(pkg_res.workspace());
+            lockfile.linked_members.get(path)
+        } else {
+            None
+        };
         if cfg!(not(windows))
-            && !is_linked
-            && pkg_res.tag == ResolutionTag::Workspace
-            && let Some(member) = lockfile
-                .linked_members
-                .get(lockfile.str(pkg_res.workspace()))
+            && let Some(member) = linked_member
         {
             dest = AutoPath::from(&*member.real_path).assume_ok();
             dest.append(b"node_modules").assume_ok();
@@ -1968,6 +1970,8 @@ impl<'a> Installer<'a> {
         // The `node_modules` of the project or of a member, which no first install has reset.
         let is_behind_link =
             is_linked && matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace);
+        // See `LinkedNodeModules::resolve`.
+        let all_absolute = cfg!(windows) && (is_behind_link || linked_member.is_some());
 
         // See `Symlinker::real_len`. A first install with `--filter` does not reset the members.
         let all_real = made_entry
@@ -1984,9 +1988,8 @@ impl<'a> Installer<'a> {
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
         let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
-            if is_linked {
-                self.linked.resolve(&mut to);
-            }
+            // A store entry's link to another one does not leave what the link leads to.
+            let stays_behind_link = is_linked && self.linked.resolve(&mut to);
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&to);
@@ -1997,6 +2000,7 @@ impl<'a> Installer<'a> {
                 target: target.into_sep::<{ PathSeparators::ANY }>(),
                 real_len: if all_real { dest_len } else { real_len },
                 is_behind_link,
+                is_absolute: all_absolute || (cfg!(windows) && is_linked && !stays_behind_link),
                 #[cfg(windows)]
                 fallback_junction_target: to.into_sep::<{ PathSeparators::ANY }>(),
             };

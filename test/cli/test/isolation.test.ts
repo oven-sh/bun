@@ -1524,7 +1524,7 @@ describe.concurrent("bun test --isolate=modules", () => {
       test("count", () => {
         const held = new Heap().pathsTo("ModuleGraph").filter(path => path === "root(StrongHandles) ModuleGraph");
         console.log("graphs", held.length);
-      });
+      }, 120_000); // A heap snapshot takes 20 s on a busy debug build.
     `;
     expect(await passes(many, 13)).toContain("graphs 9\n");
     using dir = tempDir("isolate-global-code", files);

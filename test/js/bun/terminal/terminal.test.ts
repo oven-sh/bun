@@ -1615,9 +1615,14 @@ describe.concurrent("Bun.spawn with terminal option", () => {
             if (!output.includes(marker)) late.push(marker);
           }
           terminal.close();
-          const waiterThread = readdirSync("/proc/self/task").some(
-            task => readFileSync("/proc/self/task/" + task + "/comm", "utf8").trim() === "Waitpid",
-          );
+          // A thread can exit between the listing and the read of its name.
+          const waiterThread = readdirSync("/proc/self/task").some(task => {
+            try {
+              return readFileSync("/proc/self/task/" + task + "/comm", "utf8").trim() === "Waitpid";
+            } catch {
+              return false;
+            }
+          });
           console.log(JSON.stringify({ late, waiterThread }));
         `,
       ],

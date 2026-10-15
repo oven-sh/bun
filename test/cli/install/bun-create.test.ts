@@ -8,6 +8,7 @@ import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
 import { TestRegistry } from "registry";
 import { gzipSync } from "zlib";
+import { configWorld, prefixRegistry } from "./prefix-registry";
 
 const registry = new TestRegistry();
 beforeAll(() => registry.start());
@@ -53,6 +54,44 @@ it.concurrent.each([
 
   expect(err.split(/\r?\n/)).toContain(`error: GET ${registry.url}${requested} - 404`);
   expect(exitCode).toBe(1);
+});
+
+// `bun create <npm template>` runs `create-<template>` through bunx, so the
+// install of the template takes bunfig.toml and .npmrc from the project that
+// `bun create` runs in.
+// https://github.com/oven-sh/bun/issues/13247
+describe("installs an npm template with the project's install config", () => {
+  const layouts = {
+    "a directory with no package.json": { files: { keep: "" }, cwd: "." },
+    "a subdirectory of the project": {
+      files: { "package.json": JSON.stringify({ name: "proj", version: "1.0.0" }), apps: { keep: "" } },
+      cwd: "apps",
+    },
+  };
+  const configs = {
+    "a bunfig.toml scope": (url: string) => ({
+      "bunfig.toml": `[install.scopes]\nbun13247test = { url = "${url}" }\n`,
+    }),
+    "an .npmrc scope": (url: string) => ({ ".npmrc": `@bun13247test:registry=${url}\n` }),
+  };
+
+  describe.each(Object.entries(layouts))("from %s", (_, layout) => {
+    it.concurrent.each(Object.entries(configs))("reads %s", async (_, config) => {
+      using templates = prefixRegistry();
+      using world = configWorld(templates, { project: { ...layout.files, ...config(templates.url("PROJECT")) } });
+      const before = world.projectFiles();
+
+      const { stdout, stderr, exitCode } = await world.bun(["create", "@bun13247test/package", "out"], layout.cwd);
+
+      expect(stderr).not.toContain("error:");
+      expect({ used: templates.used(), stdout, project: world.projectFiles() }).toEqual({
+        used: [{ prefix: "PROJECT", authorization: null }],
+        stdout: "SERVED-BY-PROJECT",
+        project: before,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // Close-delimited body (no Content-Length, no chunked) split across packets:

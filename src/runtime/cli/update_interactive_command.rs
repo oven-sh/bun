@@ -1491,9 +1491,8 @@ fn update_catalog(
     Ok(())
 }
 
-/// Returns the text that replaces `declared` in package.json: what `bun update` would write, or
-/// what `bun update --latest` would write if `declared` does not resolve to `chosen`. `None` means
-/// `declared` is kept as written.
+/// Returns what `bun update` would write in place of `declared`, or what `bun update --latest`
+/// would write if `chosen` is not `in_range`. `None` means `declared` is kept as written.
 fn chosen_version_literal(declared: &[u8], chosen: &[u8], in_range: bool) -> Option<Vec<u8>> {
     updated_version_literal(declared, min_of_valid(chosen)?, chosen, false, !in_range)
 }

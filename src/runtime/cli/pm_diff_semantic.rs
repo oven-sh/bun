@@ -33,10 +33,8 @@ pub(crate) struct Projection<'a> {
 }
 
 impl Projection<'_> {
-    /// Checks all folded lines at once by parsing and printing, instead of line by line. The old
-    /// side that the diff shows is every line except the `+` lines, which is `old` with the folded
-    /// lines in `new`'s text. It has to be the same program as `old`. `same_key` says whether `old`
-    /// and `new` are already known to be the same program.
+    /// Checks all folded lines at once: the old side that the diff shows, which is `old` with the
+    /// folded lines in `new`'s text, has to be the same program as `old`.
     pub(crate) fn holds(&self, path: &[u8], old: &[u8], new: &[u8], same_key: bool) -> bool {
         let mut shown = Vec::with_capacity(old.len());
         let mut removed = Vec::new();

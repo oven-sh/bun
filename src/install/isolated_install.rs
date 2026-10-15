@@ -701,8 +701,7 @@ fn build_store(
     }
 
     // A workspace member is not linked into the root's `node_modules` when one of the root's own
-    // dependencies has the same name. That dependency then also gets the name when peers are
-    // resolved and in `node_modules/.bun/node_modules`.
+    // dependencies has the same name.
     let root_folder = (lockfile.buffers.trees.first()).map(|tree| {
         tree.dependencies
             .get(&lockfile.buffers.hoisted_dependencies)
@@ -1474,8 +1473,7 @@ fn build_store(
 }
 
 /// Moves what another linker installed out of every `node_modules`, into `.old_modules-<hex>`. The
-/// entries are moved one by one, because `node_modules` itself may be a mount point. `keep_links`
-/// leaves symlinks in place: in the global `node_modules`, `bun link` created them.
+/// entries are moved one by one, because `node_modules` itself may be a mount point.
 pub(crate) fn move_node_modules_aside(
     lockfile: &Lockfile,
     keep_links: bool,
@@ -1979,11 +1977,8 @@ pub(crate) fn install_isolated_packages(
                                         if poisoned { 0 } else { sub.final_().max(1) };
                                 }
                             } else if members.len() > 1 {
-                                // One order-independent hash for the whole SCC. Each member gets a
-                                // sub-hash of its own identity (store path + integrity) and of
-                                // every link it holds, and then the sorted sub-hashes are hashed
-                                // together. Sorting by content, not by entry index, is what keeps
-                                // the hash stable across projects.
+                                // The whole SCC gets one hash of its members' sub-hashes, which are
+                                // sorted by content so that the hash is the same in every project.
                                 let own: Vec<u64> = (members.iter())
                                     .map(|&m| hash_entry(0, store::entry::Id::from(m)).final_())
                                     .collect();

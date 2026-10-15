@@ -459,9 +459,7 @@ pub enum BuilderMethod {
     Resolvable,
 
     /// For installing. Every dependency is hoisted first, so where a package is installed does not
-    /// depend on the options of this install. Then `keep_linked_rows` drops what this install skips
-    /// because of 'os', 'cpu', 'libc' (optional only), `--omit=dev/peer/optional` or `--filter`,
-    /// along with anything that only a dropped package depends on.
+    /// depend on this install's options. Then `keep_linked_rows` drops what this install skips.
     Filter,
 }
 
@@ -569,8 +567,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// The folder `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
     /// `Filter` only: the `(tree, name)` places where two dependency groups of one package resolve
-    /// the name to different packages. Which one is installed depends on what the install skips,
-    /// so no other package deduplicates onto such a place.
+    /// the name to different packages. Which one is installed depends on what the install skips.
     pub(crate) contested: bun_collections::HashMap<(Id, PackageNameHash), ()>,
     /// The dependencies that did not get the row at a contested place. Each still gets one tree of
     /// its own below that place, as a placed row does.
@@ -579,8 +576,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// writes in its place for the installer to read. `None` keeps every row as it is.
     pub(crate) kept: Option<RowMap>,
     /// Builds the `Filter` tree as Bun 1.4.3 and earlier did: skipped dependencies are not placed
-    /// at all, so other packages hoist higher. `prune::remove_copies_of_the_older_layout` uses this
-    /// to find where those versions installed a package.
+    /// at all, so other packages hoist higher. See `prune::remove_copies_of_the_older_layout`.
     pub(crate) older_layout: bool,
     /// The `place_key` of every row, with the package placed there. Left empty when `older_layout`
     /// would place every row that this install keeps exactly where it is now.
@@ -943,8 +939,7 @@ pub(crate) type Placed =
     bun_collections::HashMap<(Id, PackageNameHash), DependencyID, PlaceContext>;
 
 /// Maps a `(tree, row)` pair to a `u32`, where a row is a dependency id in that tree's list. Most
-/// rows are in one tree, which `first` covers. A row is in a second tree only if the package that
-/// lists the dependency is placed twice.
+/// rows are in only one tree, which `first` covers. `more` holds the rest.
 pub(crate) struct RowMap {
     /// Indexed by row: the first tree inserted for the row, and the value of that pair.
     first: Vec<Option<(Id, u32)>>,
@@ -1044,10 +1039,8 @@ impl LinkedRows<'_> {
             )
     }
 
-    /// Returns the rows this install keeps (`None` means all) and `older_layout_can_differ`. A row
-    /// is kept if the root reaches it through dependencies that are not skipped, looking up each
-    /// name in the nearest `node_modules` first, as Node does. This has to run after hoisting,
-    /// because such a dependency can resolve to a row that a skipped dependency placed.
+    /// Returns the rows that the root reaches without a skipped dependency (`None` means all rows)
+    /// and `older_layout_can_differ`. Names are resolved as Node does, so this runs after hoisting.
     fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
 
@@ -1069,8 +1062,7 @@ impl LinkedRows<'_> {
         let mut kept = RowMap::new(dependencies.len());
 
         // Maps `(parent tree, dependency)` to the dependency's own tree. It is not keyed by name,
-        // because an unlinked workspace package and the loser of a contested place have trees too,
-        // under the same name as a row.
+        // because a dependency that got no row can have a tree under the same name as a row.
         let mut own_folder = RowMap::new(dependencies.len());
         for tree in trees.iter().skip(1) {
             own_folder.insert(tree.parent, tree.dependency_id, tree.id);
@@ -1103,9 +1095,8 @@ impl LinkedRows<'_> {
 
                 let mut tree_id = from;
                 let row = loop {
-                    // Skip two kinds of row, both placed after this dependency found its package
-                    // higher up: one from another dependency group of the same package, and, as in
-                    // `hoist_dependency`, a bundled one.
+                    // Skip a row from another dependency group of the same package, and a bundled
+                    // row. Both were placed after this dependency found its package higher up.
                     if let Some(&row) = self.placed.get(&(tree_id, dep.name_hash))
                         && (self.resolutions[row as usize] == target
                             || !list.contains(row)
@@ -1161,10 +1152,7 @@ impl LinkedRows<'_> {
     }
 
     /// Whether `older_layout` could place a kept row somewhere else. That layout hoists only the
-    /// dependencies this install does not skip, in the same order. It can differ only if a skipped
-    /// dependency placed a row that a kept one shares, placed a row with the name of a kept row, or
-    /// placed a second copy of a kept package, whose dependencies were then walked earlier. A
-    /// skipped peer counts too, because a package is not hoisted away from its peers.
+    /// dependencies this install keeps, so it differs only if a skipped one moved a kept row.
     fn older_layout_can_differ(&self, kept: &RowMap, mut idle: Vec<bool>, walked: &[bool]) -> bool {
         if self.replaced_row || !self.contested.is_empty() {
             return true;
@@ -1505,8 +1493,7 @@ impl Tree {
                 )
             };
             // Whether resolving `dep_id` to `res_id` needs no new pass. Nothing reads a resolution
-            // before the first walk of the package that lists it, so a pass that started with
-            // `res_id` would repeat this one if the dependency still deduplicates onto that copy.
+            // before the first walk of the package that lists it, so a new pass would be the same.
             let stays_on = |res_id: PackageID, builder: &mut Builder<'_, METHOD>| {
                 first_walk
                     && !builder.bundle_placed
@@ -1583,8 +1570,7 @@ impl Tree {
                 HoistDependencyResult::Contested { id } => {
                     builder.contested.insert((id, dependency.name_hash), ());
                     // The dependency gets no row but still gets a tree, so its own dependencies are
-                    // placed in case `keep_linked_rows` picks it. Queue the tree only once: the
-                    // package that lists the dependency can be walked again from below that tree.
+                    // placed in case `keep_linked_rows` picks it.
                     if builder.contested_rows.insert((id, dep_id), ()).is_none()
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
@@ -1598,7 +1584,6 @@ impl Tree {
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
-                    // `pending_peers` stay pending, because they wait on a row in another tree.
                     // As in `Rebind`, only the first walk resolves an optional peer. Resolved on a
                     // later walk, it would get its own copy at the package's first placement.
                     if first_walk || !dependency.behavior.is_optional_peer() {

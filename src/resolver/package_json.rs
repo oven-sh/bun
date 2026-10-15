@@ -94,9 +94,8 @@ pub struct PackageJSON {
 
     pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
-    /// Used instead of `dependencies` for a package in node_modules: where the rows of each group
-    /// in `INSTALLED_DEPENDENCY_GROUPS` are in `json_tape`. Auto-install only parses the row it
-    /// looks up.
+    /// Used instead of `dependencies` for a package in node_modules, so that auto-install only
+    /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
     pub(crate) installed_dependency_rows:
         [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
 

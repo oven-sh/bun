@@ -543,9 +543,8 @@ impl Lockfile {
         Ok(*self.packages.get(id as usize))
     }
 
-    /// Applies the rules to a lockfile loaded from disk, once package.json has been read. Returns
-    /// `Some` if anything changed: the dependency rows that need to be resolved, and the rows that
-    /// no rule adds anymore as `(package_extension_key, name hash)`.
+    /// Applies the rules to a lockfile loaded from disk. If anything changed, returns the rows to
+    /// resolve and the rows that no rule adds anymore, as `(package_extension_key, name hash)`.
     #[cold]
     #[inline(never)]
     pub(crate) fn reconcile_package_extensions(

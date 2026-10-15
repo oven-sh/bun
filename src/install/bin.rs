@@ -848,9 +848,8 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
-    /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). If it is, a file or
-    /// directory that already has a bin's name is kept, and linking that bin fails.
-    /// `None` means not checked yet: the linker checks the first time it needs to know.
+    /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). `None` means not checked
+    /// yet. Behind a symlink, a file or directory that has a bin's name is kept, and linking fails.
     pub is_behind_link: Option<bool>,
 
     pub err: Option<Error>,
@@ -1897,8 +1896,7 @@ pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>
 }
 
 /// Links the bins of the packages in `placed`, in order, skipping names that are already taken.
-/// `placed` pairs each package with its folder name in `node_modules`, a path relative to the
-/// top-level dir. Links go into `global_bin_path` or, without one, into `node_modules/.bin`.
+/// `placed` pairs each package with its folder name in `node_modules`.
 pub(crate) fn link_free_bins(
     lockfile: &Lockfile,
     node_modules: &[u8],

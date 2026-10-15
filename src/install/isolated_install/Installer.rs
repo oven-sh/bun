@@ -187,9 +187,8 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    /// Like the hoisted linker, runs the scripts of a `link:` dependency when it is first linked,
-    /// that is, when no dependent has a symlink to `target` yet. Call this on the main thread
-    /// before the dependents' tasks start, because those tasks create the symlinks.
+    /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
+    /// `target` yet. Call this before the dependents' tasks start, because they create those links.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
         let linked = !self.manager().options.enable.force_install()
             && self.has_link_from_dependent(entry_id, target);
@@ -1529,9 +1528,8 @@ impl<'a> Installer<'a> {
 
         self.remove_planted_links_in(entry_id, Self::store_path_len())?;
 
-        // The hardlink and copy walks below only visit what the folder contains now. So first,
-        // remove what the folder no longer has from the old copy, along with any symlink that the
-        // walks would write through.
+        // The hardlink and copy walks below only visit what the folder contains now. First remove
+        // what it no longer has from the old copy, and any symlink that they would write through.
         let mut copy = AutoPath::init();
         self.append_store_path(&mut copy, entry_id);
         if let (Ok(src), Ok(dest)) = (sys::Dir::open(path), sys::Dir::open(copy.slice())) {

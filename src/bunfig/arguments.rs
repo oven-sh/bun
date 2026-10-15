@@ -174,8 +174,7 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
 }
 
 /// Whether `[install.security] scanner` is set in the user's global `.bunfig.toml` or in any
-/// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of a config file that exists but
-/// cannot be read or parsed.
+/// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of an unreadable config file.
 pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf)

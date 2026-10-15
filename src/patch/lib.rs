@@ -1472,9 +1472,8 @@ pub fn diff_post_process(
     let mut stdout = mem::take(&mut result.stdout);
     let mut stderr = mem::take(&mut result.stderr);
 
-    // Exit code 0 means no differences and 1 means differences. stderr is not checked, because git
-    // can print a warning along with a valid patch. git also exits with 1 when it cannot read a
-    // folder, but then it prints no patch.
+    // git exits with 1 if there are differences, and also if it cannot read a folder, but then it
+    // prints no patch. stderr is not checked, because git can print a warning with a valid patch.
     let succeeded = match &result.status {
         bun_spawn::Status::Exited(exit) => exit.code == 0 || (exit.code == 1 && !stdout.is_empty()),
         _ => false,

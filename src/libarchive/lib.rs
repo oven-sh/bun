@@ -1027,9 +1027,8 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Returns the path where node-tar would extract an npm tarball entry. `path` is the entry's name
-/// without the leading `package/`. The result is empty if `path` has a `..` component, because
-/// node-tar skips those entries. On POSIX only `/` is a separator, so `a\b.js` names a single file.
+/// Returns the path where node-tar would extract the npm tarball entry `path`, whose leading
+/// `package/` is already removed. The result is empty for an entry that node-tar skips.
 pub fn normalize_npm_entry_path<'a>(
     path: &[OSPathChar],
     buf: &'a mut [OSPathChar],

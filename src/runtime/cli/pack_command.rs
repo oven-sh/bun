@@ -648,8 +648,7 @@ impl Bundle {
 }
 
 /// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
-/// is in `from`'s own `node_modules`. The search stops at `project` or, if `from` is outside
-/// `project` (a linked folder, the global store), at the outermost `node_modules` in its path.
+/// is in `from`'s own `node_modules`. The search does not go above `project`.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
     let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
@@ -895,8 +894,7 @@ fn add_bundled_dep(
 }
 
 /// Gives each dependency of the bundled package `index` a place in the tarball, chosen so that the
-/// unpacked package resolves the same copy of the dependency as it does on disk. `json` is the
-/// package.json of `index`.
+/// unpacked package resolves the same copy of the dependency as it does on disk.
 fn find_dependencies_to_bundle(
     bundle: &mut Bundle,
     index: usize,
@@ -2269,10 +2267,8 @@ extern "C" fn remove_unfinished_tarball() {
     }
 }
 
-/// Creates a temporary file next to the destination, which `finish_tarball` renames over the
-/// destination. Returns `None` if the destination must not be replaced or no file can be created
-/// next to it. The tarball then stays in memory until `write_tarball_in_place`. Either way, the
-/// destination only changes once the tarball is complete.
+/// Creates a temporary file next to the destination, which `finish_tarball` renames over it. If
+/// this returns `None`, the tarball stays in memory until `write_tarball_in_place` writes it.
 fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File> {
     let mode: bun_sys::Mode = match bun_sys::lstat(abs_tarball_dest) {
         Err(_) => 0o666,

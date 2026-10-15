@@ -769,9 +769,8 @@ fn diff_against_cache(
         }
     };
 
-    // git quotes a path that has a `"`, a `\` or a control character, so `from_cwd` keeps the
-    // project's own path out of the diff. Its `./` also puts a `/./` in the folder prefixes that
-    // are stripped from the diff afterwards, which no path inside the package can match.
+    // The `./` that `from_cwd` adds puts a `/./` in the folder prefixes that are stripped from the
+    // diff afterwards, which no path inside the package can match.
     let paths = bun_patch::git_diff_preprocess_paths(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
@@ -1133,8 +1132,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
 }
 
 /// Makes the package's `bin` targets executable in its cache entry. An install does that in
-/// node_modules, which only reaches the cache entry if the files are hardlinks. Otherwise the
-/// commands of a copy of the entry do not run, or `--commit` records the mode change in the patch.
+/// node_modules, which only reaches the cache entry if the files are hardlinks.
 fn make_bins_executable(
     lockfile: &Lockfile,
     pkg: &Package,
@@ -1394,9 +1392,8 @@ fn replace_with_cache_copy(
     Ok(())
 }
 
-/// Renames `folder` to `aside`. Windows refuses that while a file inside `folder` is open, and
-/// overlayfs (Docker) refuses it for a folder from a lower layer. The entries are then moved one by
-/// one, and moved back if that fails.
+/// Renames `folder` to `aside`. If that is refused (an open file on Windows, a lower overlayfs
+/// layer in Docker), the entries are moved one by one, and moved back if that fails.
 fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     let cwd = Dir::cwd();
     let Err(refused) = sys::renameat(cwd.fd, folder, cwd.fd, aside) else {

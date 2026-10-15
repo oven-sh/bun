@@ -675,8 +675,7 @@ impl WorkspaceMap {
     }
 
     /// Whether [`Self::process_names_array`] would make `abs_dir` a workspace, given that `abs_dir`
-    /// has a package.json with a name. It matches the path against the `workspaces` entries without
-    /// reading the disk, so unlike the real walk, `**` also matches through a symlink.
+    /// has a named package.json. It never reads the disk, so `**` also matches through a symlink.
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
         let mut dir_buf = path::path_buffer_pool::get();

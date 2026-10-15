@@ -1210,8 +1210,7 @@ fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Like git, treats a file with a NUL byte near the start as binary. The exceptions are files that
-/// something reads as text: those with an extension that Bun loads as text, shebang and `.sh`
-/// scripts, and those with an unknown extension that parse as JavaScript.
+/// something reads as text, such as scripts and the file types that Bun loads as text.
 fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
     use bun_ast::Loader;
     strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
@@ -1252,9 +1251,8 @@ fn count_lines(bytes: &[u8]) -> usize {
     }
 }
 
-/// Returns `prefix` + `path` the way a patch header names a file. The name is C-quoted, which
-/// `git apply` and GNU patch both understand, when a space, control character, quote or backslash
-/// would otherwise make either tool misread it.
+/// Returns `prefix` + `path` the way a patch header names a file. A name that `git apply` or GNU
+/// patch would otherwise misread is C-quoted, which both understand.
 fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     let needs_quotes = |b: &u8| matches!(*b, 0..=b' ' | 0x7f | b'"' | b'\\');
     if !path.iter().any(needs_quotes) {
@@ -1718,9 +1716,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             Output::print(format_args!("{}", BStr::new(&c.hunks)));
             continue;
         }
-        // `git apply` and GNU patch only accept a mode line, or a file with no hunks, under a
-        // `diff --git` header. A file whose contents the patch omits gets neither that header nor a
-        // mode line, because GNU patch would apply the mode line to the previous file.
+        // A file whose contents the patch omits gets neither a `diff --git` header nor a mode line,
+        // because GNU patch would apply the mode line to the previous file.
         let in_patch = !c.binary && !c.sourcemap;
         let header: &[u8] = if in_patch {
             b"diff --git "

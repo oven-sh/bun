@@ -226,10 +226,8 @@ fn finish_checkout(
     read_package_json(task, package_dir, json)
 }
 
-/// git was told not to create symlinks, so each one is checked out as a plain file that holds its
-/// target. This replaces that file with a copy of the target if the target is a file in the
-/// repository, and removes it otherwise. Targets are resolved against `tree`, the output of
-/// `git ls-tree -r -z` (`<mode> <type> <object>\t<path>` entries), never against the disk.
+/// git was told to check out each symlink as a plain file. This replaces it with a copy of its
+/// target, or removes it. Targets are resolved in `tree` (`git ls-tree -r -z`), never on disk.
 fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()> {
     use bun_sys::{E, O};
     const LINK: &[u8] = b"120000";
@@ -608,9 +606,8 @@ fn clone_urls(url: &[u8]) -> Vec<Vec<u8>> {
     urls
 }
 
-/// Builds the whole `config` file of a cached clone. `url` is the URL form that could be cloned.
-/// From `old`, the previous `config`, it keeps only the object and ref storage formats, which git
-/// needs to read the repository.
+/// Builds the whole `config` file of a cached clone. From `old`, the previous `config`, it keeps
+/// only the object and ref storage formats, which git needs to read the repository.
 fn clone_config(url: &[u8], old: &[u8]) -> Vec<u8> {
     let mut quoted: Vec<u8> = Vec::with_capacity(url.len());
     for &byte in url {

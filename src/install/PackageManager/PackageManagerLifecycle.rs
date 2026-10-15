@@ -491,9 +491,8 @@ fn put_npm_package_env(
     Ok(())
 }
 
-/// Rewrites the `node_modules/.bin` entries of `PATH` to their real paths, so that
-/// `append_path_without_ancestor_bins` can compare them with a script's `cwd`, also a real path.
-/// As inherited, an entry may go through symlinks or, on Windows, differ in letter case.
+/// Rewrites the `node_modules/.bin` entries of `PATH` to their real paths. A script's `cwd` is a
+/// real path too, so `append_path_without_ancestor_bins` can then compare the two.
 pub(crate) fn resolve_bin_dirs_in_path(
     env: &mut bun_dotenv::Loader,
 ) -> Result<(), bun_alloc::AllocError> {

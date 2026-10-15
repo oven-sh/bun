@@ -1954,8 +1954,7 @@ fn append_manifest_dependencies(
 }
 
 /// Rewrites a range that only yarn understands into what a dependency called `name` would write for
-/// Bun: `patch:` becomes the range it patches, `portal:p` becomes `file:p`, `link:dir` becomes
-/// `link:./dir`, and `npm:next` becomes `next`. Returns `None` if `spec` needs no rewrite.
+/// Bun, for example `portal:p` into `file:p`. Returns `None` if `spec` needs no rewrite.
 fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
     // the patched range may itself be a patch, or yarn-only (`patch:` of a `portal:` package)
     let mut patched: Option<Vec<u8>> = None;

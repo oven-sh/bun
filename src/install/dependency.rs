@@ -1190,9 +1190,8 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// `target` is the text after `npm:` and has no `@version` part. As in Yarn, `npm:^1.0.0` and
-/// `npm:1.0.0` are version ranges for the dependency's own name. `x`, `v8`, `1` and `1.x` are valid
-/// package names, so, as in npm, `npm:x` is an alias for the package `x`.
+/// As in Yarn, `npm:^1.0.0` and `npm:1.0.0` are ranges for the dependency's own name. As in npm,
+/// `npm:x`, `npm:1` and `npm:1.x` are aliases, because `x`, `1` and `1.x` are valid package names.
 #[cold]
 fn is_range_after_npm_protocol(target: &[u8]) -> bool {
     (strings::index_of_any(target, b"^~><=*| ").is_some()

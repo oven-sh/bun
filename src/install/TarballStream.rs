@@ -613,10 +613,8 @@ impl TarballStream {
     /// requirement.
     unsafe fn open_archive(this: *mut Self, gzip: bool, npm: bool) -> crate::Result<()> {
         let archive = lib::ReadArchive::new();
-        // Bypass bidding entirely, because it reads ahead further than a short
-        // first chunk reaches. `gzip` is whether the body starts with the gzip
-        // magic bytes. A .tgz sent with `Content-Encoding: gzip` does not: the
-        // HTTP client has already decompressed it to a plain tar.
+        // Bypass bidding entirely. `gzip` is false for a .tgz sent with `Content-Encoding: gzip`,
+        // because the HTTP client has already decompressed it to a plain tar.
         // With patches/libarchive/select-registered-only.patch,
         // archive_read_append_filter / archive_read_set_format only select a
         // filter/format that was already registered, so register gzip and tar

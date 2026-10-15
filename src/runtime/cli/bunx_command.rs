@@ -52,9 +52,7 @@ impl InstallLock {
 }
 
 /// The state of the directory that `bunx` installs a package into. Its package.json is
-/// `EMPTY_PACKAGE_JSON` from just before `bun add` links the first package until all are linked.
-/// A run that only reads the tree checks that instead of taking the lock, because an install that
-/// is still waiting for the registry has not changed anything yet.
+/// `EMPTY_PACKAGE_JSON` while `bun add` links packages, so a read-only run needs no lock.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tree {
     Missing,
@@ -393,11 +391,8 @@ impl BunxCommand {
         Err(crate::Error::NoBinFound)
     }
 
-    /// Finds the bin in the project's installed copy of `package_name`: the nearest
-    /// `node_modules/<package_name>` from `cwd` up to `project`, the project's root directory.
-    /// Two packages can have a bin of the same name, so the `node_modules/.bin` entry is returned
-    /// only if it resolves into the copy. Otherwise the bin's file inside the copy is returned.
-    /// `NoBinFound` means the copy has no bin or, with `only_that_bin`, no bin named `bin_name`.
+    /// Finds the bin in the nearest `node_modules/<package_name>` from `cwd` up to `project`. Two
+    /// packages can share a bin name, so the `.bin` entry is used only if it resolves there.
     fn find_in_project(
         transpiler: &mut Transpiler,
         cwd: &[u8],
@@ -613,7 +608,6 @@ impl BunxCommand {
 
     /// Finds the bin in the tree that `bunx` installed. `package_name` is `None` with `--package`,
     /// which, like npx, runs any command: the tree's bins are searched first, and then `path`.
-    /// Fails with `NoBinFound` if the package is installed but has no bin.
     fn find_in_cache(
         transpiler: &mut Transpiler,
         bunx_cache_dir: &[u8],

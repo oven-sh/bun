@@ -840,9 +840,8 @@ pub struct DiffSummary {
     pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
-    /// Indexes into the new root's dependencies of the workspaces that a lockfile from Bun 1.4 or
-    /// older has no entry for, because the root also depends on a registry version of the same
-    /// name. They are not counted in `add`.
+    /// Indexes, in the new root's dependencies, of the workspaces that a lockfile from Bun 1.4 or
+    /// older has no entry for, because the root also depends on a registry version of that name.
     pub(crate) members_left_out: Vec<u32>,
 }
 
@@ -1113,8 +1112,7 @@ impl Diff {
                 && !from_dep.behavior.is_workspace()
                 && !(to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
             // Parsing package.json links a dependency to a workspace whenever its range matches.
-            // The lockfile can record something else for a peer or for a name with an override,
-            // because those can resolve elsewhere, so this difference changes no dependency.
+            // The lockfile can differ for a peer or an overridden name, which is not a change.
             let range_link = !same
                 && to_version.tag == dependency::version::Tag::Workspace
                 && (from_dep.behavior.is_peer()
@@ -1333,8 +1331,7 @@ impl Diff {
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
                     // Bun 1.4 and older replaced the root's entry for a workspace with the root's
-                    // own dependency of that name if it was a registry range that the workspace's
-                    // version does not satisfy. A range that it satisfies is a workspace link here.
+                    // own dependency of that name if the workspace did not satisfy its range.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)

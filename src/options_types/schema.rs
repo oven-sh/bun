@@ -309,8 +309,7 @@ pub mod api {
 
     impl BunInstall {
         /// Resolves `path` against `dir`, the directory of the config file that sets it or the
-        /// directory it was typed in. Without a `dir`, a relative `path` is returned unchanged.
-        /// `~` and `~/<rest>` expand to the user's home directory, as in npm. `~user` does not.
+        /// directory it was typed in. As in npm, `~` and `~/<rest>` expand to the home directory.
         pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 

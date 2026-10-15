@@ -104,9 +104,8 @@ impl Dir {
             Err(e) => Err(e),
         }
     }
-    /// Deletes everything inside this directory but keeps the directory itself. Works only through
-    /// the open handle, never through the directory's path. Continues past an entry that cannot be
-    /// deleted, and returns the first error.
+    /// Deletes everything inside this directory through its open handle, never through its path.
+    /// Continues past an entry that cannot be deleted, and returns the first error.
     pub fn delete_children(&self) -> Maybe<()> {
         // On POSIX, a listing resumes where the last one through this handle stopped, so rewind.
         // On Windows, every listing starts from the beginning.

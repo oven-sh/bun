@@ -163,9 +163,8 @@ struct Migrator<'a> {
     lockfile_name: &'static str,
 }
 
-/// Returns the packages that still have no integrity. It checks every npm package with an empty
-/// URL, plus the packages built from `unverifiable` entries, because an entry that was merged into
-/// a bundled copy's package has that copy's URL instead of an empty one.
+/// Returns the packages that still have no integrity. An empty URL does not find them all, because
+/// an `unverifiable` entry that was merged into a bundled copy's package has that copy's URL.
 fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
     let packages = migrator.this.packages.slice();
     let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());

@@ -198,10 +198,8 @@ fn key_pair(
 /// Whether `old` and `shown` have the same comparison key, which makes them the same program apart
 /// from layout and the names of locals.
 ///
-/// `shown` is `old` with some lines replaced by the new version's. `removed` lists the lines of
-/// `shown` (0-based, ascending) that the diff marks as removed, which are `old`'s text. Such a line
-/// may use a local's old name while `shown` declares it under its new name. The old name is then
-/// unbound in `shown` and prints as written, so a mismatch at that name is accepted.
+/// `removed` lists the lines of `shown` (0-based, ascending) that the diff marks as removed. A name
+/// mismatch there is accepted, because such a line may still use a local's old name.
 pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
     same_key(path, old, shown, removed, Options::KEY)
 }
@@ -257,8 +255,7 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
 }
 
 /// Whether `shown`, a re-print of the file `raw` that is displayed in its place, still parses as
-/// the same file: printing both again with `options` must give the same text. If `renamed` is set,
-/// the names of locals may differ.
+/// the same file. If `renamed` is set, the names of locals may differ.
 pub(crate) fn stands_for(
     path: &[u8],
     raw: &[u8],
@@ -341,9 +338,8 @@ fn parse_js<'a>(
     (log.errors == 0).then_some(ast)
 }
 
-/// A source map counts lines like JavaScript does: a lone `\r`, U+2028 and U+2029 also end a line.
-/// The rest of this module splits at `\n` only. For each source-map line of `text`, this returns
-/// the `\n` line it starts on and its byte offset in that line. `None` means both counts agree.
+/// In a source map, a lone `\r`, U+2028 and U+2029 also end a line. This maps each such line of
+/// `text` to the `\n` line it starts on and its byte offset there. `None` means both counts agree.
 fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
     use bun_core::strings;
     if !strings::contains_char(text, b'\r') && !strings::contains(text, b"\xe2\x80") {

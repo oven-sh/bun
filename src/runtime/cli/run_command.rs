@@ -260,8 +260,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     }
 
     /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
-    /// of its parents at the front of `PATH`. `PATH` is restored afterwards, because the next
-    /// script may belong to another package.
+    /// of its parents at the front of `PATH` while the script runs.
     pub(crate) fn run_lifecycle_script_foreground(
         ctx: &mut ContextData,
         script: &[u8],

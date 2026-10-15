@@ -462,9 +462,8 @@ impl Options {
         Ok(())
     }
 
-    /// Returns the name of the setting that turns provenance on, or `None` if provenance is off.
-    /// Only the highest-priority setting that is present counts. The order matches npm: the command
-    /// line, then `publishConfig`, then the environment, then `.npmrc`.
+    /// Returns the name of the setting that turns provenance on, or `None` if provenance is off. As
+    /// in npm, the command line wins over `publishConfig`, then the environment, then `.npmrc`.
     pub fn provenance_asked_by(
         &self,
         package_json: &Expr,

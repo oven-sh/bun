@@ -218,8 +218,7 @@ fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> 
 
 impl NodeModulesFolder {
     /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
-    /// syscall on that directory's fd does not walk the directories above it. The path stays
-    /// absolute for a workspace that is not linked into the root `node_modules`: it is outside it.
+    /// syscall on that directory's fd does not walk the directories above it.
     fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
         let top_level_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
         let folder = (self.path.strip_prefix(top_level_dir))

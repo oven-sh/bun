@@ -824,9 +824,7 @@ struct SavedTree {
 }
 
 /// Replaces the tree in `manager.lockfile` with the one that an install of every workspace uses
-/// (see `Lockfile::filter`): self-contained workspaces are hoisting barriers, and bundled
-/// dependencies are left out. `all_rows` also keeps what this run's options skip (dependency types,
-/// platforms), which does not move the other packages. Returns the tree that it replaced.
+/// (see `Lockfile::filter`), and returns the old tree. `all_rows` also keeps what this run skips.
 fn hoist_install_tree(
     manager: &mut PackageManager,
     all_rows: bool,
@@ -1658,12 +1656,9 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     remove_planned(plan, Layout::Hoisted, manager);
 }
 
-/// Bun 1.4.3 and earlier hoisted only the packages that a run linked. With `--production`,
-/// `--omit`, `--filter` or a package for another platform, they installed nested copies in folders
-/// that have no key in bun.lock. Nothing is installed in or below such a folder anymore, and the
-/// stale copy hides the package further up the tree, so this removes it. A folder that the owning
-/// package's tarball or scripts may have created is kept. Call this after bun.lock is saved, and
-/// only for an install that installed something. `places` is `tree::Builder::places`.
+/// When a run skipped dependencies, Bun 1.4.3 and earlier installed nested copies in folders that
+/// have no key in bun.lock. This removes them, because they hide the package further up the tree.
+/// It keeps any folder that the owning package's tarball or scripts may have created.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
@@ -1880,9 +1875,8 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
-/// The isolated linker only visits the names in the new lockfile. So this removes the symlink of
-/// each dependency that was dropped from a `package.json` or from `packageExtensions`, in the
-/// `node_modules` of the package that declared it. Store entries stay until `bun prune`.
+/// The isolated linker only visits the names in the new lockfile, so this removes the symlink of
+/// each dependency that was dropped from a `package.json` or from `packageExtensions`.
 pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: &Lockfile) {
     if manager.summary.remove == 0 && manager.summary.removed_extension_rows.is_empty() {
         return;
@@ -2053,9 +2047,8 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-/// Anything that removes entries from the store, or from the `node_modules` of the project or of a
-/// workspace, must open the folder with this function. A symlink is never followed. It is added to
-/// `linked_folders` instead.
+/// Anything that removes entries from the store or from a `node_modules` must open the folder with
+/// this function. It never follows a symlink, and adds it to `linked_folders` instead.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
@@ -2070,9 +2063,8 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
     }
 }
 
-/// A `node_modules` of the project or of a workspace that is itself a symlink, for example to a
-/// mounted volume or a cache disk. The linkers install through the symlink but never clear the
-/// folder behind it, because that folder may hold things that Bun did not put there.
+/// A `node_modules` of the project or of a workspace that is itself a symlink. The linkers install
+/// through it but never clear the folder behind it, which may hold things that Bun did not create.
 ///
 /// A workspace's `node_modules` is only checked right before something is written to or removed
 /// from it.
@@ -2104,13 +2096,11 @@ impl LinkedNodeModules {
         })
     }
 
-    /// Returns true if the absolute `path` is this `node_modules` or is inside it. `path` is then
-    /// rewritten to start with the symlink's real target, because a relative symlink is resolved
-    /// from the real location of the directory that contains it.
+    /// Returns true if the absolute `path` is at or inside this `node_modules`, and then rewrites
+    /// it to start with the real target, which is where a relative symlink is resolved from.
     ///
-    /// On Windows `path` is not rewritten. There, a relative link is resolved from the real
-    /// location behind a symlink, but from the path through the link behind a junction. So a link
-    /// from inside this `node_modules` to something outside it gets an absolute target instead.
+    /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
+    /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
     pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
         &self,
         path: &mut bun_paths::Path<u8, KIND, SEP>,
@@ -2538,8 +2528,7 @@ fn plan_isolated(
 }
 
 /// Whether `entry` is a copy that `bun patch` made for editing, which `bun patch --commit` removes.
-/// `bun patch` only copies a package to a path that no package.json declares if the project has no
-/// real folder for the package, because its store entry is a symlink into the global store.
+/// Such a copy only exists for a package whose store entry is a symlink into the global store.
 fn is_patch_copy(manager: &PackageManager, entry: &Entry) -> bool {
     if entry.kind != EntryKind::Directory {
         return false;
@@ -2791,9 +2780,8 @@ pub(crate) fn prune_bins(node_modules: &Dir) -> bool {
         .is_some_and(|bin| remove_dangling_bins(&bin, node_modules, None))
 }
 
-/// Whether the package that should contain the file at `path`, which is relative to `node_modules`,
-/// exists. The package can be in a store entry, so its folder is the one that follows the last
-/// `node_modules` component of `path`.
+/// Whether the package that should contain `path`, which is relative to `node_modules`, exists. Its
+/// folder follows the last `node_modules` component of `path`, because it can be in a store entry.
 fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
     let (mut package, mut at) = (0, 0);
     while let Some(end) = strings::index_of_any_pos(path, b"/\\", at) {
@@ -2989,9 +2977,7 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) -> Vec<us
 }
 
 /// Relinks the names in `.bin` and in `node_modules/.bun/node_modules` that a removed package owned
-/// to the packages that an install with this run's options gives them to. Names that are still
-/// taken are left alone. `lost_bins` is what `housekeeping` returned. A `file:` folder never gets a
-/// link in `node_modules/.bun/node_modules`, so its name there is skipped.
+/// to the packages that an install with this run's options would give them to.
 fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &PackageManager) {
     use crate::bin_real::{LinkOrder, link_free_bins};
     let lockfile: &Lockfile = &manager.lockfile;

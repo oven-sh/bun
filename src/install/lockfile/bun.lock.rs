@@ -2739,8 +2739,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let entry = pkg_map.get_or_put(pkg_path)?;
             // Each workspace was registered under its name above. A root dependency of the same
-            // name replaces it at that key, unless it is a folder. Any other repeated key is an
-            // error.
+            // name replaces it at that key, unless that dependency is a folder.
             if entry.found_existing
                 && !(res.tag != ResolutionTag::Folder
                     && (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len)
@@ -2946,8 +2945,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 }
 
                 // A registry package's peer prefers a published version in range over a workspace
-                // of that name, because its dependent may use the published one even though the
-                // workspace exists. The hoister makes the final choice.
+                // of that name, because its dependent may use the published one.
                 let by_version = if res.tag == ResolutionTag::Workspace {
                     own_peer(dep)
                 } else {
@@ -3051,14 +3049,11 @@ pub(crate) fn parse_into_binary_lockfile(
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
-/// If a peer's range matches a workspace, the fresh resolver binds the peer to that workspace
-/// right away, before peers are deferred. The loader does the same for a peer of the root or of a
-/// workspace (`linked_member`). A registry package's peer goes through this scan instead, in the
-/// loader and in the hoister, and stays on the workspace if no published version is in range.
+/// A peer of the root or of a workspace binds to a matching workspace without this scan. A registry
+/// package's peer goes through it, and stays on the workspace if no published version is in range.
 ///
-/// For the hoister this result is only a starting point. If the root's dependency of that name, or
-/// the package's own regular dependency of that name, is in range, the peer ends up resolved to
-/// that package (`tree::bind_served_peers`).
+/// For the hoister this result is only a starting point: `tree::bind_served_peers` prefers the
+/// root's or the package's own dependency of that name if it is in range.
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,

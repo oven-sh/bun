@@ -1411,10 +1411,8 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
-    /// Returns the folder on disk that `bun install` would link `name` to. It is either a workspace
-    /// member (matched by `workspace:`, by a range that its version satisfies, or by name alone for
-    /// an `Uninitialized` version) or the target of `file:` / `link:`. Those paths are relative to
-    /// `package_json_dir`, which is `None` unless the package.json belongs to the project.
+    /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
+    /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
     fn project_folder<'b>(
         &mut self,
         name: &[u8],

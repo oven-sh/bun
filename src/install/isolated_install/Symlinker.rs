@@ -7,9 +7,8 @@ pub(crate) struct Symlinker {
     pub(crate) target: bun_paths::RelPath,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
-    /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`.
-    /// If that folder is a symlink (see `LinkedNodeModules`), it is kept, and `ensure_symlink`
-    /// fails with `ELOOP` before writing anything.
+    /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`. If
+    /// that folder is a symlink, `ensure_symlink` fails with `ELOOP` before writing anything.
     pub(crate) node_modules_len: usize,
     /// True if `dest` is inside a symlinked `node_modules` (see `LinkedNodeModules`). A file or
     /// directory that is already at `dest` is then kept, and linking fails.

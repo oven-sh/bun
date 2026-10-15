@@ -555,8 +555,7 @@ pub(crate) fn for_each_catalog_object(
 }
 
 /// Returns the catalog object in the root package.json that `catalog:<catalog_name>` reads
-/// `dep_name` from. Like `CatalogMap::locate`, it prefers the spelling of the default catalog that
-/// matches `catalog_name`.
+/// `dep_name` from. Like `CatalogMap::locate`, it prefers the exact spelling of `catalog_name`.
 pub fn catalog_object_of(
     root_package_json: &Expr,
     catalog_name: &[u8],

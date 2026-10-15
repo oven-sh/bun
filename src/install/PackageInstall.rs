@@ -592,9 +592,8 @@ impl FolderRoot<'_> {
     }
 }
 
-/// Recreates the symlinks of `folder` (a path relative to the cwd) in `dest`, its installed copy,
-/// because the install backends skip symlinks. Only call this for a folder that the user named.
-/// Returns one warning for each symlink that was left out, sorted by path.
+/// Recreates the symlinks of `folder` in `dest`, its installed copy, because the install backends
+/// skip them. Only call this for a folder that the user named. Returns a warning per omitted link.
 pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
     let mut left_out: Vec<Box<[u8]>> = Vec::new();
     if let Ok(src) = Dir::open(folder) {

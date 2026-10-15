@@ -62,6 +62,9 @@ public:
     JSC::JSValue requireCache() const { return m_requireCache.get(); }
     void setRequireCache(JSC::VM& vm, JSC::JSValue cache) { m_requireCache.set(vm, this, cache); }
 
+    // The linked wrapper function of a CommonJS module this graph evaluated (ModuleGraphState::commonJSWrappers).
+    void keepCommonJSWrapper(JSC::VM&, JSC::CodeBlock*);
+
     JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
     void dispose(Zig::GlobalObject*);
 
@@ -76,6 +79,7 @@ private:
     JSC::WriteBarrier<JSC::JSObject> m_onError;
     JSC::WriteBarrier<JSModuleGraph> m_maker;
     JSC::WriteBarrier<JSC::JSString> m_mainPath;
+    WTF::UncheckedKeyHashSet<JSC::CodeBlock*> m_commonJSWrappers; // cellLock()
     unsigned m_overlayShape { 0 };
 };
 
@@ -90,6 +94,7 @@ struct ModuleGraphState {
 public:
     explicit ModuleGraphState(JSC::VM& vm)
         : overlaySymbolTables(vm)
+        , commonJSWrappers(vm)
     {
     }
     // Sorted `globals` names -> the SymbolTable the overlays of the graphs made with that name
@@ -99,6 +104,10 @@ public:
     // The same keys -> JSModuleGraph::overlayShape(). Never forgets, so a number is never reused
     // for another name set while code compiled under the first may still be cached.
     WTF::HashMap<WTF::String, unsigned> overlayShapes;
+    // <overlay shape>:<URL> -> the linked wrapper function of that CommonJS module. It owns the executables of the
+    // functions in the module, so a graph that calls the same wrapper runs their JIT code. Weak: alive while
+    // a graph that evaluated the module is.
+    JSC::WeakGCMap<WTF::String, JSC::CodeBlock> commonJSWrappers;
     // The async context native code entered from the top of the event loop
     // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;

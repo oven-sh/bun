@@ -74,6 +74,8 @@
 #include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
+#include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -156,6 +158,7 @@ public:
 
     unsigned hash() const final { return m_source->hash() ^ m_overlayShape; }
     StringView source() const final { return m_source->source(); }
+    bool hasTextOf(JSC::SourceProvider& other) const { return m_source.ptr() == &other || (m_source->hash() == other.hash() && m_source->source() == other.source()); }
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
@@ -173,10 +176,25 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
+    // JSC's code cache has the unlinked code of a source it has seen. Optimized JIT code belongs to a linked
+    // CodeBlock, and evaluating the source again links another wrapper. So a graph calls the wrapper that
+    // an earlier graph of its shape linked, if the text is still the same.
+    String sharedWrapperKey;
+    FunctionExecutable* sharedWrapper = nullptr;
     if (JSModuleGraph* graph = moduleObject->moduleGraph(); graph && code.provider()) {
-        RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
-        Zig::addCodeCoverageSourceID(vm, *provider);
-        code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
+        sharedWrapperKey = makeString(graph->overlayShape(), ':', code.provider()->sourceURL());
+        if (CodeBlock* linked = globalObject->m_moduleGraphs->commonJSWrappers.get(sharedWrapperKey)) {
+            auto* executable = uncheckedDowncast<FunctionExecutable>(linked->ownerExecutable());
+            if (static_cast<GraphCommonJSSourceProvider*>(executable->source().provider())->hasTextOf(*code.provider())) {
+                sharedWrapper = executable;
+                graph->keepCommonJSWrapper(vm, linked);
+            }
+        }
+        if (!sharedWrapper) {
+            RefPtr<JSC::SourceProvider> provider = GraphCommonJSSourceProvider::create(*code.provider(), graph->overlayShape());
+            Zig::addCodeCoverageSourceID(vm, *provider);
+            code = SourceCode(WTF::move(provider), code.startOffset(), code.endOffset());
+        }
     }
 
     // If an exception occurred somewhere else, we might have cleared the source code.
@@ -256,7 +274,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // overload would swallow the exception, leaving the misleading
     // "function wrapper" TypeError below instead of the real error.
     WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    JSValue fnValue = sharedWrapper ? JSValue(JSFunction::create(vm, globalObject, sharedWrapper, moduleObject->moduleGraph()->overlay())) : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
     if (wrapperException) [[unlikely]] {
         scope.throwException(globalObject, wrapperException.get());
         return false;
@@ -314,6 +332,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
+
+    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
+        if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
+            linked = linked->baselineAlternative();
+            globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
+            graph->keepCommonJSWrapper(vm, linked);
+        }
+    }
     return true;
 }
 

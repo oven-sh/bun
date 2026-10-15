@@ -2,7 +2,7 @@
 // records, CommonJS modules and its context) alive, and that nothing else does.
 import { heapStats, jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, Heap, isArm64, isLinux, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
@@ -389,6 +389,30 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     const { SymbolTable: baseline } = await baselineOf("SymbolTable");
     await make(30);
     expect((await settle({ SymbolTable: baseline + 10 })).SymbolTable).toBeLessThanOrEqual(baseline + 10);
+  });
+
+  test("the compiled code of a CommonJS module goes with the last graph that ran it", async () => {
+    // Many, because the count also has the code of whatever else ran since the baseline.
+    const files = 200;
+    for (let i = 0; i < files; i++)
+      writeFileSync(file(`only-in-graphs-${i}.cjs`), `module.exports = function f${i}() { return ${i}; };`);
+    const load = async () => {
+      const graph = new ModuleGraph();
+      for (let i = 0; i < files; i++) await graph.import(file(`only-in-graphs-${i}.cjs`));
+      return graph;
+    };
+    await load();
+    const { FunctionCodeBlock: baseline } = await baselineOf("FunctionCodeBlock");
+    await (async () => {
+      const held = [await load(), await load()];
+      held[0].dispose();
+      // The wrapper functions' code, once for both graphs, while either is held.
+      const { FunctionCodeBlock: whileHeld } = await baselineOf("FunctionCodeBlock");
+      expect(whileHeld - baseline).toBeWithin(files, files * 2);
+      expect(held.length).toBe(2);
+    })();
+    const limit = baseline + files / 2;
+    expect((await settle({ FunctionCodeBlock: limit })).FunctionCodeBlock).toBeLessThanOrEqual(limit);
   });
 
   test("the host's copy of a file a collected graph also loaded is untouched", async () => {

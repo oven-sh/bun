@@ -13,6 +13,7 @@
 #include "ExtendedDOMIsoSubspaces.h"
 
 #include <JavaScriptCore/BuiltinNames.h>
+#include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
@@ -572,8 +573,21 @@ void JSModuleGraph::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_onError);
     visitor.append(thisObject->m_maker);
     visitor.append(thisObject->m_mainPath);
+    Locker locker { thisObject->cellLock() };
+    for (auto* wrapper : thisObject->m_commonJSWrappers)
+        visitor.appendUnbarriered(wrapper);
 }
 DEFINE_VISIT_CHILDREN(JSModuleGraph);
+
+void JSModuleGraph::keepCommonJSWrapper(VM& vm, CodeBlock* wrapper)
+{
+    {
+        Locker locker { cellLock() };
+        if (!m_commonJSWrappers.add(wrapper).isNewEntry)
+            return;
+    }
+    vm.writeBarrier(this, wrapper);
+}
 
 // Like dynamic import(), every failure past the receiver check is a rejection of the
 // returned promise (the caller turns a throw into one), never a synchronous throw.

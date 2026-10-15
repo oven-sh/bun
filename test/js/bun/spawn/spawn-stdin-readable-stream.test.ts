@@ -1169,9 +1169,9 @@ describe("spawn stdin ReadableStream", () => {
   });
 
   // A stream that is a child's stdin stays lazy: its native source never started for JS. A call that
-  // fails on that lock must not start it. What it read never reached the child. On Windows the start
-  // reads nothing, so these cases pass there without the fix too.
-  test.each<[string, (stream: ReadableStream) => unknown]>([
+  // fails on that lock must not start it. What it read never reached the child. Not on Windows: the
+  // start reads nothing there, and the producer does not report while its pipe is full.
+  test.skipIf(isWindows).each<[string, (stream: ReadableStream) => unknown]>([
     ["getReader()", stream => stream.getReader()],
     ["values()", stream => stream.values()],
     ["tee()", stream => stream.tee()],
@@ -1228,33 +1228,36 @@ describe("spawn stdin ReadableStream", () => {
 
   // The same in one process: Bun.write holds the process's stdin stream, and process.stdin fails on
   // that lock. Nothing reads the child's stdout until it reports, so its write is paused by then.
-  test("process.stdin fails on the stdin stream that Bun.write() took, and takes no bytes from it", async () => {
-    using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.skipIf(isWindows)(
+    "process.stdin fails on the stdin stream that Bun.write() took, and takes no bytes from it",
+    async () => {
+      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
         const written = Bun.write(Bun.stdout, Bun.stdin.stream());
         let code;
         try { process.stdin.resume(); } catch (error) { code = error.code; }
         await Bun.write(Bun.stderr, String(code));
         await written;
       `,
-      ],
-      env: bunEnv,
-      stdin: Bun.file(path.join(String(dir), "in")),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const report = await proc.stderr.getReader().read();
-    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-    expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
-      report: "ERR_INVALID_STATE",
-      length: 1 << 20,
-      exitCode: 0,
-    });
-  });
+        ],
+        env: bunEnv,
+        stdin: Bun.file(path.join(String(dir), "in")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const report = await proc.stderr.getReader().read();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+        report: "ERR_INVALID_STATE",
+        length: 1 << 20,
+        exitCode: 0,
+      });
+    },
+  );
 
   test("ReadableStream object type count", async () => {
     const iterations = isASAN

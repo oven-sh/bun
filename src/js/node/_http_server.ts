@@ -121,26 +121,35 @@ const DateNow = Date.now;
 
 let cluster;
 
-function emitCloseServer(self: Server) {
+// Whether the pending close() is complete. If it is, its 'close' is due and the pending state is cleared.
+function takePendingClose(self: Server) {
   // A native close promise belongs to one listener; Node's Server 'close' spans overlapping listeners and handed-off sockets (net.js _emitCloseIfDrained).
-  if (!self[kPendingDrainClose]) return;
+  if (!self[kPendingDrainClose]) return false;
   const pendingGenerations = self[kPendingCloseGenerations];
   let drainedAtClose = true;
   for (const generation of pendingGenerations) {
-    if (!generation.nativeClosed) return;
+    if (!generation.nativeClosed) return false;
     drainedAtClose &&= generation.drainedAtClose;
   }
   const relistened = !!self[serverSymbol];
   // Node queues 'close' inside a close() that leaves no connection open. A listen() after it, or a connection to that listener, cannot hold the event back.
-  if ((relistened || self[kTrackedConnections].size > 0) && !drainedAtClose) return;
+  if ((relistened || self[kTrackedConnections].size > 0) && !drainedAtClose) return false;
   self[kPendingDrainClose] = false;
   pendingGenerations.clear();
   if (!relistened) self[kListenerGeneration] = undefined;
+  return true;
+}
+function emitCloseServer(self: Server) {
+  if (takePendingClose(self)) self.emit("close");
+}
+function emitServerClose(self: Server) {
   self.emit("close");
 }
-// Node emits the 'error' of a plaintext http socket before the server's 'close' tick (net.js Socket.prototype._destroy). Bun emits that 'error' with the socket's 'close' in one later tick, so the check goes behind it.
-function emitCloseServerAfterSocketClose(self: Server) {
-  process.nextTick(emitCloseServer, self);
+// For the last connection of a plaintext server, closed with an error. Node emits that socket's 'error' ahead of the
+// server's 'close' (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918), so the event waits one tick more.
+// The decision does not wait: a listen() from a listener of that socket does not hold the 'close' back.
+function emitCloseServerAfterSocketError(self: Server) {
+  if (takePendingClose(self)) process.nextTick(emitServerClose, self);
 }
 function markListenerGenerationClosed(self: Server, generation) {
   generation.nativeClosed = true;
@@ -1697,8 +1706,6 @@ function getNodeHTTPServerSocket() {
     #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
-    // The server that accepted the connection, like Node's socket._server. The public `server` is rewritten by each http.Server that gets the socket as a 'connection'.
-    #owner: Server;
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
@@ -1721,7 +1728,6 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
-      this.#owner = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
@@ -1831,36 +1837,35 @@ function getNodeHTTPServerSocket() {
       // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
       if (this.#closeHandled) return;
       this.#closeHandled = true;
-      // Like Node's Socket.prototype._destroy: the count goes down before any code of the program runs, and the server's
-      // 'close' check is queued from this frame, not from a listener on the socket.
-      const server = this.#owner;
-      const tracked = server[kTrackedConnections];
-      tracked?.delete(this);
       const errored = this.errored;
-      try {
-        // freeParser equivalent: runs before 'close' listeners so they observe the
-        // released parser (free() invoked, kOnTimeout nulled).
-        releaseServerParserShim(this);
-        this[kHandle] = null;
-        if (closedHandle) {
-          // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
-          if (closedHandle.peerEnded) {
-            this.push(null);
-            this.read(0);
-          }
-          // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
-          const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
-          if (closeError) {
-            // Node's errnoException(nread, 'read'): "read ECONNRESET".
-            const er = new ErrnoException(closeError.errno, "read");
-            this.#closeError = er.code === closeError.code ? er : closeError;
-          }
+      // freeParser equivalent: runs before 'close' listeners so they observe the
+      // released parser (free() invoked, kOnTimeout nulled).
+      releaseServerParserShim(this);
+      this[kHandle] = null;
+      if (closedHandle) {
+        // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
+        if (closedHandle.peerEnded) {
+          this.push(null);
+          this.read(0);
         }
-      } finally {
-        // Behind the ticks of the peer's 'end' above, and also when a 'readable' listener throws from read(0).
-        if (tracked && tracked.size === 0 && server[kPendingDrainClose]) {
+        // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
+        const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
+        if (closeError) {
+          // Node's errnoException(nread, 'read'): "read ECONNRESET".
+          const er = new ErrnoException(closeError.errno, "read");
+          this.#closeError = er.code === closeError.code ? er : closeError;
+        }
+      }
+      const server = this.server;
+      const tracked = server?.[kTrackedConnections];
+      if (tracked) {
+        tracked.delete(this);
+        if (tracked.size === 0 && server[kPendingDrainClose]) {
+          // Queued from this frame, like Node's Socket.prototype._destroy, not from a listener on the socket.
+          // Over TLS Node counts the raw socket, which TLSWrap.prototype.close destroys first, so there the
+          // 'error' does not go ahead: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L684-L687
           process.nextTick(
-            (errored || this.#closeError) && !this.encrypted ? emitCloseServerAfterSocketClose : emitCloseServer,
+            (errored || this.#closeError) && !this.encrypted ? emitCloseServerAfterSocketError : emitCloseServer,
             server,
           );
         }

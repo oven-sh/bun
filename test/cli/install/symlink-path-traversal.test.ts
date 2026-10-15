@@ -1996,7 +1996,10 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     await Promise.all(names.map(name => writeTarball(join(repo, `${name}.tgz`), name, "1.0.0", "module.exports = 1")));
     await writeFile(
       join(repo, "package.json"),
-      JSON.stringify({ name: "root", dependencies: Object.fromEntries(names.map(name => [name, `file:./${name}.tgz`])) }),
+      JSON.stringify({
+        name: "root",
+        dependencies: Object.fromEntries(names.map(name => [name, `file:./${name}.tgz`])),
+      }),
     );
     return repo;
   }
@@ -2029,7 +2032,8 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
       [linker, repo, "install"],
       [linker, repo, "install", "--frozen-lockfile"],
     ];
-    const versionIn = async (dir: string) => (await Bun.file(join(dir, "node_modules/dep/package.json")).json()).version;
+    const versionIn = async (dir: string) =>
+      (await Bun.file(join(dir, "node_modules/dep/package.json")).json()).version;
     for (const [linker, cwd, ...args] of commands) {
       const command = `${args.join(" ")} --linker ${linker}`;
       const result = await runBun(cwd, [...args, "--ignore-scripts", "--linker", linker], join(String(root), "cache"));

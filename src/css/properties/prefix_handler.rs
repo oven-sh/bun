@@ -1,7 +1,9 @@
 use crate as css;
+use crate::VendorPrefix;
 use crate::css_properties::custom::UnparsedProperty;
-use crate::css_properties::{Property, PropertyIdTag};
+use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
+use crate::prefixes::Feature;
 use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
@@ -9,9 +11,9 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
+    pub(crate) filter: Option<usize>,
+    pub(crate) backdrop_filter: Option<usize>,
     // The remaining fallback fields are not implemented yet.
-    // filter: Option<usize>,
-    // backdrop_filter: Option<usize>,
     // fill: Option<usize>,
     // stroke: Option<usize>,
     // caret_color: Option<usize>,
@@ -25,8 +27,6 @@ impl FallbackHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // Each (field, Property variant, has_vendor_prefix) pair is expanded via macro.
-
         let arena = dest.bump();
 
         // Each (field, Property variant) pair is expanded via a macro that
@@ -66,11 +66,52 @@ impl FallbackHandler {
             };
         }
 
+        // Same as `handle_unprefixed!`, for a `Property::$Variant((value, VendorPrefix))`
+        // payload whose prefixes come from `Feature::$Variant`. Color fallbacks
+        // are printed with the prefixed names. The final (widest gamut) value
+        // is then printed unprefixed only: the engines that need the prefix do
+        // not support the newer color spaces.
+        macro_rules! handle_prefixed {
+            ($self_field:ident, $Variant:ident) => {
+                if let Property::$Variant((payload, prefix)) = property {
+                    let mut val = payload.deep_clone(arena);
+                    let mut prefix = context.targets.prefixes(*prefix, Feature::$Variant);
+
+                    if $self_field.is_none() {
+                        let fallbacks = val.get_fallbacks(arena, &context.targets);
+                        let has_fallbacks = !fallbacks.is_empty();
+                        for fb in fallbacks.to_owned_slice().into_vec() {
+                            dest.push(Property::$Variant((fb, prefix)));
+                        }
+                        if has_fallbacks && prefix.contains(VendorPrefix::NONE) {
+                            prefix = VendorPrefix::NONE;
+                        }
+                    }
+
+                    if $self_field.is_none()
+                        || (context.targets.browsers.is_some()
+                            && !val.is_compatible(&context.targets.browsers.unwrap()))
+                    {
+                        *$self_field = Some(dest.len());
+                        dest.push(Property::$Variant((val, prefix)));
+                    } else if let Some(index) = *$self_field {
+                        dest[index] = Property::$Variant((val, prefix));
+                    } else {
+                        drop(val);
+                    }
+
+                    return true;
+                }
+            };
+        }
+
         // Reshaped for borrowck — pre-borrow each self.<field> as &mut so the
         // macro body can both read and assign it without re-borrowing `self`.
         let this = &mut *self;
         let color = &mut this.color;
         let text_shadow = &mut this.text_shadow;
+        let filter = &mut this.filter;
+        let backdrop_filter = &mut this.backdrop_filter;
 
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
@@ -108,6 +149,8 @@ impl FallbackHandler {
             is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| v
                 .is_compatible(b)
         );
+        handle_prefixed!(filter, Filter);
+        handle_prefixed!(backdrop_filter, BackdropFilter);
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
@@ -120,11 +163,23 @@ impl FallbackHandler {
                         }
                     };
                 }
+                macro_rules! match_unparsed_prefixed {
+                    ($self_field:ident, $Variant:ident) => {
+                        if let PropertyId::$Variant(prefix) = val.property_id {
+                            let newval = if prefix.contains(VendorPrefix::NONE) {
+                                val.get_prefixed(arena, &context.targets, Feature::$Variant)
+                            } else {
+                                val.deep_clone(arena)
+                            };
+                            break 'unparsed_and_index (newval, $self_field);
+                        }
+                    };
+                }
 
                 match_unparsed_unprefixed!(color, Color);
                 match_unparsed_unprefixed!(text_shadow, TextShadow);
-                // (no prefixed properties active yet — `match_unparsed_prefixed!` kept for
-                // when filter/backdrop_filter/etc. are re-enabled in this handler.)
+                match_unparsed_prefixed!(filter, Filter);
+                match_unparsed_prefixed!(backdrop_filter, BackdropFilter);
 
                 return false;
             };
@@ -150,5 +205,7 @@ impl FallbackHandler {
     ) {
         self.color = None;
         self.text_shadow = None;
+        self.filter = None;
+        self.backdrop_filter = None;
     }
 }

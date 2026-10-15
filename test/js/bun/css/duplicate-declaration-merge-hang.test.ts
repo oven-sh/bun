@@ -99,7 +99,9 @@ test("deferred merge re-minify keeps per-merge output", () => {
   // The merged-in rule stages dark-mode fallback vars; its re-minify stages
   // them again, and both sets belong in this rule's @media extras. The
   // deferred flush must run before the extras are collected (and must not
-  // assert or leak the re-staged entries into a later rule's extras).
+  // assert or leak the re-staged entries into a later rule's extras). The
+  // @media rule is minified as a style rule, so the custom property handler
+  // keeps one declaration per name there.
   expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}", "", { chrome: 80 << 16 })).toBe(
     ".a {\n" +
       "  color: red;\n" +
@@ -112,8 +114,6 @@ test("deferred merge re-minify keeps per-merge output", () => {
       "\n" +
       "@media (prefers-color-scheme: dark) {\n" +
       "  .a {\n" +
-      "    --buncss-light: ;\n" +
-      "    --buncss-dark: initial;\n" +
       "    --buncss-light: ;\n" +
       "    --buncss-dark: initial;\n" +
       "  }\n" +

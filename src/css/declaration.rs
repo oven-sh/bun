@@ -1,13 +1,14 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
+use bun_collections::StringArrayHashMap;
 use css::{CssResult as Result, PrintErr, Printer};
 
 use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
 use crate::css_properties::box_shadow::BoxShadowHandler;
-use crate::css_properties::custom::CustomPropertyName;
+use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
@@ -404,6 +405,8 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
     pub(crate) direction: Option<Direction>,
+    /// Index in `decls` of each `--custom` property seen in this block, by name.
+    pub(crate) custom_properties: StringArrayHashMap<usize>,
     pub(crate) decls: DeclarationList<'bump>,
 }
 
@@ -428,6 +431,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.box_shadow.finalize(&mut self.decls, context);
         self.color_scheme.finalize(&mut self.decls, context);
         self.fallback.finalize(&mut self.decls, context);
+        self.custom_properties.clear_retaining_capacity();
     }
 
     pub(crate) fn handle_property(
@@ -480,6 +484,62 @@ impl<'bump> DeclarationHandler<'bump> {
             || self
                 .fallback
                 .handle_property(property, &mut self.decls, context)
+            || self.handle_custom_property(property, context)
+    }
+
+    /// `--custom` properties: drop the unused ones (CSS modules), keep one
+    /// declaration per name, and route the P3 / LAB color fallbacks of the
+    /// value to `@supports` rules via the context.
+    fn handle_custom_property(
+        &mut self,
+        property: &css::Property,
+        context: &mut css::PropertyHandlerContext,
+    ) -> bool {
+        let css::Property::Custom(custom) = property else {
+            return false;
+        };
+        let CustomPropertyName::Custom(name) = &custom.name else {
+            return false;
+        };
+        let name = name.v();
+
+        if css::is_unused_symbol(context.unused_symbols, name) {
+            return true;
+        }
+
+        let arena = self.decls.bump();
+        if let Some(&index) = self.custom_properties.get(name) {
+            if self.decls[index].eql(property) {
+                return true;
+            }
+            let mut custom = custom.deep_clone(arena);
+            Self::add_conditional_fallbacks(&mut custom, context);
+            self.decls[index] = css::Property::Custom(custom);
+        } else {
+            self.custom_properties.insert(name, self.decls.len());
+            let mut custom = custom.deep_clone(arena);
+            Self::add_conditional_fallbacks(&mut custom, context);
+            self.decls.push(css::Property::Custom(custom));
+        }
+
+        true
+    }
+
+    fn add_conditional_fallbacks(
+        custom: &mut CustomProperty,
+        context: &mut css::PropertyHandlerContext,
+    ) {
+        let arena = context.arena;
+        let fallbacks = custom.value.get_fallbacks(arena, &context.targets);
+        for (condition, fallback) in fallbacks.to_owned_slice().into_vec() {
+            context.add_conditional_property(
+                condition,
+                css::Property::Custom(CustomProperty {
+                    name: custom.name,
+                    value: fallback,
+                }),
+            );
+        }
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -500,6 +560,7 @@ impl<'bump> DeclarationHandler<'bump> {
             color_scheme: Default::default(),
             fallback: Default::default(),
             direction: None,
+            custom_properties: StringArrayHashMap::new(),
             decls: DeclarationList::new_in(bump),
         }
     }

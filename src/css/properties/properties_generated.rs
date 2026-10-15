@@ -26,6 +26,7 @@ use super::border_radius;
 use super::box_shadow;
 use super::css_modules;
 use super::display;
+use super::effects;
 use super::flex;
 use super::font;
 use super::margin_padding;
@@ -261,6 +262,8 @@ pub enum PropertyIdTag {
     TextDecorationColor,
     TextEmphasisColor,
     TextShadow,
+    Filter,
+    BackdropFilter,
     Direction,
     Composes,
     MaskImage,
@@ -343,6 +346,8 @@ impl PropertyIdTag {
             T::Perspective => PrefixFeature::Perspective,
             T::PerspectiveOrigin => PrefixFeature::PerspectiveOrigin,
             T::TextDecorationColor => PrefixFeature::TextDecorationColor,
+            T::Filter => PrefixFeature::Filter,
+            T::BackdropFilter => PrefixFeature::BackdropFilter,
             T::TextEmphasisColor => PrefixFeature::TextEmphasisColor,
             T::MaskImage => PrefixFeature::MaskImage,
             T::MaskRepeat => PrefixFeature::MaskRepeat,
@@ -576,6 +581,8 @@ impl PropertyIdTag {
             PropertyIdTag::TextDecorationColor => b"text-decoration-color",
             PropertyIdTag::TextEmphasisColor => b"text-emphasis-color",
             PropertyIdTag::TextShadow => b"text-shadow",
+            PropertyIdTag::Filter => b"filter",
+            PropertyIdTag::BackdropFilter => b"backdrop-filter",
             PropertyIdTag::Direction => b"direction",
             PropertyIdTag::Composes => b"composes",
             PropertyIdTag::MaskImage => b"mask-image",
@@ -844,6 +851,8 @@ pub enum PropertyId {
     TextDecorationColor(VendorPrefix),
     TextEmphasisColor(VendorPrefix),
     TextShadow,
+    Filter(VendorPrefix),
+    BackdropFilter(VendorPrefix),
     Direction,
     Composes,
     MaskImage(VendorPrefix),
@@ -1129,6 +1138,8 @@ impl PropertyId {
             PropertyId::TextDecorationColor(..) => PropertyIdTag::TextDecorationColor,
             PropertyId::TextEmphasisColor(..) => PropertyIdTag::TextEmphasisColor,
             PropertyId::TextShadow => PropertyIdTag::TextShadow,
+            PropertyId::Filter(..) => PropertyIdTag::Filter,
+            PropertyId::BackdropFilter(..) => PropertyIdTag::BackdropFilter,
             PropertyId::Direction => PropertyIdTag::Direction,
             PropertyId::Composes => PropertyIdTag::Composes,
             PropertyId::MaskImage(..) => PropertyIdTag::MaskImage,
@@ -1236,6 +1247,8 @@ impl PropertyId {
             | PropertyId::PerspectiveOrigin(p)
             | PropertyId::TextDecorationColor(p)
             | PropertyId::TextEmphasisColor(p)
+            | PropertyId::Filter(p)
+            | PropertyId::BackdropFilter(p)
             | PropertyId::MaskImage(p)
             | PropertyId::MaskRepeat(p)
             | PropertyId::MaskPosition(p)
@@ -1511,6 +1524,8 @@ impl PropertyId {
                 b"text-decoration-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationColor),
                 b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
                 b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
+                b"filter" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Filter),
+                b"backdrop-filter" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::BackdropFilter),
                 b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
                 b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
                 b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
@@ -1834,6 +1849,8 @@ pub enum Property {
     TextDecorationColor((css::css_values::color::CssColor, VendorPrefix)),
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
+    Filter((effects::FilterList, VendorPrefix)),
+    BackdropFilter((effects::FilterList, VendorPrefix)),
     Direction(text::Direction),
     Composes(css_modules::Composes),
     MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
@@ -2114,6 +2131,8 @@ impl Property {
             Property::TextDecorationColor(v) => PropertyId::TextDecorationColor(v.1),
             Property::TextEmphasisColor(v) => PropertyId::TextEmphasisColor(v.1),
             Property::TextShadow(..) => PropertyId::TextShadow,
+            Property::Filter(v) => PropertyId::Filter(v.1),
+            Property::BackdropFilter(v) => PropertyId::BackdropFilter(v.1),
             Property::Direction(..) => PropertyId::Direction,
             Property::Composes(..) => PropertyId::Composes,
             Property::MaskImage(v) => PropertyId::MaskImage(v.1),
@@ -2386,6 +2405,8 @@ impl Property {
             Property::TextDecorationColor(v) => css::generic::to_css(&v.0, dest),
             Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
             Property::TextShadow(v) => css::generic::to_css(v, dest),
+            Property::Filter(v) => css::generic::to_css(&v.0, dest),
+            Property::BackdropFilter(v) => css::generic::to_css(&v.0, dest),
             Property::Direction(v) => css::generic::to_css(v, dest),
             Property::Composes(v) => css::generic::to_css(v, dest),
             Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
@@ -3679,6 +3700,16 @@ impl Property {
                     return Ok(Property::TextShadow(c));
                 }
             }
+            PropertyId::Filter(pre) => {
+                if let Some(c) = parse_value::<effects::FilterList>(input, options) {
+                    return Ok(Property::Filter((c, pre)));
+                }
+            }
+            PropertyId::BackdropFilter(pre) => {
+                if let Some(c) = parse_value::<effects::FilterList>(input, options) {
+                    return Ok(Property::BackdropFilter((c, pre)));
+                }
+            }
             PropertyId::Direction => {
                 if let Some(c) = parse_value::<text::Direction>(input, options) {
                     return Ok(Property::Direction(c));
@@ -4393,6 +4424,10 @@ impl Property {
                 Property::TextEmphasisColor((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::TextShadow(v) => Property::TextShadow(css::generic::deep_clone(v, arena)),
+            Property::Filter(v) => Property::Filter((css::generic::deep_clone(&v.0, arena), v.1)),
+            Property::BackdropFilter(v) => {
+                Property::BackdropFilter((css::generic::deep_clone(&v.0, arena), v.1))
+            }
             Property::Direction(v) => Property::Direction(css::generic::deep_clone(v, arena)),
             Property::Composes(v) => Property::Composes(css::generic::deep_clone(v, arena)),
             Property::MaskImage(v) => {
@@ -4938,6 +4973,12 @@ impl Property {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::TextShadow(a), Property::TextShadow(b)) => css::generic::eql(a, b),
+            (Property::Filter(a), Property::Filter(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::BackdropFilter(a), Property::BackdropFilter(b)) => {
+                css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
             (Property::Direction(a), Property::Direction(b)) => css::generic::eql(a, b),
             (Property::Composes(a), Property::Composes(b)) => css::generic::eql(a, b),
             (Property::MaskImage(a), Property::MaskImage(b)) => {

@@ -2131,6 +2131,26 @@ pub struct MinifyOptions {
     pub unused_symbols: ArrayHashMap<Box<[u8]>, ()>,
 }
 
+/// Looks a borrowed `&[u8]` up against `MinifyOptions::unused_symbols`
+/// without boxing the key.
+pub(crate) fn is_unused_symbol(unused_symbols: &ArrayHashMap<Box<[u8]>, ()>, key: &[u8]) -> bool {
+    struct SliceAdapter;
+    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
+        #[inline]
+        fn hash(&self, key: &[u8]) -> u32 {
+            use core::hash::{Hash, Hasher};
+            let mut h = bun_wyhash::Wyhash11::init(0);
+            key.hash(&mut h);
+            h.finish() as u32
+        }
+        #[inline]
+        fn eql(&self, a: &[u8], b: &Box<[u8]>, _: usize) -> bool {
+            a == &**b
+        }
+    }
+    unused_symbols.contains_adapted(key, &SliceAdapter)
+}
+
 pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
 pub type BundlerCssRuleList = CssRuleList<BundlerAtRule>;
 pub type BundlerCssRule = CssRule<BundlerAtRule>;
@@ -5990,13 +6010,13 @@ pub(crate) fn parse_important(input: &mut Parser) -> CssResult<()> {
 }
 
 pub mod signfns {
-    /// Note: the ±0.0 sign FLIP is
-    /// intentional (do NOT "fix" it). Distinct from `f32::signum` and from
-    /// `calc::std_math_sign` / `CSSNumberFns::sign`.
+    /// The sign of `x`, keeping the sign of a zero (`+0.0` stays `0.0`,
+    /// `-0.0` stays `-0.0`). Distinct from `calc::std_math_sign` and
+    /// `CSSNumberFns::sign`, which map both zeros to `0.0`.
     #[inline]
     pub(crate) fn sign_f32(x: f32) -> f32 {
         if x == 0.0 {
-            return if x.is_sign_negative() { 0.0 } else { -0.0 };
+            return if x.is_sign_positive() { 0.0 } else { -0.0 };
         }
         x.signum()
     }

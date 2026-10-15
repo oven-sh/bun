@@ -132,6 +132,89 @@ describe("css tests", () => {
     // here and is left as written.
     minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
     minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
+
+    // A custom property keeps the widest color its targets support. The wider
+    // color spaces go to @supports blocks, same as for an unparsed value.
+    prefix_test(
+      `
+      .foo {
+        --custom: lab(40% 56.6 39);
+      }
+      `,
+      indoc`
+        .foo {
+          --custom: #b32323;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            --custom: lab(40% 56.6 39);
+          }
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        --custom: lab(40% 56.6 39);
+      }
+      `,
+      indoc`
+        .foo {
+          --custom: lab(40% 56.6 39);
+        }
+      `,
+      { safari: Some(15 << 16) },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        --custom: lab(40% 56.6 39) !important;
+      }
+      `,
+      indoc`
+        .foo {
+          --custom: #b32323 !important;
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            --custom: lab(40% 56.6 39) !important;
+          }
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // #44639
+    prefix_test(
+      ".i { --x: oklch(25% .05 30) }",
+      indoc`
+        .i {
+          --x: #361713;
+        }
+
+        @supports (color: color(display-p3 0 0 0)) {
+          .i {
+            --x: color(display-p3 .196003 .0981881 .0793255);
+          }
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .i {
+            --x: lab(12.5482% 15.1914 10.4048);
+          }
+        }
+      `,
+      { chrome: Some(80 << 16), safari: Some(14 << 16) },
+    );
+
+    // The last declaration of a custom property wins. Earlier ones are dropped.
+    minify_test(".foo { --x: 1; color: red; --x: 2 }", ".foo{--x:2;color:red}");
+    minify_test(".foo { --x: 1; --y: 1; --x: 1 }", ".foo{--x:1;--y:1}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -1886,6 +1969,197 @@ describe("css tests", () => {
         }
             `,
       { safari: Some(16 << 16) },
+    );
+  });
+
+  describe("filter", () => {
+    // Out-of-range values are not a <filter-function>. They stay as written.
+    for (const name of ["filter", "backdrop-filter"]) {
+      for (const value of [
+        "brightness(-1)",
+        "contrast(-1)",
+        "grayscale(-1)",
+        "invert(-1)",
+        "opacity(-1)",
+        "saturate(-1)",
+        "sepia(-1)",
+        "blur(-1px)",
+        "drop-shadow(1px 2px -3px)",
+      ]) {
+        minify_test(`.foo { ${name}: ${value} }`, `.foo{${name}:${value}}`);
+      }
+      minify_test(`.foo { ${name}: hue-rotate(-1deg) }`, `.foo{${name}:hue-rotate(-1deg)}`);
+    }
+
+    minify_test(".foo { filter: url('filters.svg#filter-id'); }", ".foo{filter:url(filters.svg#filter-id)}");
+    minify_test(".foo { filter: blur(5px); }", ".foo{filter:blur(5px)}");
+    minify_test(".foo { filter: blur(0px); }", ".foo{filter:blur()}");
+    minify_test(".foo { filter: brightness(10%); }", ".foo{filter:brightness(10%)}");
+    minify_test(".foo { filter: brightness(100%); }", ".foo{filter:brightness()}");
+    minify_test(
+      ".foo { filter: drop-shadow(16px 16px 20px yellow); }",
+      ".foo{filter:drop-shadow(16px 16px 20px #ff0)}",
+    );
+    minify_test(".foo { filter: drop-shadow(0 0 0px red); }", ".foo{filter:drop-shadow(0 0 red)}");
+    minify_test(".foo { filter: contrast(175%) brightness(3%); }", ".foo{filter:contrast(175%)brightness(3%)}");
+    minify_test(".foo { filter: hue-rotate(0) }", ".foo{filter:hue-rotate()}");
+    minify_test(".foo { filter: none }", ".foo{filter:none}");
+    minify_test(".foo { backdrop-filter: blur(4px) saturate(180%) }", ".foo{backdrop-filter:blur(4px)saturate(180%)}");
+
+    prefix_test(
+      ".foo { filter: blur(5px) }",
+      indoc`
+        .foo {
+          -webkit-filter: blur(5px);
+          filter: blur(5px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: blur(5px) }",
+      indoc`
+        .foo {
+          filter: blur(5px);
+        }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(5px) }",
+      indoc`
+        .foo {
+          backdrop-filter: blur(5px);
+        }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(5px) }",
+      indoc`
+        .foo {
+          -webkit-backdrop-filter: blur(5px);
+          backdrop-filter: blur(5px);
+        }
+      `,
+      { safari: Some(15 << 16) },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+      }
+      `,
+      indoc`
+        .foo {
+          -webkit-backdrop-filter: blur(8px);
+          backdrop-filter: blur(8px);
+        }
+      `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: var(--foo) }",
+      indoc`
+        .foo {
+          -webkit-filter: var(--foo);
+          filter: var(--foo);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      indoc`
+        .foo {
+          -webkit-filter: drop-shadow(16px 16px 20px #b32323);
+          filter: drop-shadow(16px 16px 20px #b32323);
+          filter: drop-shadow(16px 16px 20px lab(40% 56.6 39));
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: contrast(175%) drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      indoc`
+        .foo {
+          filter: contrast(175%) drop-shadow(16px 16px 20px #b32323);
+          filter: contrast(175%) drop-shadow(16px 16px 20px lab(40% 56.6 39));
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) drop-shadow(16px 16px 20px yellow) }",
+      indoc`
+        .foo {
+          filter: drop-shadow(16px 16px 20px #b32323) drop-shadow(16px 16px 20px #ff0);
+          filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) drop-shadow(16px 16px 20px #ff0);
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: var(--foo) drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      indoc`
+        .foo {
+          filter: var(--foo) drop-shadow(16px 16px 20px #b32323);
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            filter: var(--foo) drop-shadow(16px 16px 20px lab(40% 56.6 39));
+          }
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    // #44639: oklch() inside drop-shadow() at bun's default browser targets.
+    prefix_test(
+      `
+      .b { filter: drop-shadow(1px 1px 1px oklch(25% .05 30 / .5)) }
+      .c { filter: blur(1px) drop-shadow(0 0 2px oklch(25% .05 30)) }
+      .d { backdrop-filter: drop-shadow(0 0 2px oklch(25% .05 30)) }
+      `,
+      indoc`
+        .b {
+          filter: drop-shadow(1px 1px 1px #36171380);
+          filter: drop-shadow(1px 1px 1px color(display-p3 .196003 .0981881 .0793255 / .5));
+          filter: drop-shadow(1px 1px 1px lab(12.5482% 15.1914 10.4048 / .5));
+        }
+
+        .c {
+          filter: blur(1px) drop-shadow(0 0 2px #361713);
+          filter: blur(1px) drop-shadow(0 0 2px color(display-p3 .196003 .0981881 .0793255));
+          filter: blur(1px) drop-shadow(0 0 2px lab(12.5482% 15.1914 10.4048));
+        }
+
+        .d {
+          -webkit-backdrop-filter: drop-shadow(0 0 2px #361713);
+          backdrop-filter: drop-shadow(0 0 2px #361713);
+          -webkit-backdrop-filter: drop-shadow(0 0 2px color(display-p3 .196003 .0981881 .0793255));
+          backdrop-filter: drop-shadow(0 0 2px color(display-p3 .196003 .0981881 .0793255));
+          backdrop-filter: drop-shadow(0 0 2px lab(12.5482% 15.1914 10.4048));
+        }
+      `,
+      {
+        chrome: Some(80 << 16),
+        edge: Some(80 << 16),
+        firefox: Some(78 << 16),
+        safari: Some(14 << 16),
+        opera: Some(67 << 16),
+      },
     );
   });
 

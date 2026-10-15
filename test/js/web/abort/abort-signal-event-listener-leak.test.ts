@@ -414,10 +414,10 @@ describe("addEventListener({ signal: AbortSignal.timeout() })", () => {
 });
 
 describe("addEventListener({ signal }) with many listeners on one signal", () => {
-  // The listeners on the shared signal, and the largest ratio that passes. An optimized build
-  // registers a listener in about a microsecond, so it can afford the count that sets the two
-  // cases far apart. A debug or ASAN build takes 0.2 ms for each.
-  const [live, limit] = isDebug || isASAN ? [4000, 3] : [40000, 10];
+  // The listeners on the shared signal, and the ratio that fails. An optimized build registers
+  // a listener in about a microsecond, so it can afford the count that sets the two designs far
+  // apart. A debug build takes 0.2 ms for each.
+  const [live, limit] = isDebug || isASAN ? [4000, 3] : [40000, 16];
 
   test("removing a listener does not cost more the more listeners share its signal", async () => {
     // The signal keeps the abort algorithms of its listeners in registration
@@ -494,7 +494,11 @@ describe("addEventListener({ signal }) with many listeners on one signal", () =>
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const ratios = JSON.parse(stdout || "{}");
-    // RATIO-COMMENT
+    // The three ratios with the vector, then with the list:
+    //   optimized, 40,000 listeners: about 90, 140 and 90, then 1 to 4.
+    //   debug+ASAN, 4,000 listeners: about 3, 8 to 10 and 7 to 11, then 0.7 to 1.6.
+    // The limit is 4x away from both on an optimized build and 2x on a debug build. Only
+    // newest-first on a debug build cannot tell the two apart.
     expect(ratios.oldest, stdout + stderr).toBeLessThan(limit);
     expect(ratios.once, stdout + stderr).toBeLessThan(limit);
     expect(ratios.newest, stdout + stderr).toBeLessThan(limit);

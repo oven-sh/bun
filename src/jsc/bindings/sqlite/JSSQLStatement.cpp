@@ -2117,7 +2117,8 @@ static JSC::EncodedJSValue collectArrays(JSC::JSGlobalObject* lexicalGlobalObjec
         arguments.ensureCapacity(columnCount);
         for (int i = 0; i < columnCount; i++) {
             JSValue value = toValue(vm, lexicalGlobalObject, { stmt, i });
-            RETURN_IF_EXCEPTION(scope, {});
+            if (scope.exception()) [[unlikely]]
+                return {};
             arguments.append(value);
         }
         return JSC::constructArray(lexicalGlobalObject, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), arguments);

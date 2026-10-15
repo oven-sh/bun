@@ -27,10 +27,10 @@ use bun_sql::mysql::protocol::result_set_header::ResultSetHeader;
 use bun_sql::mysql::protocol::ssl_request::SSLRequest;
 use bun_sql::mysql::protocol::stack_reader::{PacketReader, StackReader};
 use bun_sql::mysql::protocol::stmt_prepare_ok_packet::StmtPrepareOKPacket;
-use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_sql::mysql::status_flags::{StatusFlag, StatusFlags};
 use bun_sql::mysql::tls_status::TLSStatus;
 use bun_sql::postgres::socket_monitor as SocketMonitor;
+use bun_sql::shared::SSLMode;
 use bun_sql::shared::connection_flags::ConnectionFlags;
 use bun_sql::shared::data::Data;
 
@@ -38,6 +38,8 @@ use crate::mysql::js_mysql_connection::JSMySQLConnection;
 use crate::mysql::js_mysql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, StatementCache};
+use crate::shared::start_tls::{StartTlsError, start_tls};
+use bun_jsc::rare_data::SocketGroups;
 use bun_ptr::RefPtr;
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -275,70 +277,20 @@ impl MySQLConnection {
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
-        // Only adopt if we're currently a plain TCP socket.
-        let Socket::SocketTcp(tcp) = &self.socket else {
-            return Ok(());
-        };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            return Ok(());
-        };
-
-        // SAFETY: `raw` is a live connected socket in its context's MySQL TCP group.
-        let tls_group: &mut bun_uws::SocketGroup = unsafe {
-            bun_jsc::rare_data::SocketGroups::of((*raw).group())
-                .mysql_group::<true>(crate::jsc::VirtualMachine::get().uws_loop())
-        };
-
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
-        // requested.
-        let ssl_ctx = unsafe {
-            &mut *self
-                .secure
-                .as_ref()
-                .expect("secure SSL_CTX must be set before upgradeToTLS")
-                .as_ptr()
-        };
-        let sni = self.tls_config.sni();
-        // `Option<NonNull<T>>` is an 8-byte null-niche optional; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::MysqlTls,
-            ssl_ctx,
-            sni,
-            true,  // is_client
-            false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
-            ext_size,
-            ext_size,
-        ) else {
-            return Err(FlushQueueError::AuthenticationFailed);
-        };
-
-        let js_connection = self.get_js_connection();
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext storage was sized for
-        // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
-        // drives both safe inherent methods (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-            core::ptr::NonNull::new(js_connection);
-        if self.verifies_certificate() {
-            sock.set_inline_reject();
+        let started = start_tls(
+            self.get_js_connection(),
+            self.socket,
+            (uws::SocketKind::MysqlTls, SocketGroups::mysql_group::<true>),
+            self.secure.as_ref(),
+            &self.tls_config,
+            self.verifies_certificate(),
+            |socket| self.socket = socket,
+        );
+        match started {
+            Err(StartTlsError::Failed) => Err(FlushQueueError::AuthenticationFailed),
+            // `NotPlain`: the handshake is under way.
+            _ => Ok(()),
         }
-        self.socket = Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        });
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
-        Ok(())
     }
 
     pub(crate) fn set_socket(&mut self, socket: Socket) {

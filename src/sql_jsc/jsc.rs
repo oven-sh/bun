@@ -182,17 +182,12 @@ pub(crate) fn create_bun_socket_error_to_js(
 /// the SQL bindings need a slightly different signature).
 pub(crate) trait JSGlobalObjectSqlExt {
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a>;
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine;
 }
 
 impl JSGlobalObjectSqlExt for JSGlobalObject {
     #[inline]
     fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a> {
         self.err(ErrorCode::OUT_OF_RANGE, args)
-    }
-    #[inline]
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine {
-        JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>()
     }
 }
 
@@ -801,23 +796,4 @@ impl SslCtxCache {
         // are caller stack locals.
         unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C" — **C++** JSC bindings (src/jsc/bindings/bindings.cpp) used by
-// the extension traits above. No Rust-defined symbols are declared here; all
-// `bun_runtime` cross-calls go through [`SqlRuntimeHooks`] so the compiler
-// type-checks both sides at the registration site.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    // JSValue — by-value `JSValue` (encoded NaN-boxed u64) + scalar args; the
-    // C++ side reads no caller memory and upholds no invariants the caller must
-    // discharge, so these are `safe fn`.
-
-    // JSGlobalObject — `&JSGlobalObject` is ABI-identical to a non-null
-    // `*const JSGlobalObject`; the reference type discharges the validity
-    // precondition, so `safe fn`. Returned pointer is opaque (caller derefs
-    // under its own SAFETY obligation).
-    safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
-
 }

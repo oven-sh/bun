@@ -39,6 +39,9 @@ pub mod shared {
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 
+    #[path = "StartTls.rs"]
+    pub mod start_tls;
+
     #[path = "StatementCache.rs"]
     pub mod statement_cache;
 

@@ -18,11 +18,10 @@ use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::protocol::stack_reader::PacketReader;
-use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
-use crate::mysql::protocol::any_mysql_error_jsc::{MaybeBytes, mysql_error_to_js};
+use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
@@ -193,16 +192,6 @@ impl JSMySQLConnection {
 
     // ────────────────────────────────────────────────────────────────────────
 
-    // Exported via the `.classes.ts` codegen (`MySQLConnectionClass__construct`).
-    pub fn constructor(
-        global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut Self> {
-        Err(global_object.throw(format_args!(
-            "MySQLConnection cannot be constructed directly"
-        )))
-    }
-
     pub(crate) fn enqueue_request(&self, item: RefPtr<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         let _entered = self.entered_from_js();
@@ -281,7 +270,6 @@ impl JSMySQLConnection {
         self.poll_ref.with_mut(|p| p.unref(ctx));
     }
 
-    // — same proc-macro limitation as `constructor` above.
     pub(crate) fn create_instance(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -292,8 +280,7 @@ impl JSMySQLConnection {
         // The connection is the calling script's.
         let context = global_object.bun_vm().context_of_caller(callframe);
         let arguments = callframe.arguments();
-        let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
-        else {
+        let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
             return Ok(JSValue::ZERO);
         };
         let (secure, tls_config) = (args.secure, args.tls_config);
@@ -397,7 +384,7 @@ impl JSMySQLConnection {
                     }
                     return Err(global_object.throw_value(mysql_error_to_js(
                         global_object,
-                        &message,
+                        Some(&message),
                         AnyMySQLErrorT::ConnectionRefused,
                     )));
                 }
@@ -521,7 +508,7 @@ impl JSMySQLConnection {
             let _ = write!(&mut message, "{}", args);
         }
 
-        let err = mysql_error_to_js(&self.global_object, &message, error_code);
+        let err = mysql_error_to_js(&self.global_object, Some(&message), error_code);
         self.fail_with_js_value(err);
     }
 
@@ -546,7 +533,7 @@ impl JSMySQLConnection {
             if js_error.is_empty() {
                 js_error = mysql_error_to_js(
                     &self.global_object,
-                    b"Connection closed",
+                    Some(b"Connection closed"),
                     AnyMySQLErrorT::ConnectionClosed,
                 );
             }
@@ -559,8 +546,8 @@ impl JSMySQLConnection {
         self.update_reference_type();
     }
 
-    fn fail(&self, message: impl MaybeBytes, err: AnyMySQLErrorT) {
-        let instance = mysql_error_to_js(&self.global_object, message, err);
+    fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
+        let instance = mysql_error_to_js(&self.global_object, Some(message), err);
         self.fail_with_js_value(instance);
     }
 
@@ -723,7 +710,7 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                self.fail(None::<&[u8]>, err);
+                self.fail_with_js_value(mysql_error_to_js(&self.global_object, None, err));
             }
         }
     }

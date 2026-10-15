@@ -15,6 +15,8 @@ pub mod shared {
     pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
+    #[path = "SSLMode.rs"]
+    pub mod ssl_mode;
     #[path = "StackReader.rs"]
     pub mod stack_reader;
     #[path = "StatementStatus.rs"]
@@ -24,6 +26,7 @@ pub mod shared {
     pub use connection_flags::ConnectionFlags;
     pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
+    pub use ssl_mode::SSLMode;
 }
 
 pub mod mysql {
@@ -39,8 +42,6 @@ pub mod mysql {
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
-    #[path = "SSLMode.rs"]
-    pub mod ssl_mode;
     #[path = "StatusFlags.rs"]
     pub mod status_flags;
     #[path = "TLSStatus.rs"]
@@ -119,8 +120,6 @@ pub mod postgres {
     pub mod postgres_types;
     #[path = "SocketMonitor.rs"]
     pub mod socket_monitor;
-    #[path = "SSLMode.rs"]
-    pub mod ssl_mode;
     #[path = "Status.rs"]
     pub mod status;
     #[path = "TLSStatus.rs"]
@@ -200,7 +199,6 @@ pub mod postgres {
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
     pub use command_tag::CommandTag;
-    pub use ssl_mode::SSLMode;
     pub use status::Status;
     pub use tls_status::TLSStatus;
 

@@ -16,6 +16,7 @@ use bun_core::fmt::ConnTimeoutKind;
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
+use bun_jsc::rare_data::SocketGroups;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_uws as uws;
 use std::rc::Rc;
@@ -40,21 +41,22 @@ use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
+use crate::shared::start_tls::start_tls;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes::Int4;
-use bun_sql::postgres::SSLMode;
 use bun_sql::postgres::SocketMonitor;
 use bun_sql::postgres::Status;
 use bun_sql::postgres::TLSStatus;
 use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
+use bun_sql::shared::SSLMode;
 
 // Aliases for PostgresRequest's `on_data` dispatch.
-pub use bun_sql::postgres::SSLMode as SslMode;
 pub use bun_sql::postgres::TLSStatus as TlsStatus;
+pub use bun_sql::shared::SSLMode as SslMode;
 
 type Socket = uws::AnySocket;
 
@@ -364,84 +366,26 @@ impl PostgresSQLConnection {
         js::onnotification_set_cached(this_value, global, value);
     }
 
+    /// `on_handshake` sends the StartupMessage.
     pub(crate) fn setup_tls(&self) {
-        debug!("setupTLS");
-        // At this point we are
-        // a plain TCP socket in the Connected state.
-        let Socket::SocketTcp(tcp) = self.socket.get() else {
+        let started = start_tls(
+            self.as_ctx_ptr(),
+            *self.socket.get(),
+            (
+                uws::SocketKind::PostgresTls,
+                SocketGroups::postgres_group::<true>,
+            ),
+            self.secure.as_ref(),
+            &self.tls_config,
+            verifies_certificate(&self.tls_config, self.ssl_mode),
+            |socket| self.socket.set(socket),
+        );
+        if started.is_err() {
             self.fail(
                 b"Failed to upgrade to TLS",
                 AnyPostgresError::TLSUpgradeFailed,
             );
-            return;
-        };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
-        };
-        // SAFETY: `raw` is a live connected socket in its context's Postgres TCP group.
-        let tls_group: &mut bun_uws::SocketGroup = unsafe {
-            bun_jsc::rare_data::SocketGroups::of((*raw).group())
-                .postgres_group::<true>(self.vm().uws_loop())
-        };
-
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached.
-        let ssl_ctx = unsafe {
-            &mut *self
-                .secure
-                .as_ref()
-                .expect("secure SSL_CTX must be set before setupTLS")
-                .as_ptr()
-        };
-        let sni = self.tls_config.sni();
-        // The ext slot is an 8-byte null-niche
-        // optional pointer, `Option<NonNull<T>>`; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size =
-            core::mem::size_of::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::PostgresTls,
-            ssl_ctx,
-            sni,
-            true,  // is_client
-            false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
-            ext_size,
-            ext_size,
-        ) else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
-        };
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
-        // above. One `&mut` reborrow drives both safe inherent methods
-        // (`ext` / `start_tls_handshake`).
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
-            core::ptr::NonNull::new(self.as_ctx_ptr());
-        if verifies_certificate(&self.tls_config, self.ssl_mode) {
-            sock.set_inline_reject();
         }
-        self.socket.set(Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        }));
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        // `on_handshake` sends the StartupMessage.
-        sock.start_tls_handshake();
     }
 
     pub(crate) fn start(&self) {
@@ -964,15 +908,6 @@ impl PostgresSQLConnection {
             self.reset_connection_timeout();
         }
     }
-
-    pub fn constructor(
-        global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut PostgresSQLConnection> {
-        Err(global_object.throw(format_args!(
-            "PostgresSQLConnection cannot be constructed directly"
-        )))
-    }
 }
 
 /// https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
@@ -991,8 +926,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // The connection is the calling script's.
     let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
-    let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
-    else {
+    let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
         return Ok(JSValue::ZERO);
     };
     let (secure, tls_config) = (args.secure, args.tls_config);

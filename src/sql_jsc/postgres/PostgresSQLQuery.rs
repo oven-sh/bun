@@ -379,16 +379,6 @@ impl PostgresSQLQuery {
         );
     }
 
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<*mut PostgresSQLQuery> {
-        let _ = callframe;
-        Err(global_this.throw(format_args!(
-            "PostgresSQLQuery cannot be constructed directly"
-        )))
-    }
-
     pub fn estimated_size(&self) -> usize {
         mem::size_of::<PostgresSQLQuery>()
     }

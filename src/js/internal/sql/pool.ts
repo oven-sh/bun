@@ -361,13 +361,14 @@ function retireReplacedPools(generation: number) {
 }
 
 /// SCRAM hashes SASLprep(password) (RFC 4013). A password that SASLprep refuses is used as it is, like in libpq.
-/// The server refuses by the tables of Unicode 3.2 and by text direction. Here anything right-to-left or outside
-/// the BMP counts as refused: that only gives up the normalization, which is what happened before there was one.
+/// The server refuses by the tables of Unicode 3.2 and by text direction. Here anything right-to-left, outside the
+/// BMP or a pictograph counts as refused, which only gives up the normalization.
 function saslprep(password: string): string {
   const mapped = password
     .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
     .replace(/\u034f|\u200d|[\ufe00-\ufe0f]|[\u00ad\u1806\u180b-\u180d\u200c\u2060\ufeff]/g, "");
-  return mapped === "" || /[\p{C}\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc\u{10000}-\u{10ffff}]/u.test(mapped)
+  return mapped === "" ||
+    /[\p{C}\p{Extended_Pictographic}\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc\u{10000}-\u{10ffff}]/u.test(mapped)
     ? password
     : mapped.normalize("NFKC");
 }
@@ -603,20 +604,17 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   /// The name goes between single quotes.
-  protected distributedNameError(name: string): string | undefined {
+  protected checkDistributedName(name: string): void {
     if (typeof name !== "string") {
-      return "Distributed transaction name must be a string.";
+      throw new Error("Distributed transaction name must be a string.");
     }
     if (name.includes("'")) {
-      return "Distributed transaction name cannot contain single quotes.";
+      throw new Error("Distributed transaction name cannot contain single quotes.");
     }
   }
 
   getFinishDistributedSQL(commit: boolean, name: string): string {
-    const error = this.distributedNameError(name);
-    if (error) {
-      throw new Error(error);
-    }
+    this.checkDistributedName(name);
     return `${commit ? this.commitPrepared : this.rollbackPrepared} '${name}'`;
   }
 

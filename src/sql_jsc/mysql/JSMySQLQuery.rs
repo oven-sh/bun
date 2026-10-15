@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
-    CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    MarkedArgumentBuffer, VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
+    VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
@@ -39,8 +39,7 @@ pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
     ref_count: Cell<u32>,
-    // Process-lifetime backrefs (JSC_BORROW on m_ctx payload).
-    vm: BackRef<VirtualMachine>,
+    // Process-lifetime backref (JSC_BORROW on m_ctx payload).
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
 }
@@ -55,15 +54,6 @@ impl JSMySQLQuery {
 
     pub fn estimated_size(&self) -> usize {
         core::mem::size_of::<Self>()
-    }
-
-    // Exported via the `.classes.ts` codegen (`MySQLQueryClass__construct`).
-    pub fn constructor(
-        global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<*mut Self> {
-        Err(global_this
-            .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
     pub fn finalize(&self) {
@@ -87,10 +77,6 @@ impl JSMySQLQuery {
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
-            // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: BackRef::from(
-                NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
-            ),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(
                 query.to_bun_string(global_this)?,
@@ -145,7 +131,7 @@ impl JSMySQLQuery {
         if !connection.is_active() {
             return Err(global_object.throw_value(mysql_error_to_js(
                 global_object,
-                "Connection closed",
+                Some(b"Connection closed"),
                 AnyMySQLError::Error::ConnectionClosed,
             )));
         }
@@ -164,7 +150,7 @@ impl JSMySQLQuery {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
         // The queue drops a request that ended when it gets to it.
         this.reject_when(
             MySQLQuery::cancel,
@@ -264,13 +250,8 @@ impl JSMySQLQuery {
             return;
         };
         this_value.ensure_still_alive();
-        let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_resolve_fn
-            .get()
-        else {
+        let vm = VirtualMachine::get_mut();
+        let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
@@ -279,9 +260,7 @@ impl JSMySQLQuery {
         pending_value.ensure_still_alive();
         self.set_pending_value(JSValue::UNDEFINED);
 
-        let event_loop = self.event_loop();
-
-        event_loop.run_callback(
+        vm.event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -328,7 +307,7 @@ impl JSMySQLQuery {
         if let Some(err_) = self.global_object().try_take_exception() {
             return err_;
         }
-        let instance = mysql_error_to_js(self.global_object(), None::<&[u8]>, err);
+        let instance = mysql_error_to_js(self.global_object(), None, err);
         instance.ensure_still_alive();
         instance
     }
@@ -351,27 +330,21 @@ impl JSMySQLQuery {
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
                 self.global_object(),
-                "Query failed",
+                Some(b"Query failed"),
                 AnyMySQLError::Error::UnknownError,
             );
         }
         debug_assert!(!js_error.is_empty(), "js_error is zero");
         js_error.ensure_still_alive();
-        let Some(function) = self
-            .vm_mut()
-            .sql_state()
-            .mysql_context
-            .on_query_reject_fn
-            .get()
-        else {
+        let vm = VirtualMachine::get_mut();
+        let Some(function) = vm.sql_state().mysql_context.on_query_reject_fn.get() else {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        let event_loop = self.event_loop();
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
-        event_loop.run_callback(
+        vm.event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
@@ -475,23 +448,6 @@ impl JSMySQLQuery {
         None
     }
 
-    // Helpers for stored back-references.
-    #[inline]
-    fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
-    }
-    #[inline]
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
-    /// `&mut EventLoop` for `run_callback`. Routes through the inherent safe
-    /// `VirtualMachine::event_loop_mut` accessor — the loop is a disjoint heap
-    /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
-    /// single-thread affinity ⇒ no two `&mut EventLoop` coexist.
-    #[inline]
-    fn event_loop(&self) -> &mut crate::jsc::EventLoop {
-        self.vm().event_loop_mut()
-    }
     #[inline]
     fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()

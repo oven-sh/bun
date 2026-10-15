@@ -241,9 +241,7 @@ class PostgresAdapter extends BaseSQLAdapter<
   }
 
   getDistributedTransactionCommands(name: string): TransactionCommands | null {
-    if (this.distributedNameError(name)) {
-      return null;
-    }
+    this.checkDistributedName(name);
     return { BEGIN: "BEGIN", COMMIT: `PREPARE TRANSACTION '${name}'`, ROLLBACK: "ROLLBACK" };
   }
 

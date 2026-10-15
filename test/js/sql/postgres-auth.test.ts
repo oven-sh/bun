@@ -604,6 +604,7 @@ describe.concurrent("scripted server", () => {
     // Refused by SASLprep: the password is used as it is.
     ["prohibited: as it is", "a\u0007\u00aa", "a\u0007\u00aa"],
     ["unassigned in Unicode 3.2: as it is", "\u00aa\u{1f600}", "\u00aa\u{1f600}"],
+    ["unassigned in Unicode 3.2, in the BMP: as it is", "\u00aa\u2728", "\u00aa\u2728"],
     ["mixed directions: as it is", "\u05d0a\u00aa", "\u05d0a\u00aa"],
     ["right-to-left that does not end so: as it is", "\u05d01\u00aa", "\u05d01\u00aa"],
     ["maps to nothing: as it is", "\u00ad", "\u00ad"],

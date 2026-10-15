@@ -13,11 +13,10 @@ for (const type of types) {
     define({
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
-      construct: true,
+      noConstructor: true,
       refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
-      klass: {},
       JSType: "0b11101110",
       proto: {
         close: {
@@ -63,11 +62,10 @@ for (const type of types) {
     define({
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
-      construct: true,
+      noConstructor: true,
       refCounted: true,
       configurable: false,
       JSType: "0b11101110",
-      klass: {},
       proto: {
         run: {
           fn: "doRun",

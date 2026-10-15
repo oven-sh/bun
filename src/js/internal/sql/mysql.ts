@@ -72,9 +72,7 @@ class MySQLAdapter extends BaseSQLAdapter<$ZigGeneratedClasses.MySQLConnection, 
   }
 
   getDistributedTransactionCommands(name: string): TransactionCommands | null {
-    if (this.distributedNameError(name)) {
-      return null;
-    }
+    this.checkDistributedName(name);
     return {
       BEGIN: `XA START '${name}'`,
       BEFORE_COMMIT_OR_ROLLBACK: `XA END '${name}'`,

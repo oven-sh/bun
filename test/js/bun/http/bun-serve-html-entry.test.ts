@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isMacOS, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>) {
@@ -731,14 +731,14 @@ describe("o + Enter", () => {
     }
   }
 
-  // Boots `bun index.html` on a pty. With `stderrFile`, the server's stderr goes to that file and
+  // Boots the dev server on a pty. With `stderrFile`, the server's stderr goes to that file and
   // colours stay on, so the pty carries the coloured banner and the key echoes only.
-  async function devServerInPty(cwd: string, PATH: string, stderrFile?: string) {
+  async function devServerInPty(cwd: string, PATH: string, stderrFile?: string, entries = ["index.html"]) {
     const decoder = new TextDecoder();
     let text = "";
     const waiters: { needle: string; from: number; resolve: () => void; reject: (error: Error) => void }[] = [];
     const closed = Promise.withResolvers<void>();
-    const bun = [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"];
+    const bun = [bunExe(), ...entries, "--port=0", "--hostname=127.0.0.1"];
     // On Windows the inherited variable is spelled `Path`, and in a plain spread it would win.
     const env = mergeWindowEnvs([bunEnv, { PATH, STDERR_FILE: stderrFile, TERM: stderrFile && "xterm-256color" }]);
     if (stderrFile) delete env.NO_COLOR;
@@ -777,6 +777,15 @@ describe("o + Enter", () => {
       return promise;
     };
     const stderr = () => (stderrFile && existsSync(stderrFile) ? readFileSync(stderrFile, "utf8") : "");
+    // Polls the stderr file until it holds `needle` `count` times. An exit of the server ends the wait.
+    const stderrHas = (needle: string, count: number) =>
+      until(
+        () => `${count} of ${JSON.stringify(needle)} on stderr, got ${JSON.stringify(stderr())}`,
+        () => {
+          if (proc.exitCode !== null) throw new Error(`server exited with ${proc.exitCode}:\n${stderr()}`);
+          return stderr().split(needle).length > count;
+        },
+      );
     try {
       // The shortcut hint is the last line of the banner, so the URL line is complete by then.
       await waitFor("h + Enter");
@@ -785,8 +794,9 @@ describe("o + Enter", () => {
       if (!url) throw new Error(`no URL on the banner: ${JSON.stringify(text)}`);
       return {
         proc,
-        // The URL on the banner.
+        // The URL on the banner, and its origin.
         url,
+        origin: new URL(url).origin,
         port: Number(new URL(url).port),
         waitFor,
         closed: closed.promise,
@@ -795,15 +805,9 @@ describe("o + Enter", () => {
         mark: () => text.length,
         // Enter is a carriage return: a Windows console read only completes a line on one.
         press: (key: string) => void proc.terminal!.write(`${key}\r`),
-        // Polls the stderr file until it holds `count` note lines. An exit of the server ends the wait.
-        reported: (count: number) =>
-          until(
-            () => `${count} reports on stderr, got ${JSON.stringify(stderr())}`,
-            () => {
-              if (proc.exitCode !== null) throw new Error(`server exited with ${proc.exitCode}:\n${stderr()}`);
-              return stderr().split("in your browser\n").length > count;
-            },
-          ),
+        stderrHas,
+        // Waits for the note line of `count` failed launches.
+        reported: (count: number) => stderrHas("in your browser\n", count),
         async [Symbol.asyncDispose]() {
           proc.kill();
           await proc.exited;
@@ -859,6 +863,123 @@ describe("o + Enter", () => {
           terminalAfterBanner: "o\r\no\r\nq\r\n",
         });
       }
+    },
+  );
+
+  // With several entries and no index route, the root is not a page. The banner names the
+  // first route, and `o` must open that page.
+  test.concurrent.skipIf(isAndroid)("opens the page on the banner when no entry is the index", async () => {
+    using dir = tempDir("html-open-routes", { "about.html": html, "contact.html": html, "empty-bin/.keep": "" });
+    const stderrFile = isWindows ? undefined : join(String(dir), "stderr.txt");
+    // `./`: a bare name after the first entry is looked up as a package before it is read as a file.
+    const entries = ["about.html", "./contact.html"];
+    await using server = await devServerInPty(String(dir), join(String(dir), "empty-bin"), stderrFile, entries);
+    expect(server.url).toBe(`${server.origin}/about`);
+
+    // With no opener on PATH, the note line shows the URL that `o` hands to the opener.
+    const from = server.mark();
+    server.press("o");
+    if (stderrFile) await server.reported(1);
+    else await server.waitFor("in your browser", from);
+    const shown = stderrFile ? server.stderr() : Bun.stripANSI(server.text().slice(from));
+    expect(shown).toContain(`note: Open ${server.origin}/about in your browser`);
+    expect({
+      page: (await fetch(server.url)).status,
+      root: (await fetch(`${server.origin}/`)).status,
+    }).toEqual({ page: 200, root: 404 });
+
+    server.press("q");
+    expect(await server.proc.exited).toBe(0);
+  });
+
+  // A fake opener needs a shebang script, so this case is POSIX-only. The opener inherits
+  // stderr, so the line it writes there is the signal that it ran.
+  // The first route comes from a file name that parses as a URL: the page must stay on the
+  // server origin, or the file name would choose what the opener is given.
+  test.concurrent.skipIf(isWindows || isAndroid)(
+    "gives the opener the banner URL and /dev/null, and neither waits for it nor reports its exit",
+    async () => {
+      const opener = isMacOS ? "open" : "xdg-open";
+      using dir = tempDir("html-open-fake", { "mailto:me.html": html, "other.html": html, "mode": "3\n" });
+      const modeFile = join(String(dir), "mode");
+      const releaseFile = join(String(dir), "release");
+      mkdirSync(join(String(dir), "bin"));
+      // The mode file says how the opener ends: an exit code, or `hold` to stay alive until released.
+      writeFileSync(
+        join(String(dir), "bin", opener),
+        `#!/bin/sh
+read mode < ${JSON.stringify(modeFile)}
+if [ -t 0 ]; then in=tty; elif [ /dev/fd/0 -ef /dev/null ]; then in=null; else in=other; fi
+if [ -t 1 ]; then out=tty; elif [ /dev/fd/1 -ef /dev/null ]; then out=null; else out=other; fi
+echo "FAKE_OPENER pid=$$ stdin=$in stdout=$out url=$1 mode=$mode" >&2
+if [ "$mode" = hold ]; then
+  i=0
+  while [ ! -e ${JSON.stringify(releaseFile)} ] && [ $i -lt 300 ]; do /bin/sleep 0.05; i=$((i+1)); done
+  exit 0
+fi
+exit "$mode"
+`,
+        { mode: 0o755 },
+      );
+      const entries = ["mailto:me.html", "./other.html"];
+      await using server = await devServerInPty(
+        String(dir),
+        join(String(dir), "bin"),
+        join(String(dir), "stderr.txt"),
+        entries,
+      );
+      expect(server.url).toBe(`${server.origin}/mailto:me`);
+
+      // Presses `o` and returns the pid of the opener that bun launched for it.
+      let presses = 0;
+      async function open(mode: string) {
+        writeFileSync(modeFile, `${mode}\n`);
+        server.press("o");
+        await server.stderrHas("\n", ++presses);
+        return Number(
+          server
+            .stderr()
+            .trimEnd()
+            .split("\n")
+            .at(-1)!
+            .match(/pid=(\d+)/)![1],
+        );
+      }
+      // A zombie still answers signal 0, so ESRCH means bun has reaped the opener.
+      const reaped = (pid: number) =>
+        until(
+          () => `opener ${pid} is reaped`,
+          () => {
+            try {
+              process.kill(pid, 0);
+              return false;
+            } catch (error: any) {
+              if (error.code !== "ESRCH") throw error;
+              return true;
+            }
+          },
+        );
+
+      // An opener that fails, then two that stay alive: the second one shows that the server
+      // still answers a key while an opener runs.
+      await reaped(await open("3"));
+      const held = [await open("hold"), await open("hold")];
+      writeFileSync(releaseFile, "");
+      await Promise.all(held.map(reaped));
+      server.press("q");
+      expect(await server.proc.exited).toBe(0);
+      await server.closed;
+
+      const marker = (mode: string) => `FAKE_OPENER pid=<pid> stdin=null stdout=null url=${server.url} mode=${mode}\n`;
+      expect({
+        stderr: server.stderr().replace(/pid=\d+/g, "pid=<pid>"),
+        terminalAfterBanner: Bun.stripANSI(server.text()).split("to show shortcuts\r\n")[1],
+      }).toEqual({
+        // Each opener's own line and nothing from bun: not for exit code 3, not while one runs.
+        stderr: marker("3") + marker("hold") + marker("hold"),
+        // Nothing went to stdout either: the terminal shows only the echo of each key.
+        terminalAfterBanner: "o\r\no\r\no\r\nq\r\n",
+      });
     },
   );
 });

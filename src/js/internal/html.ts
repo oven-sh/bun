@@ -282,22 +282,26 @@ yourself with Bun.serve().
   }
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
+
+  // The page the banner prints and `o` opens: the index route if there is one, else the first route.
+  let landingRoute;
+  if (servePaths.length === 1) {
+    landingRoute = servePaths[0];
+  } else {
+    const indexRoute = servePaths.find(a => {
+      return a === "index" || a === "";
+    });
+    landingRoute = indexRoute !== undefined ? indexRoute : servePaths[0];
+  }
+  if (landingRoute === "*") {
+    landingRoute = "";
+  }
+  // Only the path comes from the route: `new URL("mailto:me", server.url)` is `mailto:me`.
+  const page = new URL(server.url);
+  page.pathname = "/" + landingRoute;
+  const pageUrl = page.href;
+
   function printInitialMessage(isFirst: boolean) {
-    let pathnameToPrint;
-    if (servePaths.length === 1) {
-      pathnameToPrint = servePaths[0];
-    } else {
-      const indexRoute = servePaths.find(a => {
-        return a === "index" || a === "" || a === "/";
-      });
-      pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
-    }
-
-    pathnameToPrint ||= "/";
-    if (pathnameToPrint === "*") {
-      pathnameToPrint = "/";
-    }
-
     if (enableANSIColors) {
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
@@ -307,7 +311,7 @@ yourself with Bun.serve().
         topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
       }
       console.log(topLine + "\n");
-      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
+      console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${pageUrl}\x1b[0m`);
     } else {
       let topLine = `Bun v${Bun.version}`;
       if (isFirst) {
@@ -317,7 +321,7 @@ yourself with Bun.serve().
         topLine += ` ready in ${elapsed} ms`;
       }
       console.log(topLine + "\n");
-      console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
+      console.log(`url: ${pageUrl}`);
     }
     if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
       console.log("\nRoutes:");
@@ -380,7 +384,7 @@ yourself with Bun.serve().
           break;
 
         case "o\n": {
-          const url = server.url.toString();
+          const url = pageUrl;
           let cmd: string[];
 
           if (process.platform === "darwin") {
@@ -388,6 +392,7 @@ yourself with Bun.serve().
             cmd = ["open", url];
           } else if (process.platform === "win32") {
             // `start` is a cmd.exe builtin, not a program, so this launch always fails (#26231).
+            // The path of the URL comes from a file name: it must not be handed to cmd.exe.
             cmd = ["start", url];
           } else if (process.platform === "android") {
             cmd = ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url];
@@ -397,7 +402,7 @@ yourself with Bun.serve().
 
           // Bun.spawn throws synchronously when it cannot launch the opener.
           try {
-            Bun.spawn(cmd);
+            Bun.spawn(cmd, { stdout: "ignore" });
           } catch (error: any) {
             // `enableANSIColors` is also true when only stdout has colours, and these lines go to stderr.
             const [errorLabel, noteLabel] =

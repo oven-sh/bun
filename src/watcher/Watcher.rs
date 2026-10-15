@@ -1059,21 +1059,19 @@ impl Watcher {
             return false;
         }
         let dir_hash = Self::unresolved_dir_hash(lookup.dir);
-        let is_this =
-            |u: &UnresolvedImport| u.dir_hash == dir_hash && *u.candidates[0] == *lookup.base;
-        let candidates = {
+        let candidates = UnresolvedImport::candidates_of(lookup);
+        let is_this = |u: &UnresolvedImport| u.dir_hash == dir_hash && u.candidates == candidates;
+        {
             let _guard = self.mutex.lock_guard();
             if self.unresolved_imports.iter().any(is_this) {
                 return false;
             }
-            let candidates = UnresolvedImport::candidates_of(lookup);
             self.unresolved_imports.push(UnresolvedImport {
                 dir_hash,
                 candidates: candidates.clone(),
                 present: Vec::new(),
             });
-            candidates
-        };
+        }
         // Listed after the record is in place: an entry created from here on has an event that finds the record.
         let mut present: Vec<Box<[u8]>> = Vec::new();
         for_each_dir_entry(lookup.dir, |name| {

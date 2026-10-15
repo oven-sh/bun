@@ -619,10 +619,8 @@ class Interface extends InterfaceConstructor {
       this[kSawReturnAt] = 0;
     }
 
-    // The line buffer never holds "\r", "\u2028" or "\u2029": every one of them
-    // ends a line, so only the new chunk needs the check. When the chunk has
-    // none of them, "\n" is the only line ending and indexOf finds each line
-    // without the match array that RegExpPrototypeExec allocates per line.
+    // Only the new chunk needs this check: kLine_buffer is the text after the
+    // last line ending, so it never holds "\r", "\u2028" or "\u2029".
     if (
       StringPrototypeIndexOf(string, "\r") === -1 &&
       StringPrototypeIndexOf(string, "\u2028") === -1 &&

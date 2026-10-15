@@ -165,14 +165,12 @@ describe.concurrent("bun test --isolate", () => {
         });
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a-leaks-socket.test.ts", "./b-next.test.ts"],
-      env: { ...bunEnv, SERVER_PORT: String(server.port) },
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-leaks-socket.test.ts", "./b-next.test.ts"],
+      { ...bunEnv, SERVER_PORT: String(server.port) },
+    );
     expect(stderr).toContain("CLOSE-HANDLER-WROTE");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(exitCode).toBe(0);

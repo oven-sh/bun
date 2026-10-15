@@ -10,6 +10,10 @@
 //!
 //! Then, to clone the data later, we can just call `mmap` again.
 //!
+//! `create` writes the file once. Every mapping of it is `MAP_PRIVATE`, the
+//! store's own view too, so a write through one mapping never reaches the
+//! file that the other mappings read.
+//!
 //! The big catch is that mmap(), memfd_create(), write() all have overhead. And
 //! often we will re-use virtual memory within the process. This does not reuse
 //! the virtual memory. So we should only really use this for large blobs of
@@ -99,24 +103,12 @@ impl LinuxMemFdAllocator {
     /// `this` must be a live Box-allocated `*mut Self` (see [`Self::allocator`]).
     /// On `Ok`, the returned `Bytes` borrows one ref on `*this` (via the
     /// embedded allocator); the caller must NOT consume that ref separately.
-    pub(crate) unsafe fn alloc(
-        this: *mut Self,
-        len: usize,
-        offset: usize,
-        // `sys::mmap` takes raw `i32` flags; callers pass `libc::MAP_*`
-        // directly. `MAP_SHARED` is forced below.
-        flags: i32,
-    ) -> sys::Result<BlobStoreBytes> {
+    pub(crate) unsafe fn alloc(this: *mut Self, len: usize) -> sys::Result<BlobStoreBytes> {
         let mut size = len;
 
         // size rounded up to nearest page
         let page = bun_alloc::page_size();
         size = (size + page - 1) & !(page - 1);
-
-        // The map type *replaces* the low TYPE bits (not OR). Mask out the
-        // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
-        // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
-        let flags_mut = (flags & !libc::MAP_TYPE) | libc::MAP_SHARED;
 
         // SAFETY: `this` is live per caller contract; we only read scalar fields.
         let (self_size, self_fd) = unsafe { ((*this).size, (*this).fd) };
@@ -126,9 +118,11 @@ impl LinuxMemFdAllocator {
             core::ptr::null_mut(),
             map_len,
             libc::PROT_READ | libc::PROT_WRITE,
-            flags_mut,
+            // Without `MAP_NORESERVE` the kernel charges a writable private
+            // mapping against the commit limit, on top of the file's pages.
+            libc::MAP_PRIVATE | libc::MAP_NORESERVE,
             self_fd,
-            offset as i64,
+            0,
         ) {
             Ok(slice_ptr) => {
                 // SAFETY: `slice_ptr[0..map_len]` is the mmap'd region; `Self::allocator(this)`
@@ -222,7 +216,7 @@ impl LinuxMemFdAllocator {
         let memfd = Self::new(fd, bytes.len());
         // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
         // one live ref — required by `Self::alloc`.
-        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len(), 0, libc::MAP_SHARED) }?;
+        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len()) }?;
         // That ref now lives in `res.allocator`.
         let _ = memfd.into_raw();
         Ok(res)

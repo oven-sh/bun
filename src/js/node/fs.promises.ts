@@ -306,8 +306,7 @@ const exports = {
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
-  // Two arguments only: the binding takes a third (`unsorted`) that is for
-  // the `Dir` class and must not be reachable from user code.
+  // Fixed arity: the binding's third argument is for `Dir` only.
   readdir: async function readdir(path, options) {
     return fs.readdir(path, options);
   } as typeof import("node:fs/promises").readdir,

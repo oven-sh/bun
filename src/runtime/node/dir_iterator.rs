@@ -814,20 +814,15 @@ pub(crate) type WrappedIterator = NewWrappedIterator<false>;
 pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 
 struct SortedEntry {
-    /// Offset of the name in `SortedEntries::names`. The byte after the name
-    /// is a NUL, so `name_assume_z` holds.
+    /// Offset into `SortedEntries::names`. A NUL follows each name.
     off: usize,
     len: u16,
     kind: EntryKind,
 }
 
-/// A whole directory read up front and ordered by the raw name bytes
-/// (`strcmp` order). This is libuv's `uv_fs_scandir` shape: node's
-/// `fs.readdir` family returns this order on every Unix platform.
-///
-/// Two allocations per directory (`names`, `index`), none per entry. A read
-/// error is yielded after the entries read before it, so a caller sees the
-/// same sequence it would see from the streaming iterator, sorted.
+/// A directory read up front and sorted by the raw name bytes, the order
+/// libuv's `uv_fs_scandir` gives node. A read error is yielded after the
+/// entries read before it.
 pub(crate) struct SortedEntries {
     names: Vec<u8>,
     index: Vec<SortedEntry>,
@@ -883,10 +878,8 @@ impl SortedEntries {
     }
 }
 
-/// The iterator behind node's `fs.readdir` family. `Sorted` is the libuv
-/// `scandir` order node returns on Unix. `Streaming` is the raw kernel order:
-/// `fs.opendir` (node does not sort a `Dir`) and Windows (libuv does not sort
-/// there either).
+/// `Sorted` for `fs.readdir` on Unix. `Streaming` (kernel order) for
+/// `fs.opendir` and for Windows, where libuv does not sort either.
 pub(crate) enum ReaddirIterator {
     Streaming(WrappedIterator),
     Sorted(SortedEntries),

@@ -535,8 +535,7 @@ var access = function access(path, mode, callback?) {
       throw err;
     }
   },
-  // Two arguments only: the binding takes a third (`unsorted`) that is for
-  // the `Dir` class and must not be reachable from user code.
+  // Fixed arity: the binding's third argument is for `Dir` only.
   readdirSync = function readdirSync(path, options) {
     return fs.readdirSync(path, options);
   } as typeof import("node:fs").readdirSync,
@@ -1065,8 +1064,7 @@ function opendirNotDirError(path) {
 // which run the eager path check with an async stat instead.
 const kAlreadyValidated = Symbol("kAlreadyValidated");
 
-// The readdir binding takes a third argument that keeps the kernel order.
-// Only `Dir` passes it: node does not sort a `Dir`.
+// `unsorted = true` keeps the kernel order: node does not sort a `Dir`.
 type DirReaddirOptions = {
   withFileTypes: true;
   encoding: BufferEncoding | "buffer" | undefined;

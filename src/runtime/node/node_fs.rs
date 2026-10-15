@@ -3554,9 +3554,7 @@ pub(crate) mod args {
         pub(crate) encoding: Encoding,
         pub(crate) with_file_types: bool,
         pub(crate) recursive: bool,
-        /// Keep the kernel order instead of node's sorted `scandir` order.
-        /// Set only by `fs.opendir` (`Dir` reads through the readdir
-        /// binding): node does not sort a `Dir`.
+        /// Kernel order instead of node's sorted order. Only `Dir` sets it.
         pub(crate) unsorted: bool,
     }
     impl Readdir<'_> {
@@ -3603,8 +3601,6 @@ pub(crate) mod args {
                         }
                     }
                 }
-                // The public `fs.readdir*` wrappers take two arguments, so
-                // only the `Dir` class reaches this one.
                 if let Some(flag) = arguments.next_eat() {
                     unsorted = flag == JSValue::TRUE;
                 }

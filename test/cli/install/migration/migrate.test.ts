@@ -685,6 +685,47 @@ describe.concurrent("a package-lock.json entry of another host without an integr
     expect(exitCode).toBe(0);
   });
 
+  test.each(["before", "after"])("takes the integrity of the same package's entry %s it", async order => {
+    using registry = localRegistry();
+    using other = otherHost();
+    const verified = {
+      version: "1.0.0",
+      resolved: registry.tarball("no-deps", "1.0.0"),
+      integrity: registry.integrity("no-deps", "1.0.0"),
+    };
+    const unverified = { version: "1.0.0", resolved: `${other.url}no-deps-1.0.0.tgz` };
+    const dependencies = { "no-deps": "1.0.0", parent: "1.0.0" };
+    using dir = synthetic(
+      "migrate-off-registry-entry-twice",
+      {
+        "package.json": JSON.stringify({ name: "twice", dependencies }),
+        "package-lock.json": npmLock("twice", {
+          "": { name: "twice", dependencies },
+          "node_modules/no-deps": order === "before" ? verified : unverified,
+          "node_modules/parent": {
+            version: "1.0.0",
+            resolved: registry.tarball("parent", "1.0.0"),
+            integrity: "sha512-" + Buffer.alloc(64, 1).toString("base64"),
+            dependencies: { "no-deps": "1.0.0" },
+          },
+          "node_modules/parent/node_modules/no-deps": order === "before" ? unverified : verified,
+        }),
+      },
+      registry.url,
+    );
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect((await readLock(dir)).lock.packages["no-deps"]).toEqual([
+      "no-deps@1.0.0",
+      verified.resolved,
+      {},
+      verified.integrity,
+    ]);
+    expect({ registry: registry.requests, other: other.requests }).toEqual({ registry: [], other: [] });
+    expect(exitCode).toBe(0);
+  });
+
   test("is not migrated when the registry does not have that version", async () => {
     using registry = localRegistry();
     using other = otherHost();

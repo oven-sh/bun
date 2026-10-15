@@ -24,7 +24,8 @@ const dir = String(
       export const S = { TICKS: 0, HEARD: 1, RECV: 2, DISPOSED: 3, TICKS_AT_DISPOSE: 4, HEARD_AT_DISPOSE: 5, RECV_AT_DISPOSE: 6, LEAF_TICKS: 7, LEAF_STATE: 8, RELEASE: 9, GO: 10, PID: 11, PEER_SEEN: 12, PEER_CLOSED: 13, SIBLING_TICKS: 14 };
       export const BYSTANDER = 16;
       export const LEAF = { ready: 1, inHandler: 2, blocked: 3, exiting: 4 };
-      export const turn = () => new Promise(resolve => setImmediate(resolve));
+      let turns = 0;
+      export const turn = () => { if (process.env.MGW_YIELD && ++turns % 5000 === 0) Bun.sleepSync(0); return new Promise(resolve => setImmediate(resolve)); };
       export const until = async condition => { while (!condition()) await turn(); };
     `,
     "leaf.mjs": String.raw`

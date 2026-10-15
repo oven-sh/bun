@@ -68,6 +68,17 @@ pub trait PosixPipeWriter {
     /// callers may pass a `buf` that borrows from a field of `self` (e.g.
     /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
+        self.try_write_with_progress(force_sync, buf, &mut 0)
+    }
+
+    /// `try_write` for a caller that keeps `buf` buffered when the write fails: on `Err`,
+    /// `wrote_before_error` is the length of the prefix the fd took first.
+    fn try_write_with_progress(
+        &self,
+        force_sync: bool,
+        buf: &[u8],
+        wrote_before_error: &mut usize,
+    ) -> WriteResult {
         // PERF: try_write_with_write_fn is not monomorphized per FileType —
         // profile if hot.
         let ft = self.get_file_type();
@@ -75,7 +86,7 @@ pub trait PosixPipeWriter {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if matches!(ft, FileType::Pipe | FileType::NonblockingPipe) && !self.rwf_unsupported().get()
         {
-            match self.try_write_nowait(buf) {
+            match self.try_write_nowait(buf, wrote_before_error) {
                 Some(rc) => return rc,
                 // Not a pipe as far as pwritev2 is concerned (tty, pty master, old kernel): remember, use the plain path.
                 None => self.rwf_unsupported().set(true),
@@ -83,17 +94,19 @@ pub trait PosixPipeWriter {
         }
         match ft {
             // send(MSG_DONTWAIT | MSG_NBIO) is nonblocking per call on every Unix, whatever the fd's flags.
-            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
-            FileType::Pipe if !force_sync => {
-                self.try_write_with_write_fn(buf, write_to_blocking_pipe)
+            FileType::Socket => {
+                self.try_write_with_write_fn(buf, write_to_socket, wrote_before_error)
             }
-            _ => self.try_write_with_write_fn(buf, sys::write),
+            FileType::Pipe if !force_sync => {
+                self.try_write_with_write_fn(buf, write_to_blocking_pipe, wrote_before_error)
+            }
+            _ => self.try_write_with_write_fn(buf, sys::write, wrote_before_error),
         }
     }
 
     /// `None` if `RWF_NOWAIT` is not usable on this fd (nothing was written).
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn try_write_nowait(&self, buf: &[u8]) -> Option<WriteResult> {
+    fn try_write_nowait(&self, buf: &[u8], wrote_before_error: &mut usize) -> Option<WriteResult> {
         let fd = self.get_fd();
         if fd == Fd::INVALID {
             return Some(WriteResult::Done(0));
@@ -106,7 +119,10 @@ pub trait PosixPipeWriter {
                 Ok(Some(0)) => return Some(WriteResult::Done(offset)),
                 Ok(Some(wrote)) => offset += wrote,
                 Err(err) if err.is_retry() => return Some(WriteResult::Pending(offset)),
-                Err(err) => return Some(WriteResult::Err(err)),
+                Err(err) => {
+                    *wrote_before_error = offset;
+                    return Some(WriteResult::Err(err));
+                }
             }
         }
         Some(WriteResult::Wrote(offset))
@@ -116,6 +132,7 @@ pub trait PosixPipeWriter {
         &self,
         buf: &[u8],
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
+        wrote_before_error: &mut usize,
     ) -> WriteResult {
         let fd = self.get_fd();
         if fd == Fd::INVALID {
@@ -135,6 +152,7 @@ pub trait PosixPipeWriter {
                     // This ensures process.stdout.write() properly emits an error
                     // when writing to a broken pipe, matching Node.js behavior.
 
+                    *wrote_before_error = offset;
                     return WriteResult::Err(err);
                 }
 
@@ -177,7 +195,7 @@ pub trait PosixPipeWriter {
             usize::MAX
         };
 
-        match self.drain_buffered_data(max_write, received_hup) {
+        match self.drain_buffered_data(max_write, received_hup, &mut 0) {
             WriteResult::Pending(wrote) => {
                 if wrote > 0 {
                     self.on_write(wrote, WriteStatus::Pending);
@@ -209,9 +227,14 @@ pub trait PosixPipeWriter {
 
     /// Only writes; the caller dispatches the callbacks (`&self` enforces it,
     /// and parents rely on no `on_write` arriving after `on_error`). An error
-    /// is always `Err`: `try_write` reports a short write as `Pending`, never
-    /// as `Wrote`, so an error here means nothing was written this round.
-    fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
+    /// is always `Err`, and `drained_before_error` is then what the fd took
+    /// before it: a caller that keeps the buffer skips that much.
+    fn drain_buffered_data(
+        &self,
+        max_write_size: usize,
+        received_hup: bool,
+        drained_before_error: &mut usize,
+    ) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -225,7 +248,11 @@ pub trait PosixPipeWriter {
 
         while drained < limit {
             let force_sync = self.get_force_sync();
-            match self.try_write(force_sync, &self.get_buffer()[drained..limit]) {
+            match self.try_write_with_progress(
+                force_sync,
+                &self.get_buffer()[drained..limit],
+                drained_before_error,
+            ) {
                 WriteResult::Pending(pending) => {
                     drained += pending;
                     return WriteResult::Pending(drained);
@@ -234,6 +261,7 @@ pub trait PosixPipeWriter {
                     drained += amt;
                 }
                 WriteResult::Err(err) => {
+                    *drained_before_error += drained;
                     return WriteResult::Err(err);
                 }
                 WriteResult::Done(amt) => {
@@ -939,10 +967,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf_len);
         }
 
-        self.try_write_newly_buffered_data()
+        self.try_write_newly_buffered_data(self.outgoing.size() - buf_len)
     }
 
-    fn try_write_newly_buffered_data(&mut self) -> WriteResult {
+    /// Writes the buffer, whose tail is the chunk of the `write()` under way;
+    /// `buffered_before` is what it held before that chunk.
+    fn try_write_newly_buffered_data(&mut self, buffered_before: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 
         // Borrow `self.outgoing` only for the syscall. `try_write` takes `&self`
@@ -951,7 +981,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // free `outgoing.list` (`reset` shrinks; `on_write` may re-enter
         // `write()` on this writer). Holding a `&[u8]` fn-arg across those (the
         // old shape) was a Stacked-Borrows protector violation / dangling ref.
-        let rc = self.try_write(self.force_sync, self.outgoing.slice());
+        let mut wrote_before_error = 0;
+        let rc = self.try_write_with_progress(
+            self.force_sync,
+            self.outgoing.slice(),
+            &mut wrote_before_error,
+        );
 
         match rc {
             WriteResult::Wrote(amt) => {
@@ -975,7 +1010,14 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 Self::register_poll(self);
             }
 
-            WriteResult::Err(e) => return WriteResult::Err(e),
+            WriteResult::Err(e) => {
+                // The caller of `write()` is told, so nothing of its chunk stays. What was
+                // buffered before it stays for a redo, less the prefix the fd took.
+                self.outgoing.wrote(wrote_before_error);
+                self.outgoing
+                    .truncate(buffered_before.saturating_sub(wrote_before_error));
+                return WriteResult::Err(e);
+            }
         }
 
         rc
@@ -1003,13 +1045,14 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf.len());
         }
 
-        if self.outgoing.size() > 0 {
+        let buffered_before = self.outgoing.size();
+        if buffered_before > 0 {
             // make sure write is in-order
             if self.outgoing.write(buf).is_err() {
                 return WriteResult::Err(sys::Error::oom());
             }
 
-            return self.try_write_newly_buffered_data();
+            return self.try_write_newly_buffered_data(buffered_before);
         }
 
         let rc = self.try_write(self.force_sync, buf);
@@ -1046,6 +1089,18 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn flush(&mut self) -> WriteResult {
+        self.flush_impl(false)
+    }
+
+    /// `flush()` for the drain at the end of the tick, which has no caller to tell. A hard
+    /// error leaves the unsent bytes buffered, so the next `flush()`/`end()`, or the `write()`
+    /// that reaches the threshold, redoes the write(2) with a caller on the stack.
+    pub fn flush_deferred(&mut self) -> WriteResult {
+        self.flush_impl(true)
+    }
+
+    #[inline(always)]
+    fn flush_impl(&mut self, keep_unsent_on_error: bool) -> WriteResult {
         if self.closed_without_reporting || self.is_done {
             return WriteResult::Done(0);
         }
@@ -1063,7 +1118,12 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             false
         };
 
-        let rc = self.drain_buffered_data(usize::MAX, received_hup);
+        let mut drained_before_error = 0;
+        let rc = self.drain_buffered_data(usize::MAX, received_hup, &mut drained_before_error);
+        if keep_unsent_on_error && matches!(rc, WriteResult::Err(_)) {
+            self.outgoing.wrote(drained_before_error);
+            return rc;
+        }
         // update head
         match rc {
             WriteResult::Pending(written) => {
@@ -1898,6 +1958,11 @@ impl StreamBuffer {
 
     pub fn wrote(&mut self, amount: usize) {
         self.cursor += amount;
+    }
+
+    /// Drops what is buffered past the first `size` unread bytes.
+    pub fn truncate(&mut self, size: usize) {
+        self.list.truncate(self.cursor + size);
     }
 
     /// Drops the consumed prefix once it is at least as large as the unread tail.

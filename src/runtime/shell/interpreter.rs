@@ -1804,10 +1804,7 @@ pub(crate) struct ShellExecEnv {
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
     pub(crate) cwd_fd: Fd,
-    /// Status of the last `$(...)` performed by the simple command now
-    /// expanding in this env, `None` if it performed none. `Expansion` writes
-    /// it; `Cmd` and a standalone `Assigns` reset it on entry and report it
-    /// when no command name results (POSIX 2.9.1).
+    /// Status of the last `$(...)` of the simple command now expanding in this env (POSIX 2.9.1).
     pub(crate) last_cmd_subst_status: Option<ExitCode>,
 }
 

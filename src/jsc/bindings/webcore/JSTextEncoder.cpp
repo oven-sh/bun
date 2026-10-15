@@ -228,25 +228,23 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     JSC::JSString* input = argument0.value().toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     JSC::EncodedJSValue res;
-    StringView str;
-    if (input->is8Bit()) {
-        if (input->isNonSubstringRope()) {
-            GCDeferralContext gcDeferralContext(vm);
-            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, encodedValue);
-            }
-
-            RETURN_IF_EXCEPTION(throwScope, {});
+    if (input->is8Bit() && input->isNonSubstringRope()) {
+        GCDeferralContext gcDeferralContext(vm);
+        auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+        if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+            RELEASE_AND_RETURN(throwScope, encodedValue);
         }
 
-        str = input->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+    }
+
+    // A substring's view has the width of its base string now, which can differ from input->is8Bit().
+    auto str = input->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (str->is8Bit()) {
+        res = TextEncoder__encode8(lexicalGlobalObject, str->span8().data(), str->length());
     } else {
-        str = input->view(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str->span16().data(), str->length());
     }
 
     RETURN_IF_EXCEPTION(throwScope, {});

@@ -157,6 +157,9 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     VM& vm = scriptExecutionContext.vm();
     JSLockHolder lock(vm);
+    // A termination that unwinds beneath script while the gate is open (a node:vm timeout): no listener is entered on top of it.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // See https://dom.spec.whatwg.org/#dispatching-events spec on calling handleEvent.
@@ -176,6 +179,18 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
 
+    // The VM's stop is not the listener's error. Beneath script it stays pending and unwinds the caller of
+    // dispatchEvent(); with no script beneath, this is the frame that takes it.
+    auto reportThrown = [&] {
+        auto* exception = scope.exception();
+        if (!scope.tryClearException()) {
+            Bun::takeTerminationOutsideScript(vm, scope);
+            return;
+        }
+        event.target()->uncaughtExceptionInEventHandler();
+        reportException(lexicalGlobalObject, exception);
+    };
+
     JSValue handleEventFunction = jsFunction;
 
     auto callData = getCallData(handleEventFunction);
@@ -187,10 +202,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
         handleEventFunction = jsFunction->get(lexicalGlobalObject, WebCore::builtinNames(vm).handleEventPublicName());
         if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportThrown();
             return;
         }
         callData = getCallData(handleEventFunction);
@@ -218,32 +230,21 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             return jsNull();
         return toJS(lexicalGlobalObject, globalObject, *currentTarget);
     }();
-    NakedPtr<JSC::Exception> uncaughtException;
-    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args);
 
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
-    auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        if (exception) {
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
-            return true;
-        }
-        return false;
-    };
-
-    if (handleExceptionIfNeeded(uncaughtException))
+    if (scope.exception()) [[unlikely]] {
+        reportThrown();
         return;
+    }
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node
     if (retval.isObject()) {
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
         if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
-            (void)scope.tryClearException();
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
+            reportThrown();
             return;
         }
         if (then.isCallable()) {
@@ -252,10 +253,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             arglist.append(JSValue(JSC::JSFunction::create(vm, lexicalGlobalObject, 1, String(), jsFunctionEmitUncaughtExceptionNextTick, ImplementationVisibility::Public, NoIntrinsic))); // err => process.nextTick(() => throw err)
             JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
             if (scope.exception()) [[unlikely]] {
-                auto* exception = scope.exception();
-                (void)scope.tryClearException();
-                event.target()->uncaughtExceptionInEventHandler();
-                reportException(lexicalGlobalObject, exception);
+                reportThrown();
                 return;
             }
         }

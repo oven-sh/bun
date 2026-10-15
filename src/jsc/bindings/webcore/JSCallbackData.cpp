@@ -32,6 +32,7 @@
 
 #include "JSCallbackData.h"
 
+#include "BunClientData.h"
 #include "JSDOMBinding.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -45,6 +46,10 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 {
     ASSERT(callback);
 
+    // A termination that unwinds beneath script while the gate is open (a node:vm timeout): no callback is entered on top of it.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return JSValue();
+
     // https://webidl.spec.whatwg.org/#ref-for-prepare-to-run-script makes callback's [[Realm]] a running JavaScript execution context,
     // which is used for creating TypeError objects: https://tc39.es/ecma262/#sec-ecmascript-function-objects-call-thisargument-argumentslist (step 4).
     JSGlobalObject* lexicalGlobalObject = callback->globalObject();
@@ -57,6 +62,14 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // (JSEventListener::handleEvent, Bun__JSValue__call).
     if (!context || context->isJSExecutionForbidden())
         return JSValue();
+
+    // The caller reports what the callback threw. The VM's stop is not the callback's error: beneath script it stays
+    // pending and unwinds the script above; with no script beneath, this is the frame that takes it.
+    auto takeThrown = [&] {
+        returnedException = scope.exception();
+        if (!scope.tryClearException())
+            Bun::takeTerminationOutsideScript(vm, scope);
+    };
 
     JSValue function;
     CallData callData;
@@ -74,8 +87,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
         ASSERT(!functionName.isNull());
         function = callback->get(lexicalGlobalObject, functionName);
         if (scope.exception()) [[unlikely]] {
-            returnedException = scope.exception();
-            (void)scope.tryClearException();
+            takeThrown();
             return JSValue();
         }
 
@@ -94,9 +106,14 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // JSExecState::instrumentFunction(context, callData);
 
     returnedException = nullptr;
-    JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args, returnedException);
+    JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args);
 
     // InspectorInstrumentation::didCallFunction(context);
+
+    if (scope.exception()) [[unlikely]] {
+        takeThrown();
+        return jsUndefined();
+    }
 
     return result;
 }

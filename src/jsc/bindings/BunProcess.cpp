@@ -1343,13 +1343,18 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
     // around this call (Rust FFI and Process_functionFatalException).
+    //
+    // Script that this function runs can stop the VM (process.exit() in a worker, or its parent's terminate()). The
+    // error then counts as handled. The termination stays pending only beneath script, where it unwinds the caller;
+    // with no script beneath, each arm takes it, and what tells the caller is the gate.
     {
         auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (fatalScope.exception()) [[unlikely]] {
-            (void)fatalScope.tryClearException();
-            if (vm.hasPendingTerminationException()) [[unlikely]]
+            if (!fatalScope.tryClearException()) {
+                Bun::takeTerminationOutsideScript(vm, fatalScope);
                 return true;
+            }
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
             // Bun__Process__exit returns in a worker (only requests termination); don't
@@ -1371,6 +1376,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         auto monitorScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         wrapped.emit(uncaughtExceptionMonitor, args);
         RETURN_IF_EXCEPTION(monitorScope, true);
+        // A monitor that stopped the VM: its exit code stands, and the capture callback is not called after it.
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+            return true;
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
@@ -1381,9 +1389,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            (void)scope.tryClearException();
-            if (vm.hasPendingTerminationException()) [[unlikely]]
+            if (!scope.tryClearException()) {
+                Bun::takeTerminationOutsideScript(vm, scope);
                 return true;
+            }
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);

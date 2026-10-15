@@ -246,8 +246,9 @@ describe("Dir explicit resource management", () => {
 });
 
 // fs.readdir sorts its entries like node (libuv's scandir). A Dir does not:
-// node reads it with uv_fs_readdir, which is the kernel order. `ls -U` reads
-// the same directory with readdir(3) and is that order too.
+// node reads it with uv_fs_readdir, which is the kernel order. `ls -U` (GNU)
+// and `find` (GNU and busybox) read the directory with readdir(3) and print
+// that order too.
 describe.skipIf(!isLinux)("fs.Dir keeps the kernel order", () => {
   const names = [
     "readme",
@@ -272,8 +273,16 @@ describe.skipIf(!isLinux)("fs.Dir keeps the kernel order", () => {
     using dir = tempDir("dir-kernel-order", {});
     const root = String(dir);
     for (const name of names) fs.writeFileSync(path.join(root, name), "");
-    const ls = Bun.spawnSync({ cmd: ["ls", "-U", root], env: bunEnv });
-    const raw = ls.stdout.toString().split("\n").filter(Boolean);
+    let ls = Bun.spawnSync({ cmd: ["ls", "-U", root], env: bunEnv });
+    if (ls.exitCode !== 0) {
+      ls = Bun.spawnSync({ cmd: ["find", root, "-mindepth", "1", "-maxdepth", "1"], env: bunEnv });
+    }
+    expect(ls.exitCode).toBe(0);
+    const raw = ls.stdout
+      .toString()
+      .split("\n")
+      .filter(Boolean)
+      .map(line => path.basename(line));
     expect(raw.toSorted()).toEqual(names.toSorted());
 
     const sync: string[] = [];

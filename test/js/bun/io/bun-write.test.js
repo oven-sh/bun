@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -790,6 +791,353 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           "Cannot create a directory for a file descriptor",
         );
       });
+    });
+  });
+
+  describe("empty source to a path", () => {
+    // These sources have no bytes and no Blob store. On POSIX the string and the
+    // TypedArray below take a different route: a path must answer all of them the same way.
+    const storelessSources = {
+      "Blob([])": () => new Blob([]),
+      'Blob([""])': () => new Blob([""]),
+      "File([])": () => new File([], "empty.txt"),
+      "[]": () => [],
+      'Response("")': () => new Response(""),
+      "Response(null)": () => new Response(null),
+      "Request with an empty body": () => new Request("http://localhost/", { method: "POST", body: "" }),
+    };
+    const emptySpellings = { '""': () => "", "Uint8Array(0)": () => new Uint8Array(0), ...storelessSources };
+    // Source text of five of the spellings, for a child process.
+    const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+    const pathDoors = {
+      "Bun.write(path, src)": (p, src, options) => Bun.write(p, src, options),
+      "Bun.write(Bun.file(path), src)": (p, src, options) => Bun.write(Bun.file(p), src, options),
+      "Bun.file(path).write(src)": (p, src, options) => Bun.file(p).write(src, options),
+    };
+    const settle = promise =>
+      promise.then(
+        ret => ({ ret }),
+        e => ({ code: e.code, syscall: e.syscall, path: e.path }),
+      );
+    // What the write left at `p`: the contents of a file, or null for anything else.
+    const left = p => (fs.statSync(p, { throwIfNoEntry: false })?.isFile() ? fs.readFileSync(p, "utf8") : null);
+    // Runs a child and returns what it printed.
+    const run = async options => {
+      await using proc = Bun.spawn({ env: bunEnv, stdout: "pipe", stderr: "pipe", ...options });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    };
+    // Source text that writes each of `exprs` to `destExpr` and prints what each call settled to.
+    const writeEach = (exprs, destExpr) => `
+      const results = [];
+      for (const src of [${exprs.join(", ")}]) {
+        results.push(
+          await Bun.write(${destExpr}, src).then(ret => ({ ret }), e => ({ code: e.code, syscall: e.syscall })),
+        );
+      }
+      console.log(JSON.stringify(results));
+    `;
+    const printed = results => ({ stdout: JSON.stringify(results), stderr: "", exitCode: 0 });
+
+    it("gives one result for each of the nine sources and each entry point", async () => {
+      using dir = tempDir("bun-write-empty-path", {});
+      const root = String(dir);
+      // Windows keeps its own code for an empty source. The call that its errors name is not pinned here.
+      const syscall = isWindows ? expect.any(String) : "open";
+      const kinds = {
+        "a file that exists is emptied": {
+          dest: name => path.join(root, name),
+          prepare: p => fs.writeFileSync(p, "EXISTING"),
+          expected: () => ({ ret: 0, left: "" }),
+        },
+        "a new file is created": {
+          dest: name => path.join(root, name),
+          expected: () => ({ ret: 0, left: "" }),
+        },
+        "createPath: false creates the file when its directory exists": {
+          dest: name => path.join(root, name),
+          options: { createPath: false },
+          expected: () => ({ ret: 0, left: "" }),
+        },
+        "a missing directory is created": {
+          dest: name => path.join(root, `made-for-${name}`, "sub", name),
+          expected: () => ({ ret: 0, left: "" }),
+        },
+        "createPath: false rejects when the directory is missing": {
+          dest: name => path.join(root, `missing-for-${name}`, name),
+          options: { createPath: false },
+          expected: p => ({ code: "ENOENT", syscall, path: p, left: null }),
+        },
+        "a directory rejects": {
+          dest: () => root,
+          // Windows truncates the handle of the directory. Only a store-less source pins that code.
+          expected: (p, spelling) => ({
+            code: !isWindows ? "EISDIR" : spelling in storelessSources ? "EINVAL" : expect.any(String),
+            syscall,
+            path: p,
+            left: null,
+          }),
+        },
+      };
+      const results = [];
+      const expected = [];
+      for (const [kind, { dest, prepare, options, expected: expectedFor }] of Object.entries(kinds)) {
+        for (const [door, write] of Object.entries(pathDoors)) {
+          for (const [spelling, make] of Object.entries(emptySpellings)) {
+            const p = dest(`out-${results.length}.txt`);
+            prepare?.(p);
+            results.push({ kind, door, spelling, ...(await settle(write(p, make(), options))), left: left(p) });
+            expected.push({ kind, door, spelling, ...expectedFor(p, spelling) });
+          }
+        }
+      }
+      expect(results).toEqual(expected);
+    });
+
+    it("creates a bare filename in the working directory", async () => {
+      using dir = tempDir("bun-write-empty-bare", {});
+      const script = `
+        const sources = () => [${emptySourceExprs.join(", ")}];
+        const settle = promise => promise.then(ret => ({ ret }), e => ({ code: e.code, syscall: e.syscall }));
+        const results = [];
+        for (let i = 0; i < ${emptySourceExprs.length}; i++) {
+          results.push(await settle(Bun.write("write-" + i + ".txt", sources()[i])));
+          results.push(await settle(Bun.file("file-" + i + ".txt").write(sources()[i])));
+        }
+        console.log(JSON.stringify(results));
+      `;
+      const child = await run({ cmd: [bunExe(), "-e", script], cwd: String(dir) });
+      const names = emptySourceExprs.flatMap((_, i) => [`file-${i}.txt`, `write-${i}.txt`]);
+      expect({ ...child, files: fs.readdirSync(String(dir)).sort() }).toEqual({
+        ...printed(names.map(() => ({ ret: 0 }))),
+        files: names.sort(),
+      });
+    });
+
+    // A symlink whose target is in a missing directory. A bare filename has no directory
+    // to create, so the error is the one from the open.
+    it.skipIf(isWindows)("names the open for a bare filename that is a dangling symlink", async () => {
+      using dir = tempDir("bun-write-empty-dangling", {});
+      fs.symlinkSync(path.join("missing", "target"), path.join(String(dir), "dangling"));
+      const sourceExprs = [...emptySourceExprs, `"x"`, `new Blob(["x"])`];
+      const child = await run({ cmd: [bunExe(), "-e", writeEach(sourceExprs, `"dangling"`)], cwd: String(dir) });
+      expect(child).toEqual(printed(sourceExprs.map(() => ({ code: "ENOENT", syscall: "open" }))));
+    });
+
+    // A Bun.file whose stat is cached as a regular file, or one that has an offset, skips the
+    // POSIX fast path: the string and the TypedArray then go the way of the store-less sources.
+    it("creates the file through a Bun.file that skips the fast path", async () => {
+      using dir = tempDir("bun-write-empty-slow-door", {});
+      const statCached = async (p, prime) => {
+        fs.writeFileSync(p, "OLD");
+        const file = Bun.file(p);
+        await prime(file);
+        fs.rmSync(p);
+        return file;
+      };
+      const doors = {
+        "Bun.file(path) after exists()": p => statCached(p, file => file.exists()),
+        "Bun.file(path) after .size": p => statCached(p, file => file.size),
+        "Bun.file(path).slice(1)": p => Bun.file(p).slice(1),
+      };
+      const results = [];
+      const expected = [];
+      for (const [door, open] of Object.entries(doors)) {
+        for (const [spelling, make] of Object.entries(emptySpellings)) {
+          const p = path.join(String(dir), `out-${results.length}.txt`);
+          const dest = await open(p);
+          results.push({
+            door,
+            spelling,
+            ...(await settle(Bun.write(dest, make(), { createPath: false }))),
+            left: left(p),
+          });
+          expected.push({ door, spelling, ret: 0, left: "" });
+        }
+      }
+      expect(results).toEqual(expected);
+    });
+
+    // A body that has no bytes when Bun.write gets it, or that ends later without any.
+    it("creates the file for an empty Response or Request body", async () => {
+      using dir = tempDir("bun-write-empty-body-path", {});
+      const root = String(dir);
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/204") return new Response(null, { status: 204 });
+          // The server writes the Request it received.
+          if (url.pathname === "/sink") {
+            return Response.json(await settle(Bun.write(url.searchParams.get("to"), req, { createPath: false })));
+          }
+          return new Response("");
+        },
+      });
+      // This origin sends the head at once and ends the body, with no bytes, on `release`.
+      const release = Promise.withResolvers();
+      using late = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+            release.promise.then(() => socket.end("0\r\n\r\n"));
+          },
+        },
+      });
+      const closed = () =>
+        new ReadableStream({
+          start(controller) {
+            controller.close();
+          },
+        });
+      const sources = {
+        "fetch() with Content-Length: 0": () => fetch(server.url),
+        "fetch() with status 204": () => fetch(new URL("/204", server.url)),
+        "Response with a closed stream": () => new Response(closed()),
+        "Request with a closed stream": () => new Request(server.url, { method: "POST", body: closed() }),
+      };
+      const results = [];
+      for (const [source, make] of Object.entries(sources)) {
+        const p = path.join(root, `out-${results.length}.txt`);
+        results.push({ source, ...(await settle(Bun.write(p, await make(), { createPath: false }))), left: left(p) });
+      }
+
+      const sunk = path.join(root, "sunk.txt");
+      const answer = await fetch(new URL(`/sink?to=${encodeURIComponent(sunk)}`, server.url), { method: "POST" });
+      results.push({ source: "a Request with no body, in the server", ...(await answer.json()), left: left(sunk) });
+
+      const ended = path.join(root, "ended.txt");
+      const pending = settle(Bun.write(ended, await fetch(`http://127.0.0.1:${late.port}/`), { createPath: false }));
+      release.resolve();
+      results.push({ source: "fetch() with a body that ends later", ...(await pending), left: left(ended) });
+
+      expect(results).toEqual(
+        [...Object.keys(sources), "a Request with no body, in the server", "fetch() with a body that ends later"].map(
+          source => ({ source, ret: 0, left: "" }),
+        ),
+      );
+    });
+
+    const resolvesOnDevice = async device => {
+      const results = [];
+      const expected = [];
+      for (const [door, write] of Object.entries(pathDoors)) {
+        for (const [spelling, make] of Object.entries(emptySpellings)) {
+          results.push({ door, spelling, ...(await settle(write(device, make()))) });
+          expected.push({ door, spelling, ret: 0 });
+        }
+      }
+      results.push({ isCharacterDevice: fs.statSync(device).isCharacterDevice() });
+      expected.push({ isCharacterDevice: true });
+      expect(results).toEqual(expected);
+    };
+    // Not fixed on Windows: "/dev/null" names NUL there, and an empty source still truncates it.
+    it.todoIf(isWindows)("resolves 0 on /dev/null and leaves the device in place", () => resolvesOnDevice("/dev/null"));
+    it.skipIf(isWindows)("resolves 0 on /dev/zero and leaves the device in place", () => resolvesOnDevice("/dev/zero"));
+
+    // The shell gives the child a pipe for stdout. Bun.spawn gives it a socket, which
+    // "/dev/stdout" cannot open on Linux.
+    it.skipIf(isWindows)("resolves 0 on /dev/stdout in a pipeline", async () => {
+      const child = await run({
+        cmd: ["sh", "-c", `"$BUN_EXE" -e "$SCRIPT" | cat`],
+        env: { ...bunEnv, BUN_EXE: bunExe(), SCRIPT: writeEach(emptySourceExprs, `"/dev/stdout"`) },
+      });
+      expect(child).toEqual(printed(emptySourceExprs.map(() => ({ ret: 0 }))));
+    });
+
+    // mkfifo(1) is POSIX. The open must not wait for a reader: a child runs it, so a
+    // blocked open fails this test and does not stop the runner.
+    it.skipIf(isWindows)("rejects on a FIFO that nobody reads, like a write that has bytes", async () => {
+      using dir = tempDir("bun-write-empty-fifo", {});
+      const fifo = path.join(String(dir), "fifo");
+      expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+      const sourceExprs = [...emptySourceExprs, `"x"`, `new Blob(["x"])`];
+      const child = await run({
+        cmd: [bunExe(), "-e", writeEach(sourceExprs, "process.env.FIFO")],
+        env: { ...bunEnv, FIFO: fifo },
+      });
+      expect(child).toEqual(printed(sourceExprs.map(() => ({ code: "ENXIO", syscall: "open" }))));
+    });
+
+    // The child holds every free descriptor, so the open fails as it does for a write that has
+    // bytes. Then four are free again, and each write must give back the one that it takes.
+    it.skipIf(isWindows)("rejects with EMFILE when no descriptor is free, and closes the one it opens", async () => {
+      using dir = tempDir("bun-write-empty-emfile", { "exist.txt": "EXISTING" });
+      const sourceExprs = [...emptySourceExprs, `"x"`, `new Blob(["x"])`];
+      const script = `
+        const fs = require("fs");
+        const settle = promise => promise.then(ret => ({ ret }), e => ({ code: e.code, syscall: e.syscall }));
+        const held = [];
+        for (;;) {
+          try {
+            held.push(fs.openSync("/dev/null", "r"));
+          } catch {
+            break;
+          }
+        }
+        const atTheLimit = [];
+        for (const src of [${sourceExprs.join(", ")}]) atTheLimit.push(await settle(Bun.write("exist.txt", src)));
+        for (let i = 0; i < 4; i++) fs.closeSync(held.pop());
+        let resolved = 0;
+        for (let i = 0; i < 100; i++) {
+          const src = [${emptySourceExprs.slice(2).join(", ")}][i % 3];
+          if ((await settle(Bun.write("exist.txt", src))).ret === 0) resolved++;
+        }
+        // LeakSanitizer opens files when the process exits.
+        for (const fd of held) fs.closeSync(fd);
+        console.log(JSON.stringify({ held: held.length > 0, atTheLimit, resolved }));
+      `;
+      const child = await run({
+        cmd: ["sh", "-c", 'ulimit -n 64 && exec "$@"', "sh", bunExe(), "-e", script],
+        cwd: String(dir),
+      });
+      expect(child).toEqual(
+        printed({
+          held: true,
+          atTheLimit: sourceExprs.map(() => ({ code: "EMFILE", syscall: "open" })),
+          resolved: 100,
+        }),
+      );
+    });
+
+    // Windows has no permission bits to compare.
+    it.skipIf(isWindows)("passes mode to the open that creates the file", async () => {
+      using dir = tempDir("bun-write-empty-mode", {});
+      const results = [];
+      for (const [spelling, make] of Object.entries(storelessSources)) {
+        const p = path.join(String(dir), `out-${results.length}.txt`);
+        const ret = await Bun.write(p, make(), { mode: 0o600 });
+        results.push({ spelling, ret, mode: fs.statSync(p).mode & 0o777 });
+      }
+      expect(results).toEqual(
+        Object.keys(storelessSources).map(spelling => ({ spelling, ret: 0, mode: 0o600 & ~process.umask() })),
+      );
+    });
+
+    // `chflags uchg` locks a file against its owner. Linux needs root for the same.
+    it.skipIf(!isMacOS)("reports EPERM for a file that is locked", async () => {
+      using dir = tempDir("bun-write-empty-locked", { "locked.txt": "LOCKED" });
+      const p = path.join(String(dir), "locked.txt");
+      expect(Bun.spawnSync({ cmd: ["chflags", "uchg", p] }).exitCode).toBe(0);
+      try {
+        const results = [];
+        for (const [spelling, make] of Object.entries(emptySpellings)) {
+          results.push({ spelling, ...(await settle(Bun.write(p, make(), { createPath: false }))), left: left(p) });
+        }
+        expect(results).toEqual(
+          Object.keys(emptySpellings).map(spelling => ({
+            spelling,
+            code: "EPERM",
+            syscall: "open",
+            path: p,
+            left: "LOCKED",
+          })),
+        );
+      } finally {
+        Bun.spawnSync({ cmd: ["chflags", "nouchg", p] });
+      }
     });
   });
 

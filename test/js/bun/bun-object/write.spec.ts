@@ -92,6 +92,24 @@ describe("Bun.write() on file paths", () => {
         expect(stats.mode & default_mode).toBe(default_mode);
         expect(stats.mode & constants.S_IFDIR).toBe(0); // not a directory
       });
+
+      it("When content is an empty Blob, creates the file with default permissions", async () => {
+        const result = await Bun.write(filepath, new Blob([]));
+        expect(result).toBe(0);
+        expect(await fs.readFile(filepath, "utf-8")).toBe("");
+        const stats = await fs.stat(filepath);
+        expect(stats.mode & default_mode).toBe(default_mode);
+        expect(stats.mode & constants.S_IFDIR).toBe(0); // not a directory
+      });
+
+      it("When content is an empty Blob and options.createPath is false, creates the file with default permissions", async () => {
+        const result = await Bun.write(filepath, new Blob([]), { createPath: false });
+        expect(result).toBe(0);
+        expect(await fs.readFile(filepath, "utf-8")).toBe("");
+        const stats = await fs.stat(filepath);
+        expect(stats.mode & default_mode).toBe(default_mode);
+        expect(stats.mode & constants.S_IFDIR).toBe(0); // not a directory
+      });
     }); // </When the file does not exist>
 
     describe("When the file exists and has content", () => {
@@ -148,6 +166,12 @@ describe("Bun.write() on file paths", () => {
         expect(result).toBe(0);
         expect(await fs.readFile(filepath, "utf-8")).toBe("");
       });
+
+      it("When an empty Blob is written, recursively creates the directory and writes the file", async () => {
+        const result = await Bun.write(filepath, new Blob([]));
+        expect(result).toBe(0);
+        expect(await fs.readFile(filepath, "utf-8")).toBe("");
+      });
     }); // </When no options are provided>
 
     describe("When options.createPath is false", () => {
@@ -155,6 +179,11 @@ describe("Bun.write() on file paths", () => {
 
       it.each(["", "Hello, world!"])("When '%s' is written, throws ENOENT", async content => {
         await expect(() => Bun.write(filepath, content, options)).toThrowWithCodeAsync(Error, "ENOENT");
+      });
+
+      it("When an empty Blob is written, throws ENOENT and does not create the directory", async () => {
+        await expect(() => Bun.write(filepath, new Blob([]), options)).toThrowWithCodeAsync(Error, "ENOENT");
+        await expect(fs.access(rootdir, constants.F_OK)).rejects.toMatchObject({ code: "ENOENT" });
       });
     }); // </When options.createPath is false>
   });

@@ -4137,6 +4137,29 @@ pub(crate) struct WriteFileOptions {
     pub(crate) mode: Option<bun_sys::Mode>,
 }
 
+/// An empty source written to `path`: creates the file, or discards its contents.
+#[cfg(not(windows))]
+fn empty_file(
+    path: &PathLike<'_>,
+    mode: Option<bun_sys::Mode>,
+    mkdirp: bool,
+) -> bun_sys::Result<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_z = path.slice_z(&mut buf);
+    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
+    let create_mode = mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
+    let mut result = bun_sys::open(path_z, flags, create_mode);
+    if mkdirp
+        && matches!(&result, Err(err) if err.get_errno() == bun_sys::E::ENOENT)
+        && bun_core::dirname(path.slice()).is_some()
+    {
+        result =
+            mkdirp_parent(path.slice()).and_then(|()| bun_sys::open(path_z, flags, create_mode));
+    }
+    let _close = bun_sys::CloseOnDrop::new(result?);
+    Ok(())
+}
+
 /// Write an empty string to a file by truncating it.
 ///
 /// This behavior matches what we do with the fast path.
@@ -4162,6 +4185,21 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            // truncate(2) creates nothing and fails on a device. Windows' NodeFS::truncate already opens the path with O_CREAT.
+            #[cfg(not(windows))]
+            if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                let mkdirp = options.mkdirp_if_not_exists != Some(false);
+                return Ok(match empty_file(path, options.mode, mkdirp) {
+                    Ok(()) => {
+                        JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
+                    }
+                    Err(err) => JSPromise::rejected_promise(
+                        cx.global(),
+                        err.with_path(path.slice()).to_js(cx.global()),
+                    )
+                    .to_js(),
+                });
+            }
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh

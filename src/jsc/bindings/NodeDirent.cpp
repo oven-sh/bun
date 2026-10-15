@@ -239,8 +239,13 @@ static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* glo
         type = object->getDirect(DirentSlot::type);
     }
 
-    if (type.isAnyInt()) {
-        return JSC::toInt32(type.asNumber());
+    // Fast path. The check below accepts an int32 too, but converts it through a double.
+    if (type.isInt32()) [[likely]] {
+        return type.asInt32();
+    }
+    // JSC can box an integer as a double, and Node's `===` still matches it.
+    if (type.isInt32AsAnyInt()) {
+        return type.asInt32AsAnyInt();
     }
 
     return std::numeric_limits<int32_t>::max();

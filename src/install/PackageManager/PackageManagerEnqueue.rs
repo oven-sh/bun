@@ -3311,7 +3311,7 @@ impl PackageManager {
         held.push((about, msgs));
     }
 
-    /// After dedupe: logs what was held about the packages that are still in the tree.
+    /// After dedupe: logs what was held. An error fails the install only if a row in the tree needs the answer.
     #[cold]
     pub(crate) fn log_held(&mut self) {
         use bun_ast::Kind;
@@ -3349,12 +3349,12 @@ impl PackageManager {
                     _ => Some(true),
                 },
             };
-            let Some(is_needed) = is_needed else {
-                continue;
-            };
             for mut msg in msgs {
-                if msg.kind == Kind::Err && !is_needed {
-                    msg.kind = Kind::Warn;
+                match (msg.kind, is_needed) {
+                    // The install does not fail on it, but the answer may have shaped the tree.
+                    (Kind::Err, None | Some(false)) => msg.kind = Kind::Warn,
+                    (_, None) => continue,
+                    _ => {}
                 }
                 match msg.kind {
                     Kind::Err => log.errors += 1,

@@ -5151,6 +5151,10 @@ describe.concurrent("bun-install", () => {
 
   // Runs `bun install` and returns the `packages` section of the bun.lock it saves.
   async function installAndReadLock(ctx: TestContext, ...args: string[]) {
+    return (await installAndReadLockAndWarnings(ctx, ...args)).packages;
+  }
+
+  async function installAndReadLockAndWarnings(ctx: TestContext, ...args: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: ctx.package_dir,
@@ -5167,7 +5171,13 @@ describe.concurrent("bun-install", () => {
       string,
       [string, ...unknown[]]
     >;
-    return Object.fromEntries(Object.entries(locked).map(([name, [resolution]]) => [name, resolution]));
+    return {
+      packages: Object.fromEntries(Object.entries(locked).map(([name, [resolution]]) => [name, resolution])),
+      warnings: err
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("warn:"))
+        .sort(),
+    };
   }
 
   it.each<{
@@ -5371,6 +5381,7 @@ describe.concurrent("bun-install", () => {
     registry: Record<string, Record<string, object>>;
     holds: Record<string, string>[];
     packages: Record<string, string>;
+    warnings?: RegExp[];
   }>([
     {
       name: "a range that admits a lower version another package pins",
@@ -5438,6 +5449,8 @@ describe.concurrent("bun-install", () => {
       },
       holds: [{ wide: "kept" }, { narrow: "gone" }],
       packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+      // What the registry answered is not kept quiet: with another answer `wide` might have kept its pick.
+      warnings: [/^warn: GET .*\/gone - 404$/, /^warn: No version matching "\^2\.0\.0" found for specifier "short"/],
     },
     {
       // The alias is for `holder`'s own row.
@@ -5452,12 +5465,15 @@ describe.concurrent("bun-install", () => {
         "wide/kept": "kept@1.0.0",
       },
     },
-  ])("a fresh install resolves $name the same", ({ files, registry, holds, packages }) => {
+  ])("a fresh install resolves $name the same", ({ files, registry, holds, packages, warnings = [] }) => {
     it.each(holds)("when the packuments arrive as in %j", async hold => {
       await withContext(defaultOpts, async ctx => {
         setContextHandler(ctx, heldRegistry(ctx, [], registry, hold));
         await writeProject(ctx, files);
-        expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual(packages);
+        expect(await installAndReadLockAndWarnings(ctx, "--lockfile-only")).toEqual({
+          packages,
+          warnings: warnings.map(warning => expect.stringMatching(warning)),
+        });
       });
     });
   });

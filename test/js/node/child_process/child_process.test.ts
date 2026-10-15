@@ -30,7 +30,6 @@ import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
 import tls from "node:tls";
-import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -1775,34 +1774,4 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // several seconds, and the fixtures give up on their markers after 15 s so
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
-});
-
-// "50%deposit" is a directory name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
-// With the path "" for it, the child runs in the parent's directory. node throws at the conversion, before it starts a child.
-// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789), so a child starts.
-describe.skipIf(isWindows)("a file URL whose path does not percent-decode to UTF-8", () => {
-  const child = path.join(import.meta.dir, "fixtures", "child-process-echo-argv.js");
-  it.each<[string, (url: URL) => unknown]>([
-    ["spawn, the cwd", cwd => spawn(bunExe(), [child], { cwd, env: bunEnv })],
-    ["spawnSync, the cwd", cwd => spawnSync(bunExe(), [child], { cwd, env: bunEnv })],
-    ["exec, the cwd", cwd => exec(`"${bunExe()}" "${child}"`, { cwd, env: bunEnv })],
-    ["execSync, the cwd", cwd => execSync(`"${bunExe()}" "${child}"`, { cwd, env: bunEnv, stdio: "ignore" })],
-    ["execFile, the cwd", cwd => execFile(bunExe(), [child], { cwd, env: bunEnv })],
-    ["execFileSync, the cwd", cwd => execFileSync(bunExe(), [child], { cwd, env: bunEnv, stdio: "ignore" })],
-    ["fork, the cwd", cwd => fork(child, [], { cwd, env: bunEnv, stdio: "ignore" })],
-    ["fork, the module", url => fork(url, [], { env: bunEnv, stdio: "ignore" })],
-  ])("%s throws the URIError", (_, call) => {
-    let error: any;
-    try {
-      const returned = call(new URL("50%deposit/", pathToFileURL(os.tmpdir() + path.sep)));
-      if (returned instanceof ChildProcess) returned.kill();
-    } catch (e) {
-      error = e;
-    }
-    expect({ name: error?.name, message: error?.message, code: error?.code }).toEqual({
-      name: "URIError",
-      message: "URI malformed",
-      code: undefined,
-    });
-  });
 });

@@ -567,6 +567,16 @@ test.skipIf(isWindows)("a module whose name has a % that is not a UTF-8 escape c
           expect(() => mock.module(url, () => ({}))).toThrow(new TypeError('Invalid "file:" URL'));
         }
       });
+
+      test("import() of such a file: URL rejects when a mock exists", async () => {
+        mock.module("not-a-package", () => ({ default: 1 }));
+        const error = await import("file:///50%deposit.ts").catch(error => error);
+        expect({ name: error.name, message: error.message, input: error.input }).toEqual({
+          name: "URIError",
+          message: "URI malformed",
+          input: "file:///50%deposit.ts",
+        });
+      });
     `,
   });
   await using proc = Bun.spawn({
@@ -577,6 +587,6 @@ test.skipIf(isWindows)("a module whose name has a % that is not a UTF-8 escape c
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(" 3 pass\n 0 fail");
+  expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
 });

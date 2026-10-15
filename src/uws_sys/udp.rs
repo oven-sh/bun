@@ -14,10 +14,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Socket {
-    /// Without `recv_error_cb` the socket never gets `IP_RECVERR` (Linux), so
-    /// an ICMP error about one peer cannot fail a send to another. A failing
-    /// receive then has no handler: uSockets closes the socket and calls
-    /// `close_cb`, which must drop the handle.
+    /// `recv_error_cb: None`: no `IP_RECVERR`, and a receive error closes the socket (`close_cb`).
     pub fn create(
         loop_: *mut Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
@@ -103,12 +100,6 @@ impl Socket {
                 c_int::try_from(payloads.len()).expect("int cast"),
             )
         }
-    }
-
-    /// `drain_cb` runs once the socket is writable. `send` asks for this itself
-    /// when the send would block.
-    pub fn poll_writable(&mut self) {
-        us_udp_socket_poll_writable(self)
     }
 
     pub fn user(&mut self) -> *mut c_void {
@@ -227,7 +218,6 @@ unsafe extern "C" {
         addresses: *const *const c_void,
         num: c_int,
     ) -> c_int;
-    safe fn us_udp_socket_poll_writable(socket: &mut Socket);
     safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
     safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
     fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);

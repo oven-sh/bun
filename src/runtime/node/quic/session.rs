@@ -1967,8 +1967,7 @@ impl QuicSession {
         })
     }
 
-    /// Node's `Session::Close(CloseMethod::SILENT)`: no CONNECTION_CLOSE
-    /// leaves, and JS sees a close with no error.
+    /// Node's `Session::Close(CloseMethod::SILENT)`: JS sees a close with no error.
     pub(super) fn close_silently(&self) {
         match self.conn() {
             Some(conn) => conn.abort_silent(),

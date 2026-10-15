@@ -230,6 +230,8 @@ pub(crate) struct QuicEndpoint {
 
     processing: Cell<bool>,
     followup_due: Cell<bool>,
+    /// A send failed with ENOBUFS. The next `process` pass sends the waiting packets again.
+    retry_unsent: Cell<bool>,
     sessions: JsCell<Vec<*mut QuicSession>>,
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
@@ -432,33 +434,23 @@ fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<
     })
 }
 
-/// `packets_out` has a datagram that the socket did not send. Returns whether
-/// the batch stops there, with `errno` set to what lsquic reads from a short
-/// return. `us_quic_packets_out` (quic.c) is the same verdict for HTTP/3:
-/// change both together.
-///
-/// - `rv == 0`: the socket would block, and uSockets armed WRITABLE for it.
-///   EAGAIN pauses the engine until `on_drain`.
-/// - ENOBUFS: the output queue of the interface is full, which is common on
-///   macOS. It clears by itself, so it is the same pause. uSockets reports it
-///   as an error and arms nothing, so the endpoint arms `socket`, its own.
-/// - EMSGSIZE: lsquic takes the packet back (ci_packet_too_large). An MTU
-///   probe feeds DPLPMTUD, and any other packet ends its connection.
-/// - Any other errno: the kernel refused this one datagram (EINVAL, EACCES,
-///   EPERM, ENETUNREACH, ...). lsquic has no outcome for that: a short return
-///   pauses every session of the engine or closes one. So the datagram counts
-///   as sent, which lsquic sees as a packet lost on the wire. Node drops it
-///   too: Endpoint::PacketDone ignores the status of a send
-///   (node/src/quic/endpoint.cc).
+/// Whether an unsent datagram stops the batch. Sets errno for lsquic. Twin: `us_quic_packets_out`.
 #[cold]
 #[inline(never)]
-fn unsent_stops_batch(socket: *mut uws::udp::Socket, rv: c_int) -> bool {
+fn unsent_stops_batch(this: &QuicEndpoint, rv: c_int) -> bool {
     let e = bun_core::ffi::errno_ptr();
     if rv < 0 {
         // SAFETY: `errno_ptr()` is this thread's errno slot.
         match unsafe { *e } {
-            libc::ENOBUFS => uws::udp::Socket::opaque_mut(socket).poll_writable(),
-            errno => return errno == libc::EMSGSIZE,
+            // The interface queue is full, and no poll reports when it has room: try again in 1 ms.
+            libc::ENOBUFS => {
+                this.retry_unsent.set(true);
+                this.followup_due.set(true);
+            }
+            // lsquic retires the packet (ci_packet_too_large).
+            libc::EMSGSIZE => return true,
+            // The kernel refused this datagram. It counts as sent, so lsquic sees a lost packet.
+            _ => return false,
         }
     }
     // SAFETY: as above.
@@ -757,8 +749,7 @@ lsquic_callback! {
         n: c_uint,
     ) -> c_int = 0; {
         let Some(socket) = this.socket.get() else {
-            // uSockets closed the socket (`on_socket_closed`). Nothing can
-            // leave, and a short return would make lsquic read a stale errno.
+            // uSockets closed the socket (`on_socket_closed`), so the batch counts as sent.
             return n as c_int;
         };
         let my_addr = this.local_addr.get();
@@ -835,7 +826,7 @@ lsquic_callback! {
                 &[total],
                 &[dest.as_ptr().cast()],
             );
-            if rv < 1 && unsent_stops_batch(socket, rv) {
+            if rv < 1 && unsent_stops_batch(this, rv) {
                 break;
             }
             this.add_stat(IDX_STATS_PACKETS_SENT, 1);
@@ -1183,6 +1174,7 @@ impl QuicEndpoint {
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
+            retry_unsent: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
@@ -1500,8 +1492,13 @@ impl QuicEndpoint {
             }
         }
         bun_boringssl_sys::ERR_clear_error();
+        let retry_unsent = self.retry_unsent.replace(false);
         for engine in [self.server_engine.get(), self.client_engine.get()] {
             if !engine.is_null() {
+                if retry_unsent {
+                    // SAFETY: engine is live while the endpoint is.
+                    unsafe { lsquic::lsquic_engine_send_unsent_packets(engine) };
+                }
                 // SAFETY: engine is live while the endpoint is.
                 unsafe { lsquic::lsquic_engine_process_conns(engine) };
             }
@@ -1567,8 +1564,7 @@ impl QuicEndpoint {
         self.sweep_provisional();
         self.rearm_timer();
         self.update_keepalive();
-        // With no socket the engines can send nothing, so the conns they still
-        // hold (handshakes with no session yet) are not waited for.
+        // With no socket, the conns that an engine still holds can send nothing.
         if self.closing.get()
             && self.sessions.get().is_empty()
             && (self.engine_conn_count() == 0 || self.socket.get().is_none())
@@ -2157,10 +2153,7 @@ impl QuicEndpoint {
         true
     }
 
-    /// uSockets closed the socket: a receive or a poll failed, and there is no
-    /// receive-error callback. Node's `Endpoint::Destroy(RECEIVE_FAILURE)`
-    /// (node/src/quic/endpoint.cc): each session ends with no packet sent,
-    /// then the endpoint closes.
+    /// uSockets closed the socket on a receive error: Node's `Endpoint::Destroy(RECEIVE_FAILURE)`.
     fn on_socket_closed(&self, socket: *mut uws::udp::Socket) {
         // `release_native` takes the handle before it closes the socket.
         if self.socket.get() != Some(socket) {

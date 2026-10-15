@@ -2636,16 +2636,9 @@ fn decimal_digits(digits: &[u8], radix: u32) -> Vec<u8> {
 
 /// The value of the digits `digits` of base `radix`, a power of two, rounded once.
 fn number_from_digits(digits: &[u8], radix: u32) -> f64 {
-    let bits = radix.trailing_zeros();
-    // As many of the leading digits as fit. The others only give a power of two, and decide a tie.
-    let (mut leading, mut exponent, mut is_inexact) = (0u64, 0i32, false);
+    let mut integer = bun_core::fmt::RadixInteger::default();
     for digit in digits.iter().filter_map(|&c| char::from(c).to_digit(radix)) {
-        if leading >> (64 - bits) == 0 {
-            leading = leading << bits | u64::from(digit);
-        } else {
-            exponent = exponent.saturating_add(bits as i32);
-            is_inexact |= digit != 0;
-        }
+        integer.push_digit(radix.trailing_zeros(), digit);
     }
-    (leading | u64::from(is_inexact)) as f64 * 2f64.powi(exponent)
+    integer.to_f64()
 }

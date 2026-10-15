@@ -51,7 +51,7 @@ Bun.serve({
     drain(ws) {}, // the socket is ready to receive more data
     ping(ws, data) {}, // a ping is received
     pong(ws, data) {}, // a pong is received
-    error(ws, error) {}, // one of the handlers above threw
+    error(error, ws) {}, // one of the handlers above threw
   },
 });
 ```
@@ -363,7 +363,7 @@ When the client violates the protocol, Bun sends a Close frame with `1002` (prot
 
 ### Errors
 
-When a handler throws, Bun calls the `error` handler with the socket and the error. Without an `error` handler, the error is an uncaught exception. If the `open` handler throws, Bun closes the socket.
+When a handler throws, Bun calls the `error` handler with the error and the socket. Unlike the other handlers, the socket is the second argument. Without an `error` handler, the error is an uncaught exception. If the `open` handler throws, Bun closes the socket.
 
 ```ts
 Bun.serve({
@@ -372,7 +372,7 @@ Bun.serve({
     message(ws, message) {
       throw new Error("oops");
     },
-    error(ws, error) {
+    error(error, ws) {
       console.error(ws.remoteAddress, error);
       ws.close(1011);
     },

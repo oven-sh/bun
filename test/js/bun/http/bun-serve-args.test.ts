@@ -366,7 +366,7 @@ describe("Bun.serve websocket options", () => {
   });
 
   test.each(["open", "message", "ping", "pong", "close"])(
-    "websocket.error is called with (ws, error) when %s throws",
+    "websocket.error is called with (error, ws) when %s throws",
     async name => {
       let handlerSocket: unknown;
       const { promise, resolve } = Promise.withResolvers<unknown[]>();
@@ -398,8 +398,8 @@ describe("Bun.serve websocket options", () => {
         ws.close();
       };
       const args = await promise;
-      expect(args).toEqual([handlerSocket, new Error(`thrown by ${name}`)]);
-      expect(args[0]).toBe(handlerSocket);
+      expect(args).toEqual([new Error(`thrown by ${name}`), handlerSocket]);
+      expect(args[1]).toBe(handlerSocket);
     },
   );
 });

@@ -682,12 +682,12 @@ describe("Server", () => {
         queueMicrotask(() => done());
         return new Error("returned, not thrown") as any;
       },
-      error(_, error) {
+      error(error) {
         done(error);
       },
     }));
     for (const hook of ["message", "ping", "pong", "close"] as const) {
-      test(`${hook} handler that throws passes the socket and its error to error()`, done => {
+      test(`${hook} handler that throws passes its error and the socket to error()`, done => {
         const thrown = new Error(`${hook} threw`);
         let socket: ServerWebSocket<{ id: number }>;
         return {
@@ -704,8 +704,8 @@ describe("Server", () => {
           error(...args) {
             try {
               expect(args).toHaveLength(2);
-              expect(args[0]).toBe(socket);
-              expect(args[1]).toBe(thrown);
+              expect(args[0]).toBe(thrown);
+              expect(args[1]).toBe(socket);
               done();
             } catch (e) {
               done(e);
@@ -714,7 +714,7 @@ describe("Server", () => {
         };
       });
     }
-    it("open handler that throws passes the socket and its error to error()", async () => {
+    it("open handler that throws passes its error and the socket to error()", async () => {
       const thrown = new Error("open threw");
       let socket: ServerWebSocket<undefined> | undefined;
       const { promise, resolve } = Promise.withResolvers<unknown[]>();
@@ -740,8 +740,8 @@ describe("Server", () => {
       client.onerror = () => {};
       const args = await promise;
       expect(args).toHaveLength(2);
-      expect(args[0]).toBe(socket);
-      expect(args[1]).toBe(thrown);
+      expect(args[0]).toBe(thrown);
+      expect(args[1]).toBe(socket);
     });
     test("maxPayloadLength", done => ({
       maxPayloadLength: 4,

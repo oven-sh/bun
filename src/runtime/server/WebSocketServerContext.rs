@@ -74,7 +74,7 @@ impl Handler {
     }
 
     /// Routes an error thrown by a websocket handler to the `error` handler as
-    /// `error(ws, error)`, or to the uncaught-exception path if there's no `error`
+    /// `error(error, ws)`, or to the uncaught-exception path if there's no `error`
     /// handler. `error` runs as a top-level call, so anything it throws is reported
     /// and dispatch continues. `Err` only means a termination is still pending from
     /// the preceding callback.
@@ -103,7 +103,8 @@ impl Handler {
                 on_error,
                 global_object,
                 JSValue::UNDEFINED,
-                &[ws, error_value],
+                // The error comes first because `error(error)` was the only argument before `ws` was added.
+                &[error_value, ws],
             );
             return Ok(());
         }

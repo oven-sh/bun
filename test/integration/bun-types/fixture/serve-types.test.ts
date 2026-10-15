@@ -202,7 +202,7 @@ test("basic + websocket + upgrade + all handlers", {
       console.log("Please send me data. I am ready to receive it.");
     },
 
-    error(ws, error) {
+    error(error, ws) {
       expectType(ws).is<Bun.ServerWebSocket<{ name: string }>>();
       expectType(error).is<Error>();
       ws.pause();

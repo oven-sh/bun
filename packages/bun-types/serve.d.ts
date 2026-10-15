@@ -513,10 +513,10 @@ declare module "bun" {
      *
      * Not called when an `async` handler rejects. That's an unhandled rejection.
      *
-     * @param ws The websocket whose handler threw
      * @param error The value that was thrown
+     * @param ws The websocket whose handler threw
      */
-    error?(ws: ServerWebSocket<T>, error: Error): void | Promise<void>;
+    error?(error: Error, ws: ServerWebSocket<T>): void | Promise<void>;
 
     /**
      * Sets the maximum size of a received message, in bytes, after

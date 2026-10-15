@@ -128,7 +128,7 @@ describe("readline line splitting", () => {
   test("splitting a chunk of newline-terminated lines does not allocate an array per line", async () => {
     // The split used one RegExp match array and one rest-args array per line.
     // Count live arrays with the GC off. The "line" event still allocates one
-    // arguments array per emit, so the bound is well under two per line.
+    // arguments array per emit, so the fixed split stays near one per line.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -159,7 +159,7 @@ describe("readline line splitting", () => {
     expect(stderr).toBe("");
     const { lines, arrays } = JSON.parse(stdout);
     expect(lines).toBe(50000);
-    expect(arrays).toBeLessThan(lines * 2);
+    expect(arrays).toBeLessThan(lines * 1.5);
     expect(exitCode).toBe(0);
   });
 });

@@ -153,6 +153,11 @@ class SQLResultArray<T> extends PublicArray<T> {
     }
   }
 
+  /** `instanceof` asks `Array[Symbol.hasInstance]`, which a program can define. */
+  static isResult(array: unknown[]): boolean {
+    return #count in array;
+  }
+
   static get [Symbol.species]() {
     return Array;
   }

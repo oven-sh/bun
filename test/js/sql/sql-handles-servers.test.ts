@@ -1,7 +1,7 @@
 // The wire order is in sql-handles.test.ts.
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 
@@ -60,7 +60,8 @@ function whatStaysInTheTable(prefix: string, connect: () => Promise<SQL>) {
 
     const pipeline = await sql.begin(tx => [insert(tx, 3), insert(tx, 4)]);
     expect([pipeline.constructor.name, ...pipeline.map(described)]).toEqual(["Array", direct, direct]);
-    expect(await rows(sql)).toEqual([0, 1, 2, 3, 4]);
+    expect((await sql.begin(async tx => [insert(tx, 5), insert(tx, 6)])).map(described)).toEqual([direct, direct]);
+    expect(await rows(sql)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   test("a rejected begin() keeps no row of the tasks that go on after one failed", async () => {
@@ -351,6 +352,31 @@ function asyncContext({ open }: ReturnType<typeof whatStaysInTheTable>, connect:
   });
 }
 
+// Some programs define the hook so that `instanceof Array` holds for the arrays of another realm. A result is an Array.
+async function withHasInstanceOfArray(url: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      Object.defineProperty(Array, Symbol.hasInstance, { value: Array.isArray });
+      const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+      await sql.unsafe("CREATE TEMPORARY TABLE t (n INT PRIMARY KEY)");
+      await sql.begin(tx => [tx.unsafe("INSERT INTO t VALUES (1)"), tx.unsafe("INSERT INTO t VALUES (2)")]);
+      const pipeline = await sql.unsafe("SELECT n FROM t ORDER BY n");
+      const statements = await sql.unsafe("SELECT 1 AS x; SELECT 2 AS x; SELECT 3 AS x").simple();
+      console.log(JSON.stringify({ pipeline, statements }));
+      await sql.close();
+      `,
+    ],
+    env: { ...bunEnv, SQL_URL: url },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout && JSON.parse(stdout), stderr, exitCode };
+}
+const stored = [{ n: 1 }, { n: 2 }];
+
 const servers = [
   { image: "postgres_plain", prefix: "POSTGRES", scheme: "postgres://bun_sql_test" },
   { image: "mysql_plain", prefix: "MYSQL", scheme: "mysql://root" },
@@ -365,11 +391,28 @@ for (const { image, prefix, scheme } of servers) {
     const shared = whatStaysInTheTable(prefix, connect);
     reservations(shared);
     asyncContext(shared, connect);
+
+    test("Array[Symbol.hasInstance] of the program makes no array of queries or of results a result", async () => {
+      await container.ready;
+      expect(await withHasInstanceOfArray(`${scheme}@${container.host}:${container.port}/bun_sql_test`)).toEqual({
+        stdout: { pipeline: stored, statements: [[{ x: 1 }], [{ x: 2 }], [{ x: 3 }]] },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 }
 
 describe.concurrent("sqlite", () => {
   whatStaysInTheTable("SQLITE", async () => new SQL("sqlite://:memory:"));
+
+  test("Array[Symbol.hasInstance] of the program makes no array of queries a result", async () => {
+    expect(await withHasInstanceOfArray("sqlite://:memory:")).toEqual({
+      stdout: { pipeline: stored, statements: [{ x: 1 }] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // Not concurrent: they wait for the collector.

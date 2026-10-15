@@ -25,6 +25,9 @@ using namespace JSC;
 // What `require("module").wrapper` reports and every CommonJS module body is wrapped in unless that is overridden.
 static constexpr ASCIILiteral commonJSDefaultWrapperStart = "(function(exports,require,module,__filename,__dirname){"_s;
 static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
+// The transpiler lowers `import.meta` in a CommonJS module to a sixth wrapper parameter.
+static constexpr ASCIILiteral commonJSImportMetaParameter = "$Bun_import_meta"_s;
+static constexpr ASCIILiteral commonJSImportMetaWrapperStart = "(function(exports,require,module,__filename,__dirname,$Bun_import_meta){"_s;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
@@ -94,7 +97,6 @@ public:
 
     void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
     void evaluate(Zig::GlobalObject* globalObject, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation);
-    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
     inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);

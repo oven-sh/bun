@@ -846,11 +846,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
-        if constexpr (isExtension) {
-            target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
-        } else {
-            target->evaluate(globalObject, specifierWtfString, res->result.value);
-        }
+        target->evaluate(globalObject, specifierWtfString, res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

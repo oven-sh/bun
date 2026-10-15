@@ -104,8 +104,13 @@ const MAX_UNRESOLVED_IMPORTS: usize = 256;
 struct UnresolvedImport {
     dir_hash: HashType,
     candidates: Vec<Box<[u8]>>,
-    /// Candidates that were in the directory when the import failed. One of them created again is not a new entry.
-    present: Vec<Box<[u8]>>,
+    /// Candidates that were in the directory when the import failed.
+    present: Vec<PresentCandidate>,
+}
+
+struct PresentCandidate {
+    name: Box<[u8]>,
+    is_directory: bool,
 }
 
 impl UnresolvedImport {
@@ -130,18 +135,33 @@ impl UnresolvedImport {
             .any(|candidate| strings::eql_case_insensitive_ascii(candidate, name, true))
     }
 
-    fn is_new_candidate(&self, name: &[u8]) -> bool {
-        Self::is_candidate(&self.candidates, name) && !self.present.iter().any(|p| &**p == name)
+    fn was_present(&self, name: &[u8]) -> Option<&PresentCandidate> {
+        self.present
+            .iter()
+            .find(|present| strings::eql_case_insensitive_ascii(&present.name, name, true))
+    }
+
+    /// A listing cannot tell a created entry from one that was there, so a name that was there does not count.
+    fn is_new_in_listing(&self, listed_name: &[u8]) -> bool {
+        Self::is_candidate(&self.candidates, listed_name) && self.was_present(listed_name).is_none()
+    }
+
+    /// A file that was there can be deleted and created again. A directory created again holds nothing, and a program can do that on every run.
+    fn is_satisfied_by_created(&self, name: &[u8]) -> bool {
+        Self::is_candidate(&self.candidates, name)
+            && !self
+                .was_present(name)
+                .is_some_and(|present| present.is_directory)
     }
 }
 
-fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&[u8]) -> bool) -> bool {
+fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&[u8], sys::EntryKind) -> bool) -> bool {
     let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
         return false;
     };
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
-        if f(entry.name.slice_u8()) {
+        if f(entry.name.slice_u8(), entry.kind) {
             return true;
         }
     }
@@ -1077,10 +1097,13 @@ impl Watcher {
             });
         }
         // Listed after the record is in place: an entry created from here on has an event that finds the record.
-        let mut present: Vec<Box<[u8]>> = Vec::new();
-        for_each_dir_entry(lookup.dir, |name| {
+        let mut present: Vec<PresentCandidate> = Vec::new();
+        for_each_dir_entry(lookup.dir, |name, kind| {
             if UnresolvedImport::is_candidate(&candidates, name) {
-                present.push(name.into());
+                present.push(PresentCandidate {
+                    name: name.into(),
+                    is_directory: kind == sys::EntryKind::Directory,
+                });
             }
             false
         });
@@ -1116,11 +1139,11 @@ impl Watcher {
             return false;
         }
         if let Some(name) = name {
-            return records.any(|u| u.is_new_candidate(name));
+            return records.any(|u| u.is_satisfied_by_created(name));
         }
         let records: Vec<&UnresolvedImport> = records.collect();
-        for_each_dir_entry(dir_path, |listed_name| {
-            records.iter().any(|u| u.is_new_candidate(listed_name))
+        for_each_dir_entry(dir_path, |listed_name, _| {
+            records.iter().any(|u| u.is_new_in_listing(listed_name))
         })
     }
 

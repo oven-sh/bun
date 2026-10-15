@@ -1,7 +1,8 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isWindows, LineReader, tempDir } from "harness";
-import { writeFile } from "node:fs/promises";
+import { bunEnv, bunExe, forEachLine, isBroken, isLinux, isWindows, LineReader, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -83,6 +84,31 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await proc.exited;
   });
 
+  // An inotify event names the entry it created. A listing cannot tell that a name was replaced.
+  test.skipIf(!isLinux).concurrent("bun --watch reruns when a dangling link is replaced by the file", async () => {
+    await using dir = tempDir("watch-dangling-import", {
+      "entry.js": `import { a } from "./a.js"; console.log("RUN", a);`,
+    });
+    symlinkSync("nowhere.js", join(String(dir), "a.js"));
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = new LineReader(proc.stdout);
+    const stderr = new LineReader(proc.stderr);
+
+    await stderr.until(line => line.includes("Cannot find module"));
+
+    await unlink(join(String(dir), "a.js"));
+    await writeFile(join(String(dir), "a.js"), "export const a = 10;");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 10");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
   test.concurrent("a directory import that resolves does not rerun on a sibling file", async () => {
     // `./lib` misses as a file before it resolves as `lib/index.js`. A file the
     // program writes next to it must not count as the missing file appearing.
@@ -116,16 +142,21 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await proc.exited;
   });
 
-  test.concurrent("a caught miss does not rerun on a sibling that cannot satisfy it", async () => {
-    // `./db` is probed and not found. The resolver never tries `db.sqlite-journal` for it.
+  test.concurrent("a caught miss does not rerun on an entry that cannot satisfy it", async () => {
+    // The resolver never tries `db.sqlite-journal` for `./db`. `./cache` misses while `Cache` is
+    // there, a directory with no index (the resolver ignores ASCII case): made again, it holds nothing.
     await using dir = tempDir("watch-probed-import", {
       "entry.js": `
-        import { writeFileSync } from "node:fs";
-        let db = "none";
-        try { require("./db"); db = "found"; } catch {}
-        console.log("RUN", db);
+        import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+        const found = [];
+        try { require("./db"); found.push("db"); } catch {}
+        try { require("./cache"); found.push("cache"); } catch {}
+        console.log("RUN", found.join(" ") || "none");
         writeFileSync("db.sqlite-journal", String(Date.now()));
+        for (const name of ["Cache", "cache"]) rmSync(name, { recursive: true, force: true });
+        mkdirSync("cache");
       `,
+      "Cache": {},
     });
     await using proc = spawn({
       cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
@@ -140,39 +171,7 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     expect(await stdout.within(2000)).toEqual([]);
 
     await writeFile(join(String(dir), "db.js"), "");
-    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN found");
-
-    proc.kill("SIGKILL");
-    await proc.exited;
-  });
-
-  test.concurrent("a caught miss does not rerun when a name that was there is created again", async () => {
-    // `./cache` misses while the name `cache` is there: a directory with no index.
-    await using dir = tempDir("watch-probed-directory", {
-      "entry.js": `
-        import { mkdirSync, rmSync } from "node:fs";
-        let cache = "none";
-        try { require("./cache"); cache = "found"; } catch {}
-        console.log("RUN", cache);
-        rmSync("cache", { recursive: true });
-        mkdirSync("cache");
-      `,
-      "cache": {},
-    });
-    await using proc = spawn({
-      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const stdout = new LineReader(proc.stdout);
-
-    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN none");
-    // Same bounded window as above: a correct build prints nothing here.
-    expect(await stdout.within(2000)).toEqual([]);
-
-    await writeFile(join(String(dir), "cache.js"), "");
-    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN found");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN db");
 
     proc.kill("SIGKILL");
     await proc.exited;

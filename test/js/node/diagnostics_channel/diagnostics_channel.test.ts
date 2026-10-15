@@ -369,6 +369,16 @@ describe("Channel", () => {
     expect(frozen).toEqual([first, second]);
   });
 
+  test("unsubscribe() from a list too long to pass as arguments", () => {
+    const dc = channel("many-subscribers") as Channel & { _subscribers: Function[] };
+    const first = () => {};
+    const other = () => {};
+    dc.subscribe(first);
+    dc._subscribers = [first, ...new Array(1_000_000).fill(other)];
+    expect(dc.unsubscribe(first)).toBe(true);
+    expect(dc._subscribers.length).toBe(1_000_000);
+  });
+
   test("subscribe() after _subscribers was replaced", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -110,9 +110,9 @@ class ActiveChannel {
     const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    const after = ArrayPrototypeSlice.$call(this._subscribers, index + 1);
-    this._subscribers = ArrayPrototypeSlice.$call(this._subscribers, 0, index);
-    ArrayPrototypePush.$apply(this._subscribers, after);
+    const subscribers = ArrayPrototypeSlice.$call(this._subscribers);
+    ArrayPrototypeSplice.$call(subscribers, index, 1);
+    this._subscribers = subscribers;
 
     channels.decRef(this.name);
     maybeMarkInactive(this);

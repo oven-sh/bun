@@ -10,9 +10,6 @@ SET password_encryption = 'scram-sha-256';
 CREATE USER bun_sql_test_scram PASSWORD 'bun_sql_test_scram';
 CREATE USER bun_sql_test_password PASSWORD 'bun_sql_test_password';
 
--- SASLprep maps the soft hyphen to nothing: the verifier is made from 'softhyphen'.
-CREATE USER bun_sql_test_saslprep PASSWORD U&'soft\00ADhyphen';
-
 -- Longer than the 64-byte block of HMAC-SHA-256.
 CREATE USER bun_sql_test_long PASSWORD 'bun_sql_test_long_0123456789012345678901234567890123456789012345678901234567890123456789012345678901';
 

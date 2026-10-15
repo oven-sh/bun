@@ -2878,14 +2878,12 @@ impl PostgresSQLConnection {
                             );
                             return Err(AnyPostgresError::InvalidMessage);
                         }
-                        let prepared = sasl::PreparedPassword::new(password);
                         sasl.compute_salted_password(
                             &server_salt_decoded_base64,
                             iteration_count,
-                            prepared.as_ref().map_or(password, |p| p.as_bytes()),
+                            password,
                         )
                         .map_err(pg_err)?;
-                        drop(prepared);
                         drop(server_salt_decoded_base64);
 
                         let mut channel_binding_buf = [0u8; sasl::CHANNEL_BINDING_BASE64_MAX_LEN];

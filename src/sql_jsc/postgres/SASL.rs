@@ -5,53 +5,6 @@ use bun_boringssl_sys::SSL;
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
 use bun_sql::postgres::protocol::authentication::SASLMechanisms;
 
-unsafe extern "C" {
-    // src/jsc/bindings/SASLPrep.cpp
-    fn Bun__saslprep(input: *const u8, input_len: usize, out: *mut u8, out_capacity: usize) -> i64;
-}
-
-pub(crate) struct PreparedPassword {
-    buffer: Vec<u8>,
-    len: usize,
-}
-
-impl PreparedPassword {
-    /// `None`: use `password` as it is, which is also libpq's fallback when SASLprep refuses it.
-    pub(crate) fn new(password: &[u8]) -> Option<PreparedPassword> {
-        // SASLprep leaves ASCII alone or refuses it.
-        if password.is_ascii() {
-            return None;
-        }
-        // NFKC makes UTF-8 at most 11 times as long (U+FDFA).
-        let mut prepared = PreparedPassword {
-            buffer: vec![0; password.len() * 11],
-            len: 0,
-        };
-        // SAFETY: both pairs are a live slice's pointer and length.
-        let len = unsafe {
-            Bun__saslprep(
-                password.as_ptr(),
-                password.len(),
-                prepared.buffer.as_mut_ptr(),
-                prepared.buffer.len(),
-            )
-        };
-        prepared.len = usize::try_from(len).ok()?;
-        Some(prepared)
-    }
-
-    pub(crate) fn as_bytes(&self) -> &[u8] {
-        &self.buffer[..self.len]
-    }
-}
-
-impl Drop for PreparedPassword {
-    fn drop(&mut self) {
-        // SAFETY: the pointer and length of a live slice.
-        unsafe { bun_alloc::secure_zero(self.buffer.as_mut_ptr(), self.buffer.len()) };
-    }
-}
-
 const NONCE_BYTE_LEN: usize = 18;
 const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);
 

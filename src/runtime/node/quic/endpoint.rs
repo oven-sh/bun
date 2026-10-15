@@ -439,6 +439,9 @@ fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<
 ///
 /// - `rv == 0`: the socket would block, and uSockets armed WRITABLE for it.
 ///   EAGAIN pauses the engine until `on_drain`.
+/// - ENOBUFS: the output queue of the interface is full, which is common on
+///   macOS. It clears by itself, so it is the same pause. uSockets reports it
+///   as an error and arms nothing, so the endpoint arms `socket`, its own.
 /// - EMSGSIZE: lsquic takes the packet back (ci_packet_too_large). An MTU
 ///   probe feeds DPLPMTUD, and any other packet ends its connection.
 /// - Any other errno: the kernel refused this one datagram (EINVAL, EACCES,
@@ -446,20 +449,21 @@ fn registry_find_by_addr(addr: &StoredAddr, not: *const QuicEndpoint) -> Option<
 ///   pauses every session of the engine or closes one. So the datagram counts
 ///   as sent, which lsquic sees as a packet lost on the wire. Node drops it
 ///   too: Endpoint::PacketDone ignores the status of a send
-///   (node/src/quic/endpoint.cc). ENOBUFS is in this group while uSockets
-///   reports it as an error: WRITABLE is armed only for `rv == 0`, so nothing
-///   would end a pause (quic.c arms the poll itself).
+///   (node/src/quic/endpoint.cc).
 #[cold]
 #[inline(never)]
-fn unsent_stops_batch(rv: c_int) -> bool {
+fn unsent_stops_batch(socket: *mut uws::udp::Socket, rv: c_int) -> bool {
     let e = bun_core::ffi::errno_ptr();
-    if rv == 0 {
+    if rv < 0 {
         // SAFETY: `errno_ptr()` is this thread's errno slot.
-        unsafe { *e = libc::EAGAIN };
-        return true;
+        match unsafe { *e } {
+            libc::ENOBUFS => uws::udp::Socket::opaque_mut(socket).poll_writable(),
+            errno => return errno == libc::EMSGSIZE,
+        }
     }
     // SAFETY: as above.
-    unsafe { *e == libc::EMSGSIZE }
+    unsafe { *e = libc::EAGAIN };
+    true
 }
 
 /// Header byte 0 bit 7 (RFC 8999 sec 5.1): 1 = long header, 0 = short.
@@ -831,7 +835,7 @@ lsquic_callback! {
                 &[total],
                 &[dest.as_ptr().cast()],
             );
-            if rv < 1 && unsent_stops_batch(rv) {
+            if rv < 1 && unsent_stops_batch(socket, rv) {
                 break;
             }
             this.add_stat(IDX_STATS_PACKETS_SENT, 1);

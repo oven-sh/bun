@@ -72,6 +72,13 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     return total_sent;
 }
 
+/* on_drain runs once the socket is writable. us_udp_socket_send asks for this
+ * itself when the send would block. A caller that takes another send error for
+ * backpressure (ENOBUFS) asks for it here. */
+void us_udp_socket_poll_writable(struct us_udp_socket_t *s) {
+    us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+}
+
 int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
     /* An adopted-but-unbound descriptor cached port 0 at creation; the kernel
      * auto-binds on the first sendto(), so re-query then. */

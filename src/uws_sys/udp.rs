@@ -105,6 +105,12 @@ impl Socket {
         }
     }
 
+    /// `drain_cb` runs once the socket is writable. `send` asks for this itself
+    /// when the send would block.
+    pub fn poll_writable(&mut self) {
+        us_udp_socket_poll_writable(self)
+    }
+
     pub fn user(&mut self) -> *mut c_void {
         us_udp_socket_user(self)
     }
@@ -221,6 +227,7 @@ unsafe extern "C" {
         addresses: *const *const c_void,
         num: c_int,
     ) -> c_int;
+    safe fn us_udp_socket_poll_writable(socket: &mut Socket);
     safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
     safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
     fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);

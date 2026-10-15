@@ -108,6 +108,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
                 if (err == WSAEINTR) continue;
                 switch (err) {
                     case WSAEWOULDBLOCK:  errno = EAGAIN; break;
+                    case WSAENOBUFS:      errno = ENOBUFS; break;
                     case WSAEMSGSIZE:     errno = EMSGSIZE; break;
                     case WSAECONNREFUSED: errno = ECONNREFUSED; break;
                     case WSAENETUNREACH:  errno = ENETUNREACH; break;

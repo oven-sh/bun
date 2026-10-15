@@ -2,7 +2,7 @@
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
@@ -433,7 +433,7 @@ describe("an error on the endpoint's socket", () => {
     });
     await using endpoint = new QuicEndpoint();
     using _sessions = destroyAtExit(clientSessions, serverSessions);
-    const live = await connect(server.address, { ...clientOptions, endpoint });
+    const live = await connect(server.address!, { ...clientOptions, endpoint });
     clientSessions.push(live);
     await live.opened;
     const refusedSession = ignoreSettlement(await connect(address, { ...clientOptions, endpoint }));
@@ -466,7 +466,7 @@ describe("an error on the endpoint's socket", () => {
     const refusedSession = ignoreSettlement(await connect("[::1]:443", { ...clientOptions, endpoint }));
     clientSessions.push(refusedSession);
 
-    const live = await connect(server.address, { ...clientOptions, endpoint });
+    const live = await connect(server.address!, { ...clientOptions, endpoint });
     clientSessions.push(live);
     await live.opened;
 
@@ -498,7 +498,7 @@ describe("an error on the endpoint's socket", () => {
       using _sessions = destroyAtExit(clientSessions, serverSessions);
       using relays = new DisposableStack();
 
-      const live = await connect(server.address, {
+      const live = await connect(server.address!, {
         ...clientOptions,
         endpoint,
         ondatagram(datagram: Uint8Array) {
@@ -509,10 +509,8 @@ describe("an error on the endpoint's socket", () => {
       await live.opened;
       const cuts: (() => void)[] = [];
       for (let i = 0; i < dead; i++) {
-        const relay = relays.use(await relayTo(server.address.port));
-        const session = ignoreSettlement(
-          await connect({ address: "127.0.0.1", port: relay.port }, { ...clientOptions, endpoint }),
-        );
+        const relay = relays.use(await relayTo(server.address!.port));
+        const session = ignoreSettlement(await connect(`127.0.0.1:${relay.port}`, { ...clientOptions, endpoint }));
         clientSessions.push(session);
         await session.opened;
         cuts.push(relay.cut);
@@ -551,8 +549,8 @@ describe("an error on the endpoint's socket", () => {
 
       // Both leave in one turn, so the error about the first is still pending
       // on the socket when the probe of the second is sent.
-      const toDeadPeer = connect({ address: "127.0.0.1", port: deadPort }, { ...clientOptions, endpoint });
-      const probing = connect(server.address, { ...clientOptions, endpoint, version: 0x1a1a1a1a, onerror() {} });
+      const toDeadPeer = connect(`127.0.0.1:${deadPort}`, { ...clientOptions, endpoint });
+      const probing = connect(server.address!, { ...clientOptions, endpoint, version: 0x1a1a1a1a, onerror() {} });
       clientSessions.push(ignoreSettlement(await toDeadPeer));
       const session = await probing;
       clientSessions.push(session);
@@ -571,10 +569,12 @@ describe("an error on the endpoint's socket", () => {
   // here, so it hits the next send or receive of a UDP socket in the process.
   // On Windows an injected errno does not pass through the Winsock mapping.
   describe.skipIf(!fault.available() || isWindows)("injected in uSockets", () => {
+    // Also after a timeout, so a rule that is left cannot fail the next test.
+    afterEach(() => fault.clear());
+
     /** One server, and `count` open sessions to it on one client endpoint. */
     async function connected(count: number, serverOptions: object = {}, sessionOptions: object = {}) {
       const stack = new AsyncDisposableStack();
-      stack.defer(() => fault.clear());
       const serverSessions: any[] = [];
       const clientSessions: any[] = [];
       const server = await listen(onServerSession(serverSessions), {
@@ -590,7 +590,7 @@ describe("an error on the endpoint's socket", () => {
       stack.use(destroyAtExit(clientSessions, serverSessions));
       for (let i = 0; i < count; i++) {
         const session = ignoreSettlement(
-          await connect(server.address, { ...clientOptions, endpoint, ...sessionOptions }),
+          await connect(server.address!, { ...clientOptions, endpoint, ...sessionOptions }),
         );
         clientSessions.push(session);
         await session.opened;
@@ -605,6 +605,9 @@ describe("an error on the endpoint's socket", () => {
     test.each([
       ["the socket would block", { action: "errno", errno: "EAGAIN", repeat: 5 }, false],
       ["a send returns 0", { action: "zero", repeat: 5 }, false],
+      // uSockets does not wait for the socket after ENOBUFS, so the endpoint
+      // does. With no wait, lsquic tries again only 1 s after each failure.
+      ["the kernel has no buffer space", { action: "errno", errno: "ENOBUFS", repeat: 30 }, false],
       ["the kernel refuses 3 sends", { action: "errno", errno: "ENETUNREACH", repeat: 3 }, true],
     ] as const)("a stream round trip completes when %s", async (_case, rule, countedAsSent) => {
       await using net = await connected(1);
@@ -729,7 +732,6 @@ describe("an error on the endpoint's socket", () => {
     test("a receive error during a handshake ends the announced session, then closes the endpoint", async () => {
       const order: string[] = [];
       const serverSessions: any[] = [];
-      using _fault = { [Symbol.dispose]: () => fault.clear() };
       const server = await listen(
         (session: any) => {
           // Inside the receive loop of the server's socket, as above.
@@ -747,7 +749,7 @@ describe("an error on the endpoint's socket", () => {
       await using _server = { [Symbol.asyncDispose]: () => server.close().catch(() => {}) };
       const endpointClosed = logClose(order, "endpoint", server.closed);
       await using endpoint = new QuicEndpoint();
-      const client = ignoreSettlement(await connect(server.address, { ...clientOptions, endpoint }));
+      const client = ignoreSettlement(await connect(server.address!, { ...clientOptions, endpoint }));
       using _sessions = destroyAtExit([client], serverSessions);
 
       // A server that is still open completes the handshake, and that ends the wait.
@@ -780,10 +782,12 @@ describe("an error on the endpoint's socket", () => {
       const [live] = net.clientSessions;
       // Nothing answers this probe, so the session has no connection.
       const probe = ignoreSettlement(
-        await connect(
-          { address: "127.0.0.1", port: await closedPort() },
-          { ...clientOptions, endpoint: net.endpoint, version: 0x1a1a1a1a, onerror() {} },
-        ),
+        await connect(`127.0.0.1:${await closedPort()}`, {
+          ...clientOptions,
+          endpoint: net.endpoint,
+          version: 0x1a1a1a1a,
+          onerror() {},
+        }),
       );
       net.clientSessions.push(probe);
       const sessionsClosed = Promise.all([
@@ -809,7 +813,6 @@ describe("an error on the endpoint's socket", () => {
       const armed = Promise.withResolvers<void>();
       const serverSessions: any[] = [];
       const clientSessions: any[] = [];
-      using _fault = { [Symbol.dispose]: () => fault.clear() };
       await using server = await listen(onServerSession(serverSessions), {
         sni,
         alpn: ["quic-test"],
@@ -823,7 +826,7 @@ describe("an error on the endpoint's socket", () => {
           armed.resolve();
         },
       };
-      const first = ignoreSettlement(await connect(server.address, options));
+      const first = ignoreSettlement(await connect(server.address!, options));
       clientSessions.push(first);
       await first.opened;
       const firstEndpoint = first.endpoint;
@@ -833,7 +836,7 @@ describe("an error on the endpoint's socket", () => {
       await armed.promise;
       // A client that is still open gets the answer to this stream.
       const firstEnded = await Promise.race([first.closed.then(() => "closed"), answered(first)]);
-      const second = ignoreSettlement(await connect(server.address, clientOptions));
+      const second = ignoreSettlement(await connect(server.address!, clientOptions));
       clientSessions.push(second);
       await second.opened;
 

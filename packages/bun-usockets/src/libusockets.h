@@ -209,6 +209,9 @@ void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, i
 
 int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
 
+/* Calls drain_cb once the socket is writable. us_udp_socket_send does this itself when the send would block. */
+void us_udp_socket_poll_writable(struct us_udp_socket_t *s);
+
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 

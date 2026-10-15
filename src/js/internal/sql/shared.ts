@@ -2019,9 +2019,9 @@ function parseOptions(
       database ||=
         options.database ||
         options.db ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         env.PG_DATABASE ||
         env.PGDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         username;
       break;
     }
@@ -2030,9 +2030,9 @@ function parseOptions(
       database ||=
         options.database ||
         options.db ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         env.MYSQL_DATABASE ||
         env.MYSQLDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         "mysql";
       break;
     }
@@ -2041,9 +2041,9 @@ function parseOptions(
       database ||=
         options.database ||
         options.db ||
+        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         env.MARIADB_DATABASE ||
         env.MARIADBDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
         "mariadb";
       break;
     }

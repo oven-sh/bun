@@ -1014,4 +1014,90 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
   });
+
+  describe("URL database takes precedence over PGDATABASE / MYSQL_DATABASE / MARIADB_DATABASE", () => {
+    test("postgres URL pathname wins over PGDATABASE", () => {
+      process.env.PGDATABASE = "envdb";
+      const options = new SQL("postgres://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("postgres URL pathname wins over PG_DATABASE", () => {
+      process.env.PG_DATABASE = "envdb";
+      const options = new SQL("postgres://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("PGDATABASE applies when no URL is given", () => {
+      process.env.PGDATABASE = "envdb";
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options.database).toBe("envdb");
+    });
+
+    test("PG_DATABASE applies when no URL is given", () => {
+      process.env.PG_DATABASE = "envdb";
+      const options = new SQL({ adapter: "postgres" });
+      expect(options.options.database).toBe("envdb");
+    });
+
+    test("explicit options.database wins over URL pathname and PGDATABASE", () => {
+      process.env.PGDATABASE = "envdb";
+      const options = new SQL("postgres://u@h/urldb", { database: "explicitdb" });
+      expect(options.options.database).toBe("explicitdb");
+    });
+
+    test("explicit options.db wins over URL pathname and PGDATABASE", () => {
+      process.env.PGDATABASE = "envdb";
+      const options = new SQL("postgres://u@h/urldb", { db: "explicitdb" });
+      expect(options.options.database).toBe("explicitdb");
+    });
+
+    test("mysql URL pathname wins over MYSQL_DATABASE", () => {
+      process.env.MYSQL_DATABASE = "envdb";
+      const options = new SQL("mysql://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("MYSQL_DATABASE applies when no URL is given", () => {
+      process.env.MYSQL_DATABASE = "envdb";
+      const options = new SQL({ adapter: "mysql" });
+      expect(options.options.database).toBe("envdb");
+    });
+
+    test("mysql URL pathname wins over MYSQLDATABASE (legacy spelling)", () => {
+      process.env.MYSQLDATABASE = "envdb";
+      const options = new SQL("mysql://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("explicit options.database wins over URL pathname and MYSQL_DATABASE", () => {
+      process.env.MYSQL_DATABASE = "envdb";
+      const options = new SQL("mysql://u@h/urldb", { database: "explicitdb" });
+      expect(options.options.database).toBe("explicitdb");
+    });
+
+    test("mariadb URL pathname wins over MARIADB_DATABASE", () => {
+      process.env.MARIADB_DATABASE = "envdb";
+      const options = new SQL("mariadb://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("MARIADB_DATABASE applies when no URL is given", () => {
+      process.env.MARIADB_DATABASE = "envdb";
+      const options = new SQL({ adapter: "mariadb" });
+      expect(options.options.database).toBe("envdb");
+    });
+
+    test("mariadb URL pathname wins over MARIADBDATABASE (legacy spelling)", () => {
+      process.env.MARIADBDATABASE = "envdb";
+      const options = new SQL("mariadb://u@h/urldb");
+      expect(options.options.database).toBe("urldb");
+    });
+
+    test("explicit options.database wins over URL pathname and MARIADB_DATABASE", () => {
+      process.env.MARIADB_DATABASE = "envdb";
+      const options = new SQL("mariadb://u@h/urldb", { database: "explicitdb" });
+      expect(options.options.database).toBe("explicitdb");
+    });
+  });
 });

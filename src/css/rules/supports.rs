@@ -54,9 +54,7 @@ impl Declaration {
 
 impl Declaration {
     fn eql(&self, other: &Self) -> bool {
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
+        // `value` is byte-slice equality.
         self.property_id == other.property_id && self.value == other.value
     }
 }
@@ -99,9 +97,9 @@ impl SupportsCondition {
 
 impl SupportsCondition {
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // Hand-expanded because `#[derive(CssEql)]` would require
-        // `PropertyId: CssEql` (it only provides the custom tag+prefix
-        // `PartialEq`). Tag mismatch → false, then field-wise structural eq.
+        // Hand-expanded: `Selector` and `Unknown` hold `&'static [u8]`, which
+        // `#[derive(CssEql)]` does not cover. Tag mismatch → false, then
+        // field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -370,26 +368,11 @@ impl SupportsCondition {
     }
 }
 
-// Dedup key for `@supports` declaration conditions; manual Hash/PartialEq
-// (wrapping_add of string hash and enum int).
+// Dedup key for `@supports` declaration conditions. The property id has its
+// prefix stripped by the caller, so equality is the tag, the custom property
+// name, and the value bytes.
+#[derive(Hash, PartialEq, Eq)]
 struct SeenDeclKey(PropertyId, &'static [u8]);
-
-impl core::hash::Hash for SeenDeclKey {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // wyhash of the value bytes +% the property-id tag.
-        // `hash_string` returns u32 directly — no narrowing cast.
-        let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
-        state.write_u32(h.wrapping_add(self.0.tag() as u32));
-    }
-}
-
-impl PartialEq for SeenDeclKey {
-    fn eq(&self, other: &Self) -> bool {
-        // Tag-only equality + slice byte equality.
-        self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
-    }
-}
-impl Eq for SeenDeclKey {}
 
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
 pub struct SupportsRule<R> {

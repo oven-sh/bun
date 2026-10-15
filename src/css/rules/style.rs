@@ -39,15 +39,14 @@ impl<R> StyleRule<R> {
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
-        // property-id tag bytes.
+        // Inlined `DeclarationBlock::hash_property_ids`. Uses `PropertyId`'s
+        // `Hash` (tag plus custom property name) so the key agrees with the
+        // `PropertyId` comparison in `is_duplicate`.
         for decl in self.declarations.declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            core::hash::Hash::hash(&decl.property_id(), &mut hasher);
         }
         for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            core::hash::Hash::hash(&decl.property_id(), &mut hasher);
         }
         hasher.final_()
     }
@@ -476,7 +475,6 @@ impl<R> StyleRule<R> {
                     .iter()
                     .zip(&other.declarations.declarations[..len])
                 {
-                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
                     if a.property_id() != b.property_id() {
                         break 'brk false;
                     }

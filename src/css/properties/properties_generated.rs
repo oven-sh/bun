@@ -882,29 +882,36 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// `PropertyId` equality compares the tag, then *only* compares the payload
-// when its type is `VendorPrefix` — for `Custom` (whose payload is
-// `CustomPropertyName`) and all unit variants it returns `true` on tag match
-// alone. A derived `PartialEq` would compare the `CustomPropertyName` bytes,
-// diverging from the duplicate-detection semantics in `rules/style.rs`.
-// `prefix()` already returns the `VendorPrefix` payload for the 65 prefixed
-// variants and `VendorPrefix::empty()` for every other variant (including
-// `Custom`/`All`/`Unparsed`), so `tag` + `prefix` equality is exactly that.
+// `PropertyId` equality is structural: the tag, the `VendorPrefix` payload of
+// the prefixed variants, and the name of a `Custom` property. `prefix()`
+// returns `VendorPrefix::empty()` for every unprefixed variant, so comparing
+// it unconditionally equals comparing it only where it exists. `--a` and
+// `--b` are different property ids: `StyleRule::is_duplicate` in
+// `rules/style.rs` relies on that to keep `.x{--a:1}` next to `.x{--b:2}`.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.tag() == other.tag() && self.prefix() == other.prefix()
+        self.tag() == other.tag()
+            && self.prefix() == other.prefix()
+            && match (self, other) {
+                (PropertyId::Custom(a), PropertyId::Custom(b)) => css::CssEql::eql(a, b),
+                _ => true,
+            }
     }
 }
 
 impl Eq for PropertyId {}
 
-// Hash only the tag discriminant so PropertyId can key a hash map
-// consistent with `eq`.
+// Hash the tag discriminant and the custom property name, consistent with
+// `eq`. The prefix is left out: equal ids still hash equal, and prefixed
+// variants of one property only share a bucket.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
+        if let PropertyId::Custom(name) = self {
+            name.as_str().hash(h);
+        }
     }
 }
 

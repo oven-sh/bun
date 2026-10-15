@@ -132,6 +132,15 @@ describe("css tests", () => {
     // here and is left as written.
     minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
     minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
+
+    // Two rules with the same selector and custom properties of different
+    // names are not duplicates of each other. The later rule only replaces
+    // the earlier one when every property name matches.
+    // https://github.com/oven-sh/bun/issues/44704
+    minify_test(".x{--a:1}.y{color:red}.x{--b:2}", ".x{--a:1}.y{color:red}.x{--b:2}");
+    minify_test(".x{--a:1;--b:2}.y{color:red}.x{--b:3;--a:4}", ".x{--a:1;--b:2}.y{color:red}.x{--b:3;--a:4}");
+    minify_test(".x{--a:1}.y{color:red}.x{--a:2}", ".y{color:red}.x{--a:2}");
+    minify_test(".x{--a:1!important}.y{color:red}.x{--b:2!important}", ".x{--a:1!important}.y{color:red}.x{--b:2!important}");
   });
 
   describe("pseudo-class edge case", () => {

@@ -343,6 +343,22 @@ for (const server of servers) {
       expect(next.mine).not.toBe(id);
     });
 
+    test("a pool that lost its last connection and dialed again is taken over like any other", async () => {
+      await using program = await start();
+      const first = await program.load(`
+        const sql = new SQL(url, { max: 1 });
+        await (await sql.reserve()).close();
+        report({ id: await sessionId(sql) });
+      `);
+      expect(first).toEqual({ id: expect.any(Number) });
+      expect(
+        await program.load(`
+          const sql = new SQL(url, { max: 1 });
+          report({ id: await sessionId(sql) });
+        `),
+      ).toEqual(first);
+    });
+
     test("code of the load before goes on", async () => {
       await using program = await start();
       const first = await program.load(`

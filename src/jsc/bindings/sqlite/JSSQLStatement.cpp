@@ -1358,7 +1358,8 @@ static void putChanges(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope
 
 // Runs the statements of `sql` from `head` on. The first of them gets `bindingsValue`. Returns how many rows they
 // changed, or nothing when there was no statement or an exception is pending.
-static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, VersionSqlite3* versionDB, sqlite3* db, const NulTerminatedSQL& sql, const char* head, JSC::JSValue bindingsValue, int32_t internalFlags)
+// db.run() has always run a statement that nothing was bound to with NULL. `refuseParameters` throws instead of running it.
+static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, VersionSqlite3* versionDB, sqlite3* db, const NulTerminatedSQL& sql, const char* head, JSC::JSValue bindingsValue, int32_t internalFlags, bool refuseParameters)
 {
     std::optional<int64_t> changes;
 
@@ -1373,6 +1374,11 @@ static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalOb
         int rc = sqlite3_prepare_v3(db, head, -1, 0, &statement.stmt, &tail);
 
         if (rc == SQLITE_OK && statement.stmt) {
+            if (refuseParameters && sqlite3_bind_parameter_count(statement.stmt)) [[unlikely]] {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Only the first statement of a SQLite query can have parameters"_s));
+                return std::nullopt;
+            }
+
             if (!changes && !bindingsValue.isUndefinedOrNull()) {
                 SQLiteBindingsMap bindings { (internalFlags & kStrictFlag) != 0 };
                 // After a close() during binding, finalizing the statement on scope exit completes the sqlite3_close_v2.
@@ -1444,7 +1450,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
 
     const int32_t internalFlags = internalFlagsValue.isInt32() ? internalFlagsValue.asInt32() : 0;
-    auto changes = runStatements(lexicalGlobalObject, scope, versionDB, db, sql, sql.begin(), bindingsValue, internalFlags);
+    auto changes = runStatements(lexicalGlobalObject, scope, versionDB, db, sql, sql.begin(), bindingsValue, internalFlags, false);
     RETURN_IF_EXCEPTION(scope, {});
     if (!changes) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Query contained no valid SQL statement; likely empty query."_s));
@@ -1455,7 +1461,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
-// For Bun.sql: runs what follows the statement in `sql`, the text that it was prepared from.
+// For Bun.sql: runs what follows the statement in `sql`, the text that it was prepared from. The values of a query are
+// the first statement's, so a later one with a parameter is refused. Returns how many rows changed, or undefined when
+// nothing follows.
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementRunTailFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1476,8 +1484,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementRunTailFunction, (JSC::JSGlobalObject * l
 
     // sqlite3_sql() ends where sqlite3_prepare_v3() stopped.
     const size_t ownLength = std::min<size_t>(strlen(sqlite3_sql(castedThis->stmt)), sql.end() - sql.begin());
-    runStatements(lexicalGlobalObject, scope, castedThis->version_db.get(), sqlite3_db_handle(castedThis->stmt), sql, sql.begin() + ownLength, jsUndefined(), 0);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    auto changes = runStatements(lexicalGlobalObject, scope, castedThis->version_db.get(), sqlite3_db_handle(castedThis->stmt), sql, sql.begin() + ownLength, jsUndefined(), 0, true);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(changes ? jsNumber(*changes) : jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

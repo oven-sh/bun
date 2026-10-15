@@ -20,14 +20,19 @@ function parked() {
 const insert = (handle: any, n: number) => handle.unsafe(`INSERT INTO t VALUES (${n})`);
 const rows = async (sql: SQL) => (await sql.unsafe("SELECT n FROM t ORDER BY n")).map((row: any) => Number(row.n));
 
-async function task(handle: any, n: number, fails: boolean) {
+async function task(handle: any, n: number, fails: boolean, goOn: Promise<void> | undefined) {
   await insert(handle, n);
   if (fails) throw new Error("task failed");
+  await goOn;
   await insert(handle, n + 1);
   await insert(handle, n + 2);
 }
-function threeTasks(handle: any, tasks: Promise<string>[]) {
-  const running = [task(handle, 10, false), task(handle, 20, true), task(handle, 30, false)];
+/**
+ * Without `goOn` the two tasks that do not fail go on as soon as they can. Which of their statements still go out
+ * ahead of the rollback depends on how the answers of the server fall into reads, so only the table can be pinned.
+ */
+function threeTasks(handle: any, tasks: Promise<string>[], goOn?: Promise<void>) {
+  const running = [task(handle, 10, false, goOn), task(handle, 20, true, goOn), task(handle, 30, false, goOn)];
   tasks.push(...running.map(outcome));
   return Promise.all(running);
 }
@@ -44,8 +49,15 @@ function whatStaysInTheTable(prefix: string, connect: () => Promise<SQL>) {
 
   test("a rejected begin() keeps no row of the tasks that go on after one failed", async () => {
     await using sql = await open();
+    const racing: Promise<string>[] = [];
+    expect(await outcome(sql.begin(tx => threeTasks(tx, racing)))).toBe("task failed");
+    await Promise.all(racing);
+    expect(await rows(sql)).toEqual([]);
+
     const tasks: Promise<string>[] = [];
-    const transaction = await outcome(sql.begin(tx => threeTasks(tx, tasks)));
+    const rolledBack = Promise.withResolvers<void>();
+    const transaction = await outcome(sql.begin(tx => threeTasks(tx, tasks, rolledBack.promise)));
+    rolledBack.resolve();
     expect({ transaction, tasks: await Promise.all(tasks), rows: await rows(sql) }).toEqual({
       transaction: "task failed",
       tasks: [endedCode, "task failed", endedCode],
@@ -55,10 +67,15 @@ function whatStaysInTheTable(prefix: string, connect: () => Promise<SQL>) {
 
   test("a rolled-back savepoint keeps no row of the tasks that go on after one failed", async () => {
     await using sql = await open();
+    const racing: Promise<string>[] = [];
     const tasks: Promise<string>[] = [];
+    const rolledBack = Promise.withResolvers<void>();
     const savepoint = await sql.begin(async tx => {
       await insert(tx, 1);
-      const savepoint = await outcome(tx.savepoint(sp => threeTasks(sp, tasks)));
+      expect(await outcome(tx.savepoint(sp => threeTasks(sp, racing)))).toBe("task failed");
+      await Promise.all(racing);
+      const savepoint = await outcome(tx.savepoint(sp => threeTasks(sp, tasks, rolledBack.promise)));
+      rolledBack.resolve();
       await Promise.all(tasks);
       await insert(tx, 2);
       return savepoint;

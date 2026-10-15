@@ -338,17 +338,8 @@ function sameSettings(a: BaseSQLAdapter<any, any>, b: BaseSQLAdapter<any, any>):
 }
 
 /// bun --hot only. This module and the open connections outlive a reload, the `new SQL()` of the program does not.
+/// A pool leaves when its last connection has closed, so that it can be collected, and comes back when it dials.
 const hotPools = new Set<BaseSQLAdapter<any, any>>();
-
-function rememberHotPool(pool: BaseSQLAdapter<any, any>) {
-  for (const other of hotPools) {
-    if (other.generation < pool.generation - 1 && other.connections.length === 0) {
-      hotPools.delete(other);
-    }
-  }
-  hotPools.add(pool);
-}
-
 let sweptGeneration = 0;
 
 /// At the first dial of a load: a pool of an earlier load that nobody has asked for a connection since the first
@@ -359,6 +350,7 @@ function retireUnusedPools(generation: number) {
     if (pool.generation !== generation) {
       if (!pool.asked) {
         pool.retire();
+        hotPools.delete(pool);
       }
       pool.asked = false;
     }
@@ -559,7 +551,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     if (this.generation !== -1) {
-      rememberHotPool(this);
+      hotPools.add(this);
     }
   }
 
@@ -669,6 +661,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   /// bun --hot: instead of a dial, an idle connection of a pool that an earlier load made with the same settings.
   #adopt(): boolean {
     const generation = this.generation;
+    if (generation !== -1) {
+      hotPools.add(this);
+    }
     if (generation <= 0 || generation !== hotReloadGeneration()) {
       return false;
     }
@@ -729,10 +724,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       const waiter = queue[i];
       if (typeof waiter === "function") {
         // An even share of the demand over `size` connections: what is above it gets a new connection.
-        // Below `max` the reservations ahead get a new one too, in a full pool one has to drain for each.
+        // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(
           Math.ceil((queue.length + this.totalQueries) / size),
-          this.connections.length < this.connectionInfo.max ? 0 : reservationsAhead,
+          reservationsAhead && Math.max(reservationsAhead - this.#connecting(), 0),
         );
         if (connection === null) {
           return false;
@@ -809,6 +804,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   connectionClosed(connection: PooledConnection, err: Error, established: boolean) {
     const connections = this.connections;
     connections.splice(connections.indexOf(connection), 1);
+    if (connections.length === 0) {
+      hotPools.delete(this);
+    }
     this.readyConnections.delete(connection);
     const closeHandlers = connection.closeHandlers;
     for (const onClose of closeHandlers) {
@@ -826,14 +824,16 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       if (established) {
         this.#serve();
       } else {
-        // The queries make do with the connections that are up. The oldest caller that none of them and no dial
-        // on its way can take has its answer. The next one is dialed for while the server is known to answer.
-        while (this.#serveNext(this.readyConnections.size));
-        if (this.queue.length > this.#connecting()) {
+        // The callers make do with the connections that are up or on their way: any of them takes every query,
+        // and a reservation once it is idle. With none, the oldest caller has its answer, and the next one is
+        // dialed for while the server is known to answer.
+        const connecting = this.#connecting();
+        while (this.#serveNext(this.readyConnections.size + connecting));
+        if (this.readyConnections.size + connecting === 0) {
           this.#failQueued(err, 1);
-        }
-        if (this.isConnected()) {
-          this.#dialForQueued();
+          if (this.isConnected()) {
+            this.#dialForQueued();
+          }
         }
       }
       if (connections.length === 0) {
@@ -892,7 +892,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     for (let i = 0; i < connections.length; i++) {
       connections[i].destroy();
     }
-    hotPools.delete(this);
     this.#closing!.resolve();
   }
 

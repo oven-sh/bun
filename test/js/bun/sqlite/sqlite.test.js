@@ -5148,6 +5148,16 @@ it("a trigger that raises an empty message throws a SQLiteError", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("db.run() gives its values to the first statement and runs the parameters of the later ones as NULL", () => {
+  using db = new Database(":memory:");
+  db.run("CREATE TABLE t (a)");
+  expect(db.run("INSERT INTO t VALUES (?); INSERT INTO t VALUES (?); INSERT INTO t VALUES (:a)", [1])).toEqual({
+    changes: 3,
+    lastInsertRowid: 3,
+  });
+  expect(db.query("SELECT a FROM t").values()).toEqual([[1], [null], [null]]);
+});
+
 // macOS loads the system SQLite, which has its own default.
 it.skipIf(isMacOS)("a WAL database syncs at every commit unless the application says otherwise", () => {
   using dir = tempDir("sqlite-wal-synchronous", {});

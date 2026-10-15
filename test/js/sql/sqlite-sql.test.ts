@@ -1042,6 +1042,158 @@ describe("Query Execution", () => {
     });
   });
 
+  describe("empty statements in front of the first one", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE semi (a)`;
+      await sql`INSERT INTO semi VALUES (1), (2)`;
+      return sql;
+    };
+    const both = [{ a: 1 }, { a: 2 }];
+
+    test.each([
+      ["; select a from semi", "SELECT", both, [1, 2]],
+      [";select a from semi", "SELECT", both, [1, 2]],
+      [";\nselect a from semi;", "SELECT", both, [1, 2]],
+      ["-- header\n;select a from semi", "SELECT", both, [1, 2]],
+      [" ;; /* ; */ ; -- ;\n ;select a from semi", "SELECT", both, [1, 2]],
+      [";insert into semi values (3) returning a", "INSERT", [{ a: 3 }], [1, 2, 3]],
+      [";pragma user_version", "PRAGMA", [{ user_version: 0 }], [1, 2]],
+      ["; select a from semi where a = 1; delete from semi where a = 2", "SELECT", [{ a: 1 }], [1]],
+      ["; insert into semi values (3); insert into semi values (4)", "INSERT", [], [1, 2, 3, 4]],
+    ])("%j", async (text, command, rows, after) => {
+      await using sql = await open();
+      const result = await sql.unsafe(text);
+      expect({ command: result.command, rows: [...result] }).toEqual({ command, rows });
+      expect((await sql`SELECT a FROM semi`.values()).flat()).toEqual(after);
+    });
+
+    test("explain", async () => {
+      await using sql = await open();
+      const plan = await sql.unsafe(";explain select 1");
+      expect(plan.command).toBe("EXPLAIN");
+      expect(plan[0]).toHaveProperty("opcode");
+    });
+
+    test("in a file and in a tagged template", async () => {
+      using dir = tempDir("sqlite-sql-semi", { "semi.sql": ";\nselect a from semi;\n" });
+      await using sql = await open();
+      expect(await sql.file(join(String(dir), "semi.sql"))).toEqual(both);
+      expect(await sql`; select a from semi where a = ${2}`).toEqual([{ a: 2 }]);
+    });
+  });
+
+  describe("no statement runs with a parameter that got no value, and no value is dropped", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE flags (id INTEGER PRIMARY KEY, flag)`;
+      await sql`INSERT INTO flags VALUES (1, 'kept'), (2, 'kept')`;
+      return sql;
+    };
+    const flags = (sql: SQL) => sql`SELECT * FROM flags ORDER BY id`.values();
+    const untouched = [
+      [1, "kept"],
+      [2, "kept"],
+    ];
+    const messageOf = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => error.message,
+      );
+
+    test.each([
+      ["and a statement with a parameter follows", "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = ?"],
+      ["and a statement that writes follows", "SELECT count(*) AS n FROM flags; UPDATE flags SET flag = 'written'"],
+      ["and nothing follows", "SELECT count(*) AS n FROM flags"],
+      ["and it returns no rows", "UPDATE flags SET flag = 'written'; UPDATE flags SET flag = ?"],
+    ])("values for a first statement without parameters reject before anything runs, %s", async (_, text) => {
+      await using sql = await open();
+      const expected = "SQLite query expected 0 values, received 1";
+      expect({
+        objects: await messageOf(sql.unsafe(text, [1])),
+        values: await messageOf(sql.unsafe(text, [1]).values()),
+        raw: await messageOf(sql.unsafe(text, [1]).raw()),
+      }).toEqual({ objects: expected, values: expected, raw: expected });
+      expect(await flags(sql)).toEqual(untouched);
+    });
+
+    describe.each(["?", "?1", ":a", "$a", "@a"])("%s after the first statement", parameter => {
+      const refused = "Only the first statement of a SQLite query can have parameters";
+      // The second statement ran, the third is refused, the fourth does not run.
+      const tail = `UPDATE flags SET flag = 'ran' WHERE id = 1; UPDATE flags SET flag = ${parameter}; DELETE FROM flags`;
+      const stopped = [
+        [1, "ran"],
+        [2, "kept"],
+      ];
+
+      test("which returns rows", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`SELECT 1 AS a; ${tail}`))).toBe(refused);
+        expect(await flags(sql)).toEqual(stopped);
+      });
+
+      test("which returns rows and takes the values", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`SELECT ? AS a; ${tail}`, [1]))).toBe(refused);
+        expect(await flags(sql)).toEqual(stopped);
+      });
+
+      test("which returns no rows", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`INSERT INTO flags VALUES (3, 'new'); ${tail}`))).toBe(refused);
+        expect(await flags(sql)).toEqual([...stopped, [3, "new"]]);
+      });
+
+      test("which returns no rows and takes the values", async () => {
+        await using sql = await open();
+        expect(await messageOf(sql.unsafe(`INSERT INTO flags VALUES (?, 'new'); ${tail}`, [3]))).toBe(refused);
+        expect(await flags(sql)).toEqual([...stopped, [3, "new"]]);
+      });
+    });
+
+    test("behind an empty statement", async () => {
+      await using sql = await open();
+      expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?"))).toBe(
+        "Only the first statement of a SQLite query can have parameters",
+      );
+      expect(await messageOf(sql.unsafe("; SELECT 1 AS a; UPDATE flags SET flag = ?", [1]))).toBe(
+        "SQLite query expected 0 values, received 1",
+      );
+      expect(await flags(sql)).toEqual(untouched);
+    });
+
+    test("an object of named values is the first statement's too", async () => {
+      await using sql = await open();
+      expect(
+        await messageOf(sql.unsafe("INSERT INTO flags VALUES (3, :a); UPDATE flags SET flag = :a", { ":a": "named" })),
+      ).toBe("Only the first statement of a SQLite query can have parameters");
+      expect(await flags(sql)).toEqual([...untouched, [3, "named"]]);
+    });
+
+    test("values for every parameter of the text are too many for the first statement", async () => {
+      await using sql = await open();
+      const expected = "SQLite query expected 1 values, received 2";
+      expect(await messageOf(sql.unsafe("SELECT ? AS a; UPDATE flags SET flag = ?", [1, 2]))).toBe(expected);
+      expect(await messageOf(sql`SELECT ${1} AS a; UPDATE flags SET flag = ${2}`)).toBe(expected);
+      expect(await messageOf(sql`INSERT INTO flags VALUES (${3}, 'new'); UPDATE flags SET flag = ${2}`)).toBe(expected);
+      expect(await flags(sql)).toEqual(untouched);
+    });
+
+    test("values for the first statement, and statements without parameters after it", async () => {
+      await using sql = await open();
+      const result = await sql.unsafe(
+        "INSERT INTO flags VALUES (?, 'a'); INSERT INTO flags VALUES (4, 'b'), (5, 'c')",
+        [3],
+      );
+      expect({ rows: [...result], count: result.count, lastInsertRowid: result.lastInsertRowid }).toEqual({
+        rows: [],
+        count: 3,
+        lastInsertRowid: 5,
+      });
+      expect(await flags(sql)).toEqual([...untouched, [3, "a"], [4, "b"], [5, "c"]]);
+    });
+  });
+
   // SQLite copies text that does not end in a NUL once per statement. The same text with a NUL is the control.
   // On Linux without ASAN malloc is mimalloc, so heapStats() sees what SQLite allocates.
   test.skipIf(!isLinux || isASAN || isDebug)(
@@ -2266,6 +2418,8 @@ describe("Error handling", () => {
     const third = second.replace("nmae", "name") + ";\n  DELETE FROM offsets WHERE nmae = 2; DELETE FROM offsets";
     const select = "\n      SELECT nmae FROM offsets";
     const afterRows = "SELECT 'é' AS a; DELETE FROM offsets WHERE nmae = 1";
+    const afterEmpty = ";\n ; SELECT nmae FROM offsets";
+    const afterEmptyAndRows = "; " + afterRows;
     using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
 
     expect({
@@ -2277,6 +2431,8 @@ describe("Error handling", () => {
       transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
       select: await byteOffsetOf(sql.unsafe(select)),
       afterRows: await byteOffsetOf(sql.unsafe(afterRows)),
+      afterEmpty: await byteOffsetOf(sql.unsafe(afterEmpty)),
+      afterEmptyAndRows: await byteOffsetOf(sql.unsafe(afterEmptyAndRows)),
     }).toEqual({
       tagged: at(indented, "nmae"),
       unsafe: at(second, "nmae"),
@@ -2285,6 +2441,8 @@ describe("Error handling", () => {
       transaction: at(second, "nmae"),
       select: at(select, "nmae"),
       afterRows: at(afterRows, "nmae"),
+      afterEmpty: at(afterEmpty, "nmae"),
+      afterEmptyAndRows: at(afterEmptyAndRows, "nmae"),
     });
 
     const closed = new SQL("sqlite://:memory:");
@@ -6067,11 +6225,21 @@ describe("rows or changes", () => {
 
   test("text without a statement", async () => {
     await using sql = await seeded();
-    for (const text of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n", ";", " ; /* x */ ;"]) {
+    for (const text of [
+      "   ",
+      "-- noop",
+      "/* placeholder */",
+      "-- a\n-- b\n",
+      ";",
+      " ; /* x */ ;",
+      "/* c",
+      ";-- c\n;",
+    ]) {
       expect(await sql.unsafe(text).catch(e => e.message)).toBe(
         "Query contained no valid SQL statement; likely empty query.",
       );
     }
+    expect(await sql.unsafe("").catch(e => e.message)).toBe("SQL string mustn't be blank");
   });
 
   test("bindings that the statement has no place for", async () => {

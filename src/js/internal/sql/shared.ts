@@ -208,7 +208,8 @@ function isUnsafeTransactionStart(sql: string): boolean {
   return transactionStart.test(sql);
 }
 
-const leadingKeyword = /^[\s(]*(?:(?:--[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)[\s(]*)*([a-z]+)/i;
+// A ";" is an empty statement. SQLite steps over it when it compiles the first one.
+const leadingKeyword = /^[\s(;]*(?:(?:--[^\n]*\n|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)[\s(;]*)*([a-z]+)/i;
 function firstKeyword(sql: string): string {
   const match = leadingKeyword.exec(sql);
   return match === null ? "" : match[1].toUpperCase();

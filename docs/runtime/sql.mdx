@@ -614,7 +614,7 @@ Simple queries cannot use parameters (`${value}`). If you need parameters, split
 These rules apply to every string with several statements, also through `sql.file` and `sql.unsafe`:
 
 - On PostgreSQL and MySQL, the query resolves to an array with one result per statement.
-- On SQLite, every statement runs and the query resolves to one result. It holds the rows of the first statement if that statement returns rows. Otherwise its `count` is the number of rows that all the statements changed.
+- On SQLite, every statement runs and the query resolves to one result. It holds the rows of the first statement if that statement returns rows. Otherwise its `count` is the number of rows that all the statements changed. Only the first statement can have parameters.
 - Only PostgreSQL runs the string as one implicit transaction. On MySQL and SQLite, the statements before a failing one stay applied. Wrap the call in [`sql.begin`](#transactions) if you need all or nothing.
 
 ### Queries in files

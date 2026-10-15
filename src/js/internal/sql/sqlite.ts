@@ -22,12 +22,8 @@ function toSQLiteError(err: unknown) {
   return err;
 }
 
-// SQLite's own white space: it reports U+00A0 and the like as a syntax error.
-const blank = /^[; \t\n\v\f\r]*$/;
-/// `false` also for a ";" in a literal or a comment: db.run() finds out what follows it.
-function isOneStatement(sql: string): boolean {
-  const end = sql.indexOf(";");
-  return end === -1 || blank.test(sql.slice(end + 1));
+function lastInsertRowid(db: BunSQLiteModule.Database) {
+  return db.query("SELECT last_insert_rowid()").values()[0][0] as number | bigint;
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -55,26 +51,31 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       let rows: unknown[] | undefined;
       let changes: BunSQLiteModule.Changes | undefined;
       let readonly = false;
+      // The rows that the statements after the first one changed. `undefined` when there are none.
+      let tailChanges: number | undefined;
       // Text without a statement is left to db.run(), which says so.
       if (command !== "") {
         // Compiles the first statement of the text and runs nothing.
         const stmt = db.prepare<unknown, any[]>(sql);
         try {
-          if (stmt.native.columnsCount > 0) {
-            readonly = stmt.readonly;
-            if (mode === SQLQueryResultMode.values) {
-              rows = stmt.values(values);
-            } else if (mode === SQLQueryResultMode.raw) {
-              rows = stmt.raw(values);
+          // A Statement without parameters ignores its arguments. db.run() says that the values have no place.
+          if (stmt.paramsCount > 0 || !((values as unknown[]).length > 0)) {
+            if (stmt.native.columnsCount > 0) {
+              readonly = stmt.readonly;
+              if (mode === SQLQueryResultMode.values) {
+                rows = stmt.values(values);
+              } else if (mode === SQLQueryResultMode.raw) {
+                rows = stmt.raw(values);
+              } else {
+                const columnFrom = adapter.connectionInfo.transform?.column.from;
+                if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
+                rows = stmt.all(values);
+              }
             } else {
-              const columnFrom = adapter.connectionInfo.transform?.column.from;
-              if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
-              rows = stmt.all(values);
+              changes = stmt.run(values);
             }
-            // The result is this statement's. What follows it in the text runs too.
-            stmt.native.$runTail(sql);
-          } else if (isOneStatement(sql) && (stmt.paramsCount > 0 || (values as unknown[]).length === 0)) {
-            changes = stmt.run(values);
+            // Not db.run(): it runs a statement that got no values with NULL in their place.
+            tailChanges = stmt.native.$runTail(sql);
           }
         } finally {
           stmt.finalize();
@@ -88,14 +89,13 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
           result.affectedRows = 0;
         } else {
           result.affectedRows = rows.length;
-          result.lastInsertRowid = db.query("SELECT last_insert_rowid()").values()[0][0] as number | bigint;
+          result.lastInsertRowid = lastInsertRowid(db);
         }
       } else {
-        // There may be more than one statement, or bindings that the statement has no place for.
         changes ??= db.run<any>(sql, values);
         result = new SQLResultArray();
-        result.count = result.affectedRows = changes.changes;
-        result.lastInsertRowid = changes.lastInsertRowid;
+        result.count = result.affectedRows = changes.changes + (tailChanges ?? 0);
+        result.lastInsertRowid = tailChanges === undefined ? changes.lastInsertRowid : lastInsertRowid(db);
       }
     } catch (err) {
       throw toSQLiteError(err);

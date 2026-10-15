@@ -11,6 +11,7 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgCommandComplete,
   pgErrorResponse,
   pgReadyForQuery,
 } from "./wire-frames";
@@ -680,6 +681,7 @@ const scripted = [
         socket.end(pgErrorResponse({ S: "FATAL", C: "28P01", M: "password authentication failed" })),
       );
     },
+    answer: (socket: net.Socket) => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()])),
   },
   {
     adapter: "mysql",
@@ -701,10 +703,11 @@ const scripted = [
       socket.write(mysqlHandshakeV10());
       socket.once("data", () => socket.end(mysqlErrPacket(2, 1045, "28000", "Access denied for user")));
     },
+    answer: (socket: net.Socket) => socket.write(mysqlOkPacket(1)),
   },
 ];
 
-describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refuseLogin }) => {
+describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refuseLogin, answer }) => {
   async function serverOf(onSocket: (socket: net.Socket, nth: number) => void) {
     const sockets: net.Socket[] = [];
     const { port, server } = await listeningServer(socket => {
@@ -766,20 +769,78 @@ describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refu
     expect(server.sockets.length).toBe(3);
   });
 
-  test.concurrent("queries make do with a connection that is up, a reservation does not wait behind them", async () => {
-    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
+  test.concurrent("queries on a cold pool wait for the dial on its way when the others are refused", async () => {
     const closed = new Calls();
+    // Room for one, which is let in once the client knows of the refusals.
+    await using server = await serverOf((socket, nth) =>
+      nth === 1 ? void closed.reached(2).then(() => ready(socket)) : refuseLogin(socket),
+    );
     const sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
     await using _ = unanswered(sql);
+    const queries = [1, 2, 3].map(() => sql.unsafe("select 1").execute());
+    const refused = closed.reached(2).then(nextTurn);
+    expect(await Promise.all(queries.map(query => unlessPending(outcome(query), refused)))).toEqual(
+      Array(3).fill("pending"),
+    );
+    // With a connection up the pool tries to grow once more, and then makes do.
+    await closed.reached(4);
+    expect(queries.map(query => query.active)).toEqual([true, true, true]);
+    expect(server.sockets.length).toBe(5);
+  });
+
+  test.concurrent("queries make do with a connection that is up", async () => {
+    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
+    const closed = new Calls();
+    const sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
+    await using _ = unanswered(sql);
     await sql.connect();
-    const busy = sql.unsafe("select 1").execute();
+    const queries = [1, 2].map(() => sql.unsafe("select 1").execute());
+    queries.forEach(outcome);
+    await closed.reached(1);
+    expect(queries.map(query => query.active)).toEqual([true, true]);
+  });
+
+  test.concurrent("they leave its share to a dial that is on its way", async () => {
+    const closed = new Calls();
+    const connected = new Calls();
+    const letIn = Promise.withResolvers<void>();
+    await using server = await serverOf((socket, nth) => {
+      if (nth === 2) return refuseLogin(socket);
+      if (nth === 3) return void letIn.promise.then(() => ready(socket));
+      ready(socket);
+    });
+    const sql = new SQL({ url: url(server.port), max: 3, onconnect: connected.hit, onclose: closed.hit });
+    await using _ = unanswered(sql);
+    await sql.connect();
+    const queries = [1, 2, 3].map(() => sql.unsafe("select 1").execute());
+    queries.forEach(outcome);
+    await closed.reached(1);
+    expect(queries.map(query => query.active)).toEqual([true, true, false]);
+    letIn.resolve();
+    await connected.reached(2);
+    expect(queries.map(query => query.active)).toEqual([true, true, true]);
+  });
+
+  test.concurrent("a reservation whose dial is refused gets the connection that is up: it drains for it", async () => {
+    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
+    const closed = new Calls();
+    const sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
+    await using _ = unanswered(sql);
+    await sql.connect();
+    const busy = outcome(sql.unsafe("select 1").simple().execute());
     const reservation = outcome(sql.reserve());
-    const query = sql.unsafe("select 2").execute();
-    const left = [busy, query].map(outcome);
-    expect(await unlessPending(reservation, closed.reached(2).then(nextTurn))).toBe(prefix + "SERVER_ERROR");
-    expect([busy.active, query.active]).toEqual([true, true]);
-    await sql.close({ timeout: 0 });
-    expect(await Promise.all(left)).toEqual(Array(2).fill(prefix + "CONNECTION_CLOSED"));
+    expect(await unlessPending(reservation, closed.reached(1).then(nextTurn))).toBe("pending");
+    // Nobody got an answer, so nothing is dialed for the next one. Accepted after whatever the pool would have dialed:
+    const probe = net.connect(server.port, "127.0.0.1");
+    await once(probe, "connect");
+    probe.destroy();
+    while (server.sockets.length < 3) await nextTurn();
+    expect(server.sockets.length).toBe(3);
+    const later = sql.unsafe("select 2").execute();
+    outcome(later);
+    expect(later.active).toBe(false);
+    answer(server.sockets[0]);
+    expect([await busy, await reservation]).toEqual(["resolved", "resolved"]);
   });
 
   test.concurrent("a caller is left to a dial that is on its way when another one is refused", async () => {

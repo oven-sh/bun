@@ -310,11 +310,10 @@ const { inspect } = require('node:util');
 
 {
   const ev = new CustomEvent('test');
-  // TODO: unskip
-  // const evConstructorName = inspect(ev, {
-  //   depth: -1,
-  // });
-  // strictEqual(evConstructorName, 'CustomEvent');
+  const evConstructorName = inspect(ev, {
+    depth: -1,
+  });
+  strictEqual(evConstructorName, 'CustomEvent');
 
   const inspectResult = inspect(ev, {
     depth: 1,

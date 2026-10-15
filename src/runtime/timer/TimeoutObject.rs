@@ -40,6 +40,39 @@ impl TimeoutObject {
         Ok(frame.this())
     }
 
+    /// Native half of node's `[nodejs.util.inspect.custom]` method: what the getters give, in node's order.
+    pub(crate) fn inspect_custom(
+        this: &Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
+        let slot = |value: Option<JSValue>| value.unwrap_or(JSValue::UNDEFINED);
+        let fields = JSValue::create_empty_object(global, 5);
+        fields.put(
+            global,
+            b"_idleTimeout",
+            slot(js::idle_timeout_get_cached(this_value)),
+        );
+        fields.put(
+            global,
+            b"_idleStart",
+            slot(js::idle_start_get_cached(this_value)),
+        );
+        fields.put(
+            global,
+            b"_onTimeout",
+            slot(js::callback_get_cached(this_value)),
+        );
+        fields.put(global, b"_repeat", slot(js::repeat_get_cached(this_value)));
+        fields.put(
+            global,
+            b"_destroyed",
+            JSValue::from(this.internals.get_destroyed()),
+        );
+        crate::webcore::node_inspect::print(global, callframe, this_value, fields, c"Timeout")
+    }
+
     // Cached-property getters/setters — codegen passes `this_value` (the JS
     // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
     // Signature does not match the standard `host_fn(getter/setter)` shape; the

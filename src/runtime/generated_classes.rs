@@ -46,5 +46,7 @@ use crate::webcore::body::BodyMixin;
 // emits `Blob::get_text(&mut *this, …)` UFCS, so the trait must be in scope
 // by name here for those calls to resolve.
 use crate::webcore::blob::BlobExt;
+// And for `Blob::inspect_custom`, the reader behind `inspectCustom: true`.
+use crate::webcore::node_inspect::BlobInspect;
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_classes.rs"));

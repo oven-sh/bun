@@ -388,14 +388,9 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
 
-JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+// What node's method prints for a stream: `{ locked, state, supportsBYOB }`.
+static JSObject* inspectState(VM& vm, JSGlobalObject* lexicalGlobalObject, JSReadableStream* thisObject)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
-    auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
     Bun::putDirectNamed(vm, data, "locked"_s, jsBoolean(isReadableStreamLocked(thisObject)));
     ASCIILiteral state;
@@ -412,6 +407,27 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
     }
     Bun::putDirectNamed(vm, data, "state"_s, jsNontrivialString(vm, state));
     Bun::putDirectNamed(vm, data, "supportsBYOB"_s, jsBoolean(thisObject->m_controllerKind == ControllerKind::Byte));
+    return data;
+}
+
+// For the method of a Response (node_inspect.rs). Empty for a value that is not a stream.
+extern "C" EncodedJSValue Bun__ReadableStream__inspectState(JSGlobalObject* lexicalGlobalObject, EncodedJSValue encodedStream)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(encodedStream));
+    if (!stream)
+        return {};
+    return JSValue::encode(inspectState(JSC::getVM(lexicalGlobalObject), lexicalGlobalObject, stream));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = inspectState(vm, lexicalGlobalObject, thisObject);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStream"_s, data));
 }
 

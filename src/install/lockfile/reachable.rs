@@ -2,8 +2,9 @@ use crate::dependency::{Behavior, Dependency};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
-use crate::npm::{Architecture, OperatingSystem};
-use crate::{PackageID, PackageManager};
+use crate::npm::{Architecture, Libc, OperatingSystem};
+use crate::package_manager::WorkspaceFilter;
+use crate::{DependencyID, PackageID, PackageManager};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
 
@@ -15,7 +16,7 @@ pub struct Options {
     pub peer: bool,
     pub optional_peer: bool,
     pub bundled: bool,
-    pub platform: Option<(Architecture, OperatingSystem)>,
+    pub platform: Option<(Architecture, OperatingSystem, Libc)>,
 }
 
 impl Options {
@@ -31,7 +32,7 @@ impl Options {
         }
     }
 
-    // What `bun install` would link with the manager's `--production` / `--omit` / os / cpu settings.
+    // What `bun install` would link with the manager's `--production` / `--omit` / platform.
     pub(crate) fn install(manager: &PackageManager) -> Options {
         let features = manager.options.local_package_features;
         Options {
@@ -41,8 +42,94 @@ impl Options {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: false,
-            platform: Some((manager.options.cpu, manager.options.os)),
+            platform: Some((
+                manager.options.cpu,
+                manager.options.os,
+                manager.options.libc,
+            )),
         }
+    }
+
+    fn group_enabled(&self, behavior: Behavior) -> bool {
+        if behavior.is_optional_peer() {
+            self.optional_peer
+        } else if behavior.is_peer() {
+            self.peer
+        } else if behavior.is_optional() {
+            self.optional
+        } else if behavior.is_dev() {
+            self.dev
+        } else {
+            true
+        }
+    }
+
+    // An optional peer borrows the package of a same-name row in `siblings`: are all those omitted?
+    fn omits_optional_peer(&self, dep: &Dependency, siblings: &[Dependency]) -> bool {
+        if !dep.behavior.is_optional_peer() || (self.dev && self.optional) {
+            return false;
+        }
+        let mut lender_omitted = false;
+        for sibling in siblings {
+            if sibling.name_hash == dep.name_hash && !sibling.behavior.is_peer() {
+                if self.group_enabled(sibling.behavior) {
+                    return false;
+                }
+                lender_omitted = true;
+            }
+        }
+        lender_omitted
+    }
+}
+
+/// What a `--production` / `--omit` install links. Computed once, for one `resolutions` buffer.
+#[derive(Default)]
+pub(crate) struct Linked(Option<DynamicBitSet>);
+
+impl Linked {
+    /// An optional peer of `parent_pkg_id` whose package only an omitted group asked for.
+    pub(crate) fn omits_optional_peer(
+        &mut self,
+        dep_id: DependencyID,
+        parent_pkg_id: PackageID,
+        workspace_filters: &[WorkspaceFilter],
+        install_root_dependencies: bool,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        resolutions: &[PackageID],
+    ) -> bool {
+        let options = Options::install(manager);
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let dep_slices = lockfile.packages.items_dependencies();
+        if !options.omits_optional_peer(
+            &deps[dep_id as usize],
+            dep_slices[parent_pkg_id as usize].get(deps),
+        ) {
+            return false;
+        }
+        let linked = self.0.get_or_insert_with(|| {
+            let pruned = &manager.summary.pruned_workspaces;
+            if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
+                return packages(lockfile, resolutions, options);
+            }
+            // `--filter` or a pruned checkout links only some importers.
+            let mut roots: Vec<PackageID> = Vec::new();
+            if install_root_dependencies {
+                roots.push(0);
+            }
+            for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+                let workspace = resolutions[row];
+                if deps[row].behavior.is_workspace()
+                    && (workspace as usize) < dep_slices.len()
+                    && !pruned.contains(&deps[row].name_hash)
+                    && WorkspaceFilter::is_selected(workspace_filters, workspace)
+                {
+                    roots.push(workspace);
+                }
+            }
+            packages_from(lockfile, resolutions, &roots, false, options)
+        });
+        !linked.is_set(resolutions[dep_id as usize] as usize)
     }
 }
 
@@ -65,16 +152,35 @@ pub fn packages_from(
     follow_workspace_edges: bool,
     options: Options,
 ) -> DynamicBitSet {
-    let walk = Walk::new(lockfile, resolutions, follow_workspace_edges, options);
-    let mut seen = walk.empty_seen();
-    let mut worklist: Vec<PackageID> = Vec::new();
+    Walk::new(lockfile, resolutions, follow_workspace_edges, options).reach(roots)
+}
+
+// `roots`, plus every package a non-optional edge leads to. Skips optional edges to `left_out`.
+pub(crate) fn required_without(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    roots: &[PackageID],
+    options: Options,
+    left_out: &DynamicBitSet,
+) -> DynamicBitSet {
+    let mut walk = Walk::new(lockfile, resolutions, true, options);
+    walk.left_out = Some(left_out);
+    let reached = walk.reach(roots);
+    let mut required = walk.empty_seen();
     for &root in roots {
-        if mark(&mut seen, root) {
-            worklist.push(root);
+        mark(&mut required, root);
+    }
+    let mut parents = reached.iterator::<true, true>();
+    while let Some(parent) = parents.next() {
+        for (target, behavior) in walk.edges(parent as PackageID) {
+            if !behavior.contains(Behavior::OPTIONAL)
+                && reached.is_set_allow_out_of_bound(target as usize, false)
+            {
+                required.set(target as usize);
+            }
         }
     }
-    walk.drain(&mut seen, &mut worklist);
-    seen
+    required
 }
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
@@ -116,7 +222,7 @@ pub fn dev_packages_from(
                 continue;
             }
             if behavior.is_dev() && walk.follows(behavior) {
-                walk.admit(target, &mut seen, &mut worklist);
+                walk.admit(target, behavior, &mut seen, &mut worklist);
             }
         }
     }
@@ -132,6 +238,7 @@ struct Walk<'a> {
     follow_workspace_edges: bool,
     follow_all: bool,
     options: Options,
+    left_out: Option<&'a DynamicBitSet>,
 }
 
 impl<'a> Walk<'a> {
@@ -154,6 +261,7 @@ impl<'a> Walk<'a> {
                 && options.optional_peer
                 && options.bundled,
             options,
+            left_out: None,
         }
     }
 
@@ -161,31 +269,44 @@ impl<'a> Walk<'a> {
         DynamicBitSet::init_empty(self.dep_slices.len()).unwrap_or_oom()
     }
 
-    fn follows(&self, behavior: Behavior) -> bool {
-        let options = &self.options;
-        if (!self.follow_workspace_edges && behavior.is_workspace())
-            || (behavior.is_bundled() && !options.bundled)
-        {
-            false
-        } else if behavior.is_optional_peer() {
-            options.optional_peer
-        } else if behavior.is_peer() {
-            options.peer
-        } else if behavior.is_optional() {
-            options.optional
-        } else if behavior.is_dev() {
-            options.dev
-        } else {
-            true
+    fn reach(&self, roots: &[PackageID]) -> DynamicBitSet {
+        let mut seen = self.empty_seen();
+        let mut worklist: Vec<PackageID> = Vec::new();
+        for &root in roots {
+            if mark(&mut seen, root) {
+                worklist.push(root);
+            }
         }
+        self.drain(&mut seen, &mut worklist);
+        seen
     }
 
-    fn admit(&self, target: PackageID, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
+    fn follows(&self, behavior: Behavior) -> bool {
+        !(!self.follow_workspace_edges && behavior.is_workspace())
+            && !(behavior.is_bundled() && !self.options.bundled)
+            && self.options.group_enabled(behavior)
+    }
+
+    // As in `is_filtered_dependency_or_workspace`, libc only disables optional edges.
+    fn admit(
+        &self,
+        target: PackageID,
+        behavior: Behavior,
+        seen: &mut DynamicBitSet,
+        worklist: &mut Vec<PackageID>,
+    ) {
         if seen.is_set_allow_out_of_bound(target as usize, true) {
             return;
         }
-        if let Some((cpu, os)) = self.options.platform
-            && self.metas[target as usize].is_disabled(cpu, os)
+        if behavior.contains(Behavior::OPTIONAL)
+            && self
+                .left_out
+                .is_some_and(|left_out| left_out.is_set(target as usize))
+        {
+            return;
+        }
+        if let Some((cpu, os, libc)) = self.options.platform
+            && self.metas[target as usize].is_disabled(cpu, os, libc.for_dependency(behavior))
         {
             return;
         }
@@ -193,14 +314,22 @@ impl<'a> Walk<'a> {
         worklist.push(target);
     }
 
+    // The edges of `parent` that the walk follows.
+    fn edges(&self, parent: PackageID) -> impl Iterator<Item = (PackageID, Behavior)> {
+        let slice = self.dep_slices[parent as usize];
+        let siblings = slice.get(self.deps);
+        (slice.begin() as usize..slice.end() as usize).filter_map(move |dep_id| {
+            let dep = &self.deps[dep_id];
+            let followed = self.follow_all
+                || (self.follows(dep.behavior) && !self.options.omits_optional_peer(dep, siblings));
+            followed.then(|| (self.resolutions[dep_id], dep.behavior))
+        })
+    }
+
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
-            let slice = self.dep_slices[parent as usize];
-            for dep_id in slice.begin() as usize..slice.end() as usize {
-                if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
-                    continue;
-                }
-                self.admit(self.resolutions[dep_id], seen, worklist);
+            for (target, behavior) in self.edges(parent) {
+                self.admit(target, behavior, seen, worklist);
             }
         }
     }

@@ -341,11 +341,10 @@ declare module "bun:sqlite" {
      *
      * @note macOS-only
      *
-     * This only works before SQLite is loaded, that is,
-     * before you call `new Database()`.
-     *
-     * It can only be run once because it loads
-     * the SQLite library into the process.
+     * The initial call only works before SQLite is loaded, that is,
+     * before you call `new Database()`. Later calls with the exact same path
+     * are idempotent so workers can adopt the process-wide selection.
+     * A different path is rejected after SQLite loads.
      *
      * @param path The path to the SQLite library
      */

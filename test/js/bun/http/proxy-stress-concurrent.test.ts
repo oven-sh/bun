@@ -386,11 +386,11 @@ test("idle pooled tunnel receiving data is evicted", async () => {
         upstream.write(chunk);
         return;
       }
-      head = Buffer.concat([head, chunk]);
+      head = Buffer.concat([head, chunk as Buffer]);
       const end = head.indexOf("\r\n\r\n");
       if (end === -1) return;
       const leftover = head.subarray(end + 4);
-      upstream = net.connect(origin.port, "127.0.0.1", () => {
+      upstream = net.connect(origin.port!, "127.0.0.1", () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (leftover.length) upstream!.write(leftover);
         upstream!.pipe(client, { end: false });

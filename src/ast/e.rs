@@ -695,12 +695,6 @@ impl Number {
         self.value
     }
 }
-impl From<f64> for Number {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Number::new(v)
-    }
-}
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
     b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13", b"14",
@@ -787,11 +781,6 @@ impl Number {
         self.to::<usize>()
     }
 
-    #[inline]
-    pub(crate) fn to_u32(self) -> u32 {
-        self.to::<u32>()
-    }
-
     pub(crate) fn to<T: NumberCast>(self) -> T {
         let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
@@ -816,7 +805,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u32, usize);
+impl_number_cast!(usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
@@ -1523,90 +1512,6 @@ impl Object {
         }
         index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
-
-    pub fn package_json_sort(&mut self) {
-        index_sort::sort_slice_by(self.properties.slice_mut(), package_json_sort_is_less_than);
-    }
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PackageJsonSortFields {
-    Name = 0,
-    Version = 1,
-    Author = 2,
-    Repository = 3,
-    Config = 4,
-    Main = 5,
-    Module = 6,
-    Dependencies = 7,
-    DevDependencies = 8,
-    OptionalDependencies = 9,
-    PeerDependencies = 10,
-    Exports = 11,
-    Fake = 12,
-}
-
-bun_core::comptime_string_map! {
-    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
-        b"name" => PackageJsonSortFields::Name,
-        b"version" => PackageJsonSortFields::Version,
-        b"author" => PackageJsonSortFields::Author,
-        b"repository" => PackageJsonSortFields::Repository,
-        b"config" => PackageJsonSortFields::Config,
-        b"main" => PackageJsonSortFields::Main,
-        b"module" => PackageJsonSortFields::Module,
-        b"dependencies" => PackageJsonSortFields::Dependencies,
-        b"devDependencies" => PackageJsonSortFields::DevDependencies,
-        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-        b"exports" => PackageJsonSortFields::Exports,
-    };
-}
-
-fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
-    let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
-    let mut rhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
-
-    if let Some(k) = &lhs.key {
-        if let crate::expr::Data::EString(s) = &k.data {
-            lhs_key_size = *PACKAGE_JSON_SORT_MAP
-                .get(&s.data)
-                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
-        }
-    }
-
-    if let Some(k) = &rhs.key {
-        if let crate::expr::Data::EString(s) = &k.data {
-            rhs_key_size = *PACKAGE_JSON_SORT_MAP
-                .get(&s.data)
-                .unwrap_or(&PackageJsonSortFields::Fake) as u8;
-        }
-    }
-
-    match lhs_key_size.cmp(&rhs_key_size) {
-        Ordering::Equal => {
-            // Full `Ordering` so this is usable with `sort_by`.
-            let a = lhs
-                .key
-                .as_ref()
-                .unwrap()
-                .data
-                .e_string()
-                .expect("infallible: variant checked")
-                .data;
-            let b = rhs
-                .key
-                .as_ref()
-                .unwrap()
-                .data
-                .e_string()
-                .expect("infallible: variant checked")
-                .data;
-            a.cmp(&b)
-        }
-        ord => ord,
-    }
 }
 
 fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
@@ -2036,7 +1941,7 @@ impl EString {
         }
     }
 
-    /// Link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
@@ -2370,32 +2275,17 @@ pub struct RegExp {
 }
 impl RegExp {
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i_) = self.flags_offset {
-            let mut i = i_;
-            while i > 0 && self.value[i as usize] != b'/' {
-                i -= 1;
-            }
-
-            return bun_core::trim(&self.value[..i as usize], b"/");
-        }
-
-        bun_core::trim(&self.value, b"/")
+        // Between the first slash and the last: flags have none. Not `trim`: a pattern can end in `\/`.
+        let end = bun_core::strings::last_index_of_char(&self.value, b'/').unwrap_or(0);
+        self.value.get(1..end).unwrap_or_default()
     }
 
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i) = self.flags_offset {
-            return &self.value[i as usize..];
-        }
-
-        b""
+        // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
+        let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
+        slash
+            .and_then(|it| self.value.get(it + 1..))
+            .unwrap_or_default()
     }
 }
 

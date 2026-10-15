@@ -644,7 +644,8 @@ pub struct Location {
     // the bundle's arena.
     pub file: Cow<'static, [u8]>,
     pub namespace: Cow<'static, [u8]>,
-    /// Text on the line, avoiding the need to refetch the source code
+    /// Text on the line, avoiding the need to refetch the source code. It may be prefixed by the
+    /// preceding lines, which are printed too.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -698,6 +699,37 @@ impl Default for Location {
 }
 
 impl Location {
+    /// Writes `at file:line:column` on its own line, under a message of `kind`. Writes nothing if there's no file.
+    pub fn write_place<const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        to: &mut impl fmt::Write,
+        kind: Kind,
+    ) -> fmt::Result {
+        if self.file.is_empty() {
+            return Ok(());
+        }
+        to.write_str("\n")?;
+        write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
+        bun_core::write_pretty!(
+            to,
+            ENABLE_ANSI_COLORS,
+            "<d>at <r><cyan>{}<r>",
+            bstr::BStr::new(&self.file)
+        )?;
+        if self.line > 0 && self.column > -1 {
+            bun_core::write_pretty!(
+                to,
+                ENABLE_ANSI_COLORS,
+                "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
+                self.line,
+                self.column,
+            )?;
+        } else if self.line > -1 {
+            bun_core::write_pretty!(to, ENABLE_ANSI_COLORS, "<d>:<r><yellow>{}<r>", self.line)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += self.file.len();
@@ -962,16 +994,17 @@ impl Data {
         }
 
         // `pub const &'static str` — accepted by `const_format::concatcp!` below.
-        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED};
+        use bun_core::output::ansi::{BLUE, BOLD as B, DIM as D, RED, YELLOW};
 
         let message_color: &'static str = match kind {
-            Kind::Err => B,
+            Kind::Err | Kind::Warn => B,
             Kind::Note => BLUE,
             _ => const_format::concatcp!(D, B),
         };
 
         let color_name: &'static str = match kind {
             Kind::Err => RED,
+            Kind::Warn => YELLOW,
             Kind::Note => BLUE,
             _ => D,
         };
@@ -980,9 +1013,33 @@ impl Data {
             if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+                // The creator of the location may have included the lines preceding its own line.
+                let mut lines_before: Vec<&[u8]> =
+                    bun_core::strings::split(line_text, b"\n").collect();
+                let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
-                    let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                    let mut line_offset_for_second_line: usize = width_before(
+                        line_text,
+                        usize::try_from(location.column - 1).expect("int cast"),
+                    );
+                    let gutter = bun_core::fmt::digit_count(location.line);
+                    for (line, text) in
+                        (location.line - lines_before.len() as i32..).zip(lines_before)
+                    {
+                        pretty_write!("<d>{:>1$} | <r>", line, gutter)?;
+                        writeln!(
+                            to,
+                            "{}",
+                            bun_core::fmt::fmt_javascript(
+                                text,
+                                bun_core::fmt::HighlighterOptions {
+                                    enable_colors: ENABLE_ANSI_COLORS,
+                                    redact_sensitive_information,
+                                    ..Default::default()
+                                },
+                            )
+                        )?;
+                    }
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -1042,26 +1099,24 @@ impl Data {
         pretty_write!("{}<r>", bstr::BStr::new(&*self.text))?;
 
         if let Some(location) = &self.location {
-            if !location.file.is_empty() {
-                to.write_str("\n")?;
-                write_n_bytes(to, b' ', (kind.string().len() + ": ".len()) - "at ".len())?;
-
-                pretty_write!("<d>at <r><cyan>{}<r>", bstr::BStr::new(&location.file))?;
-
-                if location.line > 0 && location.column > -1 {
-                    pretty_write!(
-                        "<d>:<r><yellow>{}<r><d>:<r><yellow>{}<r>",
-                        location.line,
-                        location.column,
-                    )?;
-                } else if location.line > -1 {
-                    pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
-                }
-            }
+            location.write_place::<ENABLE_ANSI_COLORS>(to, kind)?;
         }
 
         Ok(())
     }
+}
+
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`. A tab counts as one column.
+fn width_before(line: &[u8], units: usize) -> usize {
+    use bun_core::strings;
+    if strings::is_all_ascii(line) {
+        return units;
+    }
+    let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
+    let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
+    // The width of a tab is 0 there.
+    let tabs = strings::count_char(before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
@@ -1227,6 +1282,22 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// An error of TypeScript's, by its code: `TS2322`.
+    TypeScript {
+        code: u32,
+        kind: TypeScriptKind,
+    },
+}
+
+/// How TypeScript reports an error, which decides what suppresses it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypeScriptKind {
+    /// `parseErrorAtRange`
+    Parse,
+    /// `grammarErrorOnNode`
+    Grammar,
+    /// `Checker.error`
+    Checker,
 }
 
 #[derive(Copy, Clone)]
@@ -1865,6 +1936,25 @@ impl Log {
             Box::default(),
             false,
         )
+    }
+
+    /// A warning at `loc` that never prints the source line, which may hold a secret the redactor cannot recognise.
+    #[cold]
+    pub fn add_warning_fmt_no_excerpt(
+        &mut self,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let range = Range { loc, len: 1 };
+        let text = alloc_print(args);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
+            location.line_text = None;
+        }
     }
 
     #[cold]

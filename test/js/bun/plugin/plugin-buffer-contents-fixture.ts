@@ -213,17 +213,19 @@ if (mode === "mutate") {
 } else if (mode === "cache") {
   // The transpiler cache stores the output of a module under the hash of its
   // source, and a source with the same bytes gets that output in every later
-  // load, in this process and in later ones. A worker switches one digit of
-  // the source between `1` and `2`. A transpiler that reads the shared bytes
-  // in place can hash one digit and transpile the other. This mode needs
+  // load, in this process and in later ones. A worker switches one character
+  // of the last string literal of the source between `1` and `2`. A
+  // transpiler that reads the shared bytes in place hashes the source, and
+  // prints the literal from the source when it has parsed the rest, so it can
+  // hash one character and print the other. This mode needs
   // BUN_RUNTIME_TRANSPILER_CACHE_PATH, and a source that is large enough for
   // the cache.
-  const head = "export const value = ";
-  const sourceOf = (round: number, digit: number) =>
-    `${head}${digit};\n// round ${roundOf(round)}\n// ${Buffer.alloc(8192, "padding ").toString()}\n`;
   const roundOf = (round: number) => String(round).padStart(6, "0");
-  const digitAt = head.length;
-  const roundAt = sourceOf(0, 1).indexOf(roundOf(0));
+  const numbers = Array.from({ length: 2048 }, (_, i) => i).join(",");
+  const head = (round: number) => `// ${roundOf(round)}\nexport const numbers = [${numbers}];\nexport const value = "`;
+  const sourceOf = (round: number, digit: number) => `${head(round)}${digit}";\n`;
+  const roundAt = "// ".length;
+  const digitAt = head(0).length;
 
   if (Bun.isMainThread) {
     const shared = fill(new SharedArrayBuffer(sourceOf(0, 1).length), encode(sourceOf(0, 1)));
@@ -251,14 +253,14 @@ if (mode === "mutate") {
     // On an unfixed build about half of the loads leave a wrong entry.
     const loads = await loadWhileWritten(passes, 16, async n => {
       const { value } = await import("written:" + roundOf(n));
-      if (value !== 1 && value !== 2) wrong.push(`load ${n} gave ${value}`);
+      if (value !== "1" && value !== "2") wrong.push(`load ${n} gave ${value}`);
       return true;
     });
     // Each source that the loads above can have hashed, now as a string that nothing writes.
     for (let n = 0; n < loads; n++) {
       for (const digit of [1, 2]) {
         const { value } = await import(`still:${n}/${digit}`);
-        if (value !== digit) wrong.push(`the source of load ${n} with ${digit} gave ${value}`);
+        if (value !== String(digit)) wrong.push(`the source of load ${n} with ${digit} gave ${value}`);
       }
     }
     results.wrong = wrong;

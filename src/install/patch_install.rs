@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
+use std::io::Write as _;
 
 use bun_ast::{Loc, Log};
 use bun_core::ZBox;
@@ -9,23 +10,14 @@ use bun_core::{ZStr, strings};
 use bun_paths as path;
 use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
+use crate::cache_publish::StagedEntry;
 use crate::package_install::PackageInstall;
 use crate::package_manager;
-use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
-    resolution::Resolution,
-};
-
-bun_output::declare_scope!(InstallPatch, visible);
-
-/// Length of the hex representation of `u64::MAX` (i.e. 16).
-const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+use crate::{DependencyID, PackageID, PackageManager, lockfile::Package, resolution::Resolution};
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
@@ -61,27 +53,12 @@ unsafe impl bun_threading::Linked for PatchTask {
     }
 }
 
-#[derive(strum::IntoStaticStr)]
 pub enum Callback {
-    #[strum(serialize = "calc_hash")]
     CalcHash(CalcPatchHash),
-    #[strum(serialize = "apply")]
     Apply(ApplyPatch),
 }
 
 impl Callback {
-    #[inline]
-    pub(crate) fn tag_name(&self) -> &'static str {
-        <&'static str>::from(self)
-    }
-    #[inline]
-    pub(crate) fn is_calc_hash(&self) -> bool {
-        matches!(self, Callback::CalcHash(_))
-    }
-    #[inline]
-    pub(crate) fn is_apply(&self) -> bool {
-        matches!(self, Callback::Apply(_))
-    }
     /// Panics if the active variant is not `Apply`.
     #[inline]
     pub(crate) fn apply_mut(&mut self) -> &mut ApplyPatch {
@@ -149,11 +126,6 @@ impl PatchTask {
     }
 
     pub(crate) fn run_from_thread_pool_impl(&mut self) {
-        bun_output::scoped_log!(
-            InstallPatch,
-            "runFromThreadPoolImpl {}",
-            <&'static str>::from(&self.callback)
-        );
         // There are no early returns in the body, so the ordering
         // (body → push → wake) is inlined below.
         match &mut self.callback {
@@ -187,36 +159,21 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), crate::Error> {
-        bun_output::scoped_log!(
-            InstallPatch,
-            "runFromThreadMainThread {}",
-            <&'static str>::from(&self.callback)
-        );
-        let pre = self.pre;
-        match &mut self.callback {
-            Callback::CalcHash(_) => {
-                let r = self.run_from_main_thread_calc_hash(manager, log_level);
-                if pre {
-                    let _ = manager
-                        .pending_pre_calc_hashes
-                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                }
-                r?;
-            }
-            Callback::Apply(_) => {
-                self.run_from_main_thread_apply(manager);
-                if pre {
-                    let _ = manager
-                        .pending_pre_calc_hashes
-                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                }
-            }
+        let result = if matches!(self.callback, Callback::CalcHash(_)) {
+            self.run_from_main_thread_calc_hash(manager, log_level)
+        } else {
+            self.run_from_main_thread_apply();
+            Ok(())
+        };
+        if self.pre {
+            let _ = manager
+                .pending_pre_calc_hashes
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
         }
-        Ok(())
+        result
     }
 
-    pub(crate) fn run_from_main_thread_apply(&mut self, manager: &mut PackageManager) {
-        let _ = manager; // autofix
+    fn run_from_main_thread_apply(&mut self) {
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
         };
@@ -281,30 +238,18 @@ impl PatchTask {
             let pkg_name = pkg.name;
             let pkg_resolution_tag = pkg.resolution.tag;
             let name_and_version_hash = calc_hash.name_and_version_hash;
+            let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
             manager.set_preinstall_state(pkg_meta_id, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
                 &pkg,
+                dep_behavior,
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
-                PreinstallState::Done => {
-                    // patched pkg in folder path, should now be handled by PackageInstall.install()
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} done",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
-                }
                 PreinstallState::Extract => {
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} extract",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
-
                     // SAFETY: every `Resolution` `Value` payload is `Copy`
                     // POD and the union is zero-initialized (see the union
                     // accessors in resolution.rs), so reading `.npm.version`
@@ -323,9 +268,7 @@ impl PatchTask {
                         TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
-                    let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
-                        .behavior
-                        .is_required();
+                    let is_required = dep_behavior.is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         match package_manager::generate_network_task_for_tarball(
@@ -336,7 +279,6 @@ impl PatchTask {
                             is_required,
                             dep_id,
                             &pkg_again,
-                            Some(name_and_version_hash),
                             match pkg_resolution_tag {
                                 crate::resolution_real::Tag::Npm => {
                                     Authorization::AllowAuthorization
@@ -354,11 +296,6 @@ impl PatchTask {
                     }
                 }
                 PreinstallState::ApplyPatch => {
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} apply patch",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
                         pkg_meta_id,
@@ -387,16 +324,16 @@ impl PatchTask {
             unreachable!()
         };
         let log = &mut patch.logger;
-        bun_output::scoped_log!(InstallPatch, "apply patch task");
-        // bun.assert(this.callback == .apply) — enforced by the match above.
 
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
 
         let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
         // TODO: can the patch file be anything other than utf-8?
@@ -430,6 +367,7 @@ impl PatchTask {
             };
 
         let system_tmpdir = self.tempdir;
+        let staging = StagedEntry::new(system_tmpdir, tempdir_name);
 
         let pkg_name = patch.pkgname;
 
@@ -447,7 +385,6 @@ impl PatchTask {
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
             let mut label = Vec::<u8>::new();
-            use std::io::Write as _;
             write!(
                 &mut label,
                 "{}",
@@ -462,18 +399,6 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
-        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. `PackageInstall` assumes
-        // `destination_dir_subpath` is a prefix slice *into*
-        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`), and that aliasing can't be
-        // expressed with `&ZStr` + `&mut [u8]`, so use a separate buffer but
-        // mirror the prefix bytes so the invariant holds for any future call
-        // that reaches those paths.
-        let mut dest_subpath_buf = [0u8; 1024];
-        dest_subpath_buf[..tempdir_name.len() + 1]
-            .copy_from_slice(tempdir_name.as_bytes_with_nul());
         // Not `self.manager()` — `&mut self.callback` is live.
         // BACKREF — read-only lockfile access while the task runs off-thread.
         let lockfile = &self.manager.get().lockfile;
@@ -481,9 +406,7 @@ impl PatchTask {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
-            destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
-            progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
             // dummy value
@@ -492,6 +415,7 @@ impl PatchTask {
         };
 
         match pkg_install.install(
+            crate::package_install::Staging::Off,
             true,
             sys::Dir::borrow(&system_tmpdir),
             InstallMethod::Copyfile,
@@ -524,16 +448,16 @@ impl PatchTask {
                         &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
-                            BStr::new(&resolution_label)
+                            bun_core::fmt::for_terminal(BStr::new(&resolution_label))
                         ),
                     );
                     return Ok(());
                 }
             };
-            let _close_guard = scopeguard::guard(patch_pkg_dir, |fd| fd.close());
+            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
 
             // 4. apply patch
-            if let Some(e) = patchfile.apply(patch_pkg_dir) {
+            if let Err(e) = patchfile.apply(patch_pkg_dir) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -542,18 +466,9 @@ impl PatchTask {
             }
 
             // 5. Add bun tag
-            let bun_tag_prefix = bun_hash_tag;
-            let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
-            buntagbuf[..bun_tag_prefix.len()].copy_from_slice(bun_tag_prefix);
-            let hashlen = {
-                use std::io::Write as _;
-                let mut cursor = &mut buntagbuf[bun_tag_prefix.len()..];
-                let before = cursor.len();
-                write!(&mut cursor, "{:x}", patch.patch_hash).expect("unreachable");
-                before - cursor.len()
-            };
-            buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
-            let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
+            let mut buntagbuf = crate::BuntagHashBuf::default();
+            let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
+            let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
@@ -566,35 +481,14 @@ impl PatchTask {
             }
         }
 
-        // 6. rename to cache dir
-        let mut path_in_tmpdir_buf = bun_paths::path_buffer_pool::get();
-        let path_in_tmpdir = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_in_tmpdir_buf.0,
-            &[
-                tempdir_name.as_bytes(),
-                // tempdir_name,
-            ],
-        );
-
+        // 6. rename to cache dir; the name holds the hash of the patch, and a folder there is a hit
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
-        if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir,
-            path_in_tmpdir,
-            patch.cache_dir,
-            cache_dir_subpath_z,
-            sys::RenameOptions {
-                move_fallback: true,
-                ..Default::default()
-            },
-        ) {
+        if let Err(mut e) = staging.publish(patch.cache_dir, cache_dir_subpath_z, &|_| true) {
+            e.err = e.err.with_path(cache_dir_subpath_z.as_bytes());
             log.add_error_fmt_opts(
-                format_args!(
-                    "renaming changes to cache dir: {}",
-                    e.with_path(cache_dir_subpath_z.as_bytes())
-                ),
+                format_args!("renaming changes to cache dir: {}", e),
                 Default::default(),
             );
-            return Ok(());
         }
         Ok(())
     }
@@ -609,9 +503,11 @@ impl PatchTask {
         let patchfile_path = &calc_hash.patchfile_path;
 
         let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
 
@@ -639,12 +535,10 @@ impl PatchTask {
                     );
                     return None;
                 }
-                bun_ast::add_warning_pretty!(
-                    log,
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes()),
+                    format_args!("failed to read patch file: {}", e),
                 );
                 return None;
             }
@@ -761,16 +655,18 @@ impl PatchTask {
         let pkg_name_slice = pkg_name
             .slice(&pkg_manager.lockfile.buffers.string_bytes)
             .to_vec();
-        // `Resolution` is `Copy`; copy out so the lockfile borrow ends
+        // `Resolution` and `Integrity` are `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
+        let integrity = pkg_manager.lockfile.packages.items_meta()[pkg_id as usize].integrity;
 
         let mut folder_path_buf = bun_paths::path_buffer_pool::get();
         let stuff = package_manager::compute_cache_dir_and_subpath(
             pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
+            &integrity,
             &mut folder_path_buf,
             Some(patch_hash),
         );

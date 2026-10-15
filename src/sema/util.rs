@@ -4,6 +4,7 @@ pub mod memory;
 
 pub use memory::{AppendVec, LocalVec};
 
+use bun_collections::index_sort;
 use bun_threading::Guarded;
 use memory::Newest;
 use std::alloc::{Allocator, Global};
@@ -14,6 +15,64 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
 /// tuples of them. Nothing may depend on the order in which a map or a set iterates.
 pub use rustc_hash::{FxBuildHasher as FxBuild, FxHashMap, FxHashSet, FxHasher};
+
+/// The sorts of slices, compiled once for the whole program: those of the standard library are compiled once for each
+/// type and closure, several KB each. They cost a list of indices and a call for each comparison, so they are not for
+/// what is sorted all the time.
+pub trait SharedSort<T> {
+    fn shared_sort(&mut self)
+    where
+        T: Ord;
+    fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering);
+    fn shared_sort_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+    fn shared_sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+    fn shared_sort_unstable(&mut self)
+    where
+        T: Ord;
+    fn shared_sort_unstable_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering);
+    fn shared_sort_unstable_by_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K);
+}
+
+impl<T> SharedSort<T> for [T] {
+    fn shared_sort(&mut self)
+    where
+        T: Ord,
+    {
+        index_sort::sort_slice_by(self, T::cmp);
+    }
+
+    fn shared_sort_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        index_sort::sort_slice_by(self, compare);
+    }
+
+    fn shared_sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
+        index_sort::sort_slice_by(self, |a, b| key(a).cmp(&key(b)));
+    }
+
+    fn shared_sort_by_cached_key<K: Ord>(&mut self, key: impl FnMut(&T) -> K) {
+        let keys: Vec<K> = self.iter().map(key).collect();
+        let mut order = index_sort::identity(self.len());
+        index_sort::sort_indices(&mut order, &mut |a, b| {
+            keys[a as usize].cmp(&keys[b as usize])
+        });
+        index_sort::apply_permutation_in_place(self, &mut order);
+    }
+
+    fn shared_sort_unstable(&mut self)
+    where
+        T: Ord,
+    {
+        index_sort::sort_slice_unstable_by(self, T::cmp);
+    }
+
+    fn shared_sort_unstable_by(&mut self, compare: impl FnMut(&T, &T) -> std::cmp::Ordering) {
+        index_sort::sort_slice_unstable_by(self, compare);
+    }
+
+    fn shared_sort_unstable_by_key<K: Ord>(&mut self, mut key: impl FnMut(&T) -> K) {
+        index_sort::sort_slice_unstable_by(self, |a, b| key(a).cmp(&key(b)));
+    }
+}
 
 #[inline]
 pub fn fx_hash<T: std::hash::Hash + ?Sized>(value: &T) -> u64 {
@@ -339,6 +398,13 @@ impl<A: Allocator + Clone> GrowingPlaces<A> {
         self.places.find(spread, Ordering::Acquire, is_it)
     }
 
+    /// Calls `read` while no thread inserts into any of `shards`. The locks are taken in the order of the list, and who
+    /// holds one of them otherwise waits for no other.
+    pub(crate) fn while_none_grows<R>(shards: &[Self], read: impl FnOnce() -> R) -> R {
+        let _held: Vec<_> = shards.iter().map(|shard| shard.len.lock()).collect();
+        read()
+    }
+
     /// `find`, during a step: no thread inserts, and the barrier before the step has ordered the
     /// earlier inserts. Plain loads.
     #[inline]
@@ -495,27 +561,5 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
             || shard.entries.push(entry.borrow_mut().take().unwrap()),
         );
         &shard.entries.get(index).1
-    }
-}
-
-impl<K: std::hash::Hash + Eq, V: Clone, A: Allocator + Clone> ShardedMap<K, V, A> {
-    /// Does not overwrite an existing value. Returns the stored value.
-    #[inline]
-    pub fn insert(&self, key: K, value: V) -> V {
-        let spread = spread_hash(&key);
-        let shard = &self.shards[shard_of(spread)];
-        // Read until it is inserted, which is its last use.
-        let entry = std::cell::RefCell::new(Some((key, value)));
-        let index = shard.places.find_or_add(
-            spread,
-            |i| {
-                entry
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|e| shard.entries.get(i).0 == e.0)
-            },
-            || shard.entries.push(entry.borrow_mut().take().unwrap()),
-        );
-        shard.entries.get(index).1.clone()
     }
 }

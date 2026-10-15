@@ -207,6 +207,7 @@ export function dictionary(
         #include "Generated${name}.h"
         #include "Bindgen/IDLConvert.h"
         #include "ObjectBindings.h"
+        #include <JavaScriptCore/ArrayConstructor.h>
         #include <JavaScriptCore/Identifier.h>
 
         template<> Bun::Bindgen::Generated::${name}
@@ -219,6 +220,12 @@ export function dictionary(
           auto ctx = Bun::Bindgen::LiteralConversionContext { ${toASCIILiteral(userFacingName)} };
           auto* object = value.getObject();
           if (!object) [[unlikely]] {
+            ctx.throwNotObject(globalObject, throwScope);
+            return {};
+          }
+          bool isArray = JSC::isArray(&globalObject, value);
+          RETURN_IF_EXCEPTION(throwScope, {});
+          if (isArray) [[unlikely]] {
             ctx.throwNotObject(globalObject, throwScope);
             return {};
           }

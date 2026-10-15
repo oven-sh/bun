@@ -251,12 +251,38 @@ const FUNCTIONS: [&[u8]; 9] = [
 /// What turns the sorting on.
 #[derive(Clone, Copy)]
 pub(crate) enum SetBy<'a> {
-    /// `[fmt]` or the flag. Paths are relative to the working directory.
-    Bun,
+    /// `[fmt]` or the flag. Paths, which only `[fmt]` has, are relative to this directory: where bunfig.toml is.
+    Bun(&'a [u8]),
     /// An oxfmt config in this directory, which paths are relative to.
     Oxfmt(&'a [u8]),
     /// `prettier-plugin-tailwindcss` in a Prettier config. Paths are relative to this directory.
     Plugin(&'a [u8]),
+}
+
+impl<'a> SetBy<'a> {
+    fn base(self) -> &'a [u8] {
+        match self {
+            SetBy::Bun(base) | SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
+        }
+    }
+}
+
+/// `value`, which is `sortTailwindcss` as JSON, with its paths from the root: it goes into one that something else sets.
+pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
+    let Some(mut entries) = bun_lint::json::parse(value).and_then(Json::into_object) else {
+        return value.to_vec();
+    };
+    for (name, value) in &mut entries {
+        if let Json::String(path) = value
+            && matches!(&name[..], b"config" | b"stylesheet" | b"entryPoint")
+            && !path.is_empty()
+        {
+            *path = paths::resolve(set_by.base(), &paths::from_native(path));
+        }
+    }
+    let mut text = Vec::new();
+    write_json(&mut text, &Json::Object(entries));
+    text
 }
 
 const PLUGIN: &[u8] = b"prettier-plugin-tailwindcss";
@@ -323,14 +349,10 @@ pub(crate) fn warning_of_plugin(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> 
 /// Resolves `sortTailwindcss` for a file in `directory`. `value` is the option as JSON, and it isn't `false`.
 pub(crate) fn for_file(
     classes: &Arc<Classes>,
-    environment: &Environment,
     value: &[u8],
     (set_by, directory): (SetBy, &[u8]),
 ) -> Tailwind {
-    let base = match set_by {
-        SetBy::Bun => &environment.cwd,
-        SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
-    };
+    let base = set_by.base();
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
     let get = |key: &[u8]| json.as_ref()?.get(key);
@@ -409,7 +431,7 @@ pub(crate) fn for_file(
     };
     Tailwind {
         functions: Names::new(match (set_by, get(b"functions")) {
-            (SetBy::Bun, None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
+            (SetBy::Bun(_), None) => FUNCTIONS.map(<[u8]>::to_vec).to_vec(),
             _ => names(b"functions"),
         }),
         attributes: Names::new(names(b"attributes")),
@@ -487,6 +509,7 @@ pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>)
             | Kind::Css(_)
             | Kind::Markdown
             | Kind::Handlebars
+            | Kind::Svelte
             | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular),
         ) => true,
         Some(Kind::Html(Parser::Lwc) | Kind::Mdx) => {

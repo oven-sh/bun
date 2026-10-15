@@ -82,6 +82,11 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+  left: string,
+  right: string,
+) => boolean;
+
 /** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
 export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
   text: string,

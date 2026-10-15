@@ -319,12 +319,22 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
     }
 }
 
+extern "C" size_t Bun__ByteBlobLoader__remaining(void* source);
+
+// A slab the size of what a blob has left is filled whole and handed over uncopied; one byte finds out that nothing is left.
+static size_t nativeSlabSize(JSNativeStreamSourceAdapter* adapter)
+{
+    if (auto* blob = dynamicDowncast<WebCore::JSBlobInternalReadableStreamSource>(adapter->handle()))
+        return std::min(adapter->m_chunkSize, std::max<size_t>(Bun__ByteBlobLoader__remaining(blob->wrapped()), 1));
+    return adapter->m_chunkSize;
+}
+
 // The pending slab is only ever handed to JS whole, so it is reused as long as it is still big enough; the
 // bytes are written by the source before anything reads them, so it need not be zeroed.
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const size_t chunkSize = adapter->m_chunkSize;
+    const size_t chunkSize = nativeSlabSize(adapter);
     if (JSObject* pending = adapter->pendingView()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
         if (!view->isDetached() && view->length() == chunkSize)

@@ -1,0 +1,35 @@
+------------------
+{ printWidth: 80 }
+------------------
+for ((let) of // comment
+a);
+for (b in /* comment */
+c)
+  d;
+for (e as f of // comment
+g);
+for ([h]; ;) // comment
+;
+for ((let) of /* comment */
+i /**
+ * comment
+ */);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+for ((let) of // comment
+a);
+for (b in /* comment */
+c)
+  d;
+for (e as f of // comment
+g);
+for ([h]; ;) // comment
+;
+for ((let) of /* comment */
+i /**
+ * comment
+ */);
+
+===================== End =====================

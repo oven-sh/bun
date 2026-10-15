@@ -590,7 +590,7 @@ pub(crate) fn find_files(
                 if loader.lacks_file_of_eslint(&loaded) {
                     return Err(config_file_missing(&path));
                 }
-                let status = match loader.ignores_named_file(&pattern, &loaded) {
+                let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
                     true => Status::Ignored,
                     false => loader.config_of(&loaded, &path).into(),
                 };

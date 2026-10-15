@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::union_constituents;
-use bun_lint::types::utils::{get_constrained_type_at_location, is_type_flag_set};
+use bun_lint::types::utils::{get_constrained_type_at_location, is_builtin_symbol_like, is_type_flag_set};
 use bun_lint::types::{SymbolFlags, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, get_wrapping_fixer_without_wrap,
@@ -43,6 +43,25 @@ fn is_empty_string_literal(e: Expr) -> bool {
     e.as_string().is_some_and(|value| value.bytes().is_empty())
 }
 
+/// The body of an `if`, of a loop, of a label or of a `with`: no statement is left there if it is removed.
+fn is_embedded_statement(statement: Stmt<'_>) -> bool {
+    let Node::Stmt(owner) = statement.parent() else {
+        return false;
+    };
+    match owner.tag() {
+        StmtTag::If
+        | StmtTag::For
+        | StmtTag::ForIn
+        | StmtTag::ForOf
+        | StmtTag::While
+        | StmtTag::DoWhile
+        | StmtTag::Labeled => true,
+        // A `with` statement.
+        StmtTag::Block => owner.as_block().is_none(),
+        _ => false,
+    }
+}
+
 #[derive(Copy, Clone)]
 struct Conversion<'a> {
     loc: Span,
@@ -79,8 +98,9 @@ fn report<'a>(cx: &Context<'a>, conversion: &Conversion<'a>) {
         (true, ExprKind::Binary { .. }) => Span::new(operand.end, loc.end),
         _ => loc,
     };
+    let is_oxlint = cx.language().is_oxlint;
     // oxlint points at what is converted.
-    cx.report(if cx.language().is_oxlint { operand } else { loc }, UNNECESSARY_TYPE_CONVERSION)
+    cx.report(if is_oxlint { operand } else { loc }, UNNECESSARY_TYPE_CONVERSION)
         .comments_apply_at(loc)
         .data("type", type_string)
         .data("violation", violation)
@@ -90,8 +110,10 @@ fn report<'a>(cx: &Context<'a>, conversion: &Conversion<'a>) {
             labels.push(loc, "");
         })
         .suggest(SUGGEST_REMOVE, |fixer| match statement {
-            Some(statement) => fixer.remove(statement),
-            None => get_wrapping_fixer_without_wrap(fixer, node, &[inner_node]),
+            // tsgolint removes the body of an `if` or of a loop too, which leaves `if (a) else` or gives the loop the next
+            // statement.
+            Some(statement) if !is_oxlint || !is_embedded_statement(statement) => fixer.remove(statement),
+            _ => get_wrapping_fixer_without_wrap(fixer, node, &[inner_node]),
         })
         .suggest_with(SUGGEST_SATISFIES, &[("type", type_string.as_bytes())], |fixer| {
             get_wrapping_fixer_for_chain_element(
@@ -176,7 +198,10 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
     let (object, property) = match callee.kind() {
         ExprKind::Ident(name) => return check_built_in_call(node, call, name, cx),
         ExprKind::Dot { obj, name, .. } if name.bytes() == b"toString" => (obj, name.span()),
-        ExprKind::Index { obj, index, .. } if index.is_ident("toString") => (obj, index.span()),
+        // tsgolint looks at a `PropertyAccessExpression` only.
+        ExprKind::Index { obj, index, .. } if !cx.language().is_oxlint && index.is_ident("toString") => {
+            (obj, index.span())
+        }
         _ => return,
     };
     // `(a?.toString)()` calls a `ChainExpression`. tsgolint leaves a call with arguments alone.
@@ -202,22 +227,46 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
 }
 
 fn check_built_in_call<'a>(node: Expr<'a>, call: Call<'a>, name: Name<'a>, cx: &Context<'a>) {
-    let (type_flag, type_string, violation) = match name.bytes() {
-        b"BigInt" => (TypeFlags::BIG_INT_LIKE, "bigint", "Passing a bigint to BigInt()"),
-        b"Boolean" => (TypeFlags::BOOLEAN_LIKE, "boolean", "Passing a boolean to Boolean()"),
-        b"Number" => (TypeFlags::NUMBER_LIKE, "number", "Passing a number to Number()"),
-        b"String" => (TypeFlags::STRING_LIKE, "string", "Passing a string to String()"),
+    let (type_flag, type_string, violation, builtins) = match name.bytes() {
+        b"BigInt" => (
+            TypeFlags::BIG_INT_LIKE,
+            "bigint",
+            "Passing a bigint to BigInt()",
+            &["BigInt", "BigIntConstructor"],
+        ),
+        b"Boolean" => (
+            TypeFlags::BOOLEAN_LIKE,
+            "boolean",
+            "Passing a boolean to Boolean()",
+            &["Boolean", "BooleanConstructor"],
+        ),
+        b"Number" => (
+            TypeFlags::NUMBER_LIKE,
+            "number",
+            "Passing a number to Number()",
+            &["Number", "NumberConstructor"],
+        ),
+        b"String" => (
+            TypeFlags::STRING_LIKE,
+            "string",
+            "Passing a string to String()",
+            &["String", "StringConstructor"],
+        ),
         _ => return,
     };
     let callee = call.callee();
     let Some(argument) = call.args().first() else {
         return;
     };
-    // tsgolint leaves a call with more arguments alone.
-    if cx.language().is_oxlint && call.args().len() > 1 {
-        return;
-    }
-    if callee.symbol().is_some()
+    if cx.language().is_oxlint {
+        // tsgolint wants one argument, and asks the type of the callee, not what the name is bound to.
+        if call.args().len() > 1
+            || !is_builtin_symbol_like(callee.ty(), builtins)
+            || !does_underlying_type_match_flag(get_constrained_type_at_location(argument), type_flag)
+        {
+            return;
+        }
+    } else if callee.symbol().is_some()
         || !does_underlying_type_match_flag(get_constrained_type_at_location(argument), type_flag)
         || Node::Expr(node).scope().resolve_name(name).is_some()
     {

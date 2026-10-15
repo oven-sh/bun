@@ -16,7 +16,7 @@ fn text_over_several_lines_breaks_groups(f: &Formatter<'_>) -> bool {
 impl<'a> Format<'a> for FormatSuppressedNode {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write_source(self.0, !text_over_several_lines_breaks_groups(f), f);
-        f.comments_mut().skip_comments_before(self.0.end);
+        f.comments_mut().mark_printed_in(self.0);
     }
 }
 

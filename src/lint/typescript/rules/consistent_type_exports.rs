@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::types::{NameOf, SymbolFlags, TsSymbol};
+use bun_lint::types::{IdSet, NameOf, SymbolFlags, TsSymbol, TypeFlags};
 use bun_lint::utils::ts_utils::format_word_list;
 
 /// Enforce consistent usage of type exports.
@@ -26,6 +26,10 @@ struct ReportValueExport<'a> {
     inline_type_specifiers: Vec<ExportSpec<'a>>,
     type_based_specifiers: Vec<ExportSpec<'a>>,
     value_specifiers: Vec<ExportSpec<'a>>,
+    /// tsgolint's `typeTexts`: the inline and the type based specifiers in the order they are written. Only with oxlint.
+    type_specifiers: Vec<ExportSpec<'a>>,
+    /// All the others in the order they are written. Only with oxlint.
+    value_or_unresolved_specifiers: Vec<ExportSpec<'a>>,
 }
 
 /// Whether a symbol resolves to a TypeScript type and not to a JavaScript value. `None` if it
@@ -33,7 +37,7 @@ struct ReportValueExport<'a> {
 fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
     let mut symbol = symbol?;
     // Aliases can form a cycle through other modules.
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen: IdSet<TsSymbol> = IdSet::new();
     while seen.insert(symbol) {
         if symbol.is_unknown() {
             return None;
@@ -52,8 +56,16 @@ fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
     None
 }
 
-fn is_specifier_type_based(specifier: ExportSpec) -> Option<bool> {
-    is_symbol_type_based(NameOf(specifier).ts_symbol())
+fn is_specifier_type_based(specifier: ExportSpec, is_oxlint: bool) -> Option<bool> {
+    // tsgolint asks at the `propertyName` of `a as b`: the immediate alias of the specifier.
+    let property_name = match is_oxlint {
+        true => specifier.ts_node().property_name(),
+        false => None,
+    };
+    is_symbol_type_based(match property_name {
+        Some(property_name) => property_name.get_symbol_at_location(),
+        None => NameOf(specifier).ts_symbol(),
+    })
 }
 
 /// `raw` of a `Literal`, `name` of an `Identifier`.
@@ -136,6 +148,49 @@ fn fix_separate_named_exports<'a>(
     ])
 }
 
+/// tsgolint's `buildNamedExportStatement`, without the `;`.
+fn push_named_export_statement<'a>(
+    out: &mut Vec<u8>,
+    file: &'a File<'a>,
+    keywords: &[u8],
+    specifiers: &[ExportSpec<'a>],
+    module_source: &[u8],
+) {
+    out.extend_from_slice(keywords);
+    out.extend_from_slice(b" { ");
+    out.extend_from_slice(&join_specifier_texts(file, specifiers.iter().copied()));
+    out.extend_from_slice(b" }");
+    if !module_source.is_empty() {
+        out.extend_from_slice(b" from ");
+        out.extend_from_slice(module_source);
+    }
+}
+
+/// tsgolint replaces the declaration by an `export type { .. }` and an `export { .. }` of the values, each on a
+/// line. It leaves out the specifiers that cannot be resolved and the import attributes: the second statement
+/// keeps both here, so that what was exported at run time still is.
+fn fix_replace_named_exports<'a>(
+    fixer: Fixer<'a>,
+    export: Export<'a>,
+    report: &ReportValueExport<'a>,
+) -> Option<Vec<Fix>> {
+    let file = fixer.file();
+    let module_source = export.spec_span().map_or(&b""[..], |span| file.slice(span));
+    let mut text = Vec::new();
+    push_named_export_statement(&mut text, file, b"export type", &report.type_specifiers, module_source);
+    text.push(b';');
+    if !report.value_or_unresolved_specifiers.is_empty() {
+        text.push(b'\n');
+        push_named_export_statement(&mut text, file, b"export", &report.value_or_unresolved_specifiers, module_source);
+        if let Some(attributes) = export.attributes() {
+            text.push(b' ');
+            text.extend_from_slice(file.slice(Span::new(attributes.keyword_span().start, attributes.braces_span().end)));
+        }
+        text.push(b';');
+    }
+    Some(vec![fixer.replace(export.stmt().span(), text)])
+}
+
 fn fix_add_type_specifier_to_named_exports<'a>(
     fixer: Fixer<'a>,
     report: &ReportValueExport<'a>,
@@ -160,10 +215,13 @@ impl ConsistentTypeExports {
         else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         let types = cx.file().type_checker();
-        let Some(source_file_symbol) =
-            types.resolve_module_name(source.bytes()).and_then(|source_file| source_file.symbol())
-        else {
+        // tsgolint asks at the module specifier: a `declare module "name"` of that name comes before a file.
+        let ambient_module = if is_oxlint { types.get_ambient_module(source.bytes()) } else { None };
+        let source_file_symbol = ambient_module
+            .or_else(|| types.resolve_module_name(source.bytes()).and_then(|source_file| source_file.symbol()));
+        let Some(source_file_symbol) = source_file_symbol else {
             return;
         };
         let source_file_type = source_file_symbol.get_type();
@@ -177,6 +235,10 @@ impl ConsistentTypeExports {
             return;
         }
         cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| {
+            // tsgolint also fixes the export of a `declare module "name";`, which has no body to say what it exports.
+            if is_oxlint && source_file_type.flags().intersects(TypeFlags::ANY) {
+                return None;
+            }
             let asterisk_token = fixer.file().tokens_in(node).find(|token| token.is_punctuator("*"))?;
             Some(fixer.insert_before(asterisk_token, "type "))
         });
@@ -190,8 +252,9 @@ impl ConsistentTypeExports {
         if export.is_type_only() {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
         let is_type_based = |specifier: ExportSpec<'a>| {
-            !specifier.is_type_only() && is_specifier_type_based(specifier) == Some(true)
+            !specifier.is_type_only() && is_specifier_type_based(specifier, is_oxlint) == Some(true)
         };
         if !export.items().iter().any(is_type_based) {
             return;
@@ -201,26 +264,40 @@ impl ConsistentTypeExports {
             inline_type_specifiers: Vec::new(),
             type_based_specifiers: Vec::new(),
             value_specifiers: Vec::new(),
+            type_specifiers: Vec::new(),
+            value_or_unresolved_specifiers: Vec::new(),
         };
         for specifier in export.items() {
             if specifier.is_type_only() {
                 report.inline_type_specifiers.push(specifier);
+                if is_oxlint {
+                    report.type_specifiers.push(specifier);
+                }
                 continue;
             }
-            match is_specifier_type_based(specifier) {
+            let is_type_based = is_specifier_type_based(specifier, is_oxlint);
+            match is_type_based {
                 Some(true) => report.type_based_specifiers.push(specifier),
                 Some(false) => report.value_specifiers.push(specifier),
                 None => {}
             }
+            if is_oxlint {
+                match is_type_based {
+                    Some(true) => report.type_specifiers.push(specifier),
+                    _ => report.value_or_unresolved_specifiers.push(specifier),
+                }
+            }
         }
 
         if report.value_specifiers.is_empty() {
-            cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| fix_export_insert_type(fixer, export));
+            cx.report(place_of_all(node, cx), TYPE_OVER_VALUE).fix(|fixer| match is_oxlint {
+                true => fix_replace_named_exports(fixer, export, &report),
+                false => fix_export_insert_type(fixer, export),
+            });
             return;
         }
 
         // tsgolint names them as they are written, `a as b`, and has a comma before the `and`.
-        let is_oxlint = cx.language().is_oxlint;
         let name_of = |specifier: &ExportSpec<'a>| {
             let mut name = Vec::new();
             match is_oxlint {
@@ -259,8 +336,11 @@ impl ConsistentTypeExports {
             }
         };
         cx.report(place, message).data("exportNames", export_names).labels_with(labels).fix(|fixer| {
-            match self.fix_mixed_exports_with_inline_type_specifier {
-                true => Some(fix_add_type_specifier_to_named_exports(fixer, &report)),
+            if self.fix_mixed_exports_with_inline_type_specifier {
+                return Some(fix_add_type_specifier_to_named_exports(fixer, &report));
+            }
+            match is_oxlint {
+                true => fix_replace_named_exports(fixer, export, &report),
                 false => fix_separate_named_exports(fixer, export, &report),
             }
         });

@@ -1,8 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{static_property_info, static_string};
-use rustc_hash::FxHashMap;
 
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
 pub struct NoAccumulatingSpread;
@@ -21,7 +21,7 @@ struct InLoop<'a> {
 #[derive(Default)]
 pub struct State<'a> {
     /// What is first assigned to, for each variable that was asked about.
-    first_assignments: FxHashMap<Symbol<'a>, Option<Expr<'a>>>,
+    first_assignments: IdMap<Symbol<'a>, Option<Expr<'a>>>,
     /// Whether something is in a call of `reduce` or in a loop.
     in_reduce_or_loop: AncestorMemo<'a, ()>,
     /// All those of one accumulator are reported at the accumulator: oxlint has them in the order of the source.
@@ -174,7 +174,7 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
     }
     // Only the first assignment counts.
     let first_assignment = || symbol.references().find(|it| it.is_write() && !it.is_init()).and_then(Reference::expr);
-    let Some(target) = *cx.state.first_assignments.entry(symbol).or_insert_with(first_assignment) else {
+    let Some(target) = *cx.state.first_assignments.get_or_insert_with(symbol, first_assignment) else {
         return;
     };
     let Node::Expr(assignment) = target.parent() else {

@@ -11,14 +11,13 @@ use bun_collections::{
     HashMap as BunHashMap, IdentityContext, LinearFifo, index_sort, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, UnwrapOrOom as _};
 use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
-use bun_dotenv as DotEnv;
 use bun_perf::system_timer::Timer;
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
@@ -37,8 +36,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
-    npm as Npm,
+    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
+    invalid_dependency_id, invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -63,6 +62,8 @@ pub mod override_map;
 pub(crate) mod override_selector;
 #[path = "lockfile/Package.rs"]
 pub mod package;
+#[path = "lockfile/package_extensions.rs"]
+pub(crate) mod package_extensions;
 #[path = "lockfile/pruned_workspaces.rs"]
 pub(crate) mod pruned_workspaces;
 #[path = "lockfile/reachable.rs"]
@@ -82,7 +83,6 @@ pub use self::buffers::Buffers;
 use self::bun_lock as TextLockfile;
 pub use self::bun_lockb as Serializer;
 pub use self::catalog_map::CatalogMap;
-pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
@@ -133,29 +133,6 @@ const ZERO_HASH: MetaHash = [0u8; 32];
 // which avoids threading a `&mut [u8]` lifetime through the load call graph.
 pub(crate) type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
-/// Duck-typed surface that `Buffers::write_array`/`save` and
-/// `Package::Serializer::save` expect of their `stream` parameter. Expressed
-/// as a trait to stay generic over the borrowck-reshaped `StreamType` in
-/// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
-pub(crate) trait PositionalStream {
-    /// Current write position.
-    fn get_pos(&self) -> Result<usize, BunError>;
-    /// Positional write — returns bytes written (always `data.len()` for
-    /// in-memory buffers).
-    fn pwrite(&mut self, data: &[u8], index: usize) -> usize;
-}
-
-impl<'a> PositionalStream for Serializer::StreamType<'a> {
-    #[inline]
-    fn get_pos(&self) -> Result<usize, BunError> {
-        Serializer::StreamType::get_pos(self)
-    }
-    #[inline]
-    fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
-        Serializer::StreamType::pwrite(self, data, index)
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile struct
 // ────────────────────────────────────────────────────────────────────────────
@@ -189,6 +166,7 @@ pub struct Lockfile {
     pub(crate) patched_dependencies: PatchedDependenciesMap,
     pub(crate) overrides: OverrideMap,
     pub catalogs: CatalogMap,
+    pub(crate) package_extensions: package_extensions::PackageExtensions,
 
     pub(crate) saved_config_version: Option<ConfigVersion>,
 
@@ -205,6 +183,9 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
+    /// Packages that a row other than a weak peer (`is_weak_peer`) resolved to at load.
+    pub(crate) held_at_load: DynamicBitSet,
+
     /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
     /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
     /// — pinned this exact version somewhere in the tree). `get_package_id`'s
@@ -213,6 +194,9 @@ pub struct Lockfile {
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
     pub(crate) exact_pinned: DynamicBitSet,
+
+    /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
+    pub(crate) only_bundled: DynamicBitSet,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -296,8 +280,6 @@ impl Scripts {
     }
 }
 
-// `deinit` becomes `Drop` — body only frees owned fields → delete entirely; Vec<Box<[u8]>> drops automatically.
-
 // ────────────────────────────────────────────────────────────────────────────
 // LoadResult
 // ────────────────────────────────────────────────────────────────────────────
@@ -309,7 +291,7 @@ pub enum LockfileFormat {
 }
 
 impl LockfileFormat {
-    pub(crate) fn filename(self) -> &'static ZStr {
+    pub fn filename(self) -> &'static ZStr {
         match self {
             LockfileFormat::Text => zstr!("bun.lock"),
             LockfileFormat::Binary => zstr!("bun.lockb"),
@@ -326,7 +308,7 @@ pub enum LoadStep {
 }
 
 impl LoadStep {
-    pub(crate) fn verb(self) -> &'static str {
+    pub fn verb(self) -> &'static str {
         match self {
             LoadStep::OpenFile => "open",
             LoadStep::ReadFile => "read",
@@ -350,6 +332,36 @@ pub struct LoadResultErr {
     pub value: BunError,
     pub(crate) lockfile_path: &'static ZStr,
     pub(crate) format: LockfileFormat,
+}
+
+impl LoadResultErr {
+    fn of<'a>(step: LoadStep, value: BunError, format: LockfileFormat) -> LoadResult<'a> {
+        LoadResult::Err(LoadResultErr {
+            step,
+            value,
+            lockfile_path: format.filename(),
+            format,
+        })
+    }
+
+    /// For the commands that stop here; `bun install` goes on and words it differently.
+    #[cold]
+    pub(crate) fn report(&self, log: &bun_ast::Log) {
+        if crate::migration::reported_unsupported_lockfile_version(self) {
+            return;
+        }
+        Output::err_generic(
+            "failed to {s} lockfile: {s}",
+            (self.step.verb(), self.value.name()),
+        );
+        print_log_errors(log);
+    }
+}
+
+pub(crate) fn print_log_errors(log: &bun_ast::Log) {
+    if log.has_errors() {
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+    }
 }
 
 pub struct LoadResultOk<'a> {
@@ -383,93 +395,70 @@ impl<'a> LoadResult<'a> {
     }
 
     pub(crate) fn migrated_from_npm(&self) -> bool {
-        match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Npm,
-            _ => false,
-        }
+        matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Npm)
     }
 
     pub(crate) fn migrated_from_pnpm(&self) -> bool {
+        matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Pnpm)
+    }
+
+    pub(crate) fn migrated_from(&self) -> Option<&'static str> {
         match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
-            _ => false,
+            LoadResult::Ok(LoadResultOk { migrated, .. }) => match migrated {
+                Migrated::None => None,
+                Migrated::Npm => Some("package-lock.json"),
+                Migrated::Yarn => Some("yarn.lock"),
+                Migrated::Pnpm => Some("pnpm-lock.yaml"),
+            },
+            _ => None,
         }
     }
 
-    pub(crate) fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
-        match self {
-            LoadResult::NotFound => {
-                // saving a lockfile for a new project. default to text lockfile
-                // unless saveTextLockfile is false in bunfig
-                let save_text_lockfile = options.save_text_lockfile.unwrap_or(true);
-                if save_text_lockfile {
-                    LockfileFormat::Text
-                } else {
-                    LockfileFormat::Binary
-                }
-            }
-            LoadResult::Err(err) => {
-                // an error occurred, but we still loaded from an existing lockfile
-                if let Some(save_text_lockfile) = options.save_text_lockfile {
-                    if save_text_lockfile {
-                        return LockfileFormat::Text;
-                    }
-                }
-                err.format
-            }
-            LoadResult::Ok(ok) => {
-                // loaded from an existing lockfile
-                if let Some(save_text_lockfile) = options.save_text_lockfile {
-                    if save_text_lockfile {
-                        return LockfileFormat::Text;
-                    }
-
-                    if ok.migrated != Migrated::None {
-                        return LockfileFormat::Binary;
-                    }
-                }
-
-                if ok.migrated != Migrated::None {
-                    return LockfileFormat::Text;
-                }
-
-                ok.format
-            }
+    pub fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
+        match (self, options.save_text_lockfile) {
+            (_, Some(true)) => LockfileFormat::Text,
+            // a new project: text lockfile unless saveTextLockfile is false in bunfig
+            (LoadResult::NotFound, None) => LockfileFormat::Text,
+            (LoadResult::NotFound, Some(false)) => LockfileFormat::Binary,
+            // an error occurred, but we still loaded from an existing lockfile
+            (LoadResult::Err(err), _) => err.format,
+            (LoadResult::Ok(ok), _) if ok.migrated == Migrated::None => ok.format,
+            (LoadResult::Ok(_), Some(false)) => LockfileFormat::Binary,
+            (LoadResult::Ok(_), None) => LockfileFormat::Text,
         }
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
     pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
+        self.choose_config_version_with_saved(match self {
+            LoadResult::Ok(ok) => ok.lockfile.saved_config_version,
+            LoadResult::NotFound | LoadResult::Err(_) => None,
+        })
+    }
+
+    /// For a caller that holds the lockfile mutably.
+    fn choose_config_version_with_saved(
+        &self,
+        saved_config_version: Option<ConfigVersion>,
+    ) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
-            LoadResult::Ok(ok) => match ok.migrated {
-                Migrated::None => {
-                    if let Some(config_version) = ok.lockfile.saved_config_version {
-                        return (config_version, false);
-                    }
-
-                    // existing bun project without configVersion
-                    (ConfigVersion::V0, true)
-                }
-                Migrated::Pnpm => (ConfigVersion::V1, true),
-                Migrated::Npm => (ConfigVersion::V0, true),
-                Migrated::Yarn => (ConfigVersion::V0, true),
+            LoadResult::Ok(ok) => match (ok.migrated, saved_config_version) {
+                (Migrated::None, Some(config_version)) => (config_version, false),
+                (Migrated::Pnpm, _) => (ConfigVersion::V1, true),
+                // npm, yarn, or an existing bun project without configVersion
+                _ => (ConfigVersion::V0, true),
             },
         }
     }
 
     /// Resolves `Auto` the way `bun install` picks the linker for this lockfile; never returns `Auto`.
     pub fn node_linker(&self, configured: NodeLinker) -> NodeLinker {
-        if configured != NodeLinker::Auto {
-            return configured;
-        }
-        if self.choose_config_version().0 != ConfigVersion::V1 {
-            return NodeLinker::Hoisted;
-        }
-        match self {
-            LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0 => NodeLinker::Isolated,
-            _ => NodeLinker::Hoisted,
-        }
+        resolve_node_linker(
+            configured,
+            self.choose_config_version().0,
+            matches!(self, LoadResult::Ok(ok) if ok.lockfile.workspace_paths.len() > 0),
+        )
     }
 
     // Callers reach this only after `handleLoadLockfileErrors` has exited on
@@ -477,9 +466,25 @@ impl<'a> LoadResult<'a> {
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// InstallResult
-// ────────────────────────────────────────────────────────────────────────────
+/// The linker for the project in the cwd; never returns `Auto`.
+pub(crate) fn resolve_node_linker(
+    configured: NodeLinker,
+    config_version: ConfigVersion,
+    has_workspaces: bool,
+) -> NodeLinker {
+    if configured != NodeLinker::Auto {
+        return configured;
+    }
+    // Nothing names a linker: a tree that `--linker=isolated` laid out stays isolated.
+    if (config_version == ConfigVersion::V1 && has_workspaces)
+        || sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
+            .unwrap_or(false)
+    {
+        NodeLinker::Isolated
+    } else {
+        NodeLinker::Hoisted
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile impl — load / clone / hoist / etc.
@@ -502,71 +507,49 @@ impl Lockfile {
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
-        mut manager: Option<&mut PackageManager>,
+        manager: Option<&mut PackageManager>,
+        log: &mut bun_ast::Log,
+    ) -> LoadResult<'a> {
+        let mut result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
+        if let LoadResult::Ok(ok) = &mut result {
+            ok.lockfile.rebase_folder_dependencies().unwrap_or_oom();
+        }
+        result
+    }
+
+    /// bun.lock, bun.lockb or, failing both, a foreign lockfile to migrate from.
+    fn read_from_dir<'a>(
+        &'a mut self,
+        attempt_loading_from_other_lockfile: bool,
+        dir: Fd,
+        manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
-        let mut lockfile_format = LockfileFormat::Text;
-        let file: File = 'file: {
-            match File::openat(dir, zstr!("bun.lock"), sys::O::RDONLY, 0) {
-                sys::Result::Ok(f) => break 'file f,
-                sys::Result::Err(text_open_err) => {
-                    if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
-                        return LoadResult::Err(LoadResultErr {
-                            step: LoadStep::OpenFile,
-                            value: BunError::from(text_open_err),
-                            lockfile_path: zstr!("bun.lock"),
-                            format: LockfileFormat::Text,
-                        });
-                    }
-
-                    lockfile_format = LockfileFormat::Binary;
-
-                    match File::openat(dir, zstr!("bun.lockb"), sys::O::RDONLY, 0) {
-                        sys::Result::Ok(f) => break 'file f,
-                        sys::Result::Err(binary_open_err) => {
-                            if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
-                                return LoadResult::Err(LoadResultErr {
-                                    step: LoadStep::OpenFile,
-                                    value: BunError::from(binary_open_err),
-                                    lockfile_path: zstr!("bun.lockb"),
-                                    format: LockfileFormat::Binary,
-                                });
-                            }
-
-                            if ATTEMPT_LOADING_FROM_OTHER_LOCKFILE {
-                                if let Some(pm) = manager {
-                                    // The format is carried inside the `LoadResult` itself.
-                                    return migration::detect_and_load_other_lockfile(
-                                        self, dir, pm, log,
-                                    );
-                                }
-                            }
-
-                            return LoadResult::NotFound;
-                        }
-                    }
+        let mut opened = None;
+        for format in [LockfileFormat::Text, LockfileFormat::Binary] {
+            match File::openat(dir, format.filename(), sys::O::RDONLY, 0) {
+                Ok(file) => {
+                    opened = Some((file, format));
+                    break;
                 }
+                Err(err) if err.errno != sys::SystemErrno::ENOENT as u16 => {
+                    return LoadResultErr::of(LoadStep::OpenFile, err.into(), format);
+                }
+                Err(_) => {}
             }
+        }
+        let Some((file, lockfile_format)) = opened else {
+            if attempt_loading_from_other_lockfile && let Some(pm) = manager {
+                return migration::detect_and_load_other_lockfile(self, dir, pm, log);
+            }
+            return LoadResult::NotFound;
         };
 
-        // `bun_sys::File::read_to_end` returns `Maybe<Vec<u8>>`
-        // (fstat-presized, pread-from-0); map the error arm to `.read_file`.
         let buf = match file.read_to_end() {
             Ok(bytes) => bytes,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ReadFile,
-                    value: BunError::from(e),
-                    lockfile_path: if lockfile_format == LockfileFormat::Text {
-                        zstr!("bun.lock")
-                    } else {
-                        zstr!("bun.lockb")
-                    },
-                    format: lockfile_format,
-                });
-            }
+            Err(e) => return LoadResultErr::of(LoadStep::ReadFile, e.into(), lockfile_format),
         };
 
         if lockfile_format == LockfileFormat::Text {
@@ -574,28 +557,20 @@ impl Lockfile {
             initialize_store();
             let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
-                Err(e) => {
-                    return LoadResult::Err(LoadResultErr {
-                        step: LoadStep::ParseFile,
-                        value: e.into(),
-                        lockfile_path: zstr!("bun.lock"),
-                        format: lockfile_format,
-                    });
-                }
+                Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
 
-            if let Err(e) =
-                TextLockfile::parse_into_binary_lockfile(self, parsed.root, &source, log, manager)
-            {
+            if let Err(e) = TextLockfile::parse_into_binary_lockfile(
+                self,
+                parsed.root,
+                &source,
+                log,
+                manager.as_deref(),
+            ) {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: BunError::from(e),
-                    lockfile_path: zstr!("bun.lock"),
-                    format: lockfile_format,
-                });
+                return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format);
             }
 
             bun_core::analytics::Features::text_lockfile_inc();
@@ -608,74 +583,12 @@ impl Lockfile {
             });
         }
 
-        let mut result = self.load_from_bytes(manager.as_deref_mut(), buf, log);
-
-        // When BUN_DEBUG_TEST_TEXT_LOCKFILE is set, convert
-        // the freshly loaded binary lockfile into a text lockfile in memory,
-        // then parse it back into a binary lockfile, so the two codepaths
-        // cross-check each other in tests.
-        if bun_core::env_var::BUN_DEBUG_TEST_TEXT_LOCKFILE
-            .get()
-            .unwrap_or(false)
-        {
-            if let (LoadResult::Ok(ok), Some(manager)) = (&mut result, manager) {
-                let mut writer_buf: Vec<u8> = Vec::new();
-                // `save_from_binary` reads only `loaded_from_binary_lockfile()`
-                // from its `load_result` parameter. `result` itself cannot be
-                // passed while `ok.lockfile` is mutably borrowed, so hand it
-                // a stand-in that answers
-                // `format == Binary` the same way the real `Ok` result does.
-                let binary_origin = LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: crate::Error::DebugTextLockfileRoundTrip,
-                    lockfile_path: zstr!("bun.lockb"),
-                    format: LockfileFormat::Binary,
-                });
-                if let Err(e) = TextLockfile::Stringifier::save_from_binary(
-                    &mut *ok.lockfile,
-                    &binary_origin,
-                    &manager.options,
-                    &mut writer_buf,
-                ) {
-                    Output::panic(format_args!(
-                        "failed to convert binary lockfile to text lockfile: {}",
-                        e.name()
-                    ));
-                }
-
-                let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
-                initialize_store();
-                let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
-                    Ok(j) => j,
-                    Err(e) => Output::panic(format_args!(
-                        "failed to print valid json from binary lockfile: {}",
-                        e.name()
-                    )),
-                };
-
-                if let Err(e) = TextLockfile::parse_into_binary_lockfile(
-                    &mut *ok.lockfile,
-                    parsed.root,
-                    &source,
-                    log,
-                    Some(manager),
-                ) {
-                    Output::panic(format_args!(
-                        "failed to parse text lockfile converted from binary lockfile: {}",
-                        <&'static str>::from(e)
-                    ));
-                }
-
-                bun_core::analytics::Features::text_lockfile_inc();
-            }
-        }
-
-        result
+        self.load_from_bytes(manager.as_deref(), buf, log)
     }
 
     pub fn load_from_bytes<'a>(
         &'a mut self,
-        pm: Option<&mut PackageManager>,
+        pm: Option<&PackageManager>,
         buf: Vec<u8>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
@@ -689,26 +602,14 @@ impl Lockfile {
         self.self_contained_workspaces = ArrayHashMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
+        self.package_extensions = Default::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
-        let link_workspace_packages = pm
-            .as_deref()
-            .is_none_or(|pm| pm.options.link_workspace_packages);
+        let link_workspace_packages = pm.is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: e,
-                    lockfile_path: zstr!("bun.lockb"),
-                    format: LockfileFormat::Binary,
-                });
-            }
+            Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e, LockfileFormat::Binary),
         };
-
-        if cfg!(debug_assertions) {
-            self.verify_data().expect("lockfile data is corrupt");
-        }
 
         self.tag_workspace_links(link_workspace_packages);
 
@@ -720,6 +621,67 @@ impl Lockfile {
         })
     }
 
+    /// The stored literal is package-relative; `Package::parse` rebases local packages' rows too.
+    pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
+        let pkgs = self.packages.slice();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        for (pkg_resolution, pkg_dependencies) in
+            (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
+        {
+            let pkg_dir: SemverString = match pkg_resolution.tag {
+                ResolutionTag::Root => SemverString::default(),
+                ResolutionTag::Workspace => *pkg_resolution.workspace(),
+                ResolutionTag::Folder => *pkg_resolution.folder(),
+                _ => continue,
+            };
+            for dep in pkg_dependencies.mut_(self.buffers.dependencies.as_mut_slice()) {
+                let is_link = dep.version.tag == dependency::Tag::Symlink;
+                if dep.version.tag != dependency::Tag::Folder && !is_link {
+                    continue;
+                }
+                let buf = self.buffers.string_bytes.as_slice();
+                let literal = dep.version.literal.sliced(buf);
+                let Some(declared) = dependency::parse_with_tag(
+                    dep.name,
+                    Some(dep.name_hash),
+                    literal.slice,
+                    dep.version.tag,
+                    &literal,
+                    None,
+                    None,
+                ) else {
+                    continue;
+                };
+                let declared_path = if is_link {
+                    declared.symlink().slice(buf)
+                } else {
+                    declared.folder().slice(buf)
+                };
+                if is_link && !dependency::is_link_path(declared_path) {
+                    continue;
+                }
+                let Some(relative) = package::folder_relative_to_top_level_dir(
+                    pkg_dir.slice(buf),
+                    declared_path,
+                    &mut path_buf[..],
+                ) else {
+                    continue;
+                };
+                let mut string_buf = SemverStringBuf {
+                    bytes: &mut self.buffers.string_bytes,
+                    pool: &mut self.string_pool,
+                };
+                if is_link {
+                    dep.version.value.symlink =
+                        string_buf.append(&dependency::link_path_for_lockfile(relative))?;
+                } else {
+                    dep.version.value.folder = string_buf.append(relative)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn is_resolved_dependency_disabled(
         &self,
         dep_id: DependencyID,
@@ -727,14 +689,12 @@ impl Lockfile {
         meta: &package::Meta,
         cpu: Npm::Architecture,
         os: Npm::OperatingSystem,
+        libc: Npm::Libc,
     ) -> bool {
-        if meta.is_disabled(cpu, os) {
-            return true;
-        }
-
         let dep = &self.buffers.dependencies[dep_id as usize];
 
-        !dep.behavior.is_placed(features)
+        meta.is_disabled(cpu, os, libc.for_dependency(dep.behavior))
+            || !dep.behavior.is_placed(features)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -753,17 +713,31 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
-    /// Is this a direct dependency of the workspace the install is taking place in?
-    pub(crate) fn is_root_dependency(
-        &self,
-        manager: &mut PackageManager,
-        id: DependencyID,
-    ) -> bool {
-        // `RootPackageId::get` caches into `manager`.
-        let root_id = manager
-            .root_package_id
-            .get(self, manager.workspace_name_hash);
-        self.packages.items_dependencies()[root_id as usize].contains(id)
+    /// `None` for git, tarball and unversioned workspace packages (no version to compare).
+    pub(crate) fn package_version(&self, id: PackageID) -> Option<Semver::Version> {
+        let resolution = &self.packages.items_resolution()[id as usize];
+        match resolution.tag {
+            ResolutionTag::Npm => Some(resolution.npm().version),
+            ResolutionTag::Workspace => self
+                .workspace_versions
+                .get(&self.packages.items_name_hash()[id as usize])
+                .copied(),
+            _ => None,
+        }
+    }
+
+    /// An optional peer, or a peer no rule overrides that is bound to a version its range rejects.
+    pub(crate) fn is_weak_peer(&self, id: DependencyID, target: PackageID) -> bool {
+        let dependency = &self.buffers.dependencies[id as usize];
+        if !dependency.behavior.is_peer() || dependency.behavior.is_optional_peer() {
+            return dependency.behavior.is_peer();
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let range = self.catalogs.resolve_range(buf, dependency);
+        range.try_npm().is_some_and(|npm| {
+            (self.package_version(target))
+                .is_some_and(|version| !npm.version.satisfies(version, buf, buf))
+        }) && !self.is_overridden_dependency(id)
     }
 
     /// Is `id` a direct dependency of one of the `targets` workspaces?
@@ -790,34 +764,71 @@ impl Lockfile {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
     }
 
+    /// Highest version first (`get_or_put_id`); empty when nothing has the name.
+    pub(crate) fn packages_named(&self, name_hash: PackageNameHash) -> &[PackageID] {
+        self.package_index
+            .get(&name_hash)
+            .map_or(&[], PackageIndexEntry::as_slice)
+    }
+
+    pub(crate) fn package_satisfying(
+        &self,
+        name_hash: PackageNameHash,
+        version: &DependencyVersion,
+        accept: impl Fn(PackageID) -> bool,
+    ) -> Option<PackageID> {
+        TextLockfile::resolve_peer_dep_by_range(
+            version,
+            name_hash,
+            &self.package_index,
+            self.packages.items_resolution(),
+            self.buffers.string_bytes.as_slice(),
+            accept,
+        )
+    }
+
+    /// A patched npm package that `version` still allows; `bun update` holds rows there.
+    pub(crate) fn patched_package_satisfying(
+        &self,
+        name_hash: PackageNameHash,
+        version: &DependencyVersion,
+    ) -> Option<PackageID> {
+        if self.patched_dependencies.count() == 0 {
+            return None;
+        }
+        self.package_satisfying(name_hash, version, |id| {
+            let label = crate::dedupe::label(self, id);
+            self.patched_dependencies
+                .contains(&SemverStringBuilder::string_hash(&label))
+        })
+    }
+
     /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
     pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
-        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
-            if dependencies.contains(id) {
-                return Some(PackageID::try_from(pkg_id).expect("int cast"));
-            }
-        }
-        None
+        (self.packages.items_dependencies().iter())
+            .position(|dependencies| dependencies.contains(id))
+            .map(|pkg_id| pkg_id as PackageID)
+    }
+
+    pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        self.packages.items_dependencies()[0]
+            .get(self.buffers.dependencies.as_slice())
+            .iter()
+            .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
         let packages = self.packages.slice();
-        let resolutions = packages.items_resolution();
-        let dependencies_lists = packages.items_dependencies();
-        for (pkg_id, (resolution, dependencies)) in resolutions
-            .iter()
-            .zip(dependencies_lists.iter())
-            .enumerate()
-        {
-            if resolution.tag != ResolutionTag::Workspace && resolution.tag != ResolutionTag::Root {
-                continue;
-            }
-            if dependencies.contains(id) {
-                return PackageID::try_from(pkg_id).expect("int cast");
-            }
-        }
-
-        invalid_package_id
+        (packages.items_resolution().iter())
+            .zip(packages.items_dependencies())
+            .position(|(resolution, dependencies)| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Workspace | ResolutionTag::Root
+                ) && dependencies.contains(id)
+            })
+            .map_or(invalid_package_id, |pkg_id| pkg_id as PackageID)
     }
 
     /// Workspace packages whose node_modules must be self-contained: listed in the
@@ -865,20 +876,40 @@ impl Lockfile {
     pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
         let packages = self.packages.slice();
         let resolutions = self.buffers.resolutions.as_slice();
-        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
-            let tag = packages.items_resolution()[pkg_id].tag;
-            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
-                continue;
-            }
-            if res_list.get(resolutions).contains(&id) {
-                return true;
-            }
+        (packages.items_resolution().iter())
+            .zip(packages.items_resolutions())
+            .any(|(resolution, res_list)| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Workspace | ResolutionTag::Root
+                ) && res_list.get(resolutions).contains(&id)
+            })
+    }
+
+    /// Compares paths: bun.lock can bind a dependency a `file:` override governs to any folder.
+    fn is_override_selected_package(&self, id: PackageID) -> bool {
+        if self.overrides.is_empty() {
+            return false;
         }
-        false
+        let buf = self.buffers.string_bytes.as_slice();
+        let folder = self.packages.items_resolution()[id as usize].folder();
+        let Some(selected) = join_top_level_dir(&[folder.slice(buf)]) else {
+            return false;
+        };
+        let selected = strings::without_trailing_slash(selected.slice());
+        (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
+            let dependency = &self.buffers.dependencies[row];
+            target == id
+                && crate::dedupe::applied_override(self, row as DependencyID, dependency)
+                    .map(|rule| rule.version())
+                    .filter(|version| version.tag == dependency::version::Tag::Folder)
+                    .and_then(|version| join_top_level_dir(&[version.folder().slice(buf)]))
+                    .is_some_and(|named| strings::without_trailing_slash(named.slice()) == selected)
+        })
     }
 
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
+    /// one of them depends on or overrides to? Checked, not assumed: a migrated lockfile
     /// can carry dependencies for a folder that a registry package shipped.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
@@ -886,7 +917,10 @@ impl Lockfile {
         };
         match self.packages.items_resolution()[parent_id as usize].tag {
             ResolutionTag::Root | ResolutionTag::Workspace => true,
-            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            ResolutionTag::Folder => {
+                self.is_workspace_declared_package(parent_id)
+                    || self.is_override_selected_package(parent_id)
+            }
             _ => false,
         }
     }
@@ -905,6 +939,14 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
+    /// `is_trusted_folder_dependency` for any row, installed or filtered out, resolving to `id`.
+    pub(crate) fn is_trusted_folder_package(&self, id: PackageID) -> bool {
+        (0..self.buffers.resolutions.len()).any(|dep_id| {
+            self.buffers.resolutions[dep_id] == id
+                && self.is_trusted_folder_dependency(dep_id as DependencyID)
+        })
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
@@ -914,9 +956,7 @@ impl Lockfile {
                 .is_workspace()
     }
 
-    /// Is the package whose `node_modules` this tree represents resolved from a
-    /// local `file:` folder? Its `Resolution::Folder` dependencies were normalized
-    /// relative to the top-level dir (`Package::parse`), unlike npm's (`Package::from_npm`).
+    /// A `file:` folder's folder dependencies are top-level relative, not package-relative.
     pub(crate) fn is_folder_tree_id(&self, id: tree::Id) -> bool {
         if id == 0 {
             return false;
@@ -928,26 +968,45 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
+    /// A folder's `node_modules` is not copied: linkers link these to `<path>/node_modules/<name>`.
+    pub(crate) fn bundled_by_folder<'a>(
+        &'a self,
+        path: &'a [u8],
+    ) -> impl Iterator<Item = &'a Dependency> {
+        let buf = self.buffers.string_bytes.as_slice();
+        (self.packages.items_resolution().iter())
+            .zip(self.packages.items_dependencies())
+            .find(|(resolution, _)| {
+                resolution.tag == ResolutionTag::Folder && resolution.folder().slice(buf) == path
+            })
+            .map_or(&[][..], |(_, rows)| {
+                rows.get(self.buffers.dependencies.as_slice())
+            })
+            .iter()
+            .filter(|dependency| dependency.behavior.is_bundled())
+    }
+
+    pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
+        let dependency = &self.buffers.dependencies[id as usize];
+        self.overrides.get(self, id, dependency.name_hash).is_some()
+    }
+
     /// Returns the package id of the workspace the install is taking place in.
     pub(crate) fn get_workspace_package_id(
         &self,
         workspace_name_hash: Option<PackageNameHash>,
     ) -> PackageID {
-        if let Some(workspace_name_hash_) = workspace_name_hash {
-            let packages = self.packages.slice();
-            let name_hashes = packages.items_name_hash();
-            let resolutions = packages.items_resolution();
-            for (i, (res, name_hash)) in resolutions.iter().zip(name_hashes.iter()).enumerate() {
-                if res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash_ {
-                    return PackageID::try_from(i).expect("int cast");
-                }
-            }
-
+        let Some(workspace_name_hash) = workspace_name_hash else {
+            return 0;
+        };
+        let packages = self.packages.slice();
+        (packages.items_resolution().iter())
+            .zip(packages.items_name_hash())
+            .position(|(res, name_hash)| {
+                res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash
+            })
             // should not hit this, default to root just in case
-            0
-        } else {
-            0
-        }
+            .map_or(0, |i| i as PackageID)
     }
 
     /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
@@ -989,8 +1048,14 @@ impl Lockfile {
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
                 debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
                 for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
+                    // The root's implicit `workspaces` rows are not package.json entries.
+                    if dep.behavior.is_workspace() {
+                        continue;
+                    }
                     if update.matches(dep, string_buf) {
                         if package_id as usize > self.packages.len() {
+                            // `-r` binds once per workspace: not what another's entry bound.
+                            update.package_id = invalid_package_id;
                             continue;
                         }
                         update.version_buf = string_buf_ptr;
@@ -1019,8 +1084,6 @@ impl Lockfile {
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         let old: &mut Lockfile = self;
-        // Outlined cold: the verbose arm is debug-only and drags in
-        // `Timer`/clock-syscall error formatting.
         let timer: Option<Timer> = if log_level.is_verbose() {
             Some(clean_verbose_timer_start()?)
         } else {
@@ -1041,8 +1104,6 @@ impl Lockfile {
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
-        // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
-        // it (never `Box::leak` to satisfy a lifetime).
         let mut new: Box<Lockfile> = Box::default();
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
@@ -1054,16 +1115,10 @@ impl Lockfile {
             .ensure_total_capacity(old.patched_dependencies.count())?;
 
         // Reset the FIFO read cursor without discarding capacity.
-        // `LinearFifo::head` is private; the queue is always drained to empty
-        // before reuse here, so a `discard(count)` resets `head` to 0.
         let queued = old.scratch.dependency_list_queue.readable_length();
         old.scratch.dependency_list_queue.discard(queued);
 
         {
-            // The signatures take `&Lockfile` for `old` and read `new`
-            // through `builder.lockfile`, so the only conflict left is the
-            // field-assign on `new.*` while `builder` borrows `new` — store
-            // the results in temps and assign after `builder` drops.
             let old_buf = old.buffers.string_bytes.as_slice();
             let (mut builder, lf) = new.string_builder_split();
             old.overrides.count(old_buf, &mut builder);
@@ -1077,30 +1132,19 @@ impl Lockfile {
         let root = old.root_package().ok_or(crate::Error::NoPackage)?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
-        let clone_queue_ = PendingResolutions::new();
-        // A frozen install never saves, so dropping peer-held targets could only fail its check.
-        let keep_optional_peer_targets =
-            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
-        // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
-        // released back to this scope once `cloner` is dropped.
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
-            clone_queue: clone_queue_,
-            optional_peers: PendingResolutions::new(),
-            keep_optional_peer_targets,
+            clone_queue: PendingResolutions::new(),
+            weak_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
         };
 
-        // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
         let _ = root.clone(&mut cloner)?;
 
-        // Between here and `cloner.flush()`, `old`/`new`/`manager`
-        // are live inside `cloner`. Reach them via `cloner.old` /
-        // `cloner.lockfile` so borrowck sees disjoint field paths.
         {
             let old = &mut *cloner.old;
             let new = &mut *cloner.lockfile;
@@ -1112,19 +1156,13 @@ impl Lockfile {
                 new.workspace_versions
                     .ensure_total_capacity(old.workspace_versions.count())?;
 
-                // Field-level split borrow of `new` (string_bytes + string_pool).
                 let mut workspace_paths_builder = string_builder!(new);
 
                 // Sort by name for determinism
                 {
                     let string_buf = old.buffers.string_bytes.as_slice();
-                    // `ArrayHashMap::sort` comparator is
-                    // `(keys, values, a, b) -> bool` (less-than).
                     old.workspace_paths.sort(|_keys, values, a, b| {
-                        let left = values[a];
-                        let right = values[b];
-                        strings::order(left.slice(string_buf), right.slice(string_buf))
-                            == Ordering::Less
+                        values[a].order(values[b], string_buf, string_buf) == Ordering::Less
                     });
                 }
 
@@ -1196,7 +1234,6 @@ impl Lockfile {
         // When you run `"bun add react"
         // This is where we update it in the lockfile from "latest" to "^17.0.2"
         cloner.flush()?;
-        // `cloner` no longer needed — release the reborrows of `old`/`new`/`manager`.
         drop(cloner);
 
         new.trusted_dependencies = old_trusted_dependencies;
@@ -1208,6 +1245,9 @@ impl Lockfile {
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
+        }
+        if !old.package_extensions.applied.is_empty() {
+            new.keep_package_extensions_of(old);
         }
 
         if !updates.is_empty() {
@@ -1317,8 +1357,7 @@ impl Lockfile {
 pub struct Cloner<'a> {
     pub(crate) clone_queue: PendingResolutions,
     /// Bound in `flush`, once `clone_queue` has decided which targets survive.
-    pub(crate) optional_peers: PendingResolutions,
-    pub(crate) keep_optional_peer_targets: bool,
+    pub(crate) weak_peers: PendingResolutions,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
@@ -1328,9 +1367,25 @@ pub struct Cloner<'a> {
 }
 
 impl<'a> Cloner<'a> {
+    /// A required peer whose dropped target was the last of its name: nothing would bind it again.
+    fn peer_on_last_copy(&mut self) -> Option<PendingResolution> {
+        let name_hashes = self.old.packages.items_name_hash();
+        let dependencies = self.lockfile.buffers.dependencies.as_slice();
+        let index = self.weak_peers.iter().position(|peer| {
+            self.mapping[peer.old_resolution as usize] == invalid_package_id
+                && !dependencies[peer.resolve_id as usize]
+                    .behavior
+                    .is_optional_peer()
+                && (self.lockfile)
+                    .packages_named(name_hashes[peer.old_resolution as usize])
+                    .is_empty()
+        })?;
+        Some(self.weak_peers.swap_remove(index))
+    }
+
     pub(crate) fn flush(&mut self) -> Result<(), BunError> {
         let max_package_id = self.old.packages.len();
-        while let Some(to_clone) = self.clone_queue.pop() {
+        while let Some(to_clone) = (self.clone_queue.pop()).or_else(|| self.peer_on_last_copy()) {
             let mapping = self.mapping[to_clone.old_resolution as usize];
             if (mapping as usize) < max_package_id {
                 self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = mapping;
@@ -1339,13 +1394,12 @@ impl<'a> Cloner<'a> {
 
             let old_package = *self.old.packages.get(to_clone.old_resolution as usize);
 
-            // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
 
         // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
-        for pending in self.optional_peers.drain(..) {
+        for pending in self.weak_peers.drain(..) {
             let mapping = self.mapping[pending.old_resolution as usize];
             if (mapping as usize) < max_package_id {
                 self.lockfile.buffers.resolutions[pending.resolve_id as usize] = mapping;
@@ -1379,9 +1433,10 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
+    /// Re-hoists while a pass bound a peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        TextLockfile::rebind_peers_to_printed_packages(self)?;
         Ok(())
     }
 
@@ -1403,12 +1458,10 @@ impl Lockfile {
         Ok(())
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
-        // `tree::Builder` stores these unconditionally (Option/slice), so
-        // accept the concrete shapes for all `METHOD`s.
         manager: Option<&PackageManager>,
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
@@ -1423,12 +1476,7 @@ impl Lockfile {
             Vec::new()
         };
 
-        // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
-        // the `&mut buffers.resolutions` split-borrow below can coexist with
-        // the read-only lockfile view inside the builder (see Tree.rs note).
-        // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
-        // which is exactly what `Builder` needs (it only ever `Deref`s); the
-        // `Builder` does not outlive this `&mut self` borrow.
+        // Lets the `&mut buffers.resolutions` split-borrow below coexist with `Builder::lockfile`.
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             self_contained,
@@ -1442,10 +1490,15 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            pending_optional_peers: Default::default(),
-            late_bound_optional_peer: false,
+            pending_peers: Default::default(),
+            late_bound_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
+            peer_probes: Default::default(),
+            placed: Default::default(),
+            shipped_rows: Default::default(),
+            in_shipped_folder: false,
+            linked: Default::default(),
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
@@ -1453,19 +1506,15 @@ impl Lockfile {
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
             use tree::BuilderEntryColumns as _;
-            // Copy the element out of `builder.list` rather than indexing
-            // in-place: `process_subtree` only reads `this.id`
-            // (before appending to `builder.list`, which may reallocate), so the
-            // copy is equivalent — and avoids the dangling-element hazard.
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
         }
 
         let cleaned = builder.clean()?;
-        let late_bound_optional_peer = builder.late_bound_optional_peer;
+        let late_bound_peer = builder.late_bound_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(late_bound_peer)
     }
 }
 
@@ -1482,36 +1531,34 @@ pub(crate) type PendingResolutions = Vec<PendingResolution>;
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    /// `FILL_INTEGRITY`: take the registry manifest's integrity for npm packages
-    /// the migrated lockfile had none for (yarn berry records a checksum of its
-    /// own zip archive, not of the tarball).
-    pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration<
-        const UPDATE_OS_CPU: bool,
-        const FILL_INTEGRITY: bool,
-    >(
+    /// `fill_integrity`: yarn berry records a checksum of its own zip archive, not of the tarball.
+    pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         &mut self,
         manager: &mut PackageManager,
+        update_os_cpu: bool,
+        fill_integrity: bool,
     ) -> Result<(), AllocError> {
-        if populate_manifest_cache::populate_manifest_cache(
+        // Manifests are fetched for `manager.lockfile`; `bun why`, `bun pm diff` load into another.
+        let detached =
+            fill_integrity && !core::ptr::eq(&raw const *self, &raw const *manager.lockfile);
+        if detached {
+            core::mem::swap(self, &mut *manager.lockfile);
+        }
+        let populated = populate_manifest_cache::populate_manifest_cache(
             manager,
             populate_manifest_cache::Packages::All,
-        )
-        .is_err()
-        {
+        );
+        if detached {
+            core::mem::swap(self, &mut *manager.lockfile);
+        }
+        if populated.is_err() {
             return Ok(());
         }
         // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
         manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        // `manifests` is a field of `manager`, and a `string_builder` is
-        // opened on `manager.lockfile` while `&manifest` is still held.
-        // Route the `manifests` projection
-        // through a raw root so it can coexist with the lockfile borrows;
-        // lockfile fields are taken from `self` (== `manager.lockfile`), never
-        // re-derived via `manager_ptr`. BACKREF `mgr_ref` wraps the same root
-        // for the read-only `options` projection so it goes through safe
-        // `ParentRef::Deref`.
+        // Lockfile fields are taken from `self` (== `manager.lockfile`), never via `manager_ptr`.
         let manager_ptr: *mut PackageManager = manager;
         let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
@@ -1519,17 +1566,14 @@ impl Lockfile {
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
 
-        // `split_mut()` yields disjoint `&mut [_]` per column from one
-        // `&mut Slice` borrow.
         let self::package::PackageColumnsMut {
             name: pkg_names,
             name_hash: pkg_name_hashes,
             resolution: pkg_resolutions,
             bin: pkg_bins,
-            meta,
+            meta: pkg_metas,
             ..
         } = pkgs.split_mut();
-        let pkg_metas: &mut [self::package::meta::Meta] = meta;
 
         for i in 0..len {
             let pkg_name = pkg_names[i];
@@ -1537,109 +1581,86 @@ impl Lockfile {
             let pkg_res = pkg_resolutions[i];
             let pkg_bin = &mut pkg_bins[i];
 
-            match pkg_res.tag {
-                ResolutionTag::Npm => {
-                    // `options` read via BACKREF `mgr_ref` (see hoisted note
-                    // above); `manifests` and `lockfile` are non-overlapping
-                    // fields and nothing below resizes/relocates `manifests`
-                    // while `manifest` is held.
-                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
-                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
-                    // SAFETY: `manifests` projected from `manager_ptr`; the
-                    // call holds only that disjoint field.
-                    let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
-                        cache_ctx,
-                        scope,
-                        pkg_name_str,
-                        pkg_name_hash,
-                        false,
-                    ) else {
-                        continue;
-                    };
+            if pkg_res.tag != ResolutionTag::Npm {
+                continue;
+            }
+            let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+            let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
+            // SAFETY: the call holds only that field, which nothing below resizes or relocates
+            // while `manifest` is held.
+            let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
+                cache_ctx,
+                scope,
+                pkg_name_str,
+                pkg_name_hash,
+                false,
+            ) else {
+                continue;
+            };
 
-                    let npm_ver = pkg_res.npm().version;
-                    let Some(pkg) = manifest.find_by_version(npm_ver) else {
-                        continue;
-                    };
+            let npm_ver = pkg_res.npm().version;
+            let Some(pkg) = manifest.find_by_version(npm_ver) else {
+                continue;
+            };
 
-                    // `manager.lockfile` is the same `Lockfile` as `self`. Re-deriving a
-                    // whole `&mut Lockfile` from `manager_ptr` here would create a
-                    // second mutable reference aliasing `self` (UB) — go through
-                    // `self` so the field-level borrows below stay disjoint from the
-                    // live `pkg_*` column views (those point into the columnar heap
-                    // allocation, not the `Lockfile` struct).
-                    let mut builder = string_builder!(self);
+            let mut builder = string_builder!(self);
 
-                    let mut bin_extern_strings_count: u32 = 0;
+            let bin_extern_strings_count = pkg.package.bin.count(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
+                &mut builder,
+            );
 
-                    bin_extern_strings_count += pkg.package.bin.count(
-                        &manifest.string_buf,
-                        &manifest.extern_strings_bin_entries,
-                        &mut builder,
-                    );
+            builder.allocate()?;
 
-                    builder.allocate()?;
-                    // `builder.clamp()` is called explicitly at end of block (no `?`
-                    // exits between here and the clamp below).
+            let extern_strings_list = &mut self.buffers.extern_strings;
+            let start = extern_strings_list.len();
+            let extern_strings_slice =
+                bun_core::vec::grow_default(extern_strings_list, bin_extern_strings_count as usize);
 
-                    let extern_strings_list = &mut self.buffers.extern_strings;
-                    let start = extern_strings_list.len();
-                    // Default-fill the tail so it is valid before `bin.clone`
-                    // overwrites it (replaces `reserve` + raw `set_len`).
-                    bun_core::vec::grow_default(
-                        extern_strings_list,
-                        bin_extern_strings_count as usize,
-                    );
-                    let new_len = extern_strings_list.len();
+            *pkg_bin = pkg.package.bin.clone_with_buffers(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
+                start as u32,
+                extern_strings_slice,
+                &mut builder,
+            );
 
-                    // A full slice and a tail subslice would alias, so
-                    // `Bin::clone_with_buffers` takes the tail's offset for
-                    // `ExternalStringList::init` directly.
-                    let extern_strings_slice = &mut extern_strings_list[start..new_len];
+            builder.clamp();
 
-                    *pkg_bin = pkg.package.bin.clone_with_buffers(
-                        &manifest.string_buf,
-                        &manifest.extern_strings_bin_entries,
-                        start as u32,
-                        extern_strings_slice,
-                        &mut builder,
-                    );
+            let pkg_meta = &mut pkg_metas[i];
+            // Neither yarn.lock nor pnpm-lock.yaml records this.
+            pkg_meta.set_has_install_script(pkg.package.has_install_script);
 
-                    builder.clamp();
-
-                    let pkg_meta = &mut pkg_metas[i];
-                    if UPDATE_OS_CPU {
-                        // Update os/cpu metadata if not already set
-                        if pkg_meta.os == Npm::OperatingSystem::ALL {
-                            pkg_meta.os = pkg.package.os;
-                        }
-                        if pkg_meta.arch == Npm::Architecture::ALL {
-                            pkg_meta.arch = pkg.package.cpu;
-                        }
-                    }
-                    // Only when the tarball is the one the manifest describes: under the
-                    // registry it was fetched from, or its recorded `dist.tarball`. A
-                    // fresh resolve records the same value.
-                    if FILL_INTEGRITY
-                        && !pkg_meta.integrity.tag.is_supported()
-                        && pkg.package.integrity.tag.is_supported()
-                    {
-                        let url = pkg_res
-                            .npm()
-                            .url
-                            .slice(self.buffers.string_bytes.as_slice());
-                        if url.is_empty()
-                            || bun_lock::url_is_under_registry(
-                                url,
-                                &crate::yarn_berry::registry_without_auth(scope.url.href()),
-                            )
-                            || url == pkg.package.tarball_url.slice(&manifest.string_buf)
-                        {
-                            pkg_meta.integrity = pkg.package.integrity;
-                        }
-                    }
+            if update_os_cpu {
+                if pkg_meta.os == Npm::OperatingSystem::ALL {
+                    pkg_meta.os = pkg.package.os;
                 }
-                _ => {}
+                if pkg_meta.arch == Npm::Architecture::ALL {
+                    pkg_meta.arch = pkg.package.cpu;
+                }
+                if pkg_meta.libc == Npm::Libc::NONE {
+                    pkg_meta.libc = pkg.package.libc;
+                }
+            }
+            // Only when the tarball is the one the manifest describes.
+            if fill_integrity
+                && !pkg_meta.integrity.tag.is_supported()
+                && pkg.package.integrity.tag.is_supported()
+            {
+                let url = pkg_res
+                    .npm()
+                    .url
+                    .slice(self.buffers.string_bytes.as_slice());
+                if url.is_empty()
+                    || bun_lock::url_is_under_registry(
+                        url,
+                        &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                    )
+                    || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                {
+                    pkg_meta.integrity = pkg.package.integrity;
+                }
             }
         }
         Ok(())
@@ -1657,11 +1678,6 @@ pub struct Printer<'a> {
     pub(crate) updates: &'a [UpdateRequest],
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PrinterFormat {
-    Yarn,
-}
-
 pub mod printer {
     pub use super::printer_mods::tree_printer as Tree;
     pub use super::printer_mods::yarn as Yarn;
@@ -1669,108 +1685,61 @@ pub mod printer {
 
 impl<'a> Printer<'a> {
     #[cold]
-    pub fn print(
-        log: &mut bun_ast::Log,
-        input_lockfile_path: &[u8],
-        format: PrinterFormat,
-    ) -> Result<(), BunError> {
+    pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
-        let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
-        let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
-
-        let mut lockfile_path: &ZStr = ZStr::EMPTY;
-        // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
-        // step below can write into the *other* buffer. `resolve_path::z` does
-        // `output[..n].copy_from_slice(input)` (→ `ptr::copy_nonoverlapping`);
-        // passing a slice of `bufN` as `input` while taking `&mut bufN` as
-        // `output` is UB on overlapping ranges and would also corrupt
-        // `lockfile_path` (printed in the NotFound arm).
-        let mut path_in_buf2 = false;
-
-        if !bun_paths::is_absolute(path) {
-            // `bun_sys::getcwd` returns the length written into the
-            // caller-owned buffer.
-            let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
-            let parts = [path];
-            // Copy `cwd` out of `buf1` so the
-            // join can write into `buf2` while `cwd` borrows `buf1` only.
-            let cwd = &lockfile_path_buf1[..cwd_len];
-            let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
-                cwd,
-                &mut lockfile_path_buf2.0,
-                &parts,
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let mut joined_buf = bun_paths::path_buffer_pool::get();
+        let lockfile_path: &[u8] = if bun_paths::is_absolute(path) {
+            path
+        } else {
+            let cwd_len = bun_sys::getcwd(&mut cwd_buf[..])?;
+            resolve_path::join_abs_string_buf::<platform::Auto>(
+                &cwd_buf[..cwd_len],
+                &mut joined_buf.0,
+                &[path],
             )
-            .len();
-            lockfile_path_buf2[lockfile_path__len] = 0;
-            // SAFETY: NUL written at [len] above. Not `from_buf`: borrowck
-            // can't see that the `path_in_buf2` flag picks the *other* buffer
-            // for the chdir scratch write below, so the borrow must be detached.
-            lockfile_path =
-                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
-            path_in_buf2 = true;
-        } else if !path.is_empty() {
-            lockfile_path_buf1[..path.len()].copy_from_slice(path);
-            lockfile_path_buf1[path.len()] = 0;
-            // SAFETY: NUL written at [len] above. See note above re. borrowck.
-            lockfile_path = unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
+        };
+
+        if lockfile_path.first() == Some(&SEP) {
+            let dir = bun_paths::dirname(lockfile_path).unwrap_or(SEP_STR.as_bytes());
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            let _ = sys::chdir(resolve_path::z(dir, &mut dir_buf));
         }
 
-        if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
-            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
-            // NUL-terminate into the buffer that does NOT back `lockfile_path`
-            // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
-            // after the join, so it is free for reuse here.
-            let dir_z = if path_in_buf2 {
-                resolve_path::z(dir, &mut lockfile_path_buf1)
-            } else {
-                resolve_path::z(dir, &mut lockfile_path_buf2)
-            };
-            let _ = sys::chdir(dir_z);
-        }
-
-        // Bootstrap the resolver FS singleton. `Printer::print` is an entry
-        // point (`bun bun.lockb`), so
-        // the singleton may not exist yet.
+        // An entry point (`bun bun.lockb`): the resolver FS singleton may not exist yet.
         let _ = FileSystem::init(None)?;
 
         let mut lockfile = Box::<Lockfile>::default();
 
-        let load_from_disk = lockfile.load_from_cwd::<false>(None, log);
+        // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
+        let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
+            Ok(bytes) => lockfile.load_from_bytes(None, bytes, log),
+            Err(_) => lockfile.load_from_cwd::<false>(None, log),
+        };
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
-                match cause.step {
-                    crate::lockfile::LoadStep::OpenFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> opening lockfile:<r> {}.",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::ParseFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> parsing lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::ReadFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> reading lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::Migrating => bun_core::pretty_errorln!(
-                        "<r><red>error<r> while migrating lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                }
-                if log.errors > 0 {
-                    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-                    // not `&mut &mut Writer` — pass the raw vtable pointer.
-                    let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew)?;
-                }
+                let (doing, end) = match cause.step {
+                    LoadStep::OpenFile => ("opening", "."),
+                    LoadStep::ParseFile => ("parsing", ""),
+                    LoadStep::ReadFile => ("reading", ""),
+                    LoadStep::Migrating => ("while migrating", ""),
+                };
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r> {} lockfile:<r> {}{}",
+                    doing,
+                    cause.value.name(),
+                    end
+                );
+                print_log_errors(log);
                 Global::crash();
             }
             crate::lockfile::LoadResult::NotFound => {
                 bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
-                        text: lockfile_path.as_bytes()
+                        text: lockfile_path
                     },
                 );
                 Global::crash();
@@ -1778,8 +1747,7 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        let writer = Output::writer_buffered();
-        match Self::print_with_lockfile(&lockfile, format, writer) {
+        match printer::Yarn::print(&lockfile, Output::writer_buffered()) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
             Err(crate::Error::WriteFailed) => return Ok(()),
@@ -1788,127 +1756,11 @@ impl<'a> Printer<'a> {
         Output::flush();
         Ok(())
     }
-
-    pub(crate) fn print_with_lockfile<W: bun_io::Write>(
-        lockfile: &Lockfile,
-        format: PrinterFormat,
-        writer: W,
-    ) -> Result<(), BunError> {
-        // `FileSystem::init` ran in the caller (`Printer::print`); this is the
-        // process-static singleton. Single-threaded
-        // CLI path, no concurrent access.
-        let fs = FileSystem::instance();
-        let mut options = PackageManagerOptions {
-            max_concurrent_lifecycle_scripts: 1,
-            ..Default::default()
-        };
-
-        // Capture the `'static` cwd slice
-        // before borrowing `fs.fs` mutably.
-        let top_level_dir = fs.top_level_dir;
-        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
-        // with the `&mut self` borrow `read_directory` took.
-        let entries_option: *const Fs::EntriesOption =
-            fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        // Copy the listing's basenames out under `entries_mutex`; `.data` must
-        // only be probed while the lock is held.
-        let entries = {
-            let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
-            match unsafe { &*entries_option } {
-                Fs::EntriesOption::Entries(e) => {
-                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
-                }
-                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-            }
-        };
-
-        let mut env_loader = DotEnv::Loader::init();
-        env_loader.quiet = true;
-
-        env_loader.load_process()?;
-        env_loader.load(
-            &entries,
-            &[] as &[&[u8]],
-            DotEnv::DotEnvFileSuffix::Production,
-            false,
-        )?;
-        let mut log = bun_ast::Log::init();
-        options.load(
-            &mut log,
-            &mut env_loader,
-            None,
-            None,
-            crate::Subcommand::Install,
-        )?;
-
-        let mut printer = Printer {
-            lockfile,
-            options: &options,
-            successfully_installed: None,
-            updates: &[],
-        };
-
-        let mut writer = writer;
-        match format {
-            PrinterFormat::Yarn => {
-                printer::Yarn::print(&mut printer, &mut writer)?;
-            }
-        }
-        Ok(())
-    }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// verifyData / saveToDisk / rootPackage / str / initEmpty
-// ────────────────────────────────────────────────────────────────────────────
+// saveToDisk / rootPackage / str / initEmpty
 
 impl Lockfile {
-    pub(crate) fn verify_data(&self) -> Result<(), BunError> {
-        debug_assert!(self.format == FormatVersion::current());
-        let mut i: usize = 0;
-        while i < self.packages.len() {
-            let package: Package = *self.packages.get(i);
-            debug_assert!(self.str(&package.name).len() == package.name.len());
-            debug_assert!(
-                SemverStringBuilder::string_hash(self.str(&package.name)) == package.name_hash
-            );
-            debug_assert!(
-                package
-                    .dependencies
-                    .get(self.buffers.dependencies.as_slice())
-                    .len()
-                    == package.dependencies.len as usize
-            );
-            debug_assert!(
-                package
-                    .resolutions
-                    .get(self.buffers.resolutions.as_slice())
-                    .len()
-                    == package.resolutions.len as usize
-            );
-            debug_assert!(
-                package
-                    .resolutions
-                    .get(self.buffers.resolutions.as_slice())
-                    .len()
-                    == package.dependencies.len as usize
-            );
-            let dependencies = package
-                .dependencies
-                .get(self.buffers.dependencies.as_slice());
-            for dependency in dependencies {
-                debug_assert!(self.str(&dependency.name).len() == dependency.name.len());
-                debug_assert!(
-                    SemverStringBuilder::string_hash(self.str(&dependency.name))
-                        == dependency.name_hash
-                );
-            }
-            i += 1;
-        }
-        Ok(())
-    }
-
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
     pub fn save_to_disk(
         &mut self,
@@ -1916,16 +1768,13 @@ impl Lockfile {
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
-        if cfg!(debug_assertions) {
-            if let Err(e) = self.verify_data() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error:<r> failed to verify lockfile: {}",
-                    e.name()
-                );
-                Global::crash();
-            }
-            debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
-        }
+        // Only `bun install` sets the option. `self` is `load_result`'s lockfile.
+        let config_version = options.config_version.unwrap_or_else(|| {
+            load_result
+                .choose_config_version_with_saved(self.saved_config_version)
+                .0
+        });
+        debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let bytes: Vec<u8> = 'bytes: {
             if save_format == LockfileFormat::Text {
@@ -1934,15 +1783,12 @@ impl Lockfile {
                 if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
                     self,
                     load_result,
-                    options,
+                    config_version,
                     &mut writer_buf,
                 ) {
                     // The only write failure on an allocating writer is OOM.
                     bun_core::out_of_memory();
                 }
-
-                // writer.flush() catch error.WriteFailed -> OOM
-                // (Vec<u8> writer needs no flush)
 
                 break 'bytes writer_buf;
             }
@@ -1951,9 +1797,14 @@ impl Lockfile {
 
             let mut total_size: usize = 0;
             let mut end_pos: usize = 0;
-            if let Err(e) =
-                Serializer::save(self, options, &mut bytes, &mut total_size, &mut end_pos)
-            {
+            if let Err(e) = Serializer::save(
+                self,
+                options,
+                config_version,
+                &mut bytes,
+                &mut total_size,
+                &mut end_pos,
+            ) {
                 Output::err(e, "failed to serialize lockfile", format_args!(""));
                 Global::crash();
             }
@@ -1963,97 +1814,13 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        if File::openat(
-            Fd::cwd(),
-            save_format.filename().as_bytes(),
-            sys::O::RDONLY,
-            0,
-        )
-        .and_then(|existing| existing.read_to_end())
-        .is_ok_and(|existing| existing == bytes)
-        {
-            return false;
-        }
-
-        let mut tmpname_buf = [0u8; 512];
-        let mut base64_bytes = [0u8; 8];
-        bun_boringssl_sys::rand_bytes(&mut base64_bytes);
-        let tmpname: &ZStr = {
-            let mut cursor: &mut [u8] = &mut tmpname_buf[..];
-            let start_len = cursor.len();
-            if save_format == LockfileFormat::Text {
-                write!(
-                    cursor,
-                    ".lock-{}.tmp\0",
-                    bun_core::fmt::HexBytes::<true>(&base64_bytes)
-                )
-                .expect("unreachable");
-            } else {
-                write!(
-                    cursor,
-                    ".lockb-{}.tmp\0",
-                    bun_core::fmt::HexBytes::<true>(&base64_bytes)
-                )
-                .expect("unreachable");
-            }
-            let written = start_len - cursor.len();
-            ZStr::from_buf(&tmpname_buf, written - 1)
+        // bun.lockb starts with `#!/usr/bin/env bun`.
+        let mode = if save_format == LockfileFormat::Text {
+            0o666
+        } else {
+            0o777
         };
-
-        let file = match File::openat(Fd::cwd(), tmpname, sys::O::CREAT | sys::O::WRONLY, 0o777) {
-            sys::Result::Err(e) => {
-                Output::err(
-                    e,
-                    "failed to create temporary file to save lockfile",
-                    format_args!(""),
-                );
-                Global::crash();
-            }
-            sys::Result::Ok(f) => f,
-        };
-
-        match file.write_all(&bytes) {
-            sys::Result::Err(e) => {
-                let _ = file.close(); // close error is non-actionable
-                let _ = sys::unlink(tmpname);
-                Output::err(e, "failed to write lockfile", format_args!(""));
-                Global::crash();
-            }
-            sys::Result::Ok(()) => {}
-        }
-
-        #[cfg(unix)]
-        {
-            // chmod 755 for binary, 644 for plaintext
-            let mut filemode: sys::Mode = 0o755;
-            if save_format == LockfileFormat::Text {
-                filemode = 0o644;
-            }
-            match sys::fchmod(file.handle, filemode) {
-                sys::Result::Err(e) => {
-                    let _ = file.close(); // close error is non-actionable
-                    let _ = sys::unlink(tmpname);
-                    Output::err(e, "failed to change lockfile permissions", format_args!(""));
-                    Global::crash();
-                }
-                sys::Result::Ok(()) => {}
-            }
-        }
-
-        if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {
-            bun_core::handle_error_return_trace(&e);
-
-            // note: file is already closed here.
-            let _ = sys::unlink(tmpname);
-
-            Output::err(
-                &e,
-                "Failed to replace old lockfile with new lockfile on disk",
-                format_args!(""),
-            );
-            Global::crash();
-        }
-        true
+        replace_in_cwd(save_format.filename(), &bytes, mode)
     }
 
     pub(crate) fn root_package(&self) -> Option<Package> {
@@ -2090,6 +1857,7 @@ impl Lockfile {
     }
 
     /// Construct an empty Lockfile value in place.
+    #[inline(never)]
     pub fn init_empty(&mut self) {
         *self = Self::init_empty_value();
     }
@@ -2100,6 +1868,62 @@ impl Default for Lockfile {
     fn default() -> Self {
         Self::init_empty_value()
     }
+}
+
+/// A temporary file (`mode` less the umask) renamed over `filename`. False: it had these bytes.
+pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> bool {
+    if File::read_from(Fd::cwd(), filename.as_bytes()).is_ok_and(|existing| existing == bytes) {
+        return false;
+    }
+
+    let mut tmpname_buf = [0u8; 64];
+    let mut random = [0u8; 8];
+    bun_boringssl_sys::rand_bytes(&mut random);
+    let tmpname: &ZStr = {
+        let mut cursor: &mut [u8] = &mut tmpname_buf[..];
+        let start_len = cursor.len();
+        write!(
+            cursor,
+            "{}-{}.tmp\0",
+            bstr::BStr::new(bun_paths::extension(filename.as_bytes())),
+            bun_core::fmt::HexBytes::<true>(&random)
+        )
+        .expect("unreachable");
+        let written = start_len - cursor.len();
+        ZStr::from_buf(&tmpname_buf, written - 1)
+    };
+
+    let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
+    let file = File::openat(Fd::cwd(), tmpname, flags, mode).unwrap_or_else(|e| {
+        Output::err(
+            e,
+            "failed to create temporary file to save lockfile",
+            format_args!(""),
+        );
+        Global::crash();
+    });
+
+    if let Err(e) = file.write_all(bytes) {
+        let _ = file.close(); // close error is non-actionable
+        let _ = sys::unlink(tmpname);
+        Output::err(e, "failed to write lockfile", format_args!(""));
+        Global::crash();
+    }
+
+    if let Err(e) = file.close_and_move_to(tmpname, filename) {
+        bun_core::handle_error_return_trace(&e);
+
+        // note: file is already closed here.
+        let _ = sys::unlink(tmpname);
+
+        Output::err(
+            &e,
+            "Failed to replace old lockfile with new lockfile on disk",
+            format_args!(""),
+        );
+        Global::crash();
+    }
+    true
 }
 
 /// The workspace an npm range on `name_hash`'s package links to instead of the registry: the
@@ -2124,7 +1948,37 @@ pub(crate) fn linked_workspace_path(
     range.satisfies(version, buf, buf).then_some(path)
 }
 
+/// Does the root's `dep`, a registry range that links no workspace, replace its workspace edge?
+pub(crate) fn replaces_workspace_edge(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    dep: &Dependency,
+    buf: &[u8],
+) -> bool {
+    dep.version.tag == dependency::Tag::Npm
+        && workspace_versions.contains(&dep.name_hash)
+        && Semver::string::Builder::string_hash(dep.version.npm().name.slice(buf)) == dep.name_hash
+        && linked_workspace_path(
+            link_workspace_packages,
+            workspace_paths,
+            workspace_versions,
+            dep.name_hash,
+            &dep.version.npm().version,
+            buf,
+        )
+        .is_none()
+}
+
+/// For lockfile paths: `join` resolves an absolute one and `..`. `None`: too long for a buffer.
+pub(crate) fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
+    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+    path.join(parts).ok()?;
+    Some(path)
+}
+
 impl Lockfile {
+    #[inline(never)]
     pub(crate) fn init_empty_value() -> Self {
         Lockfile {
             format: FormatVersion::current(),
@@ -2141,6 +1995,7 @@ impl Lockfile {
             self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
+            package_extensions: Default::default(),
             meta_hash: ZERO_HASH,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
@@ -2148,16 +2003,27 @@ impl Lockfile {
             // session-appended, so the order-independence guard in
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
+            held_at_load: DynamicBitSet::default(),
             exact_pinned: DynamicBitSet::default(),
+            only_bundled: DynamicBitSet::default(),
         }
     }
 
-    /// Snapshot `packages.len()` as the "loaded from lockfile" watermark.
-    /// Call exactly once after `load_from_cwd` (including npm/pnpm/yarn
-    /// migration) before any manifest-driven `append_package`.
-    #[inline]
-    pub(crate) fn mark_loaded_packages(&mut self) {
-        self.loaded_package_count = self.packages.len() as PackageID;
+    /// Call once after `load_from_cwd`, before a resolution is re-pointed or a package appended.
+    pub(crate) fn mark_loaded_packages(&mut self) -> Result<(), AllocError> {
+        let packages_len = self.packages.len();
+        self.loaded_package_count = packages_len as PackageID;
+        let mut held = DynamicBitSet::init_empty(packages_len)?;
+        let rows = self.buffers.dependencies.len();
+        for (id, &package_id) in self.buffers.resolutions.iter().enumerate().take(rows) {
+            if (package_id as usize) < packages_len
+                && !self.is_weak_peer(id as DependencyID, package_id)
+            {
+                held.set(package_id as usize);
+            }
+        }
+        self.held_at_load = held;
+        Ok(())
     }
 
     /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its
@@ -2168,17 +2034,23 @@ impl Lockfile {
     /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
     pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
         let pkg_resolutions = self.packages.items_resolution();
+        let root_rows = self.packages.items_dependencies().first();
         let buf = self.buffers.string_bytes.as_slice();
-        for (dep, &pkg_id) in self
+        for (dep_id, (dep, &pkg_id)) in self
             .buffers
             .dependencies
             .iter_mut()
             .zip(self.buffers.resolutions.iter())
+            .enumerate()
         {
             if pkg_id as usize >= pkg_resolutions.len() {
                 continue;
             }
             let res = &pkg_resolutions[pkg_id as usize];
+            // The root package's path.
+            if res.tag == ResolutionTag::Root && dep.version.tag == dependency::Tag::Workspace {
+                dep.version.value.workspace = SemverString::from(b".");
+            }
             if res.tag != ResolutionTag::Workspace {
                 continue;
             }
@@ -2195,6 +2067,10 @@ impl Lockfile {
                         buf,
                     )
                     .is_some()
+                }
+                // For the root, the workspace of that name wins over a `file:` folder.
+                dependency::Tag::Folder => {
+                    root_rows.is_some_and(|root| root.contains(dep_id as DependencyID))
                 }
                 _ => false,
             };
@@ -2213,6 +2089,25 @@ impl Lockfile {
         }
     }
 
+    /// Undoes `tag_workspace_links` for one edge; `false` for a `workspace:` spec, not that pass's.
+    pub(crate) fn untag_workspace_link(&mut self, dep_id: DependencyID) -> bool {
+        let dep = &self.buffers.dependencies[dep_id as usize];
+        if dep.version.tag != dependency::Tag::Workspace {
+            return true;
+        }
+        let sliced = dep
+            .version
+            .literal
+            .sliced(self.buffers.string_bytes.as_slice());
+        match dependency::parse(dep.name, dep.name_hash, sliced.slice, &sliced, None, None) {
+            Some(version) if version.tag == dependency::Tag::Npm => {
+                self.buffers.dependencies[dep_id as usize].version = version;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Record that package `id` was appended via an exact-version dependency
     /// (`=X.Y.Z`). See the `exact_pinned` field doc.
     #[inline]
@@ -2222,6 +2117,28 @@ impl Lockfile {
             bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
         }
         self.exact_pinned.set(i);
+    }
+
+    pub(crate) fn mark_only_bundled(&mut self, id: PackageID) {
+        let i = id as usize;
+        if self.only_bundled.bit_length() <= i {
+            bun_core::handle_oom(self.only_bundled.resize(i + 1, false));
+        }
+        self.only_bundled.set(i);
+    }
+
+    /// Is the row a bundled dependency, or owned by a package only bundles hold?
+    pub(crate) fn is_row_inside_bundle(
+        &self,
+        id: DependencyID,
+        behavior: dependency::Behavior,
+    ) -> bool {
+        behavior.is_bundled()
+            || (self.is_in_unplaced_subtree(id)
+                && self.get_parent_pkg_of_dependency(id).is_some_and(|owner| {
+                    self.only_bundled
+                        .is_set_allow_out_of_bound(owner as usize, false)
+                }))
     }
 
     /// See `Scratch::unplaced_subtree`.
@@ -2252,15 +2169,35 @@ impl Lockfile {
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
+        self.find_package_id(name_hash, version, resolution, false)
+    }
+
+    /// `only_bundled` packages ship in another's tarball: skipped unless `resolution` is one.
+    pub(crate) fn get_package_id_outside_bundles(
+        &mut self,
+        name_hash: u64,
+        version: Option<&DependencyVersion>,
+        resolution: &Resolution,
+    ) -> Option<PackageID> {
+        let found = self.find_package_id(name_hash, version, resolution, true);
+        if found.is_some() || self.only_bundled.bit_length() == 0 {
+            return found;
+        }
+        let id = self.find_package_id(name_hash, None, resolution, false)?;
+        self.only_bundled.unset(id as usize);
+        Some(id)
+    }
+
+    fn find_package_id(
+        &self,
+        name_hash: u64,
+        version: Option<&DependencyVersion>,
+        resolution: &Resolution,
+        skip_only_bundled: bool,
+    ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
-        // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
-        // list head). `version` is held by-value for the whole fn body so the
-        // borrow is sound.
-        let npm_version = match version {
-            Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
-            _ => None,
-        };
+        let npm_version = version.and_then(|v| v.try_npm()).map(|npm| &npm.version);
         // Order-independence guard for the `satisfies` fallback below: when the
         // caller already knows the manifest's best-match version (the npm
         // `resolution` it passes), only dedupe to an existing entry whose
@@ -2272,11 +2209,8 @@ impl Lockfile {
         // satisfies-preserves-mapping rule (which keeps the resolution slot
         // populated so the early return in `get_or_put_resolved_package` fires
         // before we get here).
-        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
-            Some(resolution.npm().version)
-        } else {
-            None
-        };
+        let resolved_npm_floor =
+            (resolution.tag == ResolutionTag::Npm).then(|| resolution.npm().version);
         let buf = self.buffers.string_bytes.as_slice();
 
         let loaded_watermark = self.loaded_package_count;
@@ -2320,126 +2254,47 @@ impl Lockfile {
             }
             true
         };
+        let skipped = |id: PackageID| -> bool {
+            skip_only_bundled
+                && self
+                    .only_bundled
+                    .is_set_allow_out_of_bound(id as usize, false)
+        };
 
-        match entry {
-            PackageIndexEntry::Id(id) => {
-                debug_assert!((*id as usize) < resolutions.len());
-
-                if resolutions[*id as usize].eql(resolution, buf, buf) {
-                    return Some(*id);
-                }
-
-                if try_satisfies_dedupe(*id) {
-                    return Some(*id);
-                }
-            }
-            PackageIndexEntry::Ids(ids) => {
-                for &id in ids.iter() {
-                    debug_assert!((id as usize) < resolutions.len());
-
-                    if resolutions[id as usize].eql(resolution, buf, buf) {
-                        return Some(id);
-                    }
-
-                    if try_satisfies_dedupe(id) {
-                        return Some(id);
-                    }
-                }
-            }
-        }
-
-        None
+        entry.as_slice().iter().copied().find(|&id| {
+            debug_assert!((id as usize) < resolutions.len());
+            !skipped(id)
+                && (resolutions[id as usize].eql(resolution, buf, buf) || try_satisfies_dedupe(id))
+        })
     }
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
-    ///
-    /// The string buffer is read from `self`, splitting borrows at the field
-    /// level (`package_index` / `packages` / `buffers.string_bytes` are
-    /// disjoint).
     pub(crate) fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
     ) -> Result<PackageID, AllocError> {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
-
-        if !entry.found_existing {
-            let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-            pkg.meta.id = new_id;
-            self.packages.append(*pkg)?;
-            *entry.value_ptr = PackageIndexEntry::Id(new_id);
-            return Ok(new_id);
-        }
-
         let buf = self.buffers.string_bytes.as_slice();
-        let mut resolutions = self.packages.items_resolution();
 
-        match entry.value_ptr {
-            PackageIndexEntry::Id(existing_id) => {
-                let existing_id = *existing_id;
-                if pkg
-                    .resolution
-                    .eql(&resolutions[existing_id as usize], buf, buf)
-                {
-                    pkg.meta.id = existing_id;
-                    return Ok(existing_id);
-                }
-
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-                pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
-
-                resolutions = self.packages.items_resolution();
-
-                let pair = if pkg
-                    .resolution
-                    .order(&resolutions[existing_id as usize], buf, buf)
-                    == Ordering::Greater
-                {
-                    [new_id, existing_id]
-                } else {
-                    [existing_id, new_id]
-                };
-                let mut ids = PackageIDList::with_capacity(8);
-                ids.extend_from_slice(&pair);
-
-                *entry.value_ptr = PackageIndexEntry::Ids(ids);
-
-                Ok(new_id)
-            }
-            PackageIndexEntry::Ids(existing_ids) => {
-                for &existing_id in existing_ids.iter() {
-                    if pkg
-                        .resolution
-                        .eql(&resolutions[existing_id as usize], buf, buf)
-                    {
-                        pkg.meta.id = existing_id;
-                        return Ok(existing_id);
-                    }
-                }
-
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-                pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
-
-                resolutions = self.packages.items_resolution();
-
-                for i in 0..existing_ids.len() {
-                    let existing_id = existing_ids[i];
-                    if pkg
-                        .resolution
-                        .order(&resolutions[existing_id as usize], buf, buf)
-                        == Ordering::Greater
-                    {
-                        existing_ids.insert(i, new_id);
-                        return Ok(new_id);
-                    }
-                }
-
-                existing_ids.push(new_id);
-
-                Ok(new_id)
+        if entry.found_existing {
+            let resolutions = self.packages.items_resolution();
+            if let Some(&existing_id) = (entry.value_ptr.as_slice().iter())
+                .find(|&&id| pkg.resolution.eql(&resolutions[id as usize], buf, buf))
+            {
+                pkg.meta.id = existing_id;
+                return Ok(existing_id);
             }
         }
+
+        let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
+        pkg.meta.id = new_id;
+        self.packages.append(*pkg)?;
+        if entry.found_existing {
+            (entry.value_ptr).insert(new_id, self.packages.items_resolution(), buf);
+        } else {
+            *entry.value_ptr = PackageIndexEntry::Id(new_id);
+        }
+        Ok(new_id)
     }
 
     pub(crate) fn get_or_put_id(
@@ -2448,52 +2303,12 @@ impl Lockfile {
         name_hash: PackageNameHash,
     ) -> Result<(), AllocError> {
         let gpe = self.package_index.get_or_put(name_hash)?;
-
         if gpe.found_existing {
-            let index: &mut PackageIndexEntry = gpe.value_ptr;
-
-            match index {
-                PackageIndexEntry::Id(existing_id) => {
-                    let existing_id = *existing_id;
-                    let resolutions = self.packages.items_resolution();
-                    let buf = self.buffers.string_bytes.as_slice();
-
-                    let pair = if resolutions[id as usize].order(
-                        &resolutions[existing_id as usize],
-                        buf,
-                        buf,
-                    ) == Ordering::Greater
-                    {
-                        [id, existing_id]
-                    } else {
-                        [existing_id, id]
-                    };
-                    let mut ids = PackageIDList::with_capacity(8);
-                    ids.extend_from_slice(&pair);
-
-                    *index = PackageIndexEntry::Ids(ids);
-                }
-                PackageIndexEntry::Ids(existing_ids) => {
-                    let resolutions = self.packages.items_resolution();
-                    let buf = self.buffers.string_bytes.as_slice();
-
-                    for i in 0..existing_ids.len() {
-                        let existing_id = existing_ids[i];
-                        if resolutions[id as usize].order(
-                            &resolutions[existing_id as usize],
-                            buf,
-                            buf,
-                        ) == Ordering::Greater
-                        {
-                            existing_ids.insert(i, id);
-                            return Ok(());
-                        }
-                    }
-
-                    // append to end because it's the smallest or equal to the smallest
-                    existing_ids.push(id);
-                }
-            }
+            gpe.value_ptr.insert(
+                id,
+                self.packages.items_resolution(),
+                self.buffers.string_bytes.as_slice(),
+            );
         } else {
             *gpe.value_ptr = PackageIndexEntry::Id(id);
         }
@@ -2567,7 +2382,6 @@ impl Lockfile {
                 workspace_paths: &mut self.workspace_paths,
                 workspace_versions: &mut self.workspace_versions,
                 patched_dependencies: &mut self.patched_dependencies,
-                trusted_dependencies: &mut self.trusted_dependencies,
             },
         )
     }
@@ -2623,7 +2437,6 @@ pub(crate) struct LockfileFields<'a> {
     pub(crate) workspace_paths: &'a mut NameHashMap,
     pub(crate) workspace_versions: &'a mut VersionHashMap,
     pub(crate) patched_dependencies: &'a mut PatchedDependenciesMap,
-    pub(crate) trusted_dependencies: &'a mut Option<TrustedDependenciesSet>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2662,10 +2475,6 @@ macro_rules! string_builder {
     };
 }
 
-/// Trait implemented by `String` and `ExternalString` to support generic `append*`.
-/// Canonical def lives in
-/// `bun_semver::semver_string`; imported under the local name so generic
-/// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
 use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
@@ -2694,7 +2503,10 @@ impl<'a> StringBuilder<'a> {
     fn count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        if !self.string_pool.contains(hash) {
+        // `append` also stores a string whose hash is taken by another one.
+        let bytes = self.string_bytes.as_slice();
+        let pooled = self.string_pool.get(hash);
+        if !pooled.is_some_and(|pooled| strings::eql(pooled.slice(bytes), slice)) {
             self.cap += slice.len();
         }
     }
@@ -2715,10 +2527,7 @@ impl<'a> StringBuilder<'a> {
     pub(crate) fn allocate(&mut self) -> Result<(), AllocError> {
         let string_bytes = &mut *self.string_bytes;
         let prev_len = string_bytes.len();
-        // Zero-extend rather than `set_len` over uninit: `as_slice()` callers
-        // (lockfile.rs:2624/2644/2649/2668, dependency.rs:327, CatalogMap.rs:173)
-        // read the full slice including the not-yet-appended tail. Matches the
-        // `grow_default` precedent at :1578.
+        // Zeroed: `as_slice()` callers read the full slice including the not-yet-appended tail.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
         // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
@@ -2739,31 +2548,31 @@ impl<'a> StringBuilder<'a> {
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
-        if !string_entry.found_existing {
-            // See `append_without_pool` — safe indexing into the region
-            // `allocate()` already resized.
-            let start = self.off + self.len;
-            let end = start + slice.len();
-            self.string_bytes[start..end].copy_from_slice(slice);
-            let final_slice = &self.string_bytes[start..end];
-            self.len += slice.len();
-
-            *string_entry.value_ptr = SemverString::init(self.string_bytes.as_slice(), final_slice);
+        if string_entry.found_existing
+            && strings::eql(
+                string_entry.value_ptr.slice(self.string_bytes.as_slice()),
+                slice,
+            )
+        {
+            return T::from_pooled(*string_entry.value_ptr, hash);
         }
 
+        // Safe indexing into the region `allocate()` already resized.
+        let start = self.off + self.len;
+        let end = start + slice.len();
+        self.string_bytes[start..end].copy_from_slice(slice);
+        let final_slice = &self.string_bytes[start..end];
+        self.len += slice.len();
         debug_assert!(self.len <= self.cap);
 
-        T::from_pooled(*string_entry.value_ptr, hash)
+        let appended = SemverString::init(self.string_bytes.as_slice(), final_slice);
+        // An equal hash is not an equal string: the second one stays out of the pool.
+        if !string_entry.found_existing {
+            *string_entry.value_ptr = appended;
+        }
+        T::from_pooled(appended, hash)
     }
 }
-
-// ─── StringBuilder trait wiring ─────────────────────────────────────────────
-//
-// Several callees (`Version::count`/`append`, `Dependency::count`/`clone`,
-// `Bin::count`/`clone`, `Scripts::clone`/`count`) accept the builder via a
-// duck-typed trait. Wire
-// `lockfile::StringBuilder` into each so `Package` can pass `&mut builder`
-// straight through.
 
 impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     #[inline]
@@ -2775,13 +2584,6 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
         StringBuilder::append::<T>(self, slice_)
     }
 }
-
-// `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
-// the trait definition (it needs `string_bytes()` access to the lockfile
-// buffers). `bin_real::StringBuilder` is now a re-export of
-// `bun_semver::StringBuilder`, so the impl above covers it; `package::scripts`
-// takes `&mut StringBuilder<'_>` concretely, so no adapter trait is needed
-// there either.
 
 // ────────────────────────────────────────────────────────────────────────────
 // PackageIndex
@@ -2803,6 +2605,25 @@ pub mod package_index {
             match self {
                 Entry::Id(id) => core::slice::from_ref(id),
                 Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
+
+        /// Keeps the ids ordered by descending resolution; after the ones `id` is equal to.
+        pub(super) fn insert(&mut self, id: PackageID, resolutions: &[Resolution], buf: &[u8]) {
+            let at = (self.as_slice().iter())
+                .position(|&existing_id| {
+                    resolutions[id as usize].order(&resolutions[existing_id as usize], buf, buf)
+                        == Ordering::Greater
+                })
+                .unwrap_or(self.as_slice().len());
+            match self {
+                Entry::Id(existing_id) => {
+                    let mut ids = PackageIDList::with_capacity(8);
+                    ids.push(*existing_id);
+                    ids.insert(at, id);
+                    *self = Entry::Ids(ids);
+                }
+                Entry::Ids(ids) => ids.insert(at, id),
             }
         }
     }
@@ -2851,13 +2672,6 @@ impl FormatVersion {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Drop (deinit)
-// ────────────────────────────────────────────────────────────────────────────
-
-// `deinit` only frees owned fields → handled by Drop on each field type.
-// No explicit Drop impl needed.
-
-// ────────────────────────────────────────────────────────────────────────────
 // EqlSorter
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -2904,13 +2718,11 @@ impl Lockfile {
         r_loaded_package_count: usize,
     ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
-        let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
-        let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
         let l_string_buf = l.buffers.string_bytes.as_slice();
         let r_string_buf = r.buffers.string_bytes.as_slice();
 
-        let l_len = l_hoisted_deps.len();
-        let r_len = r_hoisted_deps.len();
+        let l_len = l.buffers.hoisted_dependencies.len();
+        let r_len = r.buffers.hoisted_dependencies.len();
 
         if l_len != r_len {
             return Ok(false);
@@ -2924,64 +2736,45 @@ impl Lockfile {
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
 
-        for l_tree in l.buffers.trees.iter() {
-            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                l.buffers.trees.as_slice(),
-                l.buffers.dependencies.as_slice(),
-                l.buffers.string_bytes.as_slice(),
-                l_tree.id,
-                &mut path_buf,
-                &mut depth_buf,
-            );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
-            tree_paths.push(tree_path);
-            for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
-                if l_dep_id == invalid_dependency_id {
-                    continue;
+        let mut side_starts = [0usize; 2];
+        for (i, (side, loaded_package_count)) in [(l, usize::MAX), (r, r_loaded_package_count)]
+            .into_iter()
+            .enumerate()
+        {
+            side_starts[i] = sort_buf.len();
+            for node in side.buffers.trees.iter() {
+                const STYLE: tree::IteratorPathStyle = tree::IteratorPathStyle::PkgPath;
+                let (rel_path, _) = tree::relative_path_and_depth::<STYLE>(
+                    side.buffers.trees.as_slice(),
+                    side.buffers.dependencies.as_slice(),
+                    side.buffers.string_bytes.as_slice(),
+                    node.id,
+                    &mut path_buf,
+                    &mut depth_buf,
+                );
+                let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
+                let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+                tree_paths.push(tree_path);
+                for &dep_id in (node.dependencies).get(side.buffers.hoisted_dependencies.as_slice())
+                {
+                    if dep_id == invalid_dependency_id {
+                        continue;
+                    }
+                    let pkg_id = side.buffers.resolutions[dep_id as usize];
+                    if pkg_id == invalid_package_id {
+                        continue;
+                    }
+                    if pkg_id as usize >= loaded_package_count {
+                        return Ok(false);
+                    }
+                    sort_buf.push(PathToId {
+                        pkg_id,
+                        tree_path: tree_path_ptr,
+                    });
                 }
-                let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id {
-                    continue;
-                }
-                sort_buf.push(PathToId {
-                    pkg_id: l_pkg_id,
-                    tree_path: tree_path_ptr,
-                });
             }
         }
-        let l_count = sort_buf.len();
-
-        for r_tree in r.buffers.trees.iter() {
-            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                r.buffers.trees.as_slice(),
-                r.buffers.dependencies.as_slice(),
-                r.buffers.string_bytes.as_slice(),
-                r_tree.id,
-                &mut path_buf,
-                &mut depth_buf,
-            );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
-            tree_paths.push(tree_path);
-            for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
-                if r_dep_id == invalid_dependency_id {
-                    continue;
-                }
-                let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id {
-                    continue;
-                }
-                if r_pkg_id as usize >= r_loaded_package_count {
-                    return Ok(false);
-                }
-                sort_buf.push(PathToId {
-                    pkg_id: r_pkg_id,
-                    tree_path: tree_path_ptr,
-                });
-            }
-        }
-        let (l_buf, r_buf) = sort_buf.split_at_mut(l_count);
+        let (l_buf, r_buf) = sort_buf.split_at_mut(side_starts[1]);
 
         if l_buf.len() != r_buf.len() {
             return Ok(false);
@@ -3098,32 +2891,14 @@ impl Lockfile {
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";
         const HASH_SUFFIX: &[u8] = b"-- END HASH--\n";
         string_builder.cap += HASH_PREFIX.len() + HASH_SUFFIX.len();
-        {
-            let mut i: usize = 1;
-
-            while i + 16 < packages_len {
-                for j in 0..16usize {
-                    alphabetized_names[(i + j) - 1] = (i + j) as PackageID;
-                    // posix path separators because we only use posix in the lockfile
-                    string_builder.fmt_count(format_args!(
-                        "{}@{}\n",
-                        bstr::BStr::new(names[i + j].slice(bytes)),
-                        resolutions[i + j].fmt(bytes, PathSep::Posix)
-                    ));
-                }
-                i += 16;
-            }
-
-            while i < packages_len {
-                alphabetized_names[i - 1] = i as PackageID;
-                // posix path separators because we only use posix in the lockfile
-                string_builder.fmt_count(format_args!(
-                    "{}@{}\n",
-                    bstr::BStr::new(names[i].slice(bytes)),
-                    resolutions[i].fmt(bytes, PathSep::Posix)
-                ));
-                i += 1;
-            }
+        for i in 1..packages_len {
+            alphabetized_names[i - 1] = i as PackageID;
+            // posix path separators because we only use posix in the lockfile
+            string_builder.fmt_count(format_args!(
+                "{}@{}\n",
+                bstr::BStr::new(names[i].slice(bytes)),
+                resolutions[i].fmt(bytes, PathSep::Posix)
+            ));
         }
 
         const SCRIPTS_BEGIN: &[u8] = b"\n-- BEGIN SCRIPTS --\n";
@@ -3193,9 +2968,19 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
-                .expect("unreachable");
+            // `bun pm hash-string` is asked for the hashed bytes; `--verbose` ends up in CI logs.
+            if PackageManager::verbose_install() {
+                Output::writer()
+                    .print(format_args!(
+                        "{}",
+                        bun_core::fmt::redacted(bstr::BStr::new(alphabetized_name_version_string))
+                    ))
+                    .expect("unreachable");
+            } else {
+                Output::writer()
+                    .write_all(alphabetized_name_version_string)
+                    .expect("unreachable");
+            }
             Output::enable_buffering();
         }
 
@@ -3212,52 +2997,23 @@ impl Lockfile {
         Ok(digest)
     }
 
+    /// `dependency_buf`: what `version` was parsed against (auto-install passes a package.json's).
     pub(crate) fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],
         version: &DependencyVersion,
+        dependency_buf: &[u8],
     ) -> Option<PackageID> {
-        let name_hash = SemverStringBuilder::string_hash(package_name);
-        let entry = self.package_index.get(&name_hash)?;
+        let candidates = self.packages_named(SemverStringBuilder::string_hash(package_name));
+        let npm_group = &version.try_npm()?.version;
         let buf = self.buffers.string_bytes.as_slice();
-
-        match version.tag {
-            dependency::Tag::Npm => {
-                // SAFETY: tag checked == .npm above; `npm` is the active
-                // `dependency::Value` union field.
-                let npm_group = &version.npm().version;
-                // Only a resolution whose own tag is npm may be read through
-                // `Resolution::npm()`: the root package, workspace members, and
-                // folder/symlink deps share the name index with other variants.
-                let satisfies = |resolution: &Resolution| -> bool {
-                    resolution.tag == ResolutionTag::Npm
-                        && npm_group.satisfies(resolution.npm().version, buf, buf)
-                };
-                match entry {
-                    PackageIndexEntry::Id(id) => {
-                        let resolutions = self.packages.items_resolution();
-
-                        debug_assert!((*id as usize) < resolutions.len());
-                        if satisfies(&resolutions[*id as usize]) {
-                            return Some(*id);
-                        }
-                    }
-                    PackageIndexEntry::Ids(ids) => {
-                        let resolutions = self.packages.items_resolution();
-
-                        for &id in ids.iter() {
-                            debug_assert!((id as usize) < resolutions.len());
-                            if satisfies(&resolutions[id as usize]) {
-                                return Some(id);
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        None
+        let resolutions = self.packages.items_resolution();
+        // Root, workspace and folder packages share the name index: `npm()` reads npm tags only.
+        candidates.iter().copied().find(|&id| {
+            let resolution = &resolutions[id as usize];
+            resolution.tag == ResolutionTag::Npm
+                && npm_group.satisfies(resolution.npm().version, dependency_buf, buf)
+        })
     }
 }
 
@@ -3295,18 +3051,22 @@ pub mod default_trusted_dependencies {
         DEFAULT_TRUSTED_DEPENDENCIES_LIST, MAX_DEFAULT_TRUSTED_DEPENDENCIES, SemverStringBuilder,
     };
     use bun_collections::static_hash_map::{
-        Entry, HashContext, HashMapMixin, StaticHashMap, static_slots,
+        HashContext, HashMapMixin, StaticHashMap, static_slots,
     };
     use std::sync::LazyLock;
 
     const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
 
+    /// `Lockfile.trusted_dependencies` has the low 32 bits of the string hash; the map takes a slot from the top bits.
+    fn slot_hash(hash: u32) -> u64 {
+        u64::from(hash) << 32
+    }
+
     struct TrustedDepHashCtx;
     impl HashContext<&'static [u8]> for TrustedDepHashCtx {
         #[inline]
         fn ctx_hash(s: &&'static [u8]) -> u64 {
-            // truncate to u32 because Lockfile.trustedDependencies uses the same u32 string hash
-            (SemverStringBuilder::string_hash(s) as u32) as u64
+            slot_hash(SemverStringBuilder::string_hash(s) as u32)
         }
         #[inline]
         fn ctx_eql(a: &&'static [u8], b: &&'static [u8]) -> bool {
@@ -3333,20 +3093,19 @@ pub mod default_trusted_dependencies {
         map
     });
 
-    /// Iterate populated entries.
-    pub(crate) fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
-        MAP.entries.iter().filter(|e| !e.is_empty())
+    pub(crate) fn entries() -> impl Iterator<Item = (u32, &'static [u8])> {
+        (MAP.entries.iter().filter(|e| !e.is_empty())).map(|e| ((e.hash >> 32) as u32, e.key))
     }
 
     #[inline]
-    pub(crate) fn has_with_hash(hash: u64) -> bool {
-        MAP.has_with_hash(hash)
+    pub(crate) fn has_with_hash(hash: u32) -> bool {
+        MAP.has_with_hash(slot_hash(hash))
     }
 
     /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
     /// not just `'static`.
     pub(crate) fn has(name: &[u8]) -> bool {
-        let hash = (SemverStringBuilder::string_hash(name) as u32) as u64;
+        let hash = slot_hash(SemverStringBuilder::string_hash(name) as u32);
         for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
             if entry.hash >= hash {
                 return entry.hash == hash && entry.key == name;
@@ -3364,6 +3123,70 @@ impl Lockfile {
             .is_some_and(|trusted| trusted.contains(&hash))
     }
 
+    /// No package.json has a list and a member is missing: it may have declared what was recorded.
+    pub(crate) fn recorded_default_trust(
+        recorded: &TrustedDependenciesSet,
+    ) -> Result<TrustedDependenciesSet, AllocError> {
+        let mut trusted = TrustedDependenciesSet::default();
+        for (hash, key) in default_trusted_dependencies::entries() {
+            // bun.lockb records the hash alone.
+            if recorded
+                .get(&hash)
+                .is_some_and(|name| name.is_empty() || **name == *key)
+            {
+                trusted.put(hash, Box::from(key))?;
+            }
+        }
+        Ok(trusted)
+    }
+
+    /// Replaces the set with what the package.json files declare; returns what was recorded.
+    pub fn read_trusted_dependencies_from_manifests(
+        &mut self,
+        manifests: &mut crate::package_manager::WorkspacePackageJSONCache,
+        log: &mut bun_ast::Log,
+    ) -> Result<Option<TrustedDependenciesSet>, BunError> {
+        let bump = bun_alloc::Arena::new();
+        let mut trusted: Option<TrustedDependenciesSet> = None;
+        let mut member_is_missing = false;
+        let string_bytes = self.buffers.string_bytes.as_slice();
+        let members = self.workspace_paths.values().iter();
+        for relative_dir in
+            core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
+        {
+            let Some(package_json_path) = join_top_level_dir(&[relative_dir, b"package.json"])
+            else {
+                continue;
+            };
+            let path = package_json_path.slice();
+            let entry = match manifests.get_with_path(log, path, Default::default()) {
+                crate::GetJsonResult::Entry(entry) => entry,
+                // An install skips a member that is not on disk, too.
+                crate::GetJsonResult::ReadErr(_) if !relative_dir.is_empty() => {
+                    member_is_missing = true;
+                    continue;
+                }
+                crate::GetJsonResult::ReadErr(err) | crate::GetJsonResult::ParseErr(err) => {
+                    return Err(err);
+                }
+            };
+            package::parse_append_trusted_dependencies(
+                &mut trusted,
+                log,
+                &entry.source,
+                entry.root,
+                &bump,
+            )?;
+        }
+        if member_is_missing
+            && trusted.is_none()
+            && let Some(recorded) = &self.trusted_dependencies
+        {
+            trusted = Some(Self::recorded_default_trust(recorded)?);
+        }
+        Ok(core::mem::replace(&mut self.trusted_dependencies, trusted))
+    }
+
     pub fn has_trusted_dependency(
         &self,
         alias: &[u8],
@@ -3371,11 +3194,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let trusted_name = if resolution.tag == ResolutionTag::Npm {
-                pkg_name
-            } else {
-                alias
-            };
+            let trusted_name = resolution.trusted_name(alias, pkg_name);
             let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             let name_is_trusted = match trusted_dependencies.get(&hash) {
                 Some(name) => !name.is_empty() && **name == *trusted_name,

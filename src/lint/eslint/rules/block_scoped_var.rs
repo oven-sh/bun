@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Enforce the use of variables within the scope they are defined.
 pub struct BlockScopedVar;
@@ -14,7 +14,7 @@ const OUT_OF_SCOPE: Message = Message::new(
 pub struct State<'a> {
     binding_contexts: AncestorMemo<'a, Span>,
     /// The last statement with several names that declares the symbol.
-    declared_in: FxHashMap<Symbol<'a>, Stmt<'a>>,
+    declared_in: IdMap<Symbol<'a>, Stmt<'a>>,
 }
 
 /// All that is on the left in the declaration that `pat` is in.

@@ -11,13 +11,13 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings::{self, StringOrTinyString};
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
-use bun_install::dependency;
+use bun_install::dependency::{self, TagExt as _};
 use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::npm::{self, PackageManifest};
+use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
-use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
@@ -101,40 +101,28 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
         if name.is_empty() {
-            let local = materialize(pm, &left_spec)?;
-            *name = package_name_in(&local).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&local.label),),
-                );
-                Global::exit(1);
-            });
+            let local = materialize(pm, &left_spec, as_published)?;
+            *name = package_name_in(&local);
             left_early = Some(local);
         }
     }
-    let mut right = materialize(pm, &right_spec)?;
+    let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
-            *name = package_name_in(&right).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&right.label),),
-                );
-                Global::exit(1);
-            });
+            *name = package_name_in(&right);
         }
     }
     let mut left = match left_early {
         Some(tree) => tree,
-        None => materialize(pm, &left_spec)?,
+        None => materialize(pm, &left_spec, as_published)?,
     };
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
@@ -214,8 +202,6 @@ impl<'a> Filter<'a> {
         !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
     }
 }
-
-// ─── spec resolution ────────────────────────────────────────────────────────
 
 fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
@@ -297,7 +283,8 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
         },
         [a, b] => {
             let left = classify(a);
-            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && Semver::Version::parse(Semver::SlicedString::init(name, name)).valid);
+            // `2`, `^2`, `>=2 <4`: what package.json would read as a version or range, not a name or dist-tag.
+            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && dependency::Tag::infer(name) == dependency::Tag::Npm);
             let right = match (classify(b), &left) {
                 // `name@1 2` — a bare second version reuses the first name.
                 (r, Spec::Registry { name, .. }) if is_bare_version(&r) => {
@@ -327,8 +314,21 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
     }
 }
 
-fn package_name_in(tree: &Tree) -> Option<Vec<u8>> {
-    let bytes = tree.files.get(b"package.json".as_slice())?;
+fn package_name_in(tree: &Tree) -> Vec<u8> {
+    let package_json = tree.files.get(b"package.json".as_slice());
+    package_json
+        .and_then(|bytes| package_json_name(bytes))
+        .unwrap_or_else(|| {
+            Status::clear();
+            Output::err_generic(
+                "{} has no package.json \"name\" to look up in the registry",
+                (BStr::new(&tree.label),),
+            );
+            Global::exit(1);
+        })
+}
+
+fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let bump = Bump::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
     let json = bun_parsers::json::parse_utf8(
@@ -371,20 +371,10 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     let mut path = original_cwd.to_vec();
     path.extend_from_slice(b"/package.json");
     // The folder we are in, before the workspace root the manager walked up to.
-    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path) {
-        let bump = Bump::new();
-        let src: &[u8] = bump.alloc_slice_copy(&bytes);
-        if let Ok(json) = bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
-            &bump,
-        ) {
-            if let Some(name) = json.get_string_cloned(&bump, b"name").ok().flatten() {
-                if is_npm_name(name) {
-                    return name.to_vec();
-                }
-            }
-        }
+    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
+        && let Some(name) = package_json_name(&bytes)
+    {
+        return name;
     }
     let name = &pm.root_package_json_name_at_time_of_init;
     if !is_npm_name(name) {
@@ -410,8 +400,8 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors(
-                &broken, log_level,
+            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
+                &broken, log_level, "",
             );
             false
         }
@@ -424,21 +414,13 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
-    let mut best: Option<Vec<u8>> = None;
-    for (i, pkg_name) in names.iter().enumerate() {
-        if pkg_name.slice(string_buf) != name || resolutions[i].tag != resolution::Tag::Npm {
-            continue;
-        }
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", resolutions[i].npm().version.fmt(string_buf));
-        // Several copies may be installed; the first listed is the hoisted/root one.
-        best.get_or_insert(v);
-        break;
-    }
-    best
+    // Several copies may be installed; the first listed is the hoisted/root one.
+    let first = (0..names.len()).find(|&i| {
+        names[i].slice(string_buf) == name && resolutions[i].tag == resolution::Tag::Npm
+    })?;
+    let version = resolutions[first].npm().version;
+    Some(version.fmt(string_buf).to_string().into_bytes())
 }
-
-// ─── materializing a side ───────────────────────────────────────────────────
 
 /// A one-line status on stderr while a side is fetched or read, erased before anything else prints — so a large
 /// package or a slow registry never looks like a hang. Only when stderr is an interactive terminal.
@@ -471,7 +453,11 @@ impl Drop for Status {
     }
 }
 
-fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+fn materialize(
+    pm: &mut PackageManager,
+    spec: &Spec,
+    as_published: bool,
+) -> Result<Tree, crate::Error> {
     let _status = match spec {
         Spec::Registry { name, version } => {
             Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
@@ -497,7 +483,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
         }
-        Spec::Dir(path) => read_dir_tree(path),
+        Spec::Dir(path) => read_dir_tree(path, as_published.then_some(pm)),
     }
 }
 
@@ -558,7 +544,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     Ok(())
 }
 
-fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
+/// With `as_published_by`, `workspace:` and `catalog:` versions read as `bun pm pack` publishes them.
+fn read_dir_tree(
+    root: &[u8],
+    as_published_by: Option<&mut PackageManager>,
+) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
@@ -586,6 +576,8 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+            // Before the parse below: this one parses other package.json files.
+            let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
@@ -611,15 +603,15 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
                     &dir,
+                    root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
                 let _ = dir.into_raw();
-                for (path, optional) in queue.into_paths() {
+                for path in queue.into_paths() {
                     let rel = path.as_bytes();
                     match bun_sys::File::read_from(root_fd, rel) {
-                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
                         Ok(bytes) => {
                             #[cfg(not(windows))]
                             if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
@@ -630,6 +622,10 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                         Err(err) => fail(err, rel),
                     }
                 }
+                let pkg = match &manifests {
+                    Some(manifests) => with_published_versions(&pkg, json, manifests, root),
+                    None => pkg,
+                };
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);
@@ -711,6 +707,75 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     Ok(tree)
 }
 
+/// What `bun pm pack` in `dir` resolves the `workspace:` and `catalog:` of `manifest` through.
+fn manifests_for(
+    pm: &mut PackageManager,
+    dir: &[u8],
+    manifest: &[u8],
+) -> Option<WorkspaceManifests> {
+    if !strings::contains(manifest, b"workspace:") && !strings::contains(manifest, b"catalog:") {
+        return None;
+    }
+    // The manager is in the project's root. Run outside of a project, there is no package.json to load.
+    if !bun_sys::exists_z(bun_core::zstr!("package.json")) {
+        return None;
+    }
+    WorkspaceManifests::try_load(pm)
+        .ok()
+        .filter(|manifests| manifests.contains_package_dir(dir))
+}
+
+/// `manifest` (`dir`'s package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as published.
+fn with_published_versions(
+    manifest: &[u8],
+    json: bun_ast::Expr,
+    manifests: &WorkspaceManifests,
+    dir: &[u8],
+) -> Vec<u8> {
+    use crate::cli::pack_command::{Substitution, for_each_dependency};
+    // The string token of each version to replace (its start and end in `manifest`), and what replaces it.
+    let mut edits: Vec<(usize, usize, Vec<u8>)> = Vec::new();
+    for_each_dependency(json, |_, dependency| {
+        let (Some(name), Some(version)) = (&dependency.key, &dependency.value) else {
+            return;
+        };
+        let (Some(name), Some(spec)) = (
+            name.as_utf8_string_literal(),
+            version.as_utf8_string_literal(),
+        ) else {
+            return;
+        };
+        // A version that does not resolve stays as written: pack refuses to publish it.
+        let Some(Ok(published)) =
+            Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
+        else {
+            return;
+        };
+        // So does one spelled with JSON escapes.
+        let Ok(at) = usize::try_from(version.loc.start) else {
+            return;
+        };
+        let end = at + spec.len() + 2;
+        if manifest.get(at + 1..end - 1) == Some(spec) {
+            edits.push((at, end, published));
+        }
+    });
+    bun_collections::index_sort::sort_vec_unstable_by(&mut edits, |a, b| a.0.cmp(&b.0));
+    let mut out: Vec<u8> = Vec::with_capacity(manifest.len());
+    let mut copied = 0usize;
+    for (at, end, published) in &edits {
+        out.extend_from_slice(&manifest[copied..*at]);
+        let _ = write!(
+            out,
+            "{}",
+            bun_fmt::format_json_string_utf8(published, Default::default())
+        );
+        copied = *end;
+    }
+    out.extend_from_slice(&manifest[copied..]);
+    out
+}
+
 /// Fetches `name`'s manifest, resolves `version` (exact, range, or dist-tag), downloads that tarball and unpacks it in memory.
 fn fetch_registry_tree(
     pm: &mut PackageManager,
@@ -738,6 +803,7 @@ fn fetch_registry_tree(
         pm,
         scope,
         URL::parse(manifest_url),
+        true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),
@@ -780,14 +846,10 @@ fn fetch_registry_tree(
         version
     };
     let found = 'found: {
-        if let Some(r) = manifest.find_by_dist_tag(version) {
-            break 'found r;
-        }
-        let sliced = Semver::SlicedString::init(version, version);
-        if let Ok(query) = Semver::query::parse(version, sliced) {
-            if let Some(r) = manifest.find_best_version(&query, version) {
-                break 'found r;
-            }
+        match manifest.find_by_spec(version) {
+            Ok(r) => break 'found r,
+            Err(bun_install::Error::DistTagNotFound | bun_install::Error::NoMatchingVersion) => {}
+            Err(err) => return Err(err.into()),
         }
         Status::clear();
         Output::err_generic(
@@ -837,10 +899,16 @@ fn fetch_registry_tree(
             },
         )?;
     }
+    // The same serialisation `bun install` requests and keys `.npmrc` lines by.
+    let (tarball_url, normalized) = match npm::registry::normalize_tarball_url(&tarball_url) {
+        Some(normalized) => (normalized, true),
+        None => (tarball_url.into_boxed_slice(), false),
+    };
     let tarball = registry_get(
         pm,
         scope,
         URL::parse(&tarball_url),
+        normalized,
         b"application/octet-stream",
         None,
     )?;
@@ -865,61 +933,49 @@ fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
+    normalized: bool,
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
-    };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
-    } else {
-        (b"", b"")
-    };
-    if !token.is_empty() {
+    // The same rule as `bun install` decides which credentials, if any, follow the URL.
+    let authorization = pm
+        .options
+        .tarball_credentials(scope, &url, normalized)
+        .and_then(|credentials| credentials.authorization_parts(&url));
+    if let Some((scheme, value)) = authorization {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + token.len();
-        headers.count(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + auth.len();
+        headers.content.cap += scheme.len() + value.len();
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
-    if !token.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
-        headers.append(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+    if let Some((scheme, value)) = authorization {
+        headers.append_bytes_value(b"Authorization", scheme, value);
         headers.append(b"npm-auth-type", b"legacy");
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let http_proxy = pm.http_proxy(&url);
     let display_url = url.href.to_vec();
-    let mut req = http::AsyncHTTP::init_sync(
+    let mut req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
-        http_proxy,
-        http::FetchRedirect::Follow,
     );
-    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            Output::err(
+                err,
+                "GET {} failed",
+                (bun_core::fmt::EscapeControlChars(url),),
+            );
             Global::exit(1);
         }
     };
@@ -929,8 +985,6 @@ fn registry_get(
     }
     Ok(response_buf)
 }
-
-// ─── diffing & printing ─────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Semantic {

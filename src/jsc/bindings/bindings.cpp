@@ -2442,9 +2442,9 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
     auto iter = headers->createIterator(false);
     unsigned int i = 0;
 
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
-        const auto name = pair->key;
-        const auto value = pair->value;
+    while (auto* entry = iter.nextEntry()) {
+        const auto& name = *entry->key;
+        const auto& value = *entry->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
@@ -2486,16 +2486,26 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    auto iter = headers->createIterator();
-    size_t i = 0;
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
+    uint32_t entries = 0;
+    size_t bytes = 0;
+    auto add = [&](const String& name, const String& value) {
+        // copyTo's iterator passes over a null value.
+        if (value.isNull())
+            return;
+        entries++;
         // copyTo isomorphic-encodes: one byte per code unit.
-        i += pair->key.length();
-        i += pair->value.length();
-    }
+        bytes += name.length() + value.length();
+    };
+    auto& map = headers->internalHeaders();
+    for (auto& header : map.commonHeaders())
+        add(WTF::httpHeaderNameStringImpl(header.key), header.value);
+    for (auto& header : map.uncommonHeaders())
+        add(header.key, header.value);
+    for (auto& cookie : map.getSetCookieHeaders())
+        add(WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), cookie);
 
-    *count = headers->size();
-    *buf_len = i;
+    *count = entries;
+    *buf_len = bytes;
 }
 
 typedef struct ZigSliceString {

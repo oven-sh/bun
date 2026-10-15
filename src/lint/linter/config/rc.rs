@@ -219,6 +219,11 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
     b"vue",
 ];
 
+/// Whether oxlint keeps `name` for a plugin of its own. `n` is a package to it: its own is `node`.
+pub fn is_plugin_of_oxlint(name: &[u8]) -> bool {
+    PLUGIN_NAMES.contains(&name)
+}
+
 /// The files that are linted if nothing else says so. Of the last three the scripts.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 
@@ -1206,6 +1211,7 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                named: 0,
                 has_unknown_resolver: false,
                 handing_back: Vec::new(),
             },

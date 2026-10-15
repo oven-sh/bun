@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -623,5 +623,47 @@ describe("--no-macros", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
     expect(out).toContain("INLINED_RESULT");
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+describe.concurrent.skipIf(isWindows).each(["mac?ro", "macro?"])("a macro in the folder %s", folder => {
+  const files = {
+    [`${folder}/macro.ts`]: `export function folderOfMacro() { return import.meta.dir.split("/").pop(); }`,
+    [`${folder}/entry.ts`]: `
+      import { folderOfMacro } from "./macro.ts" with { type: "macro" };
+      console.log(folderOfMacro());
+    `,
+  };
+
+  test("runs for bun run", async () => {
+    using dir = tempDir("macro-question-mark", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `./${folder}/entry.ts`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lastLine: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
+      lastLine: folder,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("runs for bun build", async () => {
+    using dir = tempDir("macro-question-mark", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", `./${folder}/entry.ts`, "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await Bun.file(path.join(String(dir), "dist", "entry.js")).text()).toContain(`console.log("${folder}");`);
   });
 });

@@ -41,6 +41,11 @@ export const DARWIN_STACK_SIZE = "0x1200000";
  * default, and what node.exe and WebKit's own executables ship: the rest of the
  * stack is committed as it is touched.
  *
+ * The commit is also a floor under every thread's stack. A thread that asks for
+ * a reserve at or below it (64 KB, 512 KB and 2 MB all did under a 2 MB commit)
+ * gets the commit as its reserve, all of it committed, which leaves no guard
+ * page.
+ *
  * binary-expectations.ts states both numbers again as literals, and
  * verify-binary.ts checks the linked header against them.
  */

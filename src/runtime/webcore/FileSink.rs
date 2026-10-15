@@ -303,9 +303,9 @@ pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
 }
 
 impl FileSink {
-    /// The `--isolate` sweep before the swap reached this stdio sink. The file's socket close
-    /// handlers still run after that sweep and may write here, so it stays open: it is recorded
-    /// for [`rearm_for_retire`](Self::rearm_for_retire). Returns false outside that sweep.
+    /// The `--isolate` sweep before the swap reached this stdio sink: the file's close handlers
+    /// may still write here, so record it for [`rearm_for_retire`](Self::rearm_for_retire)
+    /// instead of ending it. False outside that sweep.
     ///
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink`.
@@ -324,8 +324,8 @@ impl FileSink {
         true
     }
 
-    /// Arms a sink [`keep_for_retire`](Self::keep_for_retire) recorded on the root context again,
-    /// for the swap's sweep after it retires the realm, and releases the record's ref.
+    /// Re-arms a sink [`keep_for_retire`](Self::keep_for_retire) recorded, for the swap's sweep
+    /// after it retires the realm, and releases the record's ref.
     ///
     /// # Safety
     /// `this` came from `keep_for_retire` in this sweep; it must not be used after the call.

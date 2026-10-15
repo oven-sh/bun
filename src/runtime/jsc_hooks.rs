@@ -97,9 +97,8 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
-    /// `Some` only while the `--isolate` sweep before the swap runs: the
-    /// `process.stdout`/`process.stderr` sinks it reaches (one ref each), to
-    /// re-arm after it. See [`stop_active_handles_for_test_isolation`].
+    /// `Some` while the `--isolate` sweep before the swap runs: the stdio sinks it
+    /// reached, one ref each, re-armed after it (see [`stop_active_handles_for_test_isolation`]).
     pub(crate) stdio_sinks_kept_for_retire: Option<Vec<ptr::NonNull<crate::webcore::FileSink>>>,
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
@@ -1741,10 +1740,9 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// then stop. (VM teardown must *not* drain here — its
 /// prepareForDestruction discards the pre-exit queues.)
 ///
-/// The file's socket close handlers still run after this sweep, and may write to
-/// `process.stdout`/`process.stderr`. Those sinks decline this sweep (their
-/// `on_abort` records them instead) and are re-armed here, so the swap's sweep
-/// after it retires the realm is the one that ends them.
+/// The file's socket close handlers still run after this sweep and may write to
+/// `process.stdout`/`process.stderr`, so those sinks decline it (`on_abort` records
+/// them) and are re-armed here for the swap's sweep after it retires the realm.
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
     let state = runtime_state();

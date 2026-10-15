@@ -1,5 +1,4 @@
 import { spawnSync } from "bun";
-import { SQL } from "bun:internal-for-testing";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
@@ -1221,6 +1220,7 @@ describe("prepare() binds a single non-array parameter", () => {
     }
   };
   const arity = count => ({ name: "Error", message: `SQLite query expected ${count} values, received 1` });
+  const missing = parameter => ({ name: "Error", message: `Missing parameter "${parameter}"` });
   const notBindable = {
     name: "TypeError",
     message: "Binding expected string, TypedArray, boolean, number, bigint or null",
@@ -1300,6 +1300,18 @@ describe("prepare() binds a single non-array parameter", () => {
     expect(stmt.get()).toEqual({ value: "hello" });
   });
 
+  it("an execution with arguments discards the value, even when it throws", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT ? AS value", "hello");
+
+    expect(stmt.get()).toEqual({ value: "hello" });
+    expect(thrownBy(() => stmt.get(1, 2))).toEqual({
+      name: "Error",
+      message: "SQLite query expected 1 values, received 2",
+    });
+    expect(stmt.get()).toEqual({ value: null });
+  });
+
   it.each([
     ["SELECT 1 AS x", { x: 1 }],
     ["SELECT ? AS a", { a: null }],
@@ -1375,58 +1387,16 @@ describe("prepare() binds a single non-array parameter", () => {
     expect(strictNamed.get()).toEqual({ a: 5 });
   });
 
-  // Statement.native and the internal SQL object reach the native binder without the boxing that
-  // Statement.get() and Database.run() do in JS.
   it.each([
-    ["get", { type: "blob", hex: "0708" }],
-    ["all", [{ type: "blob", hex: "0708" }]],
-    ["values", [["blob", "0708"]]],
-    ["iterate", { type: "blob", hex: "0708" }],
-  ])("Statement.native.%s(typed array) binds one blob", (method, result) => {
-    using db = new Database(":memory:");
-    using stmt = db.prepare("SELECT typeof(?1) AS type, hex(?1) AS hex");
-
-    expect(stmt.native[method](new Uint8Array([7, 8]))).toEqual(result);
-  });
-
-  it("Statement.native.raw(typed array) and Statement.native.run(typed array) bind one blob", () => {
-    using db = new Database(":memory:");
-    db.run("CREATE TABLE w (v)");
-    using select = db.prepare("SELECT ? AS v");
-    using insert = db.prepare("INSERT INTO w VALUES (?)");
-
-    expect(select.native.raw(new Uint8Array([7, 8]))).toEqual([[new Uint8Array([7, 8])]]);
-    insert.native.run(undefined, new Uint8Array([7, 8]));
-    expect(db.query("SELECT typeof(v) AS type, hex(v) AS hex FROM w").all()).toEqual([{ type: "blob", hex: "0708" }]);
-  });
-
-  it("Statement.native never reads a typed array or a function as named parameters", () => {
-    using db = new Database(":memory:");
-    using one = db.prepare("SELECT ? AS a");
-    using two = db.prepare("SELECT ? AS a, ? AS b");
-
-    expect(thrownBy(() => two.native.get(new Uint8Array([7, 8])))).toEqual(arity(2));
-    expect(thrownBy(() => one.native.get(() => 1))).toEqual(notBindable);
-  });
-
-  it("the internal SQL.prepare and SQL.run bind a single value", () => {
-    using db = new Database(":memory:");
-    db.run("CREATE TABLE w (v)");
-    const { 0: native, 1: changes } = SQL;
-
-    expect(native.prepare(db.handle, "SELECT ? AS a", 5, 0, 0).get()).toEqual({ a: 5 });
-    native.run(db.handle, 0, changes, "INSERT INTO w VALUES (?)", new Uint8Array([7, 8]));
-    expect(db.query("SELECT typeof(v) AS type, hex(v) AS hex FROM w").all()).toEqual([{ type: "blob", hex: "0708" }]);
-  });
-
-  it.each([
-    ["an array of the wrong length", "SELECT ? AS a, ? AS b", [5], arity(2)],
-    ["a value for two parameters", "SELECT ? AS a, ? AS b", 5, arity(2)],
-    ["a value that is not bindable", "SELECT ? AS a", Symbol("s"), notBindable],
-  ])("prepare() that throws on %s leaves no statement open", (_label, sql, params, error) => {
+    ["an array of the wrong length", undefined, "SELECT ? AS a, ? AS b", [5], arity(2)],
+    ["an array with a value that is not bindable", undefined, "SELECT ? AS a", [new Date(0)], notBindable],
+    ["a missing named parameter with strict: true", { strict: true }, "SELECT $a AS a", {}, missing("a")],
+    ["a value for two parameters", undefined, "SELECT ? AS a, ? AS b", 5, arity(2)],
+    ["a value that is not bindable", undefined, "SELECT ? AS a", Symbol("s"), notBindable],
+  ])("prepare() that throws on %s leaves no statement open", (_label, options, sql, params, error) => {
     using dir = tempDir("sqlite-prepare-bind-throws", {});
     const file = path.join(String(dir), "x.sqlite");
-    const db = new Database(file);
+    const db = new Database(file, options);
     // With this locking mode the connection keeps its file lock until sqlite3 closes it.
     db.exec("PRAGMA locking_mode = EXCLUSIVE; CREATE TABLE t (a)");
 

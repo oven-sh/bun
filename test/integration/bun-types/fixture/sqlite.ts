@@ -50,3 +50,28 @@ insertManyCats([
   // @ts-expect-error - Should fail
   { fail: true },
 ]);
+
+// Values given to prepare() are bound now. They do not set the parameter type of the statement.
+const bound = db.prepare("select ? as v", "x");
+bound.get();
+bound.all();
+bound.run();
+bound.get("y");
+bound.get(5);
+db.prepare("select ? as v", ["x"]).get();
+db.prepare("select $a as a", { $a: 1 }).get();
+db.prepare("select ? as v", new Uint8Array([7, 8])).all();
+db.prepare("select 1 as x", null).get();
+db.prepare("select ? as v", "x", constants.SQLITE_PREPARE_PERSISTENT).get();
+db.prepare("select 1 as x", undefined, 0).get();
+
+const typedBound = db.prepare<{ v: string }, [string]>("select ? as v", "x");
+expectType<{ v: string } | null>(typedBound.get("y"));
+// @ts-expect-error - explicit parameter types still apply at execution
+typedBound.get();
+
+// @ts-expect-error - flags is a number
+db.prepare("select 1 as x", undefined, "persistent");
+
+// @ts-expect-error - map() passes the index as params and the array as flags
+["select 1 as x"].map(db.prepare, db);

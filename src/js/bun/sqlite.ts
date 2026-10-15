@@ -549,8 +549,11 @@ class Database implements SqliteTypes.Database {
     params?: ParamsType,
     flags: number = 0,
   ) {
+    // The rule of run(), except that null stays "no bindings": prepare(sql, null, flags) passes no value.
+    const bindings: SqliteTypes.SQLQueryBindings | SqliteTypes.SQLQueryBindings[] | undefined =
+      params != null && !isArray(params) && (typeof params !== "object" || isTypedArray(params)) ? [params] : params;
     return new Statement<ReturnType, ParamsType extends any[] ? ParamsType : [ParamsType]>(
-      SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags),
+      SQL.prepare(this.#handle, query, bindings, flags || 0, this.#internalFlags),
     );
   }
 

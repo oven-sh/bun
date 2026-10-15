@@ -692,7 +692,11 @@ class Database {
   );
 
   query<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
-  prepare<ReturnType, ParamsType>(sql: string, params?: ParamsType): Statement<ReturnType, ParamsType>;
+  prepare<ReturnType, ParamsType>(
+    sql: string,
+    params?: SQLQueryBindings | SQLQueryBindings[],
+    flags?: number,
+  ): Statement<ReturnType, ParamsType>;
   run(sql: string, params?: SQLQueryBindings): { lastInsertRowid: number; changes: number };
   exec = this.run;
 

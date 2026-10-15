@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isRoot, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { chmodSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -179,6 +179,27 @@ diffme@1.0.0 → diffme@2.0.0
     expect(d.stdout).toBe(a.stdout);
   });
 
+  test.each(["2", "^2", "~2.0", ">=2", "2.x", "1 || 2", "v2.0.0", "=2.0.0"])(
+    "a bare second range (%s) reuses the first name",
+    async range => {
+      const named = await diff(["diffme@1.0.0", "diffme@2.0.0", "--name-only"]);
+      expect(await diff(["diffme@1.0.0", range, "--name-only"])).toEqual(named);
+      // After a folder it takes the folder's own name.
+      const local = await diff(["./v1", "diffme@2.0.0", "--name-only"]);
+      expect(await diff(["./v1", range, "--name-only"])).toEqual(local);
+      expect(local.exitCode).toBe(0);
+    },
+  );
+
+  test("a second argument that is no version is a package name", async () => {
+    const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "nosuchpackage"]);
+    expect({ stdout, stderr: stderr.includes("nosuchpackage"), exitCode }).toEqual({
+      stdout: "",
+      stderr: true,
+      exitCode: 1,
+    });
+  });
+
   test("--name-only and --stat", async () => {
     const names = await diff(["diffme@1.0.0", "2.0.0", "--name-only"]);
     expect(names.stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual([
@@ -270,6 +291,107 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("a workspace package's workspace: and catalog: versions are compared as `bun pm pack` publishes them", async () => {
+    const manifest = (pkg: object) => JSON.stringify(pkg, null, 2) + "\n";
+    const a = manifest({
+      name: "ws-a",
+      version: "1.0.0",
+      dependencies: { "ws-b": "workspace:^", diffme: "catalog:" },
+      devDependencies: { "ws-c": "workspace:2.x", "core": "workspace:ws-b@~" },
+      peerDependencies: { "ws-b": "workspace:*", diffme: "catalog:legacy" },
+      optionalDependencies: { "ws-d": "workspace:~", "ws-c": "workspace:../c" },
+    });
+    using dir = tempDir("pm-diff-workspace", {
+      "package.json": manifest({
+        name: "ws-root",
+        version: "9.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { diffme: "^1.0.0" },
+          catalogs: { legacy: { diffme: "1.0.0" } },
+        },
+        dependencies: { diffme: "catalog:", "ws-b": "workspace:^" },
+      }),
+      "packages/a/package.json": a,
+      "packages/a/index.js": "module.exports = 1;\n",
+      "packages/b/package.json": manifest({ name: "ws-b", version: "1.0.1" }),
+      "packages/c/package.json": manifest({ name: "ws-c", version: "2.3.4" }),
+      "packages/d/package.json": manifest({ name: "ws-d", version: "3.0.0" }),
+      // The same files outside the `workspaces` globs: not a package of this project.
+      "vendor/a/package.json": a,
+      "vendor/a/index.js": "module.exports = 1;\n",
+      "out/.keep": "",
+      "out-root/.keep": "",
+    });
+    const member = join(String(dir), "packages", "a");
+    const tgz = await pack(member, join(String(dir), "out"));
+
+    // The versions pack just wrote are the ones this folder shows, from inside the package and from the root.
+    expect(await diff([tgz, "."], member)).toEqual({
+      stdout: `${tgz} → .\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await diff([tgz, "./packages/a/"], String(dir))).toEqual({
+      stdout: `${tgz} → ./packages/a/\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // An absolute path is used as typed.
+    const roundabout = `${String(dir)}/packages/b/../a`;
+    expect(await diff([tgz, roundabout], String(dir))).toEqual({
+      stdout: `${tgz} → ${roundabout}\nNo differences (2 files)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    // The root package itself. The filter is a base name: its own package.json and the five it packs along, which
+    // are files like any other and stay as written on both sides.
+    const rootTgz = await pack(String(dir), join(String(dir), "out-root"));
+    expect((await diff([rootTgz, ".", "package.json"], String(dir))).stdout).toBe(
+      `${rootTgz} → .\nNo differences (6 files)\n`,
+    );
+
+    // A folder that is no package of the project keeps what it says: nothing is taken from a workspace of the same name.
+    const vendored = await diff([tgz, "./vendor/a", "--json"], String(dir));
+    expect(vendored.stderr).toBe("");
+    const { files, notes } = JSON.parse(vendored.stdout);
+    expect(files).toMatchObject([{ path: "package.json", linesAdded: 8, linesRemoved: 8 }]);
+    expect(notes.sort()).toEqual([
+      "dependencies diffme: ^1.0.0 → catalog:",
+      "dependencies ws-b: ^1.0.1 → workspace:^",
+      "optionalDependencies ws-c: 2.3.4 → workspace:../c",
+      "optionalDependencies ws-d: ~3.0.0 → workspace:~",
+      "peerDependencies diffme: 1.0.0 → catalog:legacy",
+      "peerDependencies ws-b: 1.0.1 → workspace:*",
+    ]);
+    expect(vendored.exitCode).toBe(0);
+
+    // Two folders compare as written, so the patch between them applies to the files on disk.
+    expect(await diff(["./vendor/a", "./packages/a"], String(dir))).toEqual({
+      stdout: "./vendor/a → ./packages/a\nNo differences (2 files)\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a workspace: version that does not resolve, or a folder outside of any project, stays as written", async () => {
+    const pkg = JSON.stringify({ name: "lonely", version: "1.0.0", dependencies: { gone: "workspace:^" } });
+    using dir = tempDir("pm-diff-unresolved", {
+      "project/package.json": pkg,
+      "copy/package.json": pkg,
+      "nowhere/sub/package.json": pkg,
+    });
+    for (const [cwd, folder] of [
+      ["project", "."],
+      ["nowhere", "./sub"],
+    ]) {
+      const { stdout, stderr, exitCode } = await diff([tarballs["1.0.0"], folder, "--json"], join(String(dir), cwd));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout).notes).toContain("dependencies added: gone@workspace:^");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("patch output marks a side that ends without a newline", async () => {
     using dir = tempDir("pm-diff-nonl", {
       "a/package.json": `{"name":"x","version":"1.0.0"}`,
@@ -349,6 +471,75 @@ diffme@1.0.0 → diffme@2.0.0
       "new binary file logo.bin (6 bytes)",
     ]);
     expect(j.totals).toEqual({ files: 6, added: 2, deleted: 1, linesAdded: 10, linesRemoved: 6, formattingOnly: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a dist.tarball on another https host carries that host's own .npmrc line", async () => {
+    // The same rule as `bun install`: the tarball's own `.npmrc` line, not the registry's token.
+    const seen = { registry: [] as (string | null)[], cdn: [] as (string | null)[] };
+    using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch(req) {
+        seen.cdn.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tarballs["2.0.0"]));
+      },
+    });
+    using authed = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        seen.registry.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== "Bearer sekrit") return new Response("no", { status: 401 });
+        const url = new URL(req.url);
+        if (url.pathname === "/diffme") {
+          return Response.json({
+            name: "diffme",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "diffme",
+                version: "1.0.0",
+                dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` },
+              },
+              "2.0.0": {
+                name: "diffme",
+                version: "2.0.0",
+                dist: { tarball: `${cdn.url.origin}/npm/diffme-2.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response(Bun.file(tarballs["1.0.0"]));
+      },
+    });
+    using dir = tempDir("pm-diff-cdn-line", {
+      "ca.pem": tls.cert,
+      "bunfig.toml": `[install]\nregistry = { url = "${authed.url.origin}/", token = "sekrit" }\ncafile = "ca.pem"\n`,
+      ".npmrc": `//${cdn.url.host}/:_authToken=cdn-line\n`,
+      "home/.gitkeep": "",
+    });
+    const home = join(String(dir), "home");
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NO_COLOR: "1",
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: home,
+        NPM_CONFIG_USERCONFIG: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(seen.cdn).toEqual(["Bearer cdn-line"]);
+    expect(seen.registry.every(a => a === "Bearer sekrit")).toBe(true);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
     expect(exitCode).toBe(0);
   });
 
@@ -478,6 +669,11 @@ diffme@1.0.0 → diffme@2.0.0
     // …and what exists instead, newest first, plus the tags.
     expect(nover.stderr).toContain("recent versions: 2.0.0, 1.0.0");
     expect(nover.stderr).toMatch(/tags: .*latest: 2\.0\.0/);
+    // An unknown dist-tag is looked up only in `dist-tags`; it never falls back to `latest`.
+    const notag = await diff(["diffme@nosuchtag", "2.0.0", "--name-only"]);
+    expect(notag.stdout).toBe("");
+    expect(notag.stderr).toContain("no version of diffme matches nosuchtag");
+    expect(notag.exitCode).toBe(1);
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);
@@ -886,7 +1082,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       try {
         const denied = await run(["./a", "./c"]);
         // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
-        if (process.getuid?.() !== 0) {
+        if (!isRoot) {
           expect(denied.stderr).toContain("secret.js");
           expect(denied.exitCode).toBe(1);
         }

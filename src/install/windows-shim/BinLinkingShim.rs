@@ -4,6 +4,7 @@
 //! The format is as follows:
 //!
 //! [WSTR:bin_path][u16'"'][u16:0](shebang?)[flags:u16]
+//! - bin_path starts at the parent of the shim's directory, unless `Flags::is_absolute_target`
 //!
 //! if shebang:
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
@@ -22,7 +23,7 @@
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-// The encoding is an open-ended 13-bit value, so model it as a transparent u16
+// The encoding is an open-ended 12-bit value, so model it as a transparent u16
 // newtype rather than an exhaustive enum.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -32,10 +33,11 @@ impl VersionFlag {
     const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    const V5: VersionFlag = VersionFlag(5478);
+    /// `2739 << 4` == `5478 << 3`: see the assertions below `Flags`.
+    const V5: VersionFlag = VersionFlag(2739);
 
-    /// Maximum 13-bit value.
-    const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
+    /// Maximum 12-bit value.
+    const MAX: VersionFlag = VersionFlag((1u16 << 12) - 1);
 
     #[inline]
     pub(crate) const fn bits(self) -> u16 {
@@ -43,7 +45,7 @@ impl VersionFlag {
     }
 }
 
-// Packed u16 bitfield (three bools + a 13-bit version tag): `#[repr(transparent)]`
+// Packed u16 bitfield (four bools + a 12-bit version tag): `#[repr(transparent)]`
 // newtype with manual shift accessors (LSB first).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -55,13 +57,15 @@ impl Flags {
         is_node_or_bun: bool,
         is_node: bool,
         has_shebang: bool,
+        is_absolute_target: bool,
         version_tag: VersionFlag,
     ) -> Flags {
         Flags(
             (is_node_or_bun as u16)
                 | ((is_node as u16) << 1)
                 | ((has_shebang as u16) << 2)
-                | (version_tag.0 << 3),
+                | ((is_absolute_target as u16) << 3)
+                | (version_tag.0 << 4),
         )
     }
 
@@ -91,8 +95,12 @@ impl Flags {
         (self.0 & 0b100) != 0
     }
     #[inline]
+    pub(crate) const fn is_absolute_target(self) -> bool {
+        (self.0 & 0b1000) != 0
+    }
+    #[inline]
     pub(crate) const fn version_tag(self) -> VersionFlag {
-        VersionFlag(self.0 >> 3)
+        VersionFlag(self.0 >> 4)
     }
 
     #[inline]
@@ -101,11 +109,15 @@ impl Flags {
     }
 
     pub(crate) fn is_valid(self) -> bool {
-        let mask: u16 = Flags::new(false, false, false, VersionFlag::MAX).bits();
-        let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
+        let mask: u16 = Flags::new(false, false, false, false, VersionFlag::MAX).bits();
+        let compare_to: u16 = Flags::new(false, false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
     }
 }
+
+// Older launchers check `bits >> 3 == 5478`: they are to take a relative shim, not an absolute one.
+const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
+const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-side encoding / embedding. None of this is compiled into the
@@ -193,8 +205,9 @@ mod host {
             e if e == w!(".mts") => Some(RunWithBun),
             e if e == w!(".tsx") => Some(RunWithBun),
             e if e == w!(".sh") => Some(RunWithBun),
-            e if e == w!(".cmd") => Some(RunWithCmd),
-            e if e == w!(".bat") => Some(RunWithCmd),
+            // Windows takes any spelling of these two for a batch file.
+            e if strings::eql_case_insensitive_t(e, b".cmd") => Some(RunWithCmd),
+            e if strings::eql_case_insensitive_t(e, b".bat") => Some(RunWithCmd),
             e if e == w!(".ps1") => Some(RunWithPowershell),
             _ => None,
         }
@@ -314,6 +327,13 @@ mod host {
                 while idx < line.len() && line[idx] == b' ' {
                     idx += 1;
                 }
+                // `env -S prog args`, `env -Sprog args`: the launcher is split at spaces anyway.
+                if line[idx..].starts_with(b"-S") {
+                    idx += b"-S".len();
+                    while idx < line.len() && line[idx] == b' ' {
+                        idx += 1;
+                    }
+                }
                 let rest = &line[idx..];
                 // tokenizer.next(): program token
                 let prog_start = idx;
@@ -338,8 +358,9 @@ mod host {
     }
 
     pub(crate) struct BinLinkingShim<'a> {
-        /// Relative to node_modules. Do not include slash
+        /// Relative to the parent of the shim's directory (no leading slash), or absolute.
         pub(crate) bin_path: &'a [u16],
+        pub(crate) is_absolute_target: bool,
         /// Information found within the target file's shebang
         pub(crate) shebang: Option<Shebang<'a>>,
     }
@@ -389,6 +410,7 @@ mod host {
                 is_node_or_bun,
                 /* is_node */ false,
                 /* has_shebang */ self.shebang.is_some(),
+                self.is_absolute_target,
                 VersionFlag::CURRENT,
             );
 

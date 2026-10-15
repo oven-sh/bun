@@ -802,9 +802,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         ) {
                             repeat_recv_count++;
 
-                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            // When not hung up, read a maximum of 10 more times: a peer that refills the receive buffer
+                            // during on_data keeps every read full, and timers only run once we return to the loop.
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                            if (repeat_recv_count <= 10) {
                                 continue;
                             }
                         }
@@ -926,6 +927,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
+                    if (s->ssl && s->ssl_send_rejected && unsent_is_lost) {
+                        /* This owner reads nothing until the lost bytes drain: left open for what is queued, its hangup would fire for ever. */
+                        s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                        return;
+                    }
                     s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
                                                        : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;

@@ -479,7 +479,7 @@ pub(crate) fn pending_scripts_key(
     );
     let mut key = Vec::with_capacity(rel.len() + 1 + folder_name.len());
     key.extend_from_slice(rel.as_bytes());
-    key.push(b'/');
+    key.push(SEP);
     key.extend_from_slice(folder_name);
     key
 }
@@ -592,8 +592,6 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.progress }
     }
 
-    /// Increments the number of installed packages for the current tree and runs available scripts
-    /// if the tree is finished.
     /// Whether `finish_install` lists the scripts of a dependency.
     fn is_trusted(
         &self,
@@ -629,6 +627,8 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// Increments the number of installed packages for the current tree and runs available scripts
+    /// if the tree is finished.
     fn increment_tree_install_count(
         &mut self,
         is_pending_package_install: bool,

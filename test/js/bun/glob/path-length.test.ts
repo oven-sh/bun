@@ -106,6 +106,27 @@ describe.skipIf(isWindows)("Glob path length", () => {
     expect(scanCode).toBe(0);
   });
 
+  test("a trailing-separator pattern with onlyFiles does not walk the deep tree", async () => {
+    const root = tmpdirSync("bun-glob-overflow-trailing-sep-");
+    await buildDeepTree(root, 18, Buffer.alloc(255, "D").toString());
+
+    await using scanProc = Bun.spawn({
+      cmd: [bunExe(), "-e", runScanFixture("**/", { cwd: root })],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [scanStdout, scanStderr, scanCode] = await Promise.all([
+      scanProc.stdout.text(),
+      scanProc.stderr.text(),
+      scanProc.exited,
+    ]);
+
+    // `**/` matches directories only and onlyFiles lists none, so the scan
+    // ends at the root. It must not reach the directory that is too long.
+    expect(scanStdout.trim()).toBe("OK:0");
+    expect(scanCode).toBe(0);
+  });
+
   // Linux-only: this needs a directory that is still walkable (absolute path
   // under MAX_PATH_BYTES, 4096 there) while joining one more name onto it
   // exceeds the 4096-byte join buffer. Everywhere else MAX_PATH_BYTES is

@@ -258,6 +258,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     follow_matched_symlinks: bool,
     pub(crate) error_on_broken_symlinks: bool,
     pub(crate) only_files: bool,
+    /// The pattern ends in a path separator, so only a directory can match.
+    pub(crate) dirs_only: bool,
 
     pub(crate) path_buf: bun_paths::path_buffer_pool::Guard,
     // iteration state
@@ -499,6 +501,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
         self.cwd_fd = cwd_fd;
 
+        // `only_files` never yields a directory, and nothing else matches a
+        // pattern that ends in a separator.
+        if self.walker.dirs_only && self.walker.only_files {
+            return Ok(Ok(()));
+        }
+
         let trans = if was_absolute {
             self.transition_to_dir_iter_state::<false>(root_work_item)?
         } else {
@@ -685,8 +693,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
-                let trailing_sep = self.walker.pattern_components[idx as usize].trailing_sep;
-                let matches = if trailing_sep {
+                let matches = if self.walker.dirs_only {
                     S::ISDIR(mode) && !self.walker.only_files
                 } else {
                     (S::ISDIR(mode) && !self.walker.only_files)
@@ -1339,7 +1346,6 @@ pub struct Component {
     index: u32,
 
     pub(crate) syntax_hint: SyntaxHint,
-    pub(crate) trailing_sep: bool,
 }
 
 impl Default for Component {
@@ -1349,15 +1355,13 @@ impl Default for Component {
             len: 0,
             index: 0,
             syntax_hint: SyntaxHint::None,
-            trailing_sep: false,
         }
     }
 }
 
 impl Component {
     pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
-        let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
-        &pattern[self.start as usize..end]
+        &pattern[self.start as usize..(self.start + self.len) as usize]
     }
 }
 
@@ -1456,6 +1460,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             follow_symlinks,
             error_on_broken_symlinks,
             only_files,
+            dirs_only: false,
             basename_excluding_special_syntax_component_idx: 0,
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
@@ -1474,6 +1479,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &this.pattern,
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
+            &mut this.dirs_only,
         )?;
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
@@ -1758,18 +1764,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         pattern: &Component,
         next_pattern: Option<&Component>,
     ) -> bool {
-        if pattern.trailing_sep {
-            return false;
-        }
-
         // Handle case b)
         if !is_last {
-            let next = next_pattern.unwrap();
             return pattern.syntax_hint == SyntaxHint::Double
                 && (component_idx + 1) as usize == self.pattern_components.len().saturating_sub(1)
-                && next.syntax_hint != SyntaxHint::Double
-                && !next.trailing_sep
-                && self.match_pattern_impl(next, entry_name);
+                && next_pattern.unwrap().syntax_hint != SyntaxHint::Double
+                && self.match_pattern_impl(next_pattern.unwrap(), entry_name);
         }
 
         // Handle case a)
@@ -1870,6 +1870,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     fn eval_file(&self, active: &ComponentSet, entry_name: &[u8]) -> bool {
+        if self.dirs_only {
+            return false;
+        }
         let comps = &self.pattern_components;
         let len: u32 = u32::try_from(comps.len()).expect("int cast");
         let mut it = active.iterator::<true, true>();
@@ -2092,7 +2095,14 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             || crate::has_extglob_prefix(pattern)
     }
 
-    fn make_component(pattern: &[u8], start_byte: u32, end_byte: u32) -> Option<Component> {
+    /// `before_trailing_sep`: this is the last component and the pattern
+    /// continues with a separator.
+    fn make_component(
+        pattern: &[u8],
+        start_byte: u32,
+        end_byte: u32,
+        before_trailing_sep: bool,
+    ) -> Option<Component> {
         let mut component = Component {
             start: start_byte,
             len: end_byte - start_byte,
@@ -2102,31 +2112,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return None;
         }
 
-        // The final component of a pattern may carry its trailing `/` inside
-        // `len`. Classify the syntax hint on the same slice `pattern_slice()`
-        // returns (i.e. without that separator) so `**/` is recognized as a
-        // globstar and recurses like `**` during scan().
-        let last_idx = (component.start + component.len - 1) as usize;
-        if pattern[last_idx] == b'/' {
-            component.trailing_sep = true;
-        } else {
-            #[cfg(windows)]
-            {
-                component.trailing_sep = pattern[last_idx] == b'\\';
-            }
-        }
-        let effective_len = component.len - u32::from(component.trailing_sep);
-
         'out: {
             let comp_slice =
-                &pattern[component.start as usize..(component.start + effective_len) as usize];
-            if comp_slice == b"." {
-                component.syntax_hint = SyntaxHint::Dot;
-                break 'out;
-            }
-            if comp_slice == b".." {
-                component.syntax_hint = SyntaxHint::DotBack;
-                break 'out;
+                &pattern[component.start as usize..(component.start + component.len) as usize];
+            // A final `./` or `../` names a directory to stat and yield, so it
+            // stays a Literal. A Dot or DotBack only extends the directory
+            // path and yields nothing when it is last.
+            if !before_trailing_sep {
+                if comp_slice == b"." {
+                    component.syntax_hint = SyntaxHint::Dot;
+                    break 'out;
+                }
+                if comp_slice == b".." {
+                    component.syntax_hint = SyntaxHint::DotBack;
+                    break 'out;
+                }
             }
 
             if !Self::check_special_syntax(comp_slice) {
@@ -2134,7 +2134,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 break 'out;
             }
 
-            match effective_len {
+            match component.len {
                 1 => {
                     if pattern[component.start as usize] == b'*' {
                         component.syntax_hint = SyntaxHint::Single;
@@ -2193,9 +2193,20 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         pattern: &[u8],
         end_byte_of_basename_excluding_special_syntax: &mut u32,
         basename_excluding_special_syntax_component_idx: &mut u32,
+        dirs_only: &mut bool,
     ) -> Result<(), AllocError> {
         let mut start_byte: u32 = 0;
         let pattern_len: u32 = u32::try_from(pattern.len()).expect("int cast");
+
+        // A trailing run of separators makes no component. It restricts the
+        // pattern to directories.
+        let mut last_component_end = pattern_len;
+        while last_component_end > 0
+            && bun_core::path_sep::is_sep_native(pattern[(last_component_end - 1) as usize])
+        {
+            last_component_end -= 1;
+        }
+        *dirs_only = last_component_end < pattern_len;
 
         let mut prev_is_backslash = false;
         let mut saw_special = false;
@@ -2206,12 +2217,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
             if bun_core::path_sep::is_sep_native(c) {
-                let mut end_byte = i;
-                // is last char
-                if (i + width) as usize == pattern.len() {
-                    end_byte += width;
-                }
-                if let Some(component) = Self::make_component(pattern, start_byte, end_byte) {
+                if let Some(component) =
+                    Self::make_component(pattern, start_byte, i, i == last_component_end)
+                {
                     saw_special = saw_special || component.syntax_hint.is_special_syntax();
                     if !saw_special {
                         *basename_excluding_special_syntax_component_idx =
@@ -2240,6 +2248,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             pattern,
             start_byte,
             u32::try_from(pattern.len()).expect("int cast"),
+            false,
         ) {
             saw_special = saw_special || component.syntax_hint.is_special_syntax();
             if !saw_special {

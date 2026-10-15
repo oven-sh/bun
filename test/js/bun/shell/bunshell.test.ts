@@ -1175,6 +1175,46 @@ booga"
         chmodSync(noaccess, 0o755);
       }
     });
+
+    describe.concurrent("a glob that ends in a separator", () => {
+      const tree = { "d1/d2/d3/deep.txt": "", "d1/f.txt": "", "e1/g.txt": "", "foo": "" };
+      const run = async (cwd: string, command: ReturnType<typeof $>) => {
+        const { stdout, stderr, exitCode } = await command.cwd(cwd).quiet().nothrow();
+        const words = stdout.toString().split(/\s+/).filter(Boolean);
+        return { words: words.map(word => word.replaceAll("\\", "/")).sort(), stderr: stderr.toString(), exitCode };
+      };
+      const expanded = (...words: string[]) => ({ words, stderr: "", exitCode: 0 });
+      const noMatch = (word: string) => ({ words: [], stderr: `bun: no matches found: ${word}\n`, exitCode: 1 });
+
+      test("expands to directories only, at every depth under **", async () => {
+        using dir = tempDir("shell-glob-trailing-sep", tree);
+        const cwd = String(dir);
+        expect(await run(cwd, $`echo **/`)).toEqual(expanded("d1", "d1/d2", "d1/d2/d3", "e1"));
+        expect(await run(cwd, $`echo *//`)).toEqual(expanded("d1", "e1"));
+        expect(await run(cwd, $`echo **/foo/`)).toEqual(noMatch("**/foo/"));
+      });
+
+      test("keeps a final ./ or ../ on each match", async () => {
+        using dir = tempDir("shell-glob-trailing-dot", tree);
+        const cwd = String(dir);
+        expect(await run(cwd, $`echo */./`)).toEqual(expanded("d1/.", "e1/."));
+        expect(await run(cwd, $`echo */../`)).toEqual(expanded("d1/..", "e1/.."));
+        expect(await run(cwd, $`echo d*/../`)).toEqual(expanded("d1/.."));
+      });
+
+      test("does not expand **/name/ to a symlink", async () => {
+        using dir = tempDir("shell-glob-trailing-symlink", tree);
+        const cwd = String(dir);
+        try {
+          symlinkSync("d1", join(cwd, "lnk"), "dir");
+        } catch (err: any) {
+          // This environment cannot create a symlink.
+          if (err.code === "EPERM" || err.code === "EACCES") return;
+          throw err;
+        }
+        expect(await run(cwd, $`echo **/lnk/`)).toEqual(noMatch("**/lnk/"));
+      });
+    });
   });
 
   describe("brace expansion", () => {

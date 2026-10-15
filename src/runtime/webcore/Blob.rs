@@ -656,8 +656,7 @@ impl BlobExt for Blob {
 
     /// `Bun.file("…").image(opts?)` ≡ `new Bun.Image(this, opts?)`. Lives here so
     /// the proto entry covers Blob/BunFile/S3File in one place; the actual
-    /// construction is `Image::from_blob_js` so Blob.rs doesn't grow image
-    /// knowledge.
+    /// construction is behind a door, in `bun_image`.
     fn do_image(_this: &Self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         crate::features::image_of_blob(global, cf.this(), cf.argument(0))
     }

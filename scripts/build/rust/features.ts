@@ -3,14 +3,15 @@
  *
  * Which crates are a feature's is read off the crate graph. Bun is `bun_runtime` and what it depends on. A crate with
  * `[package.metadata.bun] feature = "lint"` is where a feature starts, and what it depends on and Bun does not is the
- * feature's too. The C and C++ in the directory of such a crate is the crate's.
+ * feature's too. So is the C and C++ in the directory of such a crate, what is generated for the classes there (classes.ts),
+ * and a vendored library that says it is for the crate (`Dependency.crate`).
  *
- * What the same features need is an island, and has a number. All of it is compiled with feature-pass.cpp, which is given
- * the number.
+ * What the same features need is an island, and has a number. What LLVM compiles of it is compiled with feature-pass.cpp,
+ * which is given the number. What an assembler made goes through in-island.ts.
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { Config } from "../config.ts";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
@@ -142,7 +143,7 @@ export function featureFlags(
   };
 }
 
-/** A crate that is a feature's: where it is, what the link takes of it, and its island. */
+/** A crate that is a feature's: its name, where it is, what the link takes of it, and its island. */
 export interface FeatureCrate {
   name: string;
   directory: string;
@@ -159,24 +160,24 @@ export function featureCrates(islands: Islands): FeatureCrate[] {
   }));
 }
 
-/** The crate that `source`, a C or C++ file, is of: the one whose directory it is in, or whose classes it was generated for. */
-export function crateOfSource(crates: FeatureCrate[], source: string): FeatureCrate | undefined {
-  const generatedFor = /[\\/]ZigGeneratedClasses\.(\w+)\.cpp$/.exec(source)?.[1];
-  return crates.find(crate => source.startsWith(crate.directory + sep) || basename(crate.directory) === generatedFor);
+/** The crate that `source`, a C or C++ file, is of: the one whose directory it is in, or that it was `generatedFor`. */
+export function crateOfSource(
+  crates: FeatureCrate[],
+  generatedFor: Map<string, string>,
+  source: string,
+): FeatureCrate | undefined {
+  return crates.find(crate => source.startsWith(crate.directory + sep) || crate.name === generatedFor.get(source));
 }
 
 /** What clang is given for a file of `crate`, and what it then reads beside the file. */
 export function clangFeatureFlags(cfg: Config, crate: FeatureCrate | undefined): { flags: string[]; inputs: string[] } {
-  if (crate === undefined) return { flags: [], inputs: [] };
-  // A file includes what is beside it by name, also through a header of elsewhere (hwy/foreach_target.h).
-  const include = `-I${crate.directory}`;
   const pass = featurePass(cfg);
-  if (pass === undefined) return { flags: [include], inputs: [] };
+  if (crate === undefined || pass === undefined) return { flags: [], inputs: [] };
   const plugin = cfg.windows ? ["-Xclang", `-fpass-plugin=${pass}`] : [`-fpass-plugin=${pass}`];
   return {
     flags: [
       ...["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-island=${crate.island}`],
-      ...["-mllvm", `-bun-island-directory=${crate.directory}`, include],
+      ...["-mllvm", `-bun-island-directory=${crate.directory}`],
     ],
     inputs: [pass],
   };

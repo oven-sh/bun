@@ -175,6 +175,7 @@ pub fn print_flags_of_format(all: bool) {}
 
 pub use crate::crypto::evp::lookup_ignore_case as lookup_digest_ignore_case;
 pub use crate::node::types::Encoding as NodeEncoding;
+pub use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 
 /// `Bun.semver`
 #[feature::door(semver)]
@@ -215,8 +216,6 @@ pub fn image_as_body(
 ) -> JsResult<Option<(Box<[u8]>, &'static ZStr)>> {
     Ok(None)
 }
-
-pub use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 
 /// # Safety
 /// That of `BlobExt::read_bytes_to_handler`.

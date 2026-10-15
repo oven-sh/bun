@@ -81,6 +81,11 @@ change. WebKit has its own switch (`--webkit=local`).
 export const mydep: Dependency = {
   name: "mydep",
 
+  // Optional: the crate of a feature (src/bun_core/feature.rs) that alone uses
+  // it. `--compile-exclude-features` then leaves it out with the crate. Only
+  // for `direct` builds. See libwebp.
+  crate: "bun_image",
+
   // Source tarball. Fetched from GitHub's archive endpoint (no git history,
   // just the files at `commit`). Most deps use this.
   //

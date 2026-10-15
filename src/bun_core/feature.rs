@@ -2,9 +2,11 @@
 //!
 //! A FEATURE IS CRATES THAT THE REST OF BUN DOES NOT DEPEND ON. They depend on Bun, like a plugin would, and are linked into
 //! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go.
+//! What is in the directory of such a crate is the crate's: its C and C++, and the classes of its `.classes.ts`. So is a vendored
+//! library that says it is for the crate (`crate` in scripts/build/deps).
 //!
 //! WHAT THE SAME FEATURES NEED IS AN ISLAND: a stretch of the executable that the linker itself says the bounds of, a section
-//! or the like. What is compiled for those crates goes there (scripts/build/feature-pass.cpp), but for what is written
+//! or the like. What is compiled for those crates goes there (scripts/build/feature-pass.cpp, in-island.ts), but for what is written
 //! elsewhere and Bun has or could have too: an inline function or a template of a header of WebKit's. Within an island
 //! the linker drops, folds and moves what it likes, and nothing is shared between one and what is outside it, which
 //! Bun's build checks in what it linked (scripts/build/check-features.ts). So whether a byte stays is a matter of where it
@@ -18,6 +20,9 @@
 //! ```
 //!
 //! What it depends on and Bun does not goes with it, or, if several features depend on it, once all of them are excluded.
+//!
+//! The option also takes the name of a builtin module of JavaScript that Bun itself does not load. Those are not features: they
+//! are text, in a section with a table of its own (src/exe_format/builtins.rs).
 //!
 //! Whether this executable has a feature is `feature!(lint)`, and of several, `feature!(lint, fmt)`, whether it has one of them.
 //! It reads a byte that `bun build --compile` clears.

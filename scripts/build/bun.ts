@@ -189,6 +189,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     shimValidations: emitShimVerify(n, cfg),
   });
 
+  const crateOf = (source: string) => crateOfSource(featureCrates, codegen.crateOfCpp, source);
+
   // ─── Step 2: resolve all deps ───
   n.comment("─── Dependencies ───");
   n.blank();
@@ -205,7 +207,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     if (resolved !== null) {
       deps.push(resolved);
       depsByName.set(dep.name, resolved);
-      for (const object of resolved.objects) islandOf.set(object, crate?.island);
+      if (crate !== undefined) for (const object of resolved.objects) islandOf.set(object, crate.island);
     }
   }
 
@@ -295,7 +297,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is 3.3 MB) and bundling them would serialize work. Always called so
   // stale bundles are pruned even with --unifiedSources=false.
   // What is a feature's is not bundled: a bundle is compiled for the features of all that is in it.
-  const ofFeatures = sources.cxx.filter(src => crateOfSource(featureCrates, src) !== undefined);
+  const ofFeatures = sources.cxx.filter(src => crateOf(src) !== undefined);
   const split = generateUnifiedSources(
     cfg,
     sources.cxx.filter(src => !ofFeatures.includes(src)),
@@ -372,9 +374,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
-    const forFeatures = clangFeatureFlags(cfg, crateOfSource(featureCrates, src));
+    const crate = crateOf(src);
+    const forFeatures = clangFeatureFlags(cfg, crate);
+    // A file of a crate includes what is beside it by name, also through a header of elsewhere (hwy/foreach_target.h).
+    const beside = crate === undefined ? [] : [`-I${crate.directory}`];
     const opts: Parameters<typeof cxx>[3] = {
-      flags: [...cxxFlagsFull, ...extraFlags, ...forFeatures.flags],
+      flags: [...cxxFlagsFull, ...extraFlags, ...beside, ...forFeatures.flags],
       implicitInputs: forFeatures.inputs,
     };
     if (!noPchSources.has(src)) {
@@ -388,20 +393,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.orderOnlyInputs = codegenOrderOnly;
     }
     const object = cxx(n, cfg, src, opts);
-    islandOf.set(object, crateOfSource(featureCrates, src)?.island);
+    islandOf.set(object, crate?.island);
     cxxObjects.push(object);
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
   const compileC = (src: string): string => {
-    const forFeatures = clangFeatureFlags(cfg, crateOfSource(featureCrates, src));
+    const forFeatures = clangFeatureFlags(cfg, crateOf(src));
     const obj = cc(n, cfg, src, {
       flags: [...cFlagsFull, ...forFeatures.flags],
       implicitInputs: [...depHeaderSignal, ...forFeatures.inputs],
       orderOnlyInputs: codegenOrderOnly,
     });
-    islandOf.set(obj, crateOfSource(featureCrates, src)?.island);
+    islandOf.set(obj, crateOf(src)?.island);
     cObjects.push(obj);
     return obj;
   };

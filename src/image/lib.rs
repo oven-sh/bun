@@ -2,9 +2,9 @@
 //!
 //! The pure-Rust codec dispatch (`codecs.rs`), per-format decoders/encoders
 //! (`codec_*.rs`), EXIF/quantize/thumbhash helpers, and the platform backends
-//! are wired here. The JS-facing `Image` wrapper (`Image.rs`) — constructor,
-//! chainable mutators, pool-job plumbing — is re-exported as the public
-//! surface of this module.
+//! are wired here, with the JS-facing `Image` wrapper (`Image.rs`): constructor,
+//! chainable mutators, pool-job plumbing. Bun gets to it through the doors at
+//! the end of this file.
 
 // ─── codec dispatch surface ──────────────────────────────────────────────────
 //
@@ -56,13 +56,13 @@ pub(crate) mod thumbhash;
 pub(crate) mod image_body;
 pub(crate) use image_body::Image;
 
-/// The thunks that `ZigGeneratedClasses.image.cpp` calls (src/codegen/generate-classes.ts). src/runtime/generated_classes.rs
-/// says why what is generated trips each of these lints.
+/// The thunks that `ZigGeneratedClasses.bun_image.cpp` calls (src/codegen/generate-classes.ts). src/runtime/generated_classes.rs
+/// says why what is generated is not FFI-safe and has those closures. `js_Image` is the name that is not snake case.
 #[allow(non_snake_case, improper_ctypes, clippy::redundant_closure)]
 pub(crate) mod generated_classes {
     include!(concat!(
         env!("BUN_CODEGEN_DIR"),
-        "/generated_classes.image.rs"
+        "/generated_classes.bun_image.rs"
     ));
 }
 

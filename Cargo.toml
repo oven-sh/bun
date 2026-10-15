@@ -2,10 +2,10 @@
 resolver = "2"
 members = [
   "src/bun_all",
-  "src/image",
   "src/check_command",
   "src/csrf_jsc",
   "src/format_command",
+  "src/image",
   "src/lint_command",
   "src/typescript_libs",
   "src/opaque",

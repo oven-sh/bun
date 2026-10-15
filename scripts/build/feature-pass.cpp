@@ -1,10 +1,10 @@
 // Puts what is compiled for features into an island, which `bun build --compile --compile-exclude-features` can leave out
 // (src/bun_core/feature.rs says what a feature and an island are, src/exe_features leaves them out).
 //
-// An LLVM pass, as a plugin, because that is what every compiler bun is built with has in common:
+// An LLVM pass, as a plugin, because that is what rustc and clang have in common:
 //
 //   BUN_ISLAND=7 rustc -Zllvm-plugins=<this>
-//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-island=7 -mllvm -bun-island-directory=<of the crate>
+//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-island=7 -mllvm -bun-island-directory=<of the crate or the library>
 //
 // rustc reads its options before it loads a plugin. ccache knows nothing of the environment.
 //
@@ -43,7 +43,7 @@ bool isThisUnitsAlone(const GlobalObject& global)
         && !global.hasLinkOnceLinkage() && !global.hasSection();
 }
 
-// Whether an inline function or a template is the island's is a matter of where it is written: in the directory of the crate,
+// Whether an inline function or a template is the island's is a matter of where it is written: in that directory,
 // or in a header of WebKit's, say, that Bun includes too. That is the same code that Bun has or could have, and the linker
 // keeps one copy for all. One that was made for a type or a lambda that only this unit can name is one that only this
 // unit can name.

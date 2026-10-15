@@ -906,9 +906,9 @@ pub mod fs {
 
     /// A directory whose read failed, with the error. A failed read is cached
     /// nowhere, so whoever needed the listing reports it.
-    pub struct DirReadFailure {
-        pub dir: Box<[u8]>,
-        pub err: crate::Error,
+    pub(crate) struct DirReadFailure {
+        pub(crate) dir: Box<[u8]>,
+        pub(crate) err: crate::Error,
     }
 
     impl DirReadFailure {

@@ -1314,7 +1314,12 @@ describe("bundler", () => {
           useEffect(() => {});
           return props.on ? lib.version : typeof lib.useEffect;
         }
-        module.exports = { Direct, InBlock, Rebound, InArray, DefaultParameter };
+        function NoRequire(props) {
+          useEffect(() => {});
+          const state = { on: props.on };
+          return state.on ? "on" : "off";
+        }
+        module.exports = { Direct, InBlock, Rebound, InArray, DefaultParameter, NoRequire };
       `,
       "/node_modules/react/package.json": /* json */ `
         { "name": "react", "version": "19.0.0", "main": "index.js" }
@@ -1330,6 +1335,19 @@ describe("bundler", () => {
       `,
     },
     reactCompiler: true,
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      // The compiler moves the empty effect callback of a function that it compiles out of the function.
+      const isCompiled = (name: string) => {
+        const start = code.indexOf(`function ${name}(`);
+        return code.slice(start, code.indexOf("\n  }\n", start)).includes("useEffect(_temp");
+      };
+      expect(
+        Object.fromEntries(
+          ["InBlock", "Rebound", "InArray", "DefaultParameter", "NoRequire"].map(name => [name, isCompiled(name)]),
+        ),
+      ).toEqual({ InBlock: false, Rebound: false, InArray: false, DefaultParameter: false, NoRequire: true });
+    },
     run: {
       stdout: [
         "Direct 19.0.0 function",
@@ -1337,6 +1355,7 @@ describe("bundler", () => {
         "Rebound rebound/outer 19.0.0/outer",
         "InArray 19.0.0 off",
         "DefaultParameter 19.0.0 function",
+        "NoRequire on off",
       ].join("\n"),
     },
   });

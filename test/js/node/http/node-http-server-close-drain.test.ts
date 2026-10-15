@@ -1013,9 +1013,7 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
   }
 });
 
-// server.close(cb) waits for the last connection. Node counts a connection down when its socket is destroyed and
-// queues the server's 'close' from there, so nothing the program does with the socket's events can hold the
-// server's 'close' back: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918
+// Node queues the server's 'close' when the last socket is destroyed, not from that socket's events: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918
 // Node v26.3.0 prints the same line for each row, except where a comment gives its line.
 test(
   "server.close(cb) calls back, whatever the program does to the events of the last connection",
@@ -1039,10 +1037,9 @@ test(
       ],
       "a socket 'close' listener throws": ["server close", "close callback", "uncaught boom"],
       "the 'close' listener of an upgraded socket throws": ["server close", "close callback", "uncaught boom"],
-      // Node: server close, close callback, uncaught boom. This close carries an error, and Node emits the socket's
-      // 'close' in a later turn of the loop than its 'error'.
+      // Node: server close, close callback, uncaught boom. Node emits this socket's 'close' a turn of the loop after its 'error'.
       "the 'close' listener of a socket that sent one byte throws": ["uncaught boom", "server close", "close callback"],
-      // Node: server close, disposed, uncaught boom. Node emits the socket's 'close' in a later turn of the loop.
+      // Node: server close, disposed, uncaught boom. Node emits the socket's 'close' a turn of the loop later.
       "server[Symbol.asyncDispose]() waits and a socket 'close' listener throws": [
         "server close",
         "uncaught boom",
@@ -1058,8 +1055,7 @@ test(
       "closeAllConnections() closes the idle last connection": ["server close", "close callback", "uncaught boom"],
       "closeIdleConnections() closes the idle last connection": ["server close", "close callback", "uncaught boom"],
       "the peer closes the idle last connection": ["server close", "close callback", "uncaught boom"],
-      // Node: server close, close callback, uncaught boom. Here the listener's own close is delivered after this
-      // socket's close, and the server's 'close' waits for both.
+      // Node: server close, close callback, uncaught boom. Here the listener's own close is delivered after this socket's.
       "closeIdleConnections() and then socket.destroy() close the idle last connection": [
         "uncaught boom",
         "server close",
@@ -1078,8 +1074,7 @@ test(
         "close callback",
         "socket close",
       ],
-      // Node: server close, close callback, socket close. The sweep of close() closes this connection before the
-      // listener's own close is delivered.
+      // Node: server close, close callback, socket close. Here the listener's own close is delivered after this socket's.
       "close() itself closes the idle last connection": ["socket close", "server close", "close callback"],
       "a tunnel that is idle after the peer's FIN is destroyed": ["server close", "close callback"],
       "the response is destroyed with an error": ["clientError", "server close", "close callback"],

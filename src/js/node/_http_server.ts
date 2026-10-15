@@ -145,9 +145,7 @@ function emitCloseServer(self: Server) {
 function emitServerClose(self: Server) {
   self.emit("close");
 }
-// For the last connection of a plaintext server, closed with an error. Node emits that socket's 'error' ahead of the
-// server's 'close' (https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918), so the event waits one tick more.
-// The decision does not wait: a listen() from a listener of that socket does not hold the 'close' back.
+// Node emits a plaintext socket's 'error' ahead of the server's 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918
 function emitCloseServerAfterSocketError(self: Server) {
   if (takePendingClose(self)) process.nextTick(emitServerClose, self);
 }
@@ -1861,9 +1859,7 @@ function getNodeHTTPServerSocket() {
       if (tracked) {
         tracked.delete(this);
         if (tracked.size === 0 && server[kPendingDrainClose]) {
-          // Queued from this frame, like Node's Socket.prototype._destroy, not from a listener on the socket.
-          // Over TLS Node counts the raw socket, which TLSWrap.prototype.close destroys first, so there the
-          // 'error' does not go ahead: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L684-L687
+          // Not a listener on the socket. Over TLS Node destroys the counted raw socket before the 'error': https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L684-L687
           process.nextTick(
             (errored || this.#closeError) && !this.encrypted ? emitCloseServerAfterSocketError : emitCloseServer,
             server,

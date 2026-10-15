@@ -241,7 +241,7 @@ function cppHeaderForUnion(type: UnionType): string {
 }`;
       if (alternative.type instanceof UnitType) return `result.tag = ${i};\nreturn;`;
       const convert = alternative.type.convertsInPlace
-        ? alternative.type.cppConvertInto(member, "value", "ctx", "")
+        ? alternative.type.cppConvertInto(`${member}.emplace()`, "value", "ctx", "")
         : `${member} = ::Bun::convertIDL<${alternative.type.idlType}>(lexicalGlobalObject, value, ctx);`;
       return `result.tag = ${i};\nscope.release();\n${convert}\nreturn;`;
     });
@@ -254,10 +254,10 @@ function cppHeaderForUnion(type: UnionType): string {
 namespace Bun {
 namespace Bindgen {
 namespace Generated {
-// A member for each alternative, so that the one \`tag\` names is converted where it stays.
+// A member for each alternative, so that the one \`tag\` names is converted where it stays. A large one is made when chosen.
 struct ${name} {
 ${cppDefaultConstructor(name)}
-${held.map(a => `    ${implementationType(a.type)} ${a.name};`).join("\n")}
+${held.map(a => `    ${a.type.convertsInPlace ? `::std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
     ::std::uint8_t tag;
 };
 struct Extern${name} {
@@ -279,7 +279,7 @@ template<> struct ExternTraits<Generated::${name}> {
 ${held
   .map(
     a => `        case ${alternatives.indexOf(a)}:
-            result.data.${a.name} = ExternTraits<${implementationType(a.type)}>::convertToExtern(::std::move(value.${a.name}));
+            result.data.${a.name} = ExternTraits<${implementationType(a.type)}>::convertToExtern(::std::move(${a.type.convertsInPlace ? "*" : ""}value.${a.name}));
             break;`,
   )
   .join("\n")}
@@ -444,7 +444,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
     if (member.type instanceof DefaultType) {
       const absent = member.type.onNull ? "isUndefinedOrNull" : "isUndefined";
       body = `if (value${i}.${absent}()) {
-            result.${member.internalName} = ${member.type.toCpp(member.type.value)};
+            ${member.type.cppAssign(`result.${member.internalName}`, member.type.value).replaceAll("\n", "\n            ")}
         } else {
             ${convert.replaceAll("\n", "\n    ")}
         }`;
@@ -476,7 +476,7 @@ void Bun::Bindgen::Generated::convert${type.name}(JSC::JSGlobalObject& lexicalGl
 ${
   type.allowNonObject
     ? `    if (!object || object->isCallable()) {
-        result = ${type.toCpp({})};
+        ${type.cppAssign("result", {}).replaceAll("\n", "\n        ")}
         return;
     }`
     : `    if (!object) [[unlikely]] {
@@ -540,9 +540,12 @@ function cppDeclareConverted(type: Type, variable: string, value: string, ctx: s
   if (!absent) return [`${declaration};`, ...into];
   return [
     `${declaration};`,
-    `if (${absent})`,
-    `    ${variable} = ${type.toCpp(type.value)};`,
-    "else {",
+    `if (${absent}) {`,
+    ...type
+      .cppAssign(variable, type.value)
+      .split("\n")
+      .map(line => `    ${line}`),
+    "} else {",
     ...into.map(line => `    ${line}`),
     "}",
   ];

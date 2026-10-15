@@ -184,6 +184,10 @@ export abstract class Type {
 
   /** A C++ expression of `idlType::ImplementationType` for a default value written in the schema. */
   abstract toCpp(value: unknown): string;
+  /** C++ statements that give that value to `target`, which was just default-constructed. */
+  cppAssign(target: string, value: unknown): string {
+    return `${target} = ${this.toCpp(value)};`;
+  }
   /** The same value as a Rust expression of `rustType`. */
   toRust(value: unknown, scope: RustScope): string {
     throw new TypeError(`${this.tsType} cannot have a default`);
@@ -500,6 +504,10 @@ export class Utf8Type extends Type {
     assert(typeof value === "string");
     return `::Bun::Bindgen::JSStringUTF8View { ${asciiLiteral(value)} }`;
   }
+  cppAssign(target: string, value: unknown): string {
+    assert(typeof value === "string");
+    return `${target}.initialize(${asciiLiteral(value)});`;
+  }
   toRust(value: unknown): string {
     return `b${JSON.stringify(value)}`;
   }
@@ -792,6 +800,14 @@ export class OptionalType extends Type {
   toCpp(value: unknown): string {
     return value == null ? `${this.idlType}::nullValue()` : this.payload.toCpp(value);
   }
+  cppAssign(target: string, value: unknown): string {
+    if (!this.convertsInPlace) return super.cppAssign(target, value);
+    if (value == null) return "";
+    return this.payload.cppAssign(
+      this.payload.nullRepresentation === "optional" ? `${target}.emplace()` : target,
+      value,
+    );
+  }
   toRust(value: unknown, scope: RustScope): string {
     return value == null ? "None" : `Some(${this.payload.toRust(value, scope)})`;
   }
@@ -879,6 +895,9 @@ export class DefaultType extends Type {
   /** Of a value that is provided. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
     return this.payload.cppConvertInto(target, value, ctx, name);
+  }
+  cppAssign(target: string, value: unknown): string {
+    return this.payload.cppAssign(target, value);
   }
   layout(): Layout {
     return this.payload.layout();
@@ -1123,6 +1142,9 @@ export class DictionaryType extends NamedType {
     return this.members.flatMap(member => member.names);
   }
   toCpp(value: unknown): string {
+    return `[] { ${this.cpp} value; ${this.cppAssign("value", value).replaceAll("\n", " ")} return value; }()`;
+  }
+  cppAssign(target: string, value: unknown): string {
     assert(typeof value === "object" && value !== null);
     const given = value as Record<string, unknown>;
     for (const key of Object.keys(given))
@@ -1135,9 +1157,9 @@ export class DictionaryType extends NamedType {
       if (Object.hasOwn(given, member.name)) field = given[member.name];
       else if (member.type instanceof DefaultType) field = member.type.value;
       else assert(member.type.permitsUndefined, `missing key: ${member.name}`);
-      return `value.${member.internalName} = ${member.type.toCpp(field)};`;
+      return member.type.cppAssign(`${target}.${member.internalName}`, field);
     });
-    return `[] { ${this.cpp} value; ${fields.join(" ")} return value; }()`;
+    return fields.filter(text => text.length > 0).join("\n");
   }
   /** Every member can be left out. */
   get hasDefault(): boolean {
@@ -1213,9 +1235,12 @@ export class UnionType extends NamedType {
     return this.alternatives.map(a => a.type);
   }
   toCpp(value: unknown): string {
+    return `[] { ${this.cpp} value; ${this.cppAssign("value", value)} return value; }()`;
+  }
+  cppAssign(target: string, value: unknown): string {
     const unit = this.alternatives.find(a => a.type instanceof UnitType && a.type.tsType === String(value));
     assert(unit, `${this.name}: only null or undefined can be a default`);
-    return `[] { ${this.cpp} value; value.tag = ${this.alternatives.indexOf(unit)}; return value; }()`;
+    return `${target}.tag = ${this.alternatives.indexOf(unit)};`;
   }
   toRust(value: unknown, scope: RustScope): string {
     const unit = this.alternatives.find(

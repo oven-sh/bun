@@ -36,6 +36,12 @@ public:
             JSC::throwOutOfMemoryError(&globalObject, scope);
     }
 
+    void initialize(WTF::ASCIILiteral literal)
+    {
+        m_view = { nullptr, literal };
+        m_isNull = false;
+    }
+
     bool isNull() const { return m_isNull; }
 
     // Null data only when isNull().

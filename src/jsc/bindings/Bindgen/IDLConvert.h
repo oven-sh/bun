@@ -55,10 +55,17 @@ inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::JSV
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictUTF8String> : Bun::DefaultContextConverter<Bun::Bindgen::IDLStrictUTF8String> {
     template<Bun::IDLConversionContext Ctx>
-    static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringUTF8View& result)
+    ALWAYS_INLINE static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringUTF8View& result)
     {
         if (value.isString()) [[likely]]
             return result.initialize(globalObject, JSC::asString(value));
+        convertNonStringInto(globalObject, value, ctx, result);
+    }
+
+private:
+    template<Bun::IDLConversionContext Ctx>
+    NEVER_INLINE static void convertNonStringInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx, Bun::Bindgen::JSStringUTF8View& result)
+    {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (!Bun::Bindgen::isStringObject(value)) {
@@ -89,7 +96,15 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
 
 template<> struct WebCore::Converter<Bun::Bindgen::IDLLooseUTF8String> : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseUTF8String> {
     template<Bun::IDLConversionContext Ctx>
-    static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&, Bun::Bindgen::JSStringUTF8View& result)
+    ALWAYS_INLINE static void convertInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&, Bun::Bindgen::JSStringUTF8View& result)
+    {
+        if (value.isString()) [[likely]]
+            return result.initialize(globalObject, JSC::asString(value));
+        convertNonStringInto(globalObject, value, result);
+    }
+
+private:
+    NEVER_INLINE static void convertNonStringInto(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Bun::Bindgen::JSStringUTF8View& result)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);

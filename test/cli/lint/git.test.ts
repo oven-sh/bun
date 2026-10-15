@@ -737,6 +737,24 @@ test.concurrent.each(commands)("bun %s --staged only reads from the index what i
   expect(await reads()).toBe(true);
 });
 
+test.concurrent.each(commands)(
+  "bun %s --staged names a file whose staged version isn't in the clone",
+  async command => {
+    using repo = await repository({ "sub/partly.js": tidy });
+    const { root } = repo;
+    write(root, "sub/partly.js", before);
+    await git(root, "add", "-A");
+    write(root, "sub/partly.js", tidy);
+    // Otherwise `git diff` looks for the blob too, and fails first.
+    await git(root, "config", "diff.autoRefreshIndex", "false");
+    const id = (await git(root, "rev-parse", ":sub/partly.js")).trim();
+    rmSync(join(root, ".git/objects", id.slice(0, 2), id.slice(2)), { force: true });
+    const { stderr, exitCode } = await bun(join(root, "sub"), [command, "--staged"]);
+    expect(stderr).toContain(`--staged cannot read what is staged of partly.js (blob ${id})\n`);
+    expect(exitCode).toBe(2);
+  },
+);
+
 test.concurrent("bun lint --staged reads a file with a conflict from the disk", async () => {
   using repo = await repository({ "conflict.js": tidy, "whole.js": tidy });
   const { root } = repo;

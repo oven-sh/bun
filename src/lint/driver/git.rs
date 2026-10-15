@@ -273,14 +273,17 @@ impl<'e> Files<'e> {
         let input = [&ids.join(&b'\n')[..], b"\n"].concat();
         let read = self.git(&[b"cat-file", b"--batch"], &input)?;
         let mut rest = &read.stdout[..];
-        for (path, _) in wanted {
-            // `<ID> blob <size>`, a line break, the content, a line break.
+        for (path, id) in wanted {
+            // `<ID> blob <size>`, a line break, the content, a line break. Or `<ID> missing`, in a partial clone.
             let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
                 let size = strings::rsplit_once_char(first, b' ')?.1;
                 after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
             });
             let Some((content, after)) = content.filter(|_| read.is_ok) else {
-                return Err(self.unreadable(&read));
+                let shown = paths::relative(&self.environment.cwd, &path);
+                let (shown, id) = (bstr::BStr::new(&shown), bstr::BStr::new(id));
+                let first = format!("--staged cannot read what is staged of {shown} (blob {id})");
+                return Err(in_the_words_of_git(&first, &read));
             };
             self.in_the_index.insert(path, content.to_vec());
             rest = after.get(1..).unwrap_or_default();

@@ -572,7 +572,6 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
-    pub(crate) res: Resolution,
 }
 
 pub struct GitCommitRequest {

@@ -1,0 +1,10 @@
+x = class extends a
+// prettier-ignore
+.b {};
+
+class A extends c
+// prettier-ignore
+?.[d] {}
+
+y = class extends a // prettier-ignore
+.b {};

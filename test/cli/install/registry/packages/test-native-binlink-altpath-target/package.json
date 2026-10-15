@@ -2,7 +2,7 @@
   "_id": "test-native-binlink-altpath-target",
   "name": "test-native-binlink-altpath-target",
   "dist-tags": {
-    "latest": "3.0.0"
+    "latest": "4.0.0"
   },
   "versions": {
     "1.0.0": {
@@ -60,6 +60,25 @@
         "integrity": "sha512-FGsc/0SeLfozuFe2LUrUYyCoKVpxtF1Qgt+gMeluw28DKOEaERV1d8s2o+DaD0a+/jlb3dsSRRMV5wca3mHUXQ==",
         "shasum": "b1b381785a8690834073eef4b9d92ccc1b2a3347",
         "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-3.0.0.tgz"
+      }
+    },
+    "4.0.0": {
+      "name": "test-native-binlink-altpath-target",
+      "version": "4.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "_id": "test-native-binlink-altpath-target@4.0.0",
+      "dist": {
+        "integrity": "sha512-nFy+nSrqd+Id9wpIFbHYtYp3vJfO9nvxuMlHcBAHp36csP5Cnqfz/jkCmnjHUQxFNg0t5r+cqllCzAZD4k3icA==",
+        "shasum": "63a056dbd70ced7435dd653daef17245a9df3e42",
+        "tarball": "http://localhost:4873/test-native-binlink-altpath-target/-/test-native-binlink-altpath-target-4.0.0.tgz"
       }
     }
   }

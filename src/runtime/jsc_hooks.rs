@@ -101,6 +101,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
+    pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
 }
 
 thread_local! {
@@ -188,6 +190,23 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
+/// [`RuntimeState::lint`] of this thread's VM.
+#[inline]
+pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "lint_vm before init_runtime_state");
+    // SAFETY: as `global_dns_data`.
+    unsafe { &(*state).lint }
+}
+
+/// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
+pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
+    // SAFETY: this thread's state, and no `lint_vm()` borrow is live: the caller runs no JavaScript.
+    unsafe { (*state).lint.take() }
+}
+
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
 /// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
 /// `All.wtf_timers` heap exists for exactly that), and the
@@ -216,10 +235,9 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// Note: lives here (high tier) because the storage slot
 /// (`RareData.default_client_ssl_ctx`) is in `bun_jsc` but population requires
 /// `RuntimeState.ssl_ctx_cache` (this crate). The cached `SSL_CTX*` is held
-/// for the VM's lifetime so the weak-cache entry never tombstones.
+/// until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
 pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
-    let rare = vm.as_mut().rare_data();
-    if rare.default_client_ssl_ctx.is_none() {
+    if vm.as_mut().rare_data().default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
         let state = runtime_state();
         debug_assert!(
@@ -235,17 +253,23 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // rejectUnauthorized:true) verifies real servers. Route through the
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
-        // digest. The +1 ref returned here is held for the VM's lifetime, so
-        // the entry never tombstones.
-        match cache.get_or_create_opts(&Default::default(), &mut err) {
-            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
+        // digest. The +1 ref returned here is held, so the entry never tombstones.
+        let ctx = if vm.tls_default_ciphers().is_some() {
+            cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
+        } else {
+            cache.get_or_create_opts(&Default::default(), &mut err)
+        };
+        match ctx {
+            Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
                 bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
             )),
         }
     }
-    rare.default_client_ssl_ctx
+    vm.as_mut()
+        .rare_data()
+        .default_client_ssl_ctx
         .as_ref()
         .unwrap()
         .as_ptr()
@@ -347,6 +371,7 @@ unsafe fn init_runtime_state(
         },
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        lint: core::cell::OnceCell::new(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -411,42 +436,26 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
+                    t.options.global_cache = opts.global_cache;
+                    t.resolver.opts.global_cache = opts.global_cache;
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
-                    let wake_ctx: *mut bun_jsc::async_module::WakeContext = &raw mut **(*state)
+                    let wake_ctx: &mut bun_jsc::async_module::WakeContext = &mut **(*state)
                         .wake_ctx
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
                             handle: (*vm).handle(),
                             kind: (*vm).current_loop_kind(),
                         }));
-                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
-                        context: core::ptr::NonNull::new(wake_ctx.cast()),
-                        handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
-                        on_dependency_error: Some({
-                            unsafe fn adapter(
-                                ctx: *mut core::ffi::c_void,
-                                dep: &bun_resolver::install_types::Dependency,
-                                id: bun_resolver::install_types::DependencyID,
-                                err: &'static str,
-                            ) {
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
-                                unsafe {
-                                    bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                            .cast(),
-                                        dep,
-                                        id,
-                                        err,
-                                    )
-                                }
-                            }
-                            adapter
+                    t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler(
+                        Some(bun_resolver::install_types::WakeTarget {
+                            context: core::ptr::NonNull::from(wake_ctx).cast(),
+                            handler: bun_jsc::async_module::Queue::on_wake_handler,
                         }),
-                    };
+                    );
                     // Branch on `opts.graph` here — with a module graph,
                     // auto_jsx=true would
                     // `read_dir_info(cwd)` and cache its tsconfig.json BEFORE
@@ -3787,7 +3796,10 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
 
 /// `Fs.Path.loader(&jsc_vm.transpiler.options.loaders)` — re-spelt against
 /// `bun_ast::LoaderHashTable` (= `StringArrayHashMap<bun_ast::Loader>`).
-fn loader_for_path(path: &Fs::Path<'_>, loaders: &bun_ast::LoaderHashTable) -> Option<Loader> {
+pub(crate) fn loader_for_path(
+    path: &Fs::Path<'_>,
+    loaders: &bun_ast::LoaderHashTable,
+) -> Option<Loader> {
     if path.is_data_url() {
         return Some(Loader::Dataurl);
     }
@@ -4215,11 +4227,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     'transpile_async: {
         let concurrent_loader = lr.loader.unwrap_or(Loader::File);
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let (has_loaded, is_in_preload, plugin_runner_is_none, store_enabled) = unsafe {
+        let (has_loaded, is_in_preload, has_plugins, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
                 (*jsc_vm).is_in_preload,
-                (*jsc_vm).plugin_runner.is_none(),
+                (*jsc_vm).global().has_plugins(),
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
@@ -4230,7 +4242,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             && !lr.is_main
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
-            && plugin_runner_is_none
+            && !has_plugins
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -4437,8 +4449,6 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     // launder provenance through a shared ref and the `&mut *jsc_vm` /
     // transpiler writes below would be UB under Stacked Borrows.
     let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
-    // Note: spec asserted `jsc_vm.plugin_runner != null` then dropped the
-    // assert ("not required for build.module()") — keep parity (no assert).
 
     let specifier_slice = specifier_str.to_utf8();
     let specifier = specifier_slice.slice();
@@ -4703,6 +4713,18 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
             )
         },
+        bun_io::AllocatorType::SpawnSync => {
+            // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
+            let vm = unsafe { &mut *bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr() };
+            // SAFETY: shared, as is the borrow of the call that is waiting on the loop.
+            let event_loop = unsafe { &*vm.rare_data_ptr() }
+                .existing_spawn_sync_event_loop()
+                .expect("a FilePoll of the spawnSync loop outlived it")
+                .event_loop_ptr()
+                .cast::<bun_jsc::event_loop::EventLoop>();
+            // SAFETY: owned by the VM's `RareData`.
+            unsafe { (*event_loop).event_loop_ctx() }
+        }
         bun_io::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (the global mini loop

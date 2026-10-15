@@ -184,7 +184,10 @@ impl PackageJSON {
     pub(crate) fn lists_dependencies(&self) -> bool {
         self.dependencies.map.count() > 0
             || self.package_manager_package_id != INVALID_PACKAGE_ID
-            || self.installed_dependency_rows.iter().any(|rows| !rows.is_empty())
+            || self
+                .installed_dependency_rows
+                .iter()
+                .any(|rows| !rows.is_empty())
     }
 
     /// What a package in node_modules has for `name`, the row that wins first.

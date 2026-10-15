@@ -285,13 +285,18 @@ impl PmVersionCommand {
         }
 
         // What `npm version` gives the three scripts.
-        let name = json.get(b"name").and_then(|name| name.as_string(&json_bump));
+        let name = json
+            .get(b"name")
+            .and_then(|name| name.as_string(&json_bump));
         let variables: [(&[u8], Option<&[u8]>); 6] = [
             (b"npm_command", Some(b"version".as_slice())),
             (b"npm_package_json", Some(package_json_path.as_bytes())),
             (b"npm_package_name", name),
             (b"npm_package_version", current_version),
-            (b"npm_old_version", Some(current_version.unwrap_or(b"0.0.0"))),
+            (
+                b"npm_old_version",
+                Some(current_version.unwrap_or(b"0.0.0")),
+            ),
             (b"npm_new_version", Some(new_version_str.as_slice())),
         ];
         for (key, value) in variables {

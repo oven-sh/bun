@@ -2323,7 +2323,9 @@ fn may_be_collapsed(
     use package_manager_real::Subcommand;
     !this.options.runtime_auto_install
         && !matches!(this.subcommand, Subcommand::Dedupe | Subcommand::Audit)
-        && this.lockfile.has_appended_match(name_hash, version, own_pick)
+        && this
+            .lockfile
+            .has_appended_match(name_hash, version, own_pick)
         && !this.lockfile.is_workspace_dependency(dependency_id)
 }
 
@@ -2335,10 +2337,8 @@ fn tarball_task(
     dependency_id: DependencyID,
     url: &[u8],
 ) -> crate::Result<Option<ResolvedPackageTask>> {
-    let task_id = Task::Id::for_npm_package(
-        this.lockfile.str(&name),
-        package.resolution.npm().version,
-    );
+    let task_id =
+        Task::Id::for_npm_package(this.lockfile.str(&name), package.resolution.npm().version);
     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
     let task = run_tasks::generate_network_task_for_tarball(
@@ -2439,7 +2439,13 @@ fn get_or_put_resolved_package_with_find_result(
                 this.lockfile.buffers.string_bytes.as_slice(),
                 this.lockfile.buffers.string_bytes.as_slice(),
             )
-            && !is_row_unplaced(this, &result.package, behavior, dependency_id, inside_bundle)
+            && !is_row_unplaced(
+                this,
+                &result.package,
+                behavior,
+                dependency_id,
+                inside_bundle,
+            )
             && !(reusable_range.is_some()
                 && may_be_collapsed(this, name_hash, version, dependency_id, id))
         {

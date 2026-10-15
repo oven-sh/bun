@@ -1152,7 +1152,7 @@ fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
             && ((text[i + 1] == 0x80 && (0xa8..=0xae).contains(&text[i + 2]))
                 || (text[i + 1] == 0x81 && (0xa6..=0xa9).contains(&text[i + 2])))
         {
-            let cp =0x2000 + (u32::from(text[i + 1] & 0x3f) << 6) + u32::from(text[i + 2] & 0x3f);
+            let cp = 0x2000 + (u32::from(text[i + 1] & 0x3f) << 6) + u32::from(text[i + 2] & 0x3f);
             let _ = write!(out, "‹U+{cp:04X}›");
             i += 3;
             continue;
@@ -1295,7 +1295,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             changes.push(change);
             continue;
         }
-        change.binary = [old, new].iter().flatten().any(|side| is_binary(path, side));
+        change.binary = [old, new]
+            .iter()
+            .flatten()
+            .any(|side| is_binary(path, side));
         // With the colon this is JSON only: no program starts like it.
         change.sourcemap = strings::ends_with(path, b".map")
             && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
@@ -1743,7 +1746,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             continue;
         }
         if c.binary {
-            Output::print(format_args!("Binary files differ ({})\n", binary_summary(c)));
+            Output::print(format_args!(
+                "Binary files differ ({})\n",
+                binary_summary(c)
+            ));
             continue;
         }
         // An empty file, added or removed, as git writes it: the ids of no file and of the empty file, and no hunk.

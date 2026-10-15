@@ -58,7 +58,10 @@ impl PackageManager {
     }
 
     fn has_git_env(&self) -> bool {
-        self.git_env.get().as_ref().is_some_and(|env| env.is_settled)
+        self.git_env
+            .get()
+            .as_ref()
+            .is_some_and(|env| env.is_settled)
     }
 }
 
@@ -88,7 +91,10 @@ pub(crate) enum Finalize {
     /// A checkout the cache already has.
     CachedCheckout(bun_sys::Dir),
     /// A fresh checkout, to strip and move into the cache.
-    PublishCheckout(CacheStaging, /* what `git ls-tree -r -z` printed */ Vec<u8>),
+    PublishCheckout(
+        CacheStaging,
+        /* what `git ls-tree -r -z` printed */ Vec<u8>,
+    ),
     Failed {
         staging: Option<CacheStaging>,
         err: Error,
@@ -178,9 +184,7 @@ fn finish_checkout(
     let _ = dir.delete_tree(b".bun-tag");
     let prepared = copy_linked_files(&dir, tree)
         .map_err(|err| ("replacing the links", err))
-        .and_then(|()| {
-            strip_node_modules(&dir).map_err(|err| ("cleaning \"node_modules\"", err))
-        })
+        .and_then(|()| strip_node_modules(&dir).map_err(|err| ("cleaning \"node_modules\"", err)))
         .and_then(|()| {
             bun_sys::File::openat(
                 dir.fd(),
@@ -265,7 +269,9 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
                 return matches!(entries[at].1, b"100644" | b"100755").then_some(at);
             };
             let path = link_target_path(entries[at].0, target)?;
-            at = entries.binary_search_by(|(listed, _)| (*listed).cmp(&path)).ok()?;
+            at = entries
+                .binary_search_by(|(listed, _)| (*listed).cmp(&path))
+                .ok()?;
         }
         None
     };

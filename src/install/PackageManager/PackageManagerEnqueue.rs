@@ -3319,54 +3319,42 @@ impl PackageManager {
         if held.is_empty() {
             return;
         }
-        let all = reachable::Options::all(0);
-        let before = reachable::packages(&self.lockfile, &self.lockfile.buffers.resolutions, all);
-        self.leave_out_broken_optional_dependencies(&held);
         let lockfile = &*self.lockfile;
-        let after = reachable::packages(lockfile, &lockfile.buffers.resolutions, all);
+        let all = reachable::Options::all(0);
+        let tree = reachable::packages(lockfile, &lockfile.buffers.resolutions, all);
+        let is_in_tree = |row: DependencyID| {
+            (lockfile.get_parent_pkg_of_dependency(row))
+                .is_none_or(|owner| tree.is_set(owner as usize))
+        };
         let log = self.log_mut();
         for (about, msgs) in held {
-            // `Some(true)`: something in `tree` cannot do without it.
-            let needed_in = |tree: &bun_collections::DynamicBitSet| -> Option<bool> {
-                let is_in_tree = |row: DependencyID| {
-                    (lockfile.get_parent_pkg_of_dependency(row))
-                        .is_none_or(|owner| tree.is_set(owner as usize))
-                };
-                match about {
-                    HeldAbout::Row(row) => is_in_tree(row).then_some(true),
-                    HeldAbout::Task(id) => match self.task_queue.get(&id) {
-                        Some(waiters) if !waiters.is_empty() => waiters
-                            .iter()
-                            .filter_map(|waiter| match *waiter {
-                                TaskCallbackContext::Dependency(row)
-                                | TaskCallbackContext::RootDependency(row) => {
-                                    is_in_tree(row).then(|| {
-                                        lockfile.buffers.dependencies[row as usize]
-                                            .behavior
-                                            .is_required()
-                                    })
-                                }
-                                _ => Some(true),
-                            })
-                            .max(),
-                        _ => Some(true),
-                    },
-                }
+            // `Some(true)`: a row in the tree cannot do without it. `None`: dedupe dropped all that asked.
+            let is_needed = match about {
+                HeldAbout::Row(row) => is_in_tree(row).then_some(true),
+                HeldAbout::Task(id) => match self.task_queue.get(&id) {
+                    Some(waiters) if !waiters.is_empty() => waiters
+                        .iter()
+                        .filter_map(|waiter| match *waiter {
+                            TaskCallbackContext::Dependency(row)
+                            | TaskCallbackContext::RootDependency(row) => {
+                                is_in_tree(row).then(|| {
+                                    lockfile.buffers.dependencies[row as usize]
+                                        .behavior
+                                        .is_required()
+                                })
+                            }
+                            _ => Some(true),
+                        })
+                        .max(),
+                    _ => Some(true),
+                },
             };
-            let is_needed = match needed_in(&after) {
-                Some(is_needed) => is_needed,
-                // It went with an optional dependency.
-                None if needed_in(&before).is_some() => false,
-                None => continue,
+            let Some(is_needed) = is_needed else {
+                continue;
             };
             for mut msg in msgs {
-                match msg.kind {
-                    Kind::Err if !is_needed => msg.kind = Kind::Warn,
-                    // The row that needs it asked after the answer.
-                    Kind::Warn if is_needed && matches!(about, HeldAbout::Task(_)) => {
-                        msg.kind = Kind::Err;
-                    }
-                    _ => {}
+                if msg.kind == Kind::Err && !is_needed {
+                    msg.kind = Kind::Warn;
                 }
                 match msg.kind {
                     Kind::Err => log.errors += 1,
@@ -3376,59 +3364,6 @@ impl PackageManager {
                 log.msgs.push(msg);
             }
         }
-    }
-
-    /// Like npm, unbinds an optional dependency when the registry has nothing for a row it cannot do without.
-    fn leave_out_broken_optional_dependencies(&mut self, held: &[(HeldAbout, Vec<bun_ast::Msg>)]) {
-        use bun_collections::DynamicBitSet;
-        let lockfile = &*self.lockfile;
-        let lists = lockfile.packages.items_dependencies();
-        let owners = lockfile.packages.items_resolution();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let mut resolutions = lockfile.buffers.resolutions.clone();
-        // A row that is unresolved for another reason breaks nothing: the next install may resolve it.
-        let mut refused = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
-        for (about, _) in held {
-            match *about {
-                HeldAbout::Row(row) => refused.set(row as usize),
-                HeldAbout::Task(id) => {
-                    for waiter in self.task_queue.get(&id).into_iter().flatten() {
-                        if let TaskCallbackContext::Dependency(row) = *waiter {
-                            refused.set(row as usize);
-                        }
-                    }
-                }
-            }
-        }
-        let mut broken = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
-        loop {
-            let broken_before = broken.count();
-            for (owner, list) in lists.iter().enumerate() {
-                if (list.begin() as usize..list.end() as usize).any(|row| {
-                    (self.options).must_resolve(owners[owner].tag, dependencies[row].behavior)
-                        && match resolutions[row] {
-                            id if id == invalid_package_id => refused.is_set(row),
-                            id => broken.is_set(id as usize),
-                        }
-                }) {
-                    broken.set(owner);
-                }
-            }
-            if broken.count() == broken_before {
-                break;
-            }
-        }
-        for (resolved, dependency) in resolutions.iter_mut().zip(dependencies) {
-            if dependency.behavior.contains(Behavior::OPTIONAL)
-                && broken.is_set_allow_out_of_bound(*resolved as usize, false)
-                // `bun add --optional` reports what it could not add.
-                && !(self.update_requests.iter()).any(|request| request.matches(dependency, buf))
-            {
-                *resolved = invalid_package_id;
-            }
-        }
-        self.lockfile.buffers.resolutions = resolutions;
     }
 
     /// Reports the `Summary::offline_misses` the install cannot go on without; returns their count.

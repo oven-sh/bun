@@ -5483,124 +5483,91 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.each<{ name: string; registry: Record<string, Record<string, object>>; warning: string }>([
+  // While it lasts, the install fails and saves nothing, so the next one is whole.
+  it.each<{ name: string; failing: RegExp; status?: number; error: RegExp }>([
     {
-      name: "the registry does not have",
-      registry: { kept: { "1.0.0": { dependencies: { gone: "^3.0.0" } } } },
-      warning: "gone - 404",
+      name: "whose tarball answers 503",
+      failing: /\/short-[^/]+\.tgz$/,
+      status: 503,
+      error: /\/short-1\.0\.0\.tgz - 503$/,
     },
+    { name: "whose manifest answers 503", failing: /\/short$/, status: 503, error: /\/short - 503$/ },
+    { name: "that the registry does not have", failing: /\/short$/, status: 404, error: /\/short - 404$/ },
     {
-      name: "has no version for",
-      registry: { kept: { "1.0.0": { dependencies: { short: "^3.0.0" } } }, short },
-      warning: 'No version matching "^3.0.0" found for specifier "short" (but package exists)',
+      name: "that has no matching version",
+      failing: /\/short$/,
+      error: /^error: No version matching "\^1\.0\.0" found/,
     },
-    {
-      name: "needs through another package and the registry does not have",
-      registry: {
-        kept: { "1.0.0": { dependencies: { between: "1.0.0" } } },
-        between: { "1.0.0": { dependencies: { gone: "^3.0.0" } } },
-      },
-      warning: "gone - 404",
-    },
-  ])("an optional dependency is left out when it needs a package that it $name", async ({ registry, warning }) => {
+  ])("an optional dependency stays in the lockfile when it needs a package $name", async row => {
     await withContext(defaultOpts, async ctx => {
-      setContextHandler(
-        ctx,
-        heldRegistry(ctx, [], { holder: { "1.0.0": { optionalDependencies: { kept: "^1.0.0" } } }, ...registry }),
-      );
+      const registry: Record<string, Record<string, object>> = {
+        holder: { "1.0.0": { optionalDependencies: { kept: "^1.0.0" } } },
+        kept: { "1.0.0": { dependencies: { short: "^1.0.0" } } },
+        short: { "1.0.0": {} },
+      };
+      const answer = heldRegistry(ctx, [], registry);
+      const behind = heldRegistry(ctx, [], { short: { "0.0.1": {} } });
+      let faulty = true;
+      setContextHandler(ctx, request => {
+        if (!faulty || !row.failing.test(request.url)) return answer(request);
+        return row.status ? new Response(null, { status: row.status }) : behind(request);
+      });
       await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } });
-      // The second install shows that bun accepts the lockfile that leaves it out.
-      for (const { args, warnings } of [
-        { args: [], warnings: [expect.stringContaining(warning)] },
-        { args: ["--frozen-lockfile"], warnings: [] },
-      ]) {
+      const lockfile = () =>
+        file(join(ctx.package_dir, "bun.lock"))
+          .text()
+          .catch(() => null);
+      const runWhileFaulty = async (command: string) => {
+        faulty = true;
         await using proc = spawn({
-          cmd: [bunExe(), "install", ...args],
+          cmd: [bunExe(), command],
           cwd: ctx.package_dir,
           stdout: "ignore",
           stdin: "ignore",
           stderr: "pipe",
-          env,
+          env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
         });
         const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        const lines = err.split(/\r?\n/);
-        expect({
-          errors: lines.filter(line => line.startsWith("error:")),
-          warnings: lines.filter(line => line.startsWith("warn:")),
-          installed: await readdirSorted(join(ctx.package_dir, "node_modules")),
-        }).toEqual({ errors: [], warnings, installed: [".cache", "holder"] });
-        expect(exitCode).toBe(0);
-      }
+        faulty = false;
+        return {
+          errors: err.split(/\r?\n/).filter(line => line.startsWith("error:")),
+          lockfile: await lockfile(),
+          exitCode,
+        };
+      };
+
+      expect(await runWhileFaulty("install")).toEqual({
+        errors: expect.arrayContaining([expect.stringMatching(row.error)]),
+        lockfile: null,
+        exitCode: 1,
+      });
+      expect(await installAndReadLock(ctx)).toEqual({
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "short": "short@1.0.0",
+      });
+
+      const saved = await lockfile();
+      registry.kept["1.1.0"] = { dependencies: { short: "^2.0.0" } };
+      registry.short["2.0.0"] = {};
+      expect(await runWhileFaulty("update")).toEqual({
+        errors: expect.arrayContaining([expect.stringContaining("short")]),
+        lockfile: saved,
+        exitCode: 1,
+      });
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "holder", "kept", "short"]);
     });
   });
 
-  // A request that failed says nothing about the package.
-  it.each([
-    { name: "tarball", failing: /\/short-[^/]+\.tgz$/ },
-    { name: "manifest", failing: /\/short$/ },
-  ])(
-    "an optional dependency stays in the lockfile when the $name of a package that it needs answers 503",
-    async ({ failing }) => {
-      await withContext(defaultOpts, async ctx => {
-        const registry: Record<string, Record<string, object>> = {
-          holder: { "1.0.0": { optionalDependencies: { kept: "^1.0.0" } } },
-          kept: { "1.0.0": { dependencies: { short: "^1.0.0" } } },
-          short: { "1.0.0": {} },
-        };
-        const answer = heldRegistry(ctx, [], registry);
-        let busy = true;
-        setContextHandler(ctx, request =>
-          busy && failing.test(request.url) ? new Response("busy", { status: 503 }) : answer(request),
-        );
-        await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } });
-        const lockfile = () =>
-          file(join(ctx.package_dir, "bun.lock"))
-            .text()
-            .catch(() => null);
-        const runWhileBusy = async (command: string) => {
-          busy = true;
-          await using proc = spawn({
-            cmd: [bunExe(), command],
-            cwd: ctx.package_dir,
-            stdout: "ignore",
-            stdin: "ignore",
-            stderr: "pipe",
-            env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
-          });
-          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-          busy = false;
-          return {
-            failed: err.split(/\r?\n/).filter(line => / - 503$/.test(line)),
-            lockfile: await lockfile(),
-            exitCode,
-          };
-        };
-        const whole = { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "short": "short@1.0.0" };
-
-        expect(await runWhileBusy("install")).toEqual({
-          failed: [expect.stringMatching(/^error: GET .*\/short/)],
-          lockfile: null,
-          exitCode: 1,
-        });
-        expect(await installAndReadLock(ctx)).toEqual(whole);
-
-        const saved = await lockfile();
-        registry.kept["1.1.0"] = { dependencies: { short: "^2.0.0" } };
-        registry.short["2.0.0"] = {};
-        expect(await runWhileBusy("update")).toEqual({
-          failed: [expect.stringContaining("/short")],
-          lockfile: saved,
-          exitCode: 1,
-        });
-        expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-          ".cache",
-          "holder",
-          "kept",
-          "short",
-        ]);
+  it("an optional dependency that the registry does not have is left out when it is also a peer of a package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, heldRegistry(ctx, [], { holder: { "1.0.0": { peerDependencies: { gone: "^1.0.0" } } } }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { holder: "1.0.0" }, optionalDependencies: { gone: "^1.0.0" } },
       });
-    },
-  );
+      expect(await installAndReadLock(ctx)).toEqual({ "holder": "holder@1.0.0" });
+    });
+  });
 
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {

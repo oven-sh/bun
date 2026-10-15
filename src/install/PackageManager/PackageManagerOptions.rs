@@ -281,18 +281,6 @@ impl Options {
         }
     }
 
-    /// Whether the install fails when such a row of a `parent` package stays unresolved.
-    pub(crate) fn must_resolve(
-        &self,
-        parent: crate::resolution::Tag,
-        behavior: bun_install::Behavior,
-    ) -> bool {
-        // Unmet peers only warn (`warn_unmet_peer_dependency`).
-        !behavior.is_peer()
-            && !behavior.is_optional()
-            && behavior.is_enabled(self.dependency_features(parent))
-    }
-
     /// Resolve the registry scope for a (possibly @-scoped) package name.
     ///
     /// Hoisted onto `Options` so callers that already hold a borrow of

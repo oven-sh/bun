@@ -144,8 +144,14 @@ impl PackageManager {
                     continue;
                 }
 
-                if !(self.options).must_resolve(pkg_resolutions[parent_id].tag, failed_dep.behavior)
-                {
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
+                if failed_dep.behavior.is_peer() {
+                    continue;
+                }
+
+                let features = (self.options).dependency_features(pkg_resolutions[parent_id].tag);
+                // even if optional dependencies are enabled, it's still allowed to fail
+                if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
                     continue;
                 }
 

@@ -3916,9 +3916,7 @@ function copyHeaderValueArray(values: any[]): any[] {
   return copy;
 }
 
-// Folds a raw [name, value, ...] list into `object`, which backs sentHeaders, and appends the
-// fields to `wire`, the list to encode. The encoder reads `wire`: a caller that changes its own
-// list after the call does not change what a queued request() sends.
+// Folds a raw [name, value, ...] list into `object` (backs sentHeaders) and appends the fields to encode to `wire`.
 function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleValue: boolean, wire: any[] = []): any[] {
   for (let i = 0; i < list.length; i += 2) {
     const key = list[i];
@@ -3928,8 +3926,7 @@ function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleVa
       const length = value.length;
       const name = typeof key === "string" ? key : String(key);
       for (let j = 0; j < length; j++) {
-        // The object form and pushStream() refuse a null element (the encoder does). Same rule here,
-        // before the encoder runs. Node sends "null".
+        // The encoder refuses a null element in the object form. Same rule here, before it runs.
         if (value[j] == null) throw $ERR_HTTP2_INVALID_HEADER_VALUE(value[j], StringPrototypeToLowerCase.$call(name));
       }
       if (!strictSingleValue && length > 1 && name.charCodeAt(0) === 0x3a /* ':' */) {
@@ -3955,10 +3952,7 @@ function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleVa
   return wire;
 }
 
-// The checks that must run before the encoder sees a list that foldRawHeaders() built: the
-// single-value rule per field, then the value bytes the encoder refuses. A throw from the
-// encoder leaves the fields before it in the shared HPACK table, so each check runs first.
-// The value of :path is not checked here: request() reports a bad path on the stream.
+// Runs before the encoder, whose mid-block throw leaves fields in the shared HPACK table. request() checks :path itself.
 function assertRawHeaderList(list: any[], strictSingleValue: boolean) {
   if (strictSingleValue) {
     let seen: Set<string> | null = null;
@@ -6262,10 +6256,10 @@ class ClientHttp2Session extends Http2Session {
         // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
         // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
         // before a stream id is allocated AND before the concurrency queue, so queued requests are
-        // validated exactly like immediate ones. A raw list is read as the encoder reads it: the
-        // first :path field of the list (an array in that slot is one field per element).
+        // validated exactly like immediate ones.
         let path = headers[":path"];
         if (rawHeadersList !== null) {
+          // The first :path field of the list to encode.
           path = undefined;
           for (let i = 0; i < rawHeadersList.length; i += 2) {
             const key = rawHeadersList[i];

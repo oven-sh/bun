@@ -719,11 +719,12 @@ pub(crate) fn bind_served_peers(
     if served.is_empty() {
         return;
     }
-    for &row in list.items_dependencies().iter().flatten() {
-        if dependencies[row as usize].behavior.is_peer() {
-            served.retain(|&(dep_id, _)| dep_id != row);
-        }
-    }
+    let rows = list.items_dependencies().iter().flatten().copied();
+    let mut placed: Vec<DependencyID> = rows
+        .filter(|&row| dependencies[row as usize].behavior.is_peer())
+        .collect();
+    placed.sort_unstable();
+    served.retain(|&(dep_id, _)| placed.binary_search(&dep_id).is_err());
     for (dep_id, pkg_id) in served.drain(..) {
         resolutions[dep_id as usize] = pkg_id;
     }

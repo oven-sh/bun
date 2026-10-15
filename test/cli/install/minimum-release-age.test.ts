@@ -2502,7 +2502,7 @@ describe("minimum-release-age", () => {
         port: 0,
         fetch(req) {
           const { pathname, origin } = new URL(req.url);
-          const abbreviated = req.headers.get("accept")!.includes("application/vnd.npm.install-v1+json");
+          const abbreviated = req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json");
           const versions: Record<string, object> = {};
           for (const [version, scripts] of Object.entries(published)) {
             const tarball = `/${name}/-/${name}-${version}.tgz`;

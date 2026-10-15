@@ -215,7 +215,7 @@ static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
 fn get_temporary_directory_run(
     manager: &mut PackageManager,
 ) -> Result<TemporaryDirectory, DirectoryError> {
-    let cache_directory_fd = get_cache_directory(manager);
+    let cache_directory_fd = try_get_cache_directory(manager)?;
     let cache_directory = Dir::borrow(&cache_directory_fd);
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work

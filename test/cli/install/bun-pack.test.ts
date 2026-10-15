@@ -2992,31 +2992,37 @@ describe.concurrent("bundledDependencies", () => {
   });
 
   // Like npm: a link to a folder that is no installed copy is packed by that folder's own rules.
-  test.skipIf(isWindows)("a bundled workspace is packed with its own files and .npmignore", async () => {
-    using dir = tempDir("pack-bundled-sibling", {
-      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
-      "packages/lib/package.json": JSON.stringify({
-        name: "lib",
-        version: "1.0.0",
-        dependencies: { util: "workspace:*", other: "workspace:*" },
-        bundledDependencies: ["util", "other"],
-      }),
-      "packages/util/package.json": JSON.stringify({
-        name: "util",
-        version: "1.0.0",
-        files: ["dist"],
-        // `lib` is not packed into itself.
-        dependencies: { lib: "workspace:*", y: "1.0.0" },
-      }),
-      "packages/util/dist/index.js": indexJs,
-      "packages/util/src/index.ts": indexJs,
-      "packages/util/node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
-      "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
-      "packages/other/index.js": indexJs,
-      "packages/other/test/index.js": indexJs,
-      "packages/other/.npmignore": "test\n",
-      "node_modules": {},
+  test.skipIf(isWindows).each([
+    ["", "project"],
+    [", also below a folder named node_modules", "node_modules/project"],
+  ])("a bundled workspace is packed with its own files and .npmignore%s", async (_, project) => {
+    using parent = tempDir("pack-bundled-sibling", {
+      [project]: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { util: "workspace:*", other: "workspace:*" },
+          bundledDependencies: ["util", "other"],
+        }),
+        "packages/util/package.json": JSON.stringify({
+          name: "util",
+          version: "1.0.0",
+          files: ["dist"],
+          // `lib` is not packed into itself.
+          dependencies: { lib: "workspace:*", y: "1.0.0" },
+        }),
+        "packages/util/dist/index.js": indexJs,
+        "packages/util/src/index.ts": indexJs,
+        "packages/util/node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+        "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+        "packages/other/index.js": indexJs,
+        "packages/other/test/index.js": indexJs,
+        "packages/other/.npmignore": "test\n",
+        "node_modules": {},
+      },
     });
+    const dir = join(String(parent), project);
     for (const name of ["lib", "util", "other"]) {
       await symlink(join("..", "packages", name), join(dir, "node_modules", name));
     }

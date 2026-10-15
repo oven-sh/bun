@@ -783,7 +783,8 @@ fn add_bundled_dep(
     let mut json = parse();
 
     // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball.
-    let is_own_package = !strings::contains(&real_path, path::NODE_MODULES_NEEDLE);
+    let below_project = (real_path.strip_prefix(&*bundle.project_path)).unwrap_or(&real_path);
+    let is_own_package = !strings::contains(below_project, path::NODE_MODULES_NEEDLE);
     if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
         // Reading the other workspaces resets the `Store` that `json` is in.
         *manifests = Some(WorkspaceManifests::load(manager));

@@ -466,3 +466,33 @@ test("a check in a bundle of more files than there are threads, and more such bu
     0,
   ]);
 }, 60_000);
+
+// A page stands for the files of the project that it loads, not for what the project installed.
+test("bun build --check: a page does not name what it loads from node_modules", async () => {
+  const wrong = `export const n: number = "1";\n`;
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "own.ts": wrong,
+    "node_modules/pkg/index.ts": wrong,
+    "node_modules/loose.ts": wrong,
+    "own.html": page("./own.ts"),
+    "in-a-package.html": page("./node_modules/pkg/index.ts"),
+    "directly.html": page("./node_modules/loose.ts"),
+  });
+  const check = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--check", entry, "--outdir", "out-" + entry],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return [entry, [...new Set((stdout + stderr).match(/\bTS\d+/g))], exitCode];
+  };
+  expect(await Promise.all(["own.html", "in-a-package.html", "directly.html"].map(check))).toEqual([
+    ["own.html", ["TS2322"], 1],
+    ["in-a-package.html", [], 0],
+    ["directly.html", [], 0],
+  ]);
+});

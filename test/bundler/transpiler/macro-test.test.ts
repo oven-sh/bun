@@ -625,3 +625,54 @@ describe("--no-macros", () => {
     expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
   });
 });
+
+describe("a file in node_modules cannot run a macro", () => {
+  const macro = `
+    import { writeFileSync } from "node:fs";
+    export function f() {
+      writeFileSync("MACRO_RAN", "macro executed");
+      return "INLINED_RESULT";
+    }
+  `;
+  const importMacro = `import { f } from "./macro.js" with { type: "macro" };`;
+  const callers = {
+    "a call": `${importMacro}\nexport default f();\n`,
+    "a tagged template": `${importMacro}\nexport default f\`\`;\n`,
+  };
+  // A package manager puts no file directly in node_modules, but the guard is for all of node_modules.
+  const layouts = {
+    "in a package": { dir: "node_modules/pkg", file: "index.js", specifier: "pkg" },
+    "directly in node_modules": { dir: "node_modules", file: "loose.js", specifier: "loose.js" },
+  };
+  const commands = {
+    "bun build": ["build", "./entry.js", "--outdir", "dist"],
+    "Bun.build": ["run", "./build.js"],
+    "bun run": ["run", "./entry.js"],
+  };
+
+  for (const [callerName, caller] of Object.entries(callers)) {
+    for (const [layoutName, layout] of Object.entries(layouts)) {
+      test.concurrent.each(Object.entries(commands))(`${callerName} ${layoutName}: %s`, async (_, args) => {
+        using dir = tempDir("macro-node-modules", {
+          [`${layout.dir}/${layout.file}`]: caller,
+          [`${layout.dir}/macro.js`]: macro,
+          "entry.js": `import value from "${layout.specifier}";\nconsole.log(value);\n`,
+          "build.js": `await Bun.build({ entrypoints: ["./entry.js"], outdir: "dist" });\n`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toMatchObject({
+          stderr: expect.stringContaining("For security reasons, macros cannot be run from node_modules."),
+          exitCode: 1,
+        });
+        expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
+      });
+    }
+  }
+});

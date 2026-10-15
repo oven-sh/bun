@@ -188,6 +188,23 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A duplicate key is reported where the user can fix it. With the CLI backend, a warning that is not listed fails.
+  for (const [where, file, warnings] of [
+    ["outside node_modules", "/data.json", ['Duplicate key "a" in object literal']],
+    ["in a package", "/node_modules/pkg/data.json", []],
+    ["directly in node_modules", "/node_modules/data.json", []],
+  ] as const) {
+    itBundled(`bun/loader-json-duplicate-key, ${where}`, {
+      files: {
+        "/entry.ts": `import data from ".${file}";\nconsole.log(data.a);`,
+        [file]: `{"a": 1, "a": 2}`,
+      },
+      backend: "cli",
+      bundleWarnings: { [file]: [...warnings] },
+      run: { stdout: "2" },
+    });
+  }
+
   itBundled("bun/loader-toml-proto-key-is-own-property", {
     target: "bun",
     files: {
@@ -701,5 +718,27 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
       },
     });
+  });
+
+  // The dev server does not replace what is in node_modules while it runs, so a re-export from there is read once,
+  // without a getter.
+  describe("internal_bake_dev re-exports", () => {
+    for (const [where, dir, isLive] of [
+      ["outside node_modules", "/lib", true],
+      ["in a package", "/node_modules/pkg", false],
+      ["directly in node_modules", "/node_modules", false],
+    ] as const) {
+      itBundled(`bake-dev/re-export-live-binding, ${where}`, {
+        format: "internal_bake_dev",
+        files: {
+          "/entry.ts": `import { value } from ".${dir}/index.js";\nconsole.log(value);`,
+          [`${dir}/index.js`]: `export { value } from "./dep.js";`,
+          [`${dir}/dep.js`]: `export const value = 1;`,
+        },
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js").includes("get value()")).toBe(isLive);
+        },
+      });
+    }
   });
 });

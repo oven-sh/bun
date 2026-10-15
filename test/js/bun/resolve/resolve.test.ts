@@ -2094,6 +2094,25 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  // In node_modules the extension order puts .js before .ts. A directory there gets that order whether or not the
+  // specifier that names it ends in a separator.
+  it.each([
+    [".", "node_modules"],
+    ["./", "node_modules"],
+    ["./.", "node_modules"],
+    ["..", "node_modules/pkg"],
+    ["../", "node_modules/pkg"],
+    ["./..", "node_modules/pkg"],
+  ])("%j from %s resolves index.js, not index.ts", (specifier, from) => {
+    using dir = tempDir("resolve-dot-node-modules", {
+      "node_modules/index.ts": `export {};`,
+      "node_modules/index.js": `export {};`,
+      "node_modules/pkg/inside.js": `export {};`,
+    });
+    const resolved = Bun.resolveSync(specifier, join(String(dir), from));
+    expect(resolved.slice(resolved.lastIndexOf(sep) + 1)).toBe("index.js");
+  });
 });
 
 // On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.

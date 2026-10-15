@@ -1455,4 +1455,42 @@ describe("bundler", () => {
       run: { stdout: "1" },
     });
   });
+
+  // React Fast Refresh and the React Compiler are for the components of the application, not for those it installed.
+  describe.concurrent("a component in node_modules", () => {
+    for (const [where, file, isOfTheApplication] of [
+      ["outside node_modules", "/components/index.jsx", true],
+      ["in a package", "/node_modules/pkg/index.jsx", false],
+      ["directly in node_modules", "/node_modules/loose.jsx", false],
+    ] as const) {
+      const files = {
+        "/index.jsx": `import { Component } from ".${file}";\nconsole.log(Component.name);`,
+        [file]: `function useThing() { return 1; }\nexport function Component() { return <i>{useThing()}</i>; }`,
+      };
+      itBundled(`jsx/FastRefreshIsForTheApplication, ${where}`, {
+        files: {
+          ...files,
+          "/node_modules/react-refresh/runtime.js": /* js */ `
+            export const createSignatureFunctionForTransform = () => fn => fn;
+            export const register = () => {};
+          `,
+        },
+        backend: "cli",
+        external: ["react", "react/*"],
+        reactFastRefresh: true,
+        onAfterBundle(api) {
+          expect(api.readFile("out.js").includes("createSignatureFunctionForTransform()")).toBe(isOfTheApplication);
+        },
+      });
+      itBundled(`jsx/ReactCompilerIsForTheApplication, ${where}`, {
+        files,
+        backend: "cli",
+        external: ["react", "react/*"],
+        reactCompiler: true,
+        onAfterBundle(api) {
+          expect(api.readFile("out.js").includes("react/compiler-runtime")).toBe(isOfTheApplication);
+        },
+      });
+    }
+  });
 });

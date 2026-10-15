@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -922,6 +922,47 @@ describe("bundler", () => {
     },
     run: {
       stdout: "ok",
+    },
+  });
+  // What a tsconfig.json in node_modules asks for is not the user's to fix. With the CLI backend, a warning that is not
+  // listed fails.
+  for (const [where, base, warnings] of [
+    ["outside node_modules", "/base.json", ["moduleSuffixes is not supported yet"]],
+    ["in a package", "/node_modules/pkg/base.json", []],
+    ["directly in node_modules", "/node_modules/base.json", []],
+  ] as const) {
+    itBundled(`tsconfig/ModuleSuffixesWarning, ${where}`, {
+      files: {
+        "/entry.ts": `console.log("ran");`,
+        "/tsconfig.json": `{ "extends": ".${base}" }`,
+        [base]: `{ "compilerOptions": { "moduleSuffixes": [".a", ""] } }`,
+      },
+      backend: "cli",
+      bundleWarnings: { [base]: [...warnings] },
+      run: { stdout: "ran" },
+    });
+  }
+  // Whether the `extends` of a tsconfig.json in node_modules is followed does not depend on how deep in node_modules
+  // the file is. `factory.json` is only reached through that `extends`.
+  itBundled("tsconfig/ExtendsInNodeModulesIsTheSameAtEveryDepth", {
+    files: Object.fromEntries(
+      [
+        ["/in-a-package", "/node_modules/pkg"],
+        ["/directly", "/node_modules"],
+      ].flatMap(([project, dir]) => [
+        [`${project}/entry.jsx`, `console.log(<div />);`],
+        [`${project}/tsconfig.json`, `{ "extends": ".${dir}/base.json" }`],
+        [`${project}${dir}/base.json`, `{ "extends": "./factory.json" }`],
+        [`${project}${dir}/factory.json`, `{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }`],
+      ]),
+    ),
+    entryPoints: ["/in-a-package/entry.jsx", "/directly/entry.jsx"],
+    outdir: "/out",
+    outputPaths: ["/out/in-a-package/entry.js", "/out/directly/entry.js"],
+    external: ["react", "react/*"],
+    onAfterBundle(api) {
+      const factory = (file: string) => /(\w+)\("div"/.exec(api.readFile(file))![1];
+      expect(factory("/out/directly/entry.js")).toBe(factory("/out/in-a-package/entry.js"));
     },
   });
   return;

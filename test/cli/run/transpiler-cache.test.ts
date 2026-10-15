@@ -456,6 +456,51 @@ describe("transpiler cache", () => {
     });
   });
 
+  // The JSX settings of a project are part of the cache key of its own files. What it installed is not written in JSX
+  // unless it is named .jsx or .tsx, so one entry serves every project whatever its JSX settings are.
+  describe("JSX settings and node_modules", () => {
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "/").toString();
+    const run = (file: string, code: string, jsxFactory: string) => {
+      mkdirSync(join(temp_dir, file, ".."), { recursive: true });
+      writeFileSync(join(temp_dir, file), code + filler);
+      writeFileSync(join(temp_dir, "factories.js"), `globalThis.h1 = () => "h1";\nglobalThis.h2 = () => "h2";\n`);
+      writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory } }));
+      const result = Bun.spawnSync({ cmd: [bunExe(), "--preload", "./factories.js", file], cwd: temp_dir, env });
+      if (!result.success) throw new Error(result.stderr.toString());
+      return result.stdout.toString().trim();
+    };
+
+    test.each([
+      ["a file of the project", "src/index.js", false],
+      ["a .js file in a package", "node_modules/pkg/index.js", true],
+      ["a .js file directly in node_modules", "node_modules/loose.js", true],
+      ["a .jsx file in a package", "node_modules/pkg/index.jsx", false],
+      ["a .jsx file directly in node_modules", "node_modules/loose.jsx", false],
+    ])("%s without JSX", (_, file, keepsItsEntry) => {
+      const code = `console.log("ran");`;
+      expect(run(file, code, "h1")).toBe("ran");
+      expect(newCacheCount()).toBe(1);
+      const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+      const written = readFileSync(entry);
+      expect(run(file, code, "h2")).toBe("ran");
+      expect(newCacheCount()).toBe(0);
+      expect(readFileSync(entry).equals(written)).toBe(keepsItsEntry);
+    });
+
+    // A .js file there that has JSX all the same is transpiled with the settings of the run, not served from an
+    // entry that another run stored with its own.
+    test.each([
+      ["a file of the project", "src/index.js"],
+      ["a .js file in a package", "node_modules/pkg/index.js"],
+      ["a .js file directly in node_modules", "node_modules/loose.js"],
+      ["a .jsx file in a package", "node_modules/pkg/index.jsx"],
+      ["a .jsx file directly in node_modules", "node_modules/loose.jsx"],
+    ])("%s with JSX", (_, file) => {
+      const code = `console.log(<div />);`;
+      expect([run(file, code, "h1"), run(file, code, "h2")]).toEqual(["h1", "h2"]);
+    });
+  });
+
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.

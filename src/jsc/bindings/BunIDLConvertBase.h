@@ -9,7 +9,7 @@
 namespace Bun {
 
 template<typename T, IDLConversionContext Ctx>
-typename WebCore::Converter<T>::ReturnType convertIDL(
+ALWAYS_INLINE typename WebCore::Converter<T>::ReturnType convertIDL(
     JSC::JSGlobalObject& globalObject,
     JSC::JSValue value,
     Ctx& ctx)
@@ -22,7 +22,7 @@ typename WebCore::Converter<T>::ReturnType convertIDL(
 }
 
 template<typename T, IDLConversionContext Ctx>
-std::optional<typename WebCore::Converter<T>::ReturnType> tryConvertIDL(
+ALWAYS_INLINE std::optional<typename WebCore::Converter<T>::ReturnType> tryConvertIDL(
     JSC::JSGlobalObject& globalObject,
     JSC::JSValue value,
     Ctx& ctx)
@@ -51,17 +51,19 @@ template<typename IDL>
 struct DefaultTryConverter : DefaultContextConverter<IDL> {
     using typename DefaultContextConverter<IDL>::ReturnType;
 
+    // Inlined so that a value of the right type costs its test and nothing else.
     template<IDLConversionContext Ctx>
-    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    ALWAYS_INLINE static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto result = WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (result.has_value()) {
+        if (result.has_value()) [[likely]] {
+            scope.release();
             return std::move(*result);
         }
-        WebCore::Converter<IDL>::throwConversionFailed(globalObject, scope, ctx);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwConversionFailed(globalObject, scope, ctx);
         return ReturnType {};
     }
 
@@ -71,6 +73,13 @@ struct DefaultTryConverter : DefaultContextConverter<IDL> {
     {
         auto ctx = DefaultConversionContext {};
         return WebCore::Converter<IDL>::tryConvert(globalObject, value, ctx);
+    }
+
+private:
+    template<IDLConversionContext Ctx>
+    NEVER_INLINE static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        WebCore::Converter<IDL>::throwConversionFailed(globalObject, scope, ctx);
     }
 };
 

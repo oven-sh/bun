@@ -237,6 +237,18 @@ describe("dictionaries", () => {
     expect(Object.keys(seen)).toEqual(["count", "flag", "name", "color", "ratio", "payload", "renamed"]);
   });
 
+  it("a default written in the schema reaches every member, the nested ones included", () => {
+    expect(bindgen.describeDefaults()).toBe("inner: a=true b=7 name=inner; value: undefined; choice: none");
+    expect(bindgen.describeDefaults(undefined)).toBe("inner: a=true b=7 name=inner; value: undefined; choice: none");
+    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none");
+    expect(bindgen.describeDefaults({ inner: {} })).toBe(
+      "inner: a=true b=7 name=inner; value: undefined; choice: none",
+    );
+    expect(bindgen.describeDefaults({ inner: { a: false, name: "n" }, value: null, choice: true })).toBe(
+      "inner: a=false b=7 name=n; value: given; choice: true",
+    );
+  });
+
   it("returns ordinary objects", () => {
     const seen = bindgen.optionsEcho({ name: "a", renamed: 1 });
     expect(Object.getPrototypeOf(seen)).toBe(Object.prototype);

@@ -113,6 +113,12 @@ export function alternativesByKind(alternatives: readonly Type[]): Map<Kind | "o
   );
 }
 
+/** C++ statements that engage `optional`, a `std::optional`, and do to what it holds what `fill` says, given its name. */
+export function cppEmplace(optional: string, fill: (target: string) => string): string {
+  const target = `${optional.replace(/\W+/g, "_")}_value`;
+  return `auto& ${target} = ${optional}.emplace();\n${fill(target)}`;
+}
+
 export abstract class Type {
   /** `undefined` means "not provided". */
   get optional(): OptionalType {
@@ -184,7 +190,7 @@ export abstract class Type {
 
   /** A C++ expression of `idlType::ImplementationType` for a default value written in the schema. */
   abstract toCpp(value: unknown): string;
-  /** C++ statements that give that value to `target`, which was just default-constructed. */
+  /** C++ statements that give that value to `target`, which names an object that was just default-constructed. */
   cppAssign(target: string, value: unknown): string {
     return `${target} = ${this.toCpp(value)};`;
   }
@@ -200,7 +206,7 @@ export abstract class Type {
   get convertsInPlace(): boolean {
     return false;
   }
-  /** C++ statements that convert `value` into `target`, which was just default-constructed. */
+  /** C++ statements that convert `value` into `target`, which names an object that was just default-constructed. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
     return `${target} = ${this.cppConvert(value, ctx, name)};`;
   }
@@ -681,8 +687,9 @@ export class AnyType extends Type {
   get permitsUndefined(): boolean {
     return true;
   }
-  toCpp(): string {
-    throw new TypeError("b.any cannot have a default");
+  toCpp(value: unknown): string {
+    assert(value === undefined, "b.any cannot have a default");
+    return "::JSC::jsUndefined()";
   }
   toRust(): string {
     return "bindgen::JsValue::UNDEFINED";
@@ -794,8 +801,9 @@ export class OptionalType extends Type {
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
     }[this.kind];
-    const slot = this.payload.nullRepresentation === "optional" ? `${target}.emplace()` : target;
-    return `if (${provided}) {\n    ${this.payload.cppConvertInto(slot, value, ctx, name).replaceAll("\n", "\n    ")}\n}`;
+    const convert = (slot: string) => this.payload.cppConvertInto(slot, value, ctx, name);
+    const body = this.payload.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
+    return `if (${provided}) {\n    ${body.replaceAll("\n", "\n    ")}\n}`;
   }
   toCpp(value: unknown): string {
     return value == null ? `${this.idlType}::nullValue()` : this.payload.toCpp(value);
@@ -803,10 +811,10 @@ export class OptionalType extends Type {
   cppAssign(target: string, value: unknown): string {
     if (!this.convertsInPlace) return super.cppAssign(target, value);
     if (value == null) return "";
-    return this.payload.cppAssign(
-      this.payload.nullRepresentation === "optional" ? `${target}.emplace()` : target,
-      value,
-    );
+    const assign = (slot: string) => this.payload.cppAssign(slot, value);
+    return this.payload.nullRepresentation === "optional"
+      ? `{\n    ${cppEmplace(target, assign).replaceAll("\n", "\n    ")}\n}`
+      : assign(target);
   }
   toRust(value: unknown, scope: RustScope): string {
     return value == null ? "None" : `Some(${this.payload.toRust(value, scope)})`;
@@ -1238,8 +1246,8 @@ export class UnionType extends NamedType {
     return `[] { ${this.cpp} value; ${this.cppAssign("value", value)} return value; }()`;
   }
   cppAssign(target: string, value: unknown): string {
-    const unit = this.alternatives.find(a => a.type instanceof UnitType && a.type.tsType === String(value));
-    assert(unit, `${this.name}: only null or undefined can be a default`);
+    const unit = value == null && this.alternatives.find(a => a.type instanceof UnitType && takes(a.type, `${value}`));
+    assert(unit, `${this.name}: only null or undefined can be a default, and only for an alternative that takes it`);
     return `${target}.tag = ${this.alternatives.indexOf(unit)};`;
   }
   toRust(value: unknown, scope: RustScope): string {

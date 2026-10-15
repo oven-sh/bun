@@ -43,7 +43,20 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
     static constexpr bool conversionHasSideEffects = false;
 
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<T> tryConvert(
+    ALWAYS_INLINE static std::optional<T> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (value.isInt32() && std::in_range<T>(value.asInt32())) [[likely]] {
+            return static_cast<T>(value.asInt32());
+        }
+        return tryConvertSlow(globalObject, value, ctx);
+    }
+
+private:
+    template<Bun::IDLConversionContext Ctx>
+    NEVER_INLINE static std::optional<T> tryConvertSlow(
         JSC::JSGlobalObject& globalObject,
         JSC::JSValue value,
         Ctx& ctx)
@@ -104,6 +117,7 @@ struct WebCore::Converter<Bun::IDLStrictInteger<T>>
         return {};
     }
 
+public:
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(
         JSC::JSGlobalObject& globalObject,

@@ -170,3 +170,20 @@ export const overloaded = b.overloads(
     rustPath: "crate::bindgen_test::overloaded_counter",
   },
 );
+
+export const TestInner = b.dictionary({
+  a: b.bool.default(true),
+  b: b.i32.default(7),
+  name: b.string.utf8.default("inner"),
+});
+export const TestChoice = b.union({ none: b.null, flag: b.bool });
+export const TestOuter = b.dictionary({
+  inner: TestInner.nullable,
+  value: b.any,
+  choice: TestChoice,
+});
+/** What a default written in the schema gives each member, the nested ones included. */
+export const describeDefaults = b.fn({
+  args: { options: TestOuter.default({ inner: {} }) },
+  returns: b.string.utf8,
+});

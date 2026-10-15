@@ -4,6 +4,7 @@ import assert from "node:assert";
 import {
   asciiLiteral,
   ClassType,
+  cppEmplace,
   DefaultType,
   DictionaryType,
   EnumType,
@@ -241,7 +242,7 @@ function cppHeaderForUnion(type: UnionType): string {
 }`;
       if (alternative.type instanceof UnitType) return `result.tag = ${i};\nreturn;`;
       const convert = alternative.type.convertsInPlace
-        ? alternative.type.cppConvertInto(`${member}.emplace()`, "value", "ctx", "")
+        ? cppEmplace(member, target => alternative.type.cppConvertInto(target, "value", "ctx", ""))
         : `${member} = ::Bun::convertIDL<${alternative.type.idlType}>(lexicalGlobalObject, value, ctx);`;
       return `result.tag = ${i};\nscope.release();\n${convert}\nreturn;`;
     });

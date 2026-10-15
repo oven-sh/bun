@@ -8,8 +8,9 @@ use crate::bindgen::{
     WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestColor, TestCounterClass, TestCounterInternalFields as _, TestFailure,
-    TestHolderClass, TestOptions, TestOptionsEcho, TestTokenClass, TestValue,
+    TestAnything, TestChoice, TestColor, TestCounterClass, TestCounterInternalFields as _,
+    TestFailure, TestHolderClass, TestOptions, TestOptionsEcho, TestOuter, TestTokenClass,
+    TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
@@ -108,6 +109,26 @@ pub fn describe_anything<'a>(cx: &mut JsCall<'a>, value: TestAnything<'a>) -> Ve
         TestAnything::List(list) => format!("list {list:?}").into_bytes(),
         TestAnything::Options(options) => format!("options {}", options.count).into_bytes(),
     }
+}
+
+pub fn describe_defaults(options: TestOuter<'_>) -> Vec<u8> {
+    let inner = match options.inner {
+        Some(inner) => {
+            let name = bstr::BStr::new(inner.name);
+            format!("a={} b={} name={name}", inner.a, inner.b)
+        }
+        None => "none".to_owned(),
+    };
+    let value = if options.value.is_undefined() {
+        "undefined"
+    } else {
+        "given"
+    };
+    let choice = match options.choice {
+        TestChoice::None => "none".to_owned(),
+        TestChoice::Flag(flag) => flag.to_string(),
+    };
+    format!("inner: {inner}; value: {value}; choice: {choice}").into_bytes()
 }
 
 pub fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {

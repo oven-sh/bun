@@ -3,19 +3,74 @@
 
 use core::cmp::Ordering;
 
-/// Stable sort of `indices` by `cmp` (called with the two indices being compared).
+/// What the sorts of slices and `Vec`s below compare with. A `dyn FnMut` would do, but its vtable also has `call_once`, so each
+/// of their comparisons would be compiled twice.
+trait Compare {
+    fn compare(&mut self, a: u32, b: u32) -> Ordering;
+}
+
+impl<F: FnMut(u32, u32) -> Ordering> Compare for F {
+    #[inline]
+    fn compare(&mut self, a: u32, b: u32) -> Ordering {
+        self(a, b)
+    }
+}
+
+/// Either kind of comparison, so that both go through the same two instances of the standard library's sorts.
+enum By<'a> {
+    Function(&'a mut dyn FnMut(u32, u32) -> Ordering),
+    Comparison(&'a mut dyn Compare),
+}
+
+impl By<'_> {
+    #[inline]
+    fn compare(&mut self, a: u32, b: u32) -> Ordering {
+        match self {
+            By::Function(cmp) => cmp(a, b),
+            By::Comparison(cmp) => cmp.compare(a, b),
+        }
+    }
+}
+
 #[inline(never)]
+fn sort_stable(indices: &mut [u32], mut by: By<'_>) {
+    indices.sort_by(|&a, &b| by.compare(a, b));
+}
+
+#[inline(never)]
+fn sort_unstable(indices: &mut [u32], mut by: By<'_>) {
+    indices.sort_unstable_by(|&a, &b| by.compare(a, b));
+}
+
+/// Stable sort of `indices` by `cmp` (called with the two indices being compared).
 pub fn sort_indices(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Ordering) {
-    indices.sort_by(|&a, &b| cmp(a, b));
+    sort_stable(indices, By::Function(cmp));
 }
 
 /// Unstable sort of `indices` by `cmp`.
-#[inline(never)]
 pub fn sort_indices_unstable(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) -> Ordering) {
-    indices.sort_unstable_by(|&a, &b| cmp(a, b));
+    sort_unstable(indices, By::Function(cmp));
 }
 
-/// `0..len` as a `Vec<u32>`, the usual starting point for the sorts above.
+/// `0..len` in the order of `cmp`, ties in their order.
+#[inline(never)]
+fn sorted(len: usize, cmp: &mut dyn Compare) -> Vec<u32> {
+    let mut order = identity(len);
+    sort_stable(&mut order, By::Comparison(cmp));
+    order
+}
+
+/// `0..len` in the order of `cmp`, ties in any order.
+#[inline(never)]
+fn sorted_unstable(len: usize, cmp: &mut dyn Compare) -> Vec<u32> {
+    let mut order = identity(len);
+    sort_unstable(&mut order, By::Comparison(cmp));
+    order
+}
+
+/// `0..len` as a `Vec<u32>`, the usual starting point for the sorts above. Out of line: its vectorized loop is bigger than most
+/// of what calls it.
+#[inline(never)]
 pub fn identity(len: usize) -> Vec<u32> {
     (0..u32::try_from(len).expect("index sort length fits u32")).collect()
 }
@@ -38,8 +93,7 @@ pub fn sort_vec_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -> Orderin
     if items.len() < 2 {
         return;
     }
-    let mut order = identity(items.len());
-    sort_indices(&mut order, &mut |a, b| {
+    let order = sorted(items.len(), &mut |a: u32, b: u32| {
         cmp(&items[a as usize], &items[b as usize])
     });
     apply_permutation(items, &order);
@@ -50,8 +104,7 @@ pub fn sort_vec_unstable_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -
     if items.len() < 2 {
         return;
     }
-    let mut order = identity(items.len());
-    sort_indices_unstable(&mut order, &mut |a, b| {
+    let order = sorted_unstable(items.len(), &mut |a: u32, b: u32| {
         cmp(&items[a as usize], &items[b as usize])
     });
     apply_permutation(items, &order);
@@ -86,8 +139,7 @@ pub fn sort_slice_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering
     if items.len() < 2 {
         return;
     }
-    let mut order = identity(items.len());
-    sort_indices(&mut order, &mut |a, b| {
+    let mut order = sorted(items.len(), &mut |a: u32, b: u32| {
         cmp(&items[a as usize], &items[b as usize])
     });
     apply_permutation_in_place(items, &mut order);
@@ -98,9 +150,40 @@ pub fn sort_slice_unstable_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) ->
     if items.len() < 2 {
         return;
     }
-    let mut order = identity(items.len());
-    sort_indices_unstable(&mut order, &mut |a, b| {
+    let mut order = sorted_unstable(items.len(), &mut |a: u32, b: u32| {
         cmp(&items[a as usize], &items[b as usize])
+    });
+    apply_permutation_in_place(items, &mut order);
+}
+
+/// `items.sort()` through [`sort_slice_by`].
+pub fn sort_slice<T: Ord>(items: &mut [T]) {
+    sort_slice_by(items, T::cmp);
+}
+
+/// `items.sort_unstable()` through [`sort_slice_unstable_by`].
+pub fn sort_slice_unstable<T: Ord>(items: &mut [T]) {
+    sort_slice_unstable_by(items, T::cmp);
+}
+
+/// `items.sort_by_key(key)` through [`sort_slice_by`].
+pub fn sort_slice_by_key<T, K: Ord>(items: &mut [T], mut key: impl FnMut(&T) -> K) {
+    sort_slice_by(items, |a, b| key(a).cmp(&key(b)));
+}
+
+/// `items.sort_unstable_by_key(key)` through [`sort_slice_unstable_by`].
+pub fn sort_slice_unstable_by_key<T, K: Ord>(items: &mut [T], mut key: impl FnMut(&T) -> K) {
+    sort_slice_unstable_by(items, |a, b| key(a).cmp(&key(b)));
+}
+
+/// `items.sort_by_cached_key(key)`: stable, and `key` is called once for each element.
+pub fn sort_slice_by_cached_key<T, K: Ord>(items: &mut [T], key: impl FnMut(&T) -> K) {
+    if items.len() < 2 {
+        return;
+    }
+    let keys: Vec<K> = items.iter().map(key).collect();
+    let mut order = sorted(items.len(), &mut |a: u32, b: u32| {
+        keys[a as usize].cmp(&keys[b as usize])
     });
     apply_permutation_in_place(items, &mut order);
 }
@@ -130,6 +213,27 @@ mod tests {
         assert_eq!(a, b);
         sort_slice_unstable_by(&mut a, |x, y| y.cmp(x));
         b.sort_by(|x, y| y.cmp(x));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sorts_by_key_match_std() {
+        let mut a: Vec<(u64, usize)> = (0..1000).map(|i| ((i as u64 * 7919) % 257, i)).collect();
+        let mut b = a.clone();
+        sort_slice_by_key(&mut a, |it| it.0);
+        b.sort_by_key(|it| it.0);
+        assert_eq!(a, b);
+        sort_slice_by_cached_key(&mut a, |it| core::cmp::Reverse(it.0 % 10));
+        b.sort_by_cached_key(|it| core::cmp::Reverse(it.0 % 10));
+        assert_eq!(a, b);
+        sort_slice_unstable_by_key(&mut a, |it| it.1);
+        b.sort_unstable_by_key(|it| it.1);
+        assert_eq!(a, b);
+        sort_slice(&mut a);
+        b.sort();
+        assert_eq!(a, b);
+        a.reverse();
+        sort_slice_unstable(&mut a);
         assert_eq!(a, b);
     }
 

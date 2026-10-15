@@ -822,14 +822,15 @@ const SocketHandlers = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // `rejected`: the -errno of the send that failed for what a TLS handle still held of the pending write.
+  drain(socket, rejected?: number) {
     const self = socket.data;
     if (!self) return;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
@@ -1166,7 +1167,7 @@ const ServerHandlers = {
     if (typeof cb !== "function") return false;
     const wire = Buffer.isBuffer(protocolsWire) ? protocolsWire : Buffer.from(protocolsWire);
     const protocols: string[] = [];
-    for (let i = 0; i + 1 <= wire.length; ) {
+    for (let i = 0; i + 1 <= wire.length;) {
       const n = wire[i];
       protocols.push(wire.toString("latin1", i + 1, i + 1 + n));
       i += 1 + n;
@@ -1469,8 +1470,8 @@ const ServerHandlers = {
   timeout(socket) {
     SocketHandlers.timeout(socket);
   },
-  drain(socket) {
-    SocketHandlers.drain(socket);
+  drain(socket, rejected?: number) {
+    SocketHandlers.drain(socket, rejected);
   },
   binaryType: "buffer",
 } as const satisfies InternalServerHandler<SocketInstance>;
@@ -1679,14 +1680,15 @@ const SocketHandlers2 = {
     self.bytesRead += buffer.length;
     pushDataToSocket(self, socket, buffer);
   },
-  drain(socket) {
+  // See SocketHandlers.drain.
+  drain(socket, rejected?: number) {
     $debug("Bun.Socket drain");
     const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
     if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
-      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      const res = rejected ?? socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         self[kBytesWritten] = socket.bytesWritten;

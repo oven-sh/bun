@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -617,6 +617,28 @@ describe("literal fast path", async () => {
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
   });
+
+  // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
+  // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
+  test.skipIf(isWindows || isRoot)("a failed stat reports the path from cwd", () => {
+    using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
+    const unsearchable = path.join(String(dir), "packages", "a");
+    fs.chmodSync(unsearchable, 0o444);
+    try {
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir) })]).toThrow(
+        expect.objectContaining({ code: "EACCES", syscall: "fstatat", path: "packages/a/package.json" }),
+      );
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir), absolute: true })]).toThrow(
+        expect.objectContaining({
+          code: "EACCES",
+          syscall: "fstatat",
+          path: path.join(unsearchable, "package.json"),
+        }),
+      );
+    } finally {
+      fs.chmodSync(unsearchable, 0o755);
+    }
+  });
 });
 
 describe("trailing directory separator", async () => {
@@ -1199,6 +1221,42 @@ afterAll(() => {
   try {
     fs.rmSync(roDirRoot, { recursive: true, force: true });
   } catch {}
+});
+
+describe("extglob and brace sequences", () => {
+  const scan = (pattern: string, cwd: string) =>
+    Array.from(new Glob(pattern).scanSync({ cwd }))
+      .map(p => p.replaceAll("\\", "/"))
+      .sort();
+
+  test("scan finds the same files that match accepts", () => {
+    using dir = tempDir("glob-extglob", {
+      "a.js": "",
+      "b.js": "",
+      "c.js": "",
+      "a.test.js": "",
+      "1.txt": "",
+      "2.txt": "",
+      "3.txt": "",
+      "a/x.js": "",
+      "b/x.js": "",
+      "ab/x.js": "",
+      "c/x.js": "",
+      "app/(marketing)/page.js": "",
+      "app/marketing/page.js": "",
+    });
+    const cwd = String(dir);
+    expect(scan("@(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("+(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("!(a|b).js", cwd)).toEqual(["a.test.js", "c.js"]);
+    expect(scan("*.@(txt|md)", cwd)).toEqual(["1.txt", "2.txt", "3.txt"]);
+    expect(scan("{1..2}.txt", cwd)).toEqual(["1.txt", "2.txt"]);
+    expect(scan("@(a|b)/*.js", cwd)).toEqual(["a/x.js", "b/x.js"]);
+    expect(scan("+(a|b)/*.js", cwd)).toEqual(["a/x.js", "ab/x.js", "b/x.js"]);
+    expect(scan("**/!(x|page).js", cwd)).toEqual(["a.js", "a.test.js", "b.js", "c.js"]);
+    expect(scan("app/(marketing)/*.js", cwd)).toEqual(["app/(marketing)/page.js"]);
+    expect(scan("app/(marketing)/**", cwd)).toEqual(["app/(marketing)/page.js"]);
+  });
 });
 
 describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {

@@ -790,7 +790,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_openNodeInspector, (JSGlobalObject * globalO
 
     // The debugger evaluates what its client sends, whatever the engine's eval setting. Returned
     // for open() to throw: what is thrown from here it reports as a port that could not be bound.
-    if (Bun::mayNotMakeScriptFromStrings()) [[unlikely]]
+    if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
         return JSValue::encode(Bun::createCodeGenerationFromStringsError(globalObject));
 
     String requestedUrl = callFrame->argument(0).toWTFString(globalObject);

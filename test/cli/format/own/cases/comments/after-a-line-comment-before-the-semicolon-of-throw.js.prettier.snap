@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a() {
+  return b; // comment
+  /* comment */
+}
+throw (c, d); // comment
+/* comment */
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a() {
+  return b; // comment
+  /* comment */
+}
+throw (c, d); // comment
+/* comment */
+
+===================== End =====================

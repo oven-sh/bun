@@ -192,6 +192,13 @@ impl Walker {
                             kind,
                         }));
                     } else {
+                        // Every consumer copies or links the tree: what a removed directory held is not there.
+                        if self.stack[top_idx].iter.dir_was_removed() {
+                            return Err(sys::Error::from_code(
+                                sys::E::ENOENT,
+                                sys::Tag::getdents64,
+                            ));
+                        }
                         let item = self.stack.pop().unwrap();
                         if !self.stack.is_empty() {
                             item.iter.dir().close();

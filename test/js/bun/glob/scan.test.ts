@@ -1051,6 +1051,26 @@ describe.skipIf(!isLinux)("scan over entry names that are not valid UTF-8", () =
   });
 });
 
+// Linux answers getdents64(2) with ENOENT for a directory that was removed
+// after it was opened. That is the end of the listing, not a scan error.
+// /proc/self/fd/<n> names such a directory by path.
+test.skipIf(!isLinux)("scan of a directory that was removed after it was opened yields nothing", async () => {
+  using dir = tempDir("glob-scan-removed-dir", {});
+  const removed = path.join(String(dir), "removed");
+  fs.mkdirSync(removed);
+  const fd = fs.openSync(removed, "r");
+  try {
+    fs.rmdirSync(removed);
+    const cwd = `/proc/self/fd/${fd}`;
+    expect({
+      scanSync: [...new Glob("*").scanSync({ cwd })],
+      scan: await Array.fromAsync(new Glob("**/*").scan({ cwd, onlyFiles: false })),
+    }).toEqual({ scanSync: [], scan: [] });
+  } finally {
+    fs.closeSync(fd);
+  }
+});
+
 // `followSymlinks` controls whether wildcard traversal descends through
 // symlinked directories. A segment that names the symlink literally is an
 // explicit path the user wrote; it should resolve regardless, matching

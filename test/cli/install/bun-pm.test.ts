@@ -9,6 +9,7 @@ import {
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
+  removedDirReaddir,
   tempDir,
   tls,
   tmpdirSync,
@@ -1956,6 +1957,34 @@ describe.concurrent("bun pm cache rm", () => {
     expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual([]);
   });
 
+  // Something else can remove a directory of a bunx tree while this walk has it
+  // open: a second `bun pm cache rm`, a temp cleaner. Linux then answers
+  // getdents64(2) with ENOENT. `removedDirReaddir` preloads a shim that plays
+  // that remover from inside getdents64.
+  test.skipIf(!removedDirReaddir.available)("a bunx tree that something else is removing is removed", async () => {
+    const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
+    using side = tempDir("pm-cache-rm-vanishing-dir", { ...sideFiles, [`tmp/${bunx}/keep/file.txt`]: "x" });
+    using root = tempDir("pm-cache-rm-vanishing-dir-project", projectFiles);
+    mkdirSync(join(String(side), "tmp", bunx, "vanish-before-read"));
+    const log = join(String(side), "shim.log");
+    const { LD_PRELOAD, REMOVED_DIR_READDIR_LOG } = await removedDirReaddir.env(log);
+
+    expect(
+      await pmCache(
+        ["rm"],
+        join(String(root), "proj"),
+        cacheEnv(String(side), { LD_PRELOAD, REMOVED_DIR_READDIR_LOG }),
+      ),
+    ).toEqual({
+      stdout: "Cleared 'bun install' cache\nCleared 1 cached 'bunx' packages\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    // What the shim did: if it did not interpose, the output above is the same.
+    expect(removedDirReaddir.actions(log, String(side))).toEqual([`vanish-before-read tmp/${bunx}/vanish-before-read`]);
+    expect(await exists(join(String(side), "tmp", bunx))).toBeFalse();
+  });
+
   test("--dry-run prints what would be deleted and deletes nothing", async () => {
     const uid = isWindows ? undefined : process.getuid!();
     using side = tempDir("pm-cache-rm-dry-run", {
@@ -3295,3 +3324,40 @@ describe.concurrent("usage text keeps its indent", () => {
     });
   });
 });
+
+// The walker that copies or links a package skips nothing it cannot read. When
+// something else removes a directory of the package after the walker opened
+// it, the copy would lack what that directory held, so the install fails.
+// `removedDirReaddir` preloads a shim that plays that remover.
+describe.concurrent.skipIf(!removedDirReaddir.available)(
+  "bun install when a directory of a package is removed while it is copied",
+  () => {
+    test.each([
+      [[], "failed copying files from cache to destination for package dep"],
+      [["--backend=copyfile"], "failed copying files from cache to destination for package dep"],
+      [["--linker=isolated"], "failed to link package: dep@dep"],
+    ] as const)("%j", async (flags, message) => {
+      using dir = tempDir("install-vanishing-dir", {
+        "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+        "proj/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "proj/dep/index.js": "module.exports = 1;",
+        "proj/dep/lib/vanish-before-read/inner.txt": "x",
+      });
+      const log = join(String(dir), "shim.log");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...flags],
+        cwd: join(String(dir), "proj"),
+        env: { ...(await removedDirReaddir.env(log)), BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // The hardlink backend also reads its staged copy of the directory when it cleans up.
+      expect(removedDirReaddir.actions(log, String(dir))).toContain(
+        "vanish-before-read proj/dep/lib/vanish-before-read",
+      );
+      expect(stderr).toContain(message);
+      expect(exitCode).toBe(1);
+    });
+  },
+);

@@ -5,7 +5,6 @@
 
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
-#include "JSErrorHandler.h"
 #include "JSEventListener.h"
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -225,6 +224,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     auto* thisObject = protectedThis->m_thisObject.get();
     JSC::JSValue thisValue = thisObject ? thisObject : JSC::jsUndefined();
     auto fired = false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     for (auto& registeredListener : listeners) {
         // The below code used to be in here, but it's WRONG. Even if a listener is removed,
@@ -256,11 +256,16 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         fired = true;
-        WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
-        auto* exception = exceptionPtr.get();
+        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments);
+        auto* exception = scope.exception();
 
         if (exception) [[unlikely]] {
+            // The VM's stop is not the listener's error. Beneath script it stays pending and unwinds the caller of
+            // emit(); with no script beneath, this is the frame that takes it.
+            if (!scope.tryClearException()) {
+                Bun::takeTerminationOutsideScript(vm, scope);
+                return fired;
+            }
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -275,6 +280,9 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                 expcep.append(errorValue);
                 fireEventListeners(errorIdentifier, WTF::move(expcep));
             }
+            // A stop made by the handlers of that error, beneath script: the next listener is not entered on top of it.
+            if (scope.exception())
+                return fired;
         }
     }
 

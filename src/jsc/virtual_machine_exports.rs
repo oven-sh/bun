@@ -64,8 +64,8 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
-    // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
-    // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
+    // A TerminationException is not an error to report, and not this frame's to take: the frame that called the
+    // script leaves it pending beneath script and takes it outside script (WebCore::reportException alike).
     if !value.is_termination_exception() {
         let _ = global
             .bun_vm()

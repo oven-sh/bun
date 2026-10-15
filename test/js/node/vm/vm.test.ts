@@ -2297,6 +2297,60 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
   expect(exitCode).toBe(0);
 });
 
+// A timeout that lands in a listener that native code called for the script (process.emit(),
+// dispatchEvent(), abort()) ends the script there, as in Node. The dispatcher used to take the
+// termination as the listener's error and drop it: the next listener ran, the script went on after
+// the call, and the timeout was thrown only once the script had finished.
+test.concurrent("a vm timeout in a listener of emit(), dispatchEvent() or abort() ends the script", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails this test and does not hang it.
+      const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
+      const ran = [];
+      const second = () => ran.push("second listener");
+      process.on("spin", spin).on("spin", second);
+      const target = new EventTarget();
+      target.addEventListener("spin", spin);
+      target.addEventListener("spin", second);
+      const controller = new AbortController();
+      controller.signal.addEventListener("abort", spin);
+      controller.signal.addEventListener("abort", second);
+      const calls = {
+        "process.emit": () => process.emit("spin"),
+        "dispatchEvent": () => target.dispatchEvent(new Event("spin")),
+        "abort": () => controller.abort(),
+      };
+      for (const [name, call] of Object.entries(calls)) {
+        ran.length = 0;
+        let outcome;
+        try {
+          outcome = "returned " + vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { timeout: 50 });
+        } catch (e) {
+          outcome = "threw " + e.code;
+        }
+        console.log(name + ": " + outcome + " " + JSON.stringify(ran));
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "process.emit: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n" +
+      "dispatchEvent: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n" +
+      "abort: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
 // The following tests run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run
 // in a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // As in Node: microtasks a script left on an afterEvaluate context when its synchronous part timed out run

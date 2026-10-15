@@ -6,6 +6,7 @@ import { path } from "../test/common/fixtures";
 describe("crypto.hash", () => {
   test("throws for invalid arguments", () => {
     ([undefined, null, true, 1, () => {}, {}] as const).forEach(invalid => {
+      // @ts-expect-error
       expect(() => crypto.hash(invalid, "test")).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
@@ -14,6 +15,7 @@ describe("crypto.hash", () => {
     });
 
     [undefined, null, true, 1, () => {}, {}].forEach(invalid => {
+      // @ts-expect-error
       expect(() => crypto.hash("sha1", invalid)).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
@@ -22,6 +24,7 @@ describe("crypto.hash", () => {
     });
 
     [null, true, 1, () => {}, {}].forEach(invalid => {
+      // @ts-expect-error
       expect(() => crypto.hash("sha1", "test", invalid)).toThrow(
         expect.objectContaining({
           code: "ERR_INVALID_ARG_TYPE",
@@ -29,6 +32,7 @@ describe("crypto.hash", () => {
       );
     });
 
+    // @ts-expect-error
     expect(() => crypto.hash("sha1", "test", "not an encoding")).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_ARG_VALUE",
@@ -72,7 +76,7 @@ describe("crypto.hash", () => {
     "shake256",
   ].forEach(method => {
     test(`output matches crypto.createHash(${method})`, () => {
-      for (const outputEncoding of ["buffer", "hex", "base64", undefined]) {
+      for (const outputEncoding of ["buffer", "hex", "base64", undefined] as BufferEncoding[]) {
         const oldDigest = crypto
           .createHash(method)
           .update(input)
@@ -84,5 +88,33 @@ describe("crypto.hash", () => {
         expect(digestFromString).toEqual(oldDigest);
       }
     });
+  });
+});
+
+describe("crypto.verify", () => {
+  test("uses the signature bytes provided at call time", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const data = Buffer.from("data to sign");
+    const signature = crypto.sign("sha256", data, privateKey);
+    expect(crypto.verify("sha256", data, publicKey, signature)).toBe(true);
+
+    const publicPem = publicKey.export({ type: "spki", format: "pem" });
+    let passphraseReads = 0;
+    const verified = crypto.verify(
+      "sha256",
+      data,
+      {
+        key: publicPem,
+        format: "pem",
+        get passphrase() {
+          passphraseReads++;
+          signature.fill(0);
+          return undefined;
+        },
+      } as crypto.VerifyPublicKeyInput,
+      signature,
+    );
+    expect(passphraseReads).toBe(1);
+    expect(verified).toBe(true);
   });
 });

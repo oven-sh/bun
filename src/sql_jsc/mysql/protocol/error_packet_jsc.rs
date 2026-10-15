@@ -56,5 +56,3 @@ impl ErrorPacketJsc for ErrorPacket {
         .unwrap_or_else(|err| global.take_exception(err))
     }
 }
-
-// ported from: src/sql_jsc/mysql/protocol/error_packet_jsc.zig

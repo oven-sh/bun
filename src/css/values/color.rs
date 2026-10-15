@@ -17,7 +17,7 @@ use bun_alloc::Arena;
 use bun_core::strings;
 
 // ───────────────────────── colorspace structs ────────────────────────────
-// Field layout matches `color.zig`; every space is 3 channels + alpha.
+// Every space is 3 channels + alpha.
 
 /// A color with red, green, blue, and alpha components, in a byte each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub struct RGBA {
 
 impl RGBA {
     #[inline]
-    pub fn new(red: u8, green: u8, blue: u8, alpha: f32) -> RGBA {
+    pub(crate) fn new(red: u8, green: u8, blue: u8, alpha: f32) -> RGBA {
         RGBA {
             red,
             green,
@@ -40,7 +40,7 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn transparent() -> RGBA {
+    pub(crate) fn transparent() -> RGBA {
         RGBA {
             red: 0,
             green: 0,
@@ -50,15 +50,15 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn red_f32(self) -> f32 {
+    pub(crate) fn red_f32(self) -> f32 {
         self.red as f32 / 255.0
     }
     #[inline]
-    pub fn green_f32(self) -> f32 {
+    pub(crate) fn green_f32(self) -> f32 {
         self.green as f32 / 255.0
     }
     #[inline]
-    pub fn blue_f32(self) -> f32 {
+    pub(crate) fn blue_f32(self) -> f32 {
         self.blue as f32 / 255.0
     }
     #[inline]
@@ -67,7 +67,7 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn from_floats(red: f32, green: f32, blue: f32, alpha: f32) -> RGBA {
+    pub(crate) fn from_floats(red: f32, green: f32, blue: f32, alpha: f32) -> RGBA {
         RGBA {
             red: clamp_unit_f32(red),
             green: clamp_unit_f32(green),
@@ -86,22 +86,21 @@ impl RGBA {
         }
     }
 
-    /// Zig: `rgba.into(.HSL)` — routes RGBA → SRGB → HSL.
+    /// Routes RGBA → SRGB → HSL.
     #[inline]
     pub fn into_hsl(self) -> HSL {
         HSL::from_rgba(self)
     }
 
-    /// Zig: `rgba.into(.LAB)` — routes RGBA → SRGB → LAB.
+    /// Routes RGBA → SRGB → LAB.
     #[inline]
     pub fn into_lab(self) -> LAB {
         LAB::from_rgba(self)
     }
 
     /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
-    /// Zig: `ColorspaceConversions(@This()).tryFromCssColor`.
     #[inline]
-    pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
+    pub(crate) fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
         Some(SRGB::try_from_css_color(color)?.into_rgba())
     }
 }
@@ -122,8 +121,7 @@ impl RGBA {
 ///
 /// NaN → 0 (clamp passes NaN through; `NaN as u8` saturates to 0).
 ///
-/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates
-/// (`thumbhash.zig:256` `@intFromFloat`).
+/// NOTE: this *rounds*. Do **not** use for thumbhash, whose spec truncates.
 #[inline]
 pub(crate) fn clamp_unit_f32(val: f32) -> u8 {
     (val * 255.0).round().clamp(0.0, 255.0) as u8
@@ -165,11 +163,8 @@ pub enum FloatColor {
 // Variant dispatch — single source of truth for (Variant ↔ Payload type ↔
 // css-name ↔ hash-ordinal). Every match-over-all-variants in this file is
 // driven from the three `impl_variant_dispatch!` invocations below; do NOT
-// hand-roll a new copy.
-//
-// Mirrors Zig's `switch (color.*) { inline else => |*v| v.into(T) }` shape
-// (color.zig:3213 `ColorspaceConversions`) which the original Rust port
-// regressed into 14 textual copies inside `define_colorspace!`.
+// hand-roll a new copy (an earlier version
+// regressed into 14 textual copies inside `define_colorspace!`).
 //
 // ROW ORDER IS LOAD-BEARING: ordinals feed `CssColor::hash` (Wyhash).
 // css-name is NOT derivable from the ident: `XyzD65` serializes as `"xyz"`
@@ -360,7 +355,7 @@ pub enum SystemColor {
 }
 
 impl SystemColor {
-    pub(crate) fn is_compatible(self, browsers: &targets::Browsers) -> bool {
+    fn is_compatible(self, browsers: &targets::Browsers) -> bool {
         match self {
             SystemColor::Accentcolor | SystemColor::Accentcolortext => {
                 Feature::AccentSystemColor.is_compatible(browsers)
@@ -392,7 +387,7 @@ pub enum CssColor {
     System(SystemColor),
 }
 
-/// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
+/// `Result(CssColor)`.
 pub type ParseResult = css::CssResult<CssColor>;
 
 impl Default for CssColor {
@@ -403,19 +398,17 @@ impl Default for CssColor {
 }
 
 impl CssColor {
-    // TODO(port): move to *_jsc — `pub const jsFunctionColor = @import("../../css_jsc/color_js.zig").jsFunctionColor;`
-
     /// Parse a CSS `<color>` from the parser cursor.
     pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
 
         match token {
             css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {
-                let Some((r, g, b, a)) = css::color::parse_hash_color(v) else {
+                let Some(rgba) = css::color::parse_hash_color(v) else {
                     return Err(location.new_unexpected_token_error(token));
                 };
-                Ok(CssColor::Rgba(RGBA::new(r, g, b, a)))
+                Ok(CssColor::Rgba(rgba))
             }
             css::Token::Ident(value) => crate::match_ignore_ascii_case! { value, {
                 b"currentcolor" => Ok(CssColor::CurrentColor),
@@ -537,7 +530,7 @@ impl CssColor {
         }
     }
 
-    pub fn is_compatible(&self, browsers: &targets::Browsers) -> bool {
+    pub(crate) fn is_compatible(&self, browsers: &targets::Browsers) -> bool {
         match self {
             CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) => true,
             CssColor::Lab(lab) => match **lab {
@@ -560,7 +553,7 @@ impl CssColor {
     }
 
     /// Project this color into the given fallback colorspace.
-    pub fn get_fallback(&self, _arena: &Arena, kind: ColorFallbackKind) -> CssColor {
+    pub(crate) fn get_fallback(&self, _arena: &Arena, kind: ColorFallbackKind) -> CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
         }
@@ -573,7 +566,7 @@ impl CssColor {
         converted.unwrap_or_else(|| self.clone())
     }
 
-    pub fn get_fallbacks(
+    pub(crate) fn get_fallbacks(
         &mut self,
         _arena: &Arena,
         targets: &targets::Targets,
@@ -583,14 +576,12 @@ impl CssColor {
         let mut res = crate::SmallList::<CssColor, 2>::default();
 
         if fallbacks.contains(ColorFallbackKind::RGB) {
-            // PERF(port): was assume_capacity
             if let Some(rgb) = self.to_rgb() {
                 res.append(rgb);
             }
         }
 
         if fallbacks.contains(ColorFallbackKind::P3) {
-            // PERF(port): was assume_capacity
             if let Some(p3) = self.to_p3() {
                 res.append(p3);
             }
@@ -606,14 +597,14 @@ impl CssColor {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_necessary_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Get the full set of possible fallbacks, and remove the highest one, which
         // will replace the original declaration. The remaining fallbacks need to be added.
         let fallbacks = self.get_possible_fallbacks(targets);
         fallbacks.difference(fallbacks.highest())
     }
 
-    pub fn get_possible_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
+    pub(crate) fn get_possible_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
         // below and including the authored color space, and remove the ones that aren't
         // compatible with our browser targets.
@@ -691,11 +682,11 @@ impl CssColor {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _arena: &Arena) -> CssColor {
+    pub(crate) fn deep_clone(&self, _arena: &Arena) -> CssColor {
         self.clone()
     }
 
-    pub fn to_light_dark(&self) -> CssColor {
+    pub(crate) fn to_light_dark(&self) -> CssColor {
         match self {
             CssColor::LightDark { .. } => self.clone(),
             _ => CssColor::LightDark {
@@ -706,14 +697,14 @@ impl CssColor {
     }
 
     #[inline]
-    pub fn light_dark_owned(light: CssColor, dark: CssColor) -> CssColor {
+    pub(crate) fn light_dark_owned(light: CssColor, dark: CssColor) -> CssColor {
         CssColor::LightDark {
             light: Box::new(light),
             dark: Box::new(dark),
         }
     }
 
-    pub fn to_rgb(&self) -> Option<CssColor> {
+    pub(crate) fn to_rgb(&self) -> Option<CssColor> {
         if let CssColor::LightDark { light, dark } = self {
             return Some(CssColor::LightDark {
                 light: Box::new(light.to_rgb()?),
@@ -723,7 +714,7 @@ impl CssColor {
         Some(CssColor::Rgba(RGBA::try_from_css_color(self)?))
     }
 
-    pub fn to_p3(&self) -> Option<CssColor> {
+    pub(crate) fn to_p3(&self) -> Option<CssColor> {
         match self {
             CssColor::LightDark {
                 light: ld_light,
@@ -742,7 +733,7 @@ impl CssColor {
         }
     }
 
-    pub fn to_lab(&self) -> Option<CssColor> {
+    pub(crate) fn to_lab(&self) -> Option<CssColor> {
         match self {
             CssColor::LightDark {
                 light: ld_light,
@@ -764,7 +755,7 @@ impl CssColor {
     /// Mixes this color with another color, including the specified amount of each.
     /// Implemented according to the [`color-mix()`](https://www.w3.org/TR/css-color-5/#color-mix) function.
     // PERF: these little allocations feel bad
-    pub fn interpolate<T>(
+    pub(crate) fn interpolate<T>(
         &self,
         mut p1: f32,
         other: &CssColor,
@@ -880,8 +871,7 @@ impl CssColor {
         Some(result_color.into_css_color())
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload fields.
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Hash the discriminant + the active variant's f32 components explicitly;
         // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
         // padding → UB and non-deterministic hashes).
@@ -935,16 +925,16 @@ impl crate::generics::ToCss for CssColor {
     }
 }
 
-// `light_dark` payload helpers (Zig anonymous struct methods)
-// `takeLightFreeDark` / `takeDarkFreeLight` — in Rust, taking ownership of one
+// `light_dark` payload helpers
+// `takeLightFreeDark` / `takeDarkFreeLight` — taking ownership of one
 // `Box` and dropping the other is just destructuring; provided as free fns.
 #[inline]
-pub(crate) fn take_light_free_dark(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
+fn take_light_free_dark(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
     drop(dark);
     light
 }
 #[inline]
-pub(crate) fn take_dark_free_light(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
+fn take_dark_free_light(light: Box<CssColor>, dark: Box<CssColor>) -> Box<CssColor> {
     drop(light);
     dark
 }
@@ -963,11 +953,11 @@ bitflags::bitflags! {
 }
 
 impl ColorFallbackKind {
-    pub fn lowest(self) -> ColorFallbackKind {
-        ColorFallbackKind::from_bits_truncate(self.bits() & self.bits().wrapping_neg())
+    pub(crate) fn lowest(self) -> ColorFallbackKind {
+        ColorFallbackKind::from_bits_truncate(self.bits().isolate_lowest_one())
     }
 
-    pub fn highest(self) -> ColorFallbackKind {
+    pub(crate) fn highest(self) -> ColorFallbackKind {
         if self.is_empty() {
             return ColorFallbackKind::empty();
         }
@@ -975,14 +965,14 @@ impl ColorFallbackKind {
         ColorFallbackKind::from_bits_truncate(1u8 << zeroes)
     }
 
-    pub fn and_below(self) -> ColorFallbackKind {
+    pub(crate) fn and_below(self) -> ColorFallbackKind {
         if self.is_empty() {
             return ColorFallbackKind::empty();
         }
         self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
     }
 
-    pub fn supports_condition(self) -> css::SupportsCondition {
+    pub(crate) fn supports_condition(self) -> css::SupportsCondition {
         let s: &'static [u8] = match self.bits() {
             b if b == ColorFallbackKind::P3.bits() => b"color(display-p3 0 0 0)",
             b if b == ColorFallbackKind::LAB.bits() => b"lab(0% 0 0)",
@@ -997,15 +987,11 @@ impl ColorFallbackKind {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
-// BoundedColorGamut, UnboundedColorGamut, HslHwbColorGamut, DeriveInterpolate,
-// RecangularPremultiply, PolarPremultiply, AdjustPowerlessLAB/LCH,
-// ColorspaceConversions, ColorIntoMixin, ImplementIntoCssColor)
+// Colorspace traits
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
-/// first three struct fields plus `alpha`; here we expose them by index.
-/// `// TODO(port): could be derived with a proc-macro.`
+/// Trait every colorspace implements. The
+/// first three struct fields plus `alpha` are exposed by index.
 pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
@@ -1081,8 +1067,7 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     fn into_css_color(self) -> CssColor;
 }
 
-/// Gamut behavior — replaces UnboundedColorGamut / BoundedColorGamut /
-/// HslHwbColorGamut comptime mixins.
+/// Gamut behavior — in-gamut check and clipping per color space.
 pub trait ColorGamut: Sized + Copy {
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
@@ -1134,7 +1119,7 @@ fn lerp_components<T: Colorspace>(this: &T, p1: f32, other: &T, p2: f32) -> (f32
 // parse_color_function and component parsers
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn parse_color_function(
+pub(crate) fn parse_color_function(
     location: css::SourceLocation,
     function: &'static [u8],
     input: &mut css::Parser,
@@ -1189,10 +1174,20 @@ pub fn parse_color_function(
     }}
 }
 
-pub fn parse_rgb_components(
+/// The channels of an `rgb()` / `rgba()` call, up to but not including the
+/// alpha: 0..=255 in the legacy comma syntax, otherwise 0..=1 (NaN for `none`).
+pub(crate) struct RgbComponents {
+    pub(crate) r: f32,
+    pub(crate) g: f32,
+    pub(crate) b: f32,
+    /// `rgb(0, 0, 0, 0.5)`: the alpha that follows is comma-separated too.
+    pub(crate) is_legacy: bool,
+}
+
+pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-) -> CssResult<(f32, f32, f32, bool)> {
+) -> CssResult<RgbComponents> {
     let red = parser.parse_number_or_percentage(input)?;
 
     let is_legacy_syntax = parser.from.is_none()
@@ -1243,33 +1238,15 @@ pub fn parse_rgb_components(
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
-    Ok((r, g, b, is_legacy_syntax))
+    Ok(RgbComponents {
+        r,
+        g,
+        b,
+        is_legacy: is_legacy_syntax,
+    })
 }
 
-pub fn parse_hslhwb_components<T>(
-    input: &mut css::Parser,
-    parser: &mut ComponentParser,
-    allows_legacy: bool,
-) -> CssResult<(f32, f32, f32, bool)> {
-    // Zig name: parseHSLHWBComponents — acronym run collapses to one segment
-    let _ = core::marker::PhantomData::<T>; // autofix
-    let h = parse_angle_or_number(input, parser)?;
-    let is_legacy_syntax = allows_legacy
-        && parser.from.is_none()
-        && !h.is_nan()
-        && input.try_parse(|i| i.expect_comma()).is_ok();
-    let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax {
-        input.expect_colon()?;
-    }
-    let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
-    if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
-        return Err(input.new_custom_error(css::ParserError::invalid_value));
-    }
-    Ok((h, a, b, is_legacy_syntax))
-}
-
-pub(crate) fn map_gamut<T>(color: T) -> T
+fn map_gamut<T>(color: T) -> T
 where
     T: ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB> + Copy,
 {
@@ -1301,6 +1278,14 @@ where
         return T::from(oklch);
     }
 
+    // Per CSS Color 4, if clipping the origin is already within the JND, use
+    // the clip directly. Without this, colors sitting essentially on the gamut
+    // boundary (e.g. sRGB blue) get desaturated by the chroma search below.
+    let clipped = T::from(current).clip();
+    if delta_eok(clipped, current) < JND {
+        return clipped;
+    }
+
     let mut min: f32 = 0.0;
     let mut max = current.c;
 
@@ -1326,7 +1311,7 @@ where
     T::from(current)
 }
 
-pub(crate) fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
+fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     // https://www.w3.org/TR/css-color-4/#color-difference-OK
     let a: OKLAB = a_.into();
     let b: OKLAB = b_.into();
@@ -1338,7 +1323,7 @@ pub(crate) fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
-pub fn parse_lab<T>(
+pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     func: fn(f32, f32, f32, f32) -> LABColor,
@@ -1360,7 +1345,7 @@ where
     })
 }
 
-pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
+pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     func: fn(f32, f32, f32, f32) -> LABColor,
@@ -1389,7 +1374,9 @@ pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<O
 /// Parses the hsl() and hwb() functions.
 /// The results of this function are stored as floating point if there are any `none` components.
 /// https://drafts.csswg.org/css-color-4/#the-hsl-notation
-pub fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
+pub(crate) fn parse_hsl_hwb<
+    T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
+>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
@@ -1409,7 +1396,7 @@ pub fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + In
     })
 }
 
-pub fn parse_hsl_hwb_components<T>(
+pub(crate) fn parse_hsl_hwb_components<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
@@ -1436,7 +1423,10 @@ pub fn parse_hsl_hwb_components<T>(
     Ok((h, a, b, is_legacy_syntax))
 }
 
-pub fn parse_angle_or_number(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
+pub(crate) fn parse_angle_or_number(
+    input: &mut css::Parser,
+    parser: &ComponentParser,
+) -> CssResult<f32> {
     let result = parser.parse_angle_or_number(input)?;
     Ok(match result {
         css::color::AngleOrNumber::Number { value } => value,
@@ -1448,7 +1438,7 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
     // https://drafts.csswg.org/css-color-4/#rgb-functions
     input.parse_nested_block(|i| {
         parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
-            let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+            let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1491,38 +1481,14 @@ fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f
     Ok(res)
 }
 
-pub fn parse_number_or_percentage(
+pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
 ) -> CssResult<f32> {
-    let result = parser.parse_number_or_percentage(input)?;
-    Ok(match result {
-        NumberOrPercentage::Number { value } => value,
-        NumberOrPercentage::Percentage { unit_value } => unit_value,
-    })
+    Ok(parser.parse_number_or_percentage(input)?.unit_value())
 }
 
 impl LABColor {
-    pub fn new_lab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklab(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = OKLAB.new(...) }` which looks like a bug;
-        // mirrored as Lab variant for behavioral parity.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_lch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
-    pub fn new_oklch(l: f32, a: f32, b: f32, alpha: f32) -> LABColor {
-        // PORT NOTE: Zig had `LABColor{ .lab = LCH.new(...) }` (likely bug); mirrored.
-        LABColor::Lab(LAB { l, a, b, alpha })
-    }
-
     pub fn into_hsl(&self) -> HSL {
         HSL::from_lab_color(self)
     }
@@ -1559,8 +1525,7 @@ impl FloatColor {
 // Colorspace structs (LAB, SRGB, HSL, HWB, SRGBLinear, P3, A98, ProPhoto,
 // Rec2020, XYZd50, XYZd65, LCH, OKLAB, OKLCH)
 //
-// In Zig each struct manually wires `pub const X = mixin.X` for ~12 mixin
-// items. In Rust the trait impls below cover that surface; the per-type
+// The trait impls below cover the shared surface; the per-type
 // declarations collapse into a `define_colorspace!` macro invocation.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1777,8 +1742,8 @@ define_colorspace! {
     premultiply = rectangular;
     powerless = none;
     into_css = |srgb: &SRGB| {
-        // TODO: should we serialize as color(srgb, ...)?
-        // would be more precise than 8-bit color.
+        // Serializes through 8-bit RGBA, matching upstream lightningcss
+        // (`color(srgb, ...)` would be more precise but would change output).
         CssColor::Rgba(RGBA::from(*srgb))
     };
 }
@@ -1813,8 +1778,8 @@ define_colorspace! {
 define_colorspace! {
     /// A color in the [`sRGB-linear`](https://www.w3.org/TR/css-color-4/#predefined-sRGB-linear) color space.
     SRGBLinear { r, g, b }
-    // PORT NOTE: Zig had `.r = ChannelType{ .angle = true }` for SRGBLinear which looks like a bug;
-    // mirrored for parity.
+    // `r` intentionally uses the angle channel type (sic) — kept for
+    // behavioral compatibility.
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = bounded;
     premultiply = rectangular;
@@ -1916,9 +1881,9 @@ define_colorspace! {
 // ComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ComponentParser {
-    pub allow_none: bool,
-    pub from: Option<RelativeComponentParser>,
+pub(crate) struct ComponentParser {
+    pub(crate) allow_none: bool,
+    pub(crate) from: Option<RelativeComponentParser>,
 }
 
 impl ComponentParser {
@@ -1951,7 +1916,7 @@ impl ComponentParser {
         func(input, self)
     }
 
-    pub(crate) fn parse_from<T, C, F>(
+    fn parse_from<T, C, F>(
         &mut self,
         from: CssColor,
         input: &mut css::Parser,
@@ -1980,10 +1945,7 @@ impl ComponentParser {
         func(input, self)
     }
 
-    pub(crate) fn parse_number_or_percentage(
-        &self,
-        input: &mut css::Parser,
-    ) -> CssResult<NumberOrPercentage> {
+    fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
             if let Ok(res) =
                 input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
@@ -2006,7 +1968,7 @@ impl ComponentParser {
         }
     }
 
-    pub(crate) fn parse_angle_or_number(
+    fn parse_angle_or_number(
         &self,
         input: &mut css::Parser,
     ) -> CssResult<css::color::AngleOrNumber> {
@@ -2032,7 +1994,7 @@ impl ComponentParser {
         }
     }
 
-    pub(crate) fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
+    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
             {
@@ -2050,7 +2012,7 @@ impl ComponentParser {
         }
     }
 
-    pub(crate) fn parse_number(&self, input: &mut css::Parser) -> CssResult<f32> {
+    fn parse_number(&self, input: &mut css::Parser) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_number(i, from)) {
                 return Ok(res);
@@ -2069,7 +2031,7 @@ impl ComponentParser {
 }
 
 /// Helper trait so `parse_from` can build a light-dark wrapper for the result
-/// type `C`. (Zig used `C.lightDarkOwned`.)
+/// type `C`.
 pub(crate) trait LightDarkOwned: Sized {
     fn light_dark_owned(light: Self, dark: Self) -> Self;
 }
@@ -2097,7 +2059,7 @@ pub enum NumberOrPercentage {
 
 impl NumberOrPercentage {
     /// Return the value as a percentage.
-    pub(crate) fn unit_value(self) -> f32 {
+    fn unit_value(self) -> f32 {
         match self {
             NumberOrPercentage::Number { value } => value,
             NumberOrPercentage::Percentage { unit_value } => unit_value,
@@ -2109,14 +2071,14 @@ impl NumberOrPercentage {
 // RelativeComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct RelativeComponentParser {
-    pub names: (&'static [u8], &'static [u8], &'static [u8]),
-    pub components: (f32, f32, f32, f32),
-    pub types: (ChannelType, ChannelType, ChannelType),
+pub(crate) struct RelativeComponentParser {
+    pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
+    pub(crate) components: (f32, f32, f32, f32),
+    pub(crate) types: (ChannelType, ChannelType, ChannelType),
 }
 
 impl RelativeComponentParser {
-    pub(crate) fn new<C: Colorspace>(color: &C) -> RelativeComponentParser {
+    fn new<C: Colorspace>(color: &C) -> RelativeComponentParser {
         RelativeComponentParser {
             names: color.channels(),
             components: color.components(),
@@ -2124,7 +2086,7 @@ impl RelativeComponentParser {
         }
     }
 
-    pub(crate) fn parse_angle_or_number(
+    fn parse_angle_or_number(
         input: &mut css::Parser,
         this: &RelativeComponentParser,
     ) -> CssResult<css::color::AngleOrNumber> {
@@ -2141,12 +2103,10 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // PORT NOTE: Zig threads a stack `Angle` through `Calc(Angle).parseWith`
-        // via a closure that returns `Calc{ .value = &t.angle }` (raw stack
-        // pointer). Rust `Calc::Value` is `Box<V>`, so box the temporary.
+        // `Calc::Value` is `Box<V>`, so box the temporary `Angle`.
         if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Angle>::parse_with(i, this, |ctx, ident| {
-                let value = ctx.get_ident(ident, allowed)?;
+            match Calc::<Angle>::parse_with(i, &|ident| {
+                let value = this.get_ident(ident, allowed)?;
                 Some(Calc::Value(Box::new(Angle::Deg(value))))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
@@ -2161,7 +2121,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn parse_number_or_percentage(
+    fn parse_number_or_percentage(
         input: &mut css::Parser,
         this: &RelativeComponentParser,
     ) -> CssResult<NumberOrPercentage> {
@@ -2179,11 +2139,8 @@ impl RelativeComponentParser {
         }
 
         if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
-                let v = ctx.get_ident(ident, allowed)?;
-                // value variant is a *Percentage
-                // but we immediately dereference it and discard the pointer
-                // so using a field on this closure struct instead of making a gratuitous allocation
+            match Calc::<Percentage>::parse_with(i, &|ident| {
+                let v = this.get_ident(ident, allowed)?;
                 Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
@@ -2198,10 +2155,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn parse_percentage(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<f32> {
+    fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(value) = input
             .try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::PERCENTAGE))
         {
@@ -2209,8 +2163,8 @@ impl RelativeComponentParser {
         }
 
         if let Ok(value) = input.try_parse(|i| {
-            let calc_value = match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
-                let v = ctx.get_ident(ident, ChannelType::PERCENTAGE)?;
+            let calc_value = match Calc::<Percentage>::parse_with(i, &|ident| {
+                let v = this.get_ident(ident, ChannelType::PERCENTAGE)?;
                 Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(v) => v,
@@ -2227,10 +2181,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn parse_number(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<f32> {
+    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::NUMBER))
         {
@@ -2246,7 +2197,7 @@ impl RelativeComponentParser {
         Err(input.new_error_for_next_token())
     }
 
-    pub(crate) fn parse_ident(
+    fn parse_ident(
         input: &mut css::Parser,
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
@@ -2258,13 +2209,13 @@ impl RelativeComponentParser {
         }
     }
 
-    pub(crate) fn parse_calc(
+    fn parse_calc(
         input: &mut css::Parser,
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
-        if let Ok(calc_val) = Calc::<f32>::parse_with(input, this, |ctx, ident| {
-            let v = ctx.get_ident(ident, allowed_types)?;
+        if let Ok(calc_val) = Calc::<f32>::parse_with(input, &|ident| {
+            let v = this.get_ident(ident, allowed_types)?;
             Some(Calc::Number(v))
         }) {
             // PERF: I don't like this redundant allocation
@@ -2278,7 +2229,7 @@ impl RelativeComponentParser {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    pub(crate) fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
+    fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
         {
@@ -2309,7 +2260,6 @@ impl RelativeComponentParser {
 
 bitflags::bitflags! {
     /// A channel type for a color space.
-    /// TODO(zack): why tf is this bitflags?
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct ChannelType: u8 {
         /// Channel represents a percentage.
@@ -2325,7 +2275,7 @@ bitflags::bitflags! {
 // parse_predefined
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn parse_predefined(
+pub(crate) fn parse_predefined(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
 ) -> CssResult<CssColor> {
@@ -2337,7 +2287,7 @@ pub fn parse_predefined(
             None
         };
 
-        // PORT NOTE: reshaped for borrowck — detach the slice from the
+        // Reshaped for borrowck — detach the slice from the
         // `&mut self` borrow so `i` is reusable below.
         let colorspace = i.expect_ident_cloned()?;
 
@@ -2360,7 +2310,7 @@ pub fn parse_predefined(
     Ok(res)
 }
 
-pub fn parse_predefined_relative(
+pub(crate) fn parse_predefined_relative(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     colorspace: &'static [u8],
@@ -2402,7 +2352,7 @@ pub fn parse_predefined_relative(
         b"srgb" => PredefinedColor::Srgb(SRGB { r: a, g: b, b: c, alpha }),
         b"srgb-linear" => PredefinedColor::SrgbLinear(SRGBLinear { r: a, g: b, b: c, alpha }),
         b"display-p3" => PredefinedColor::DisplayP3(P3 { r: a, g: b, b: c, alpha }),
-        // PORT NOTE: Zig has "a99-rgb" here (typo?); mirrored for behavioral parity.
+        // "a99-rgb" (sic) — kept for behavioral compatibility.
         b"a99-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
         b"prophoto-rgb" => PredefinedColor::Prophoto(ProPhoto { r: a, g: b, b: c, alpha }),
         b"rec2020" => PredefinedColor::Rec2020(Rec2020 { r: a, g: b, b: c, alpha }),
@@ -2435,7 +2385,7 @@ pub(crate) enum ColorSpaceName {
     Oklch,
 }
 
-pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
+pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
 
@@ -2471,6 +2421,13 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
+    // The grammar is <percentage [0,100]>; values outside that range are invalid.
+    if first_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+        || second_percent.is_some_and(|p| !(0.0..=1.0).contains(&p))
+    {
+        return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
     let (p1, p2): (f32, f32) = if first_percent.is_none() && second_percent.is_none() {
         (0.5, 0.5)
     } else {
@@ -2501,7 +2458,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
-        // PORT NOTE: Zig used XYZd65 for xyz-d50 too (likely bug); mirrored for parity.
+        // Intentionally XYZd65 for xyz-d50 too (sic) — kept for behavioral compatibility.
         ColorSpaceName::XyzD50 => {
             first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
         }
@@ -2532,7 +2489,7 @@ pub enum HueInterpolationMethod {
 }
 
 impl HueInterpolationMethod {
-    pub(crate) fn interpolate(self, a: &mut f32, b: &mut f32) {
+    fn interpolate(self, a: &mut f32, b: &mut f32) {
         // https://drafts.csswg.org/css-color/#hue-interpolation
         if self == HueInterpolationMethod::Specified {
             *a = ((*a).rem_euclid(360.0) + 360.0).rem_euclid(360.0);
@@ -2575,7 +2532,14 @@ impl HueInterpolationMethod {
     }
 }
 
-fn rectangular_to_polar(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
+/// The channels of a polar lab-form space (`LCH`, `OKLCH`), without alpha.
+struct LchComponents {
+    l: f32,
+    c: f32,
+    h: f32,
+}
+
+fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
 
     let mut h = b.atan2(a) * 180.0 / core::f32::consts::PI;
@@ -2583,18 +2547,17 @@ fn rectangular_to_polar(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
         h += 360.0;
     }
 
-    // PERF: Zig does not have Rust's f32::powi
     let c = (a.powi(2) + b.powi(2)).sqrt();
 
     h = h.rem_euclid(360.0);
-    (l, c, h)
+    LchComponents { l, c, h }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // hex helpers / write helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn short_color_name(v: u32) -> Option<&'static str> {
+fn short_color_name(v: u32) -> Option<&'static str> {
     // These names are shorter than their hex codes
     Some(match v {
         0x000080 => "navy",
@@ -2634,12 +2597,12 @@ pub(crate) fn short_color_name(v: u32) -> Option<&'static str> {
 
 // From esbuild: https://github.com/evanw/esbuild/blob/18e13bdfdca5cd3c7a2fae1a8bd739f8f891572c/internal/css_parser/css_decls_color.go#L218
 // 0xAABBCCDD => 0xABCD
-pub(crate) fn compact_hex(v: u32) -> u32 {
+fn compact_hex(v: u32) -> u32 {
     ((v & 0x0FF00000) >> 12) | ((v & 0x00000FF0) >> 4)
 }
 
 // 0xABCD => 0xAABBCCDD
-pub fn expand_hex(v: u32) -> u32 {
+pub(crate) fn expand_hex(v: u32) -> u32 {
     ((v & 0xF000) << 16)
         | ((v & 0xFF00) << 12)
         | ((v & 0x0FF0) << 8)
@@ -2647,7 +2610,7 @@ pub fn expand_hex(v: u32) -> u32 {
         | (v & 0x000F)
 }
 
-pub fn write_components(
+pub(crate) fn write_components(
     name: &str,
     a: f32,
     b: f32,
@@ -2673,7 +2636,7 @@ pub fn write_components(
     dest.write_char(b')')
 }
 
-pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
+pub(crate) fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
     if c.is_nan() {
         dest.write_str("none")
     } else {
@@ -2681,7 +2644,10 @@ pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
     }
 }
 
-pub fn write_predefined(predefined: &PredefinedColor, dest: &mut Printer) -> Result<(), PrintErr> {
+pub(crate) fn write_predefined(
+    predefined: &PredefinedColor,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
     let (a, b, c, alpha) = predefined.components();
     let name = predefined.css_name();
 
@@ -2704,75 +2670,66 @@ pub fn write_predefined(predefined: &PredefinedColor, dest: &mut Printer) -> Res
 
 use bun_core::powf as bun_powf;
 
-pub(crate) fn gam_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+fn gam_srgb_component(c: f32) -> f32 {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31
-    // convert an array of linear-light sRGB values in the range 0.0-1.0
+    // convert a linear-light sRGB channel in the range 0.0-1.0
     // to gamma corrected form
     // https://en.wikipedia.org/wiki/SRGB
     // Extended transfer function:
     // For negative values, linear portion extends on reflection
     // of axis, then uses reflected pow below that
 
-    fn gam_srgb_component(c: f32) -> f32 {
-        let abs = c.abs();
-        if abs > 0.0031308 {
-            let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            let x: f32 = bun_powf(abs, 1.0 / 2.4);
-            let y: f32 = 1.055 * x;
-            let z: f32 = y - 0.055;
-            return sign * z;
-        }
-
-        12.92 * c
+    let abs = c.abs();
+    if abs > 0.0031308 {
+        let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
+        let x: f32 = bun_powf(abs, 1.0 / 2.4);
+        let y: f32 = 1.055 * x;
+        let z: f32 = y - 0.055;
+        return sign * z;
     }
 
-    (
-        gam_srgb_component(r),
-        gam_srgb_component(g),
-        gam_srgb_component(b),
-    )
+    12.92 * c
 }
 
-pub(crate) fn lin_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+fn lin_srgb_component(c: f32) -> f32 {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L11
-    // convert sRGB values where in-gamut values are in the range [0 - 1]
+    // convert an sRGB channel where in-gamut values are in the range [0 - 1]
     // to linear light (un-companded) form.
     // https://en.wikipedia.org/wiki/SRGB
     // Extended transfer function:
     // for negative values, linear portion is extended on reflection of axis,
     // then reflected power function is used.
 
-    fn lin_srgb_component(c: f32) -> f32 {
-        let abs = c.abs();
-        if abs < 0.04045 {
-            return c / 12.92;
-        }
-
-        let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-        sign * bun_powf((abs + 0.055) / 1.055, 2.4)
+    let abs = c.abs();
+    if abs < 0.04045 {
+        return c / 12.92;
     }
 
-    (
-        lin_srgb_component(r),
-        lin_srgb_component(g),
-        lin_srgb_component(b),
-    )
+    let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
+    sign * bun_powf((abs + 0.055) / 1.055, 2.4)
 }
 
 /// PERF: SIMD?
-pub(crate) fn multiply_matrix(m: &[f32; 9], x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+fn multiply_matrix(m: &[f32; 9], x: f32, y: f32, z: f32) -> (f32, f32, f32) {
     let a = m[0] * x + m[1] * y + m[2] * z;
     let b = m[3] * x + m[4] * y + m[5] * z;
     let c = m[6] * x + m[7] * y + m[8] * z;
     (a, b, c)
 }
 
-pub(crate) fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
+/// The channels of a rectangular lab-form space (`LAB`, `OKLAB`), without alpha.
+struct LabComponents {
+    l: f32,
+    a: f32,
+    b: f32,
+}
+
+fn polar_to_rectangular(l: f32, c: f32, h: f32) -> LabComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L385
 
     let a = c * (h * core::f32::consts::PI / 180.0).cos();
     let b = c * (h * core::f32::consts::PI / 180.0).sin();
-    (l, a, b)
+    LabComponents { l, a, b }
 }
 
 const D50: [f32; 3] = [
@@ -2782,14 +2739,9 @@ const D50: [f32; 3] = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
-// Handwritten conversions (Zig `color_conversions` namespace).
+// Handwritten conversions.
 //
-// In Zig, `ColorIntoMixin(T, .Space).into(target)` looked up `intoXXX` in
-// (a) handwritten `color_conversions.convert_<Space>`, then
-// (b) generated `generated_color_conversions.convert_<Space>`, then
-// (c) the type itself.
-//
-// In Rust we express each conversion as `impl From<Src> for Dst`. The
+// Each conversion is an `impl From<Src> for Dst`. The
 // handwritten ones are below; generated ones live in `color_generated.rs`.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -2818,7 +2770,7 @@ impl From<HWB> for RGBA {
 impl From<LAB> for LCH {
     fn from(lab_: LAB) -> LCH {
         let lab = lab_.resolve_missing();
-        let (l, c, h) = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
         LCH {
             l,
             c,
@@ -2876,11 +2828,10 @@ impl From<LAB> for XYZd50 {
 impl From<SRGB> for SRGBLinear {
     fn from(rgb: SRGB) -> SRGBLinear {
         let srgb = rgb.resolve_missing();
-        let (r, g, b) = lin_srgb(srgb.r, srgb.g, srgb.b);
         SRGBLinear {
-            r,
-            g,
-            b,
+            r: lin_srgb_component(srgb.r),
+            g: lin_srgb_component(srgb.g),
+            b: lin_srgb_component(srgb.b),
             alpha: srgb.alpha,
         }
     }
@@ -3002,11 +2953,10 @@ impl From<SRGBLinear> for PredefinedColor {
 impl From<SRGBLinear> for SRGB {
     fn from(rgb_: SRGBLinear) -> SRGB {
         let rgb = rgb_.resolve_missing();
-        let (r, g, b) = gam_srgb(rgb.r, rgb.g, rgb.b);
         SRGB {
-            r,
-            g,
-            b,
+            r: gam_srgb_component(rgb.r),
+            g: gam_srgb_component(rgb.g),
+            b: gam_srgb_component(rgb.b),
             alpha: rgb.alpha,
         }
     }
@@ -3064,8 +3014,12 @@ impl From<P3> for XYZd65 {
         ];
 
         let p3 = p3_.resolve_missing();
-        let (r, g, b) = lin_srgb(p3.r, p3.g, p3.b);
-        let (x, y, z) = multiply_matrix(&MATRIX, r, g, b);
+        let (x, y, z) = multiply_matrix(
+            &MATRIX,
+            lin_srgb_component(p3.r),
+            lin_srgb_component(p3.g),
+            lin_srgb_component(p3.b),
+        );
         XYZd65 {
             x,
             y,
@@ -3332,7 +3286,8 @@ impl From<XYZd50> for ProPhoto {
             // convert linear-light prophoto-rgb  in the range 0.0-1.0
             // to gamma corrected form
             // Transfer curve is gamma 1.8 with a small linear portion
-            // TODO for negative values, extend linear portion on reflection of axis, then add pow below that
+            // For negative values, the linear portion is extended on
+            // reflection of axis, with pow applied beyond it (csswg conversions.js).
             const ET: f32 = 1.0 / 512.0;
             let abs = c.abs();
             if abs >= ET {
@@ -3539,12 +3494,12 @@ impl From<XYZd65> for P3 {
         ];
 
         let xyz = xyz_.resolve_missing();
-        let (r1, g1, b1) = multiply_matrix(&MATRIX, xyz.x, xyz.y, xyz.z);
-        let (r, g, b) = gam_srgb(r1, g1, b1); // same as sRGB
+        let (r, g, b) = multiply_matrix(&MATRIX, xyz.x, xyz.y, xyz.z);
+        // display-p3 uses the sRGB transfer curve.
         P3 {
-            r,
-            g,
-            b,
+            r: gam_srgb_component(r),
+            g: gam_srgb_component(g),
+            b: gam_srgb_component(b),
             alpha: xyz.alpha,
         }
     }
@@ -3554,7 +3509,7 @@ impl From<XYZd65> for P3 {
 impl From<LCH> for LAB {
     fn from(lch_: LCH) -> LAB {
         let lch = lch_.resolve_missing();
-        let (l, a, b) = polar_to_rectangular(lch.l, lch.c, lch.h);
+        let LabComponents { l, a, b } = polar_to_rectangular(lch.l, lch.c, lch.h);
         LAB {
             l,
             a,
@@ -3568,7 +3523,7 @@ impl From<LCH> for LAB {
 impl From<OKLAB> for OKLCH {
     fn from(labb: OKLAB) -> OKLCH {
         let lab = labb.resolve_missing();
-        let (l, c, h) = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
         OKLCH {
             l,
             c,
@@ -3626,7 +3581,7 @@ impl From<OKLAB> for XYZd65 {
 impl From<OKLCH> for OKLAB {
     fn from(lch_: OKLCH) -> OKLAB {
         let lch = lch_.resolve_missing();
-        let (l, a, b) = polar_to_rectangular(lch.l, lch.c, lch.h);
+        let LabComponents { l, a, b } = polar_to_rectangular(lch.l, lch.c, lch.h);
         OKLAB {
             l,
             a,
@@ -3637,15 +3592,10 @@ impl From<OKLCH> for OKLAB {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ConvertTo (kept for parity; in Rust the `.into()` dispatch above replaces
-// `ColorIntoMixin(T, .Space).into(target)`).
+// ConvertTo (kept for parity with the `.into()` dispatch above).
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: `ColorIntoMixin` resolved conversions at comptime via @hasDecl
-// across handwritten + generated tables. In Rust this is the union of the
-// `impl From<Src> for Dst` blocks above plus `color_generated.rs`; the
-// generated file fills the transitive gaps the macro requires.
+// Conversions are the union of the `impl From<Src> for Dst` blocks above
+// plus `color_generated.rs`; the generated file fills the transitive gaps.
 
 crate::css_eql_partialeq!(CssColor);
-
-// ported from: src/css/values/color.zig

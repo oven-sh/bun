@@ -11,5 +11,3 @@ pub enum TLSStatus {
     SslFailed,
     SslOk,
 }
-
-// ported from: src/sql/mysql/TLSStatus.zig

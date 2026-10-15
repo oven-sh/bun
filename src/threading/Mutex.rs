@@ -1,7 +1,6 @@
 //! This is a copy-pasta of std.Thread.Mutex with some changes.
 //! - No assert with unreachable
 //! - uses bun.Futex instead of std.Thread.Futex
-//! Synchronized with std as of Zig 0.14.1
 //!
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
@@ -37,12 +36,12 @@ use crate::Futex;
 #[derive(Default)]
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
-    // `SleepConditionVariableSRW` (mirrors Zig's same-module field access).
+    // `SleepConditionVariableSRW`.
     pub(crate) impl_: Impl,
 }
 
 impl Mutex {
-    /// Const-init an unlocked mutex (Zig: `.{}`). Required for `static` items.
+    /// Const-init an unlocked mutex. Required for `static` items.
     pub const fn new() -> Self {
         Self { impl_: Impl::new() }
     }
@@ -50,6 +49,7 @@ impl Mutex {
     /// Tries to acquire the mutex without blocking the caller's thread.
     /// Returns `false` if the calling thread would have to block to acquire it.
     /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
+    #[cfg(debug_assertions)]
     pub fn try_lock(&self) -> bool {
         self.impl_.try_lock()
     }
@@ -64,7 +64,18 @@ impl Mutex {
     /// Releases the mutex which was previously acquired with `lock()` or `try_lock()`.
     /// It is undefined behavior if the mutex is unlocked from a different thread that it was locked from.
     pub fn unlock(&self) {
-        self.impl_.unlock()
+        // SAFETY: held by this thread (fn contract) and live for the whole call.
+        unsafe { Self::unlock_raw(self) }
+    }
+
+    /// [`unlock`](Self::unlock) for a release that lets another thread free the mutex
+    /// (`WaitGroup::finish_raw`): the releasing store is the last access to `*this`.
+    ///
+    /// # Safety
+    /// `this` must be held by this thread and stay live until the lock is released.
+    pub(crate) unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        unsafe { Impl::unlock_raw(&raw const (*this).impl_) }
     }
 
     /// Debug-only check that the calling thread already holds this mutex.
@@ -86,15 +97,13 @@ impl Mutex {
 
     /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
     ///
-    /// This is the idiomatic Rust spelling of Zig's `m.lock(); defer m.unlock();`
-    /// — prefer it over a bare [`lock`]/[`unlock`] pair so the critical section
+    /// Prefer this over a bare [`lock`]/[`unlock`] pair so the critical section
     /// is released on every return path (including `?`).
     ///
     /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
     /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
-    /// the owning struct alive. This matches the Zig pattern where the mutex is
-    /// a plain field and the rest of `self` remains freely accessible while
-    /// locked. Caller must ensure the `Mutex` outlives the guard (trivially
+    /// the owning struct alive: the rest of `self` remains freely accessible
+    /// while locked. Caller must ensure the `Mutex` outlives the guard (trivially
     /// true for `'static`/singleton mutexes and for guards that drop before the
     /// owning `self` does).
     #[inline]
@@ -130,9 +139,6 @@ impl Drop for MutexGuard {
     }
 }
 
-// Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.
-
-// TODO(port): Zig also gates on `!builtin.single_threaded`; Rust has no direct equivalent.
 #[cfg(debug_assertions)]
 type Impl = DebugImpl;
 #[cfg(not(debug_assertions))]
@@ -144,13 +150,6 @@ pub type ReleaseImpl = WindowsImpl;
 pub type ReleaseImpl = DarwinImpl;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub type ReleaseImpl = FutexImpl;
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) type ExternImpl = bun_sys::windows::SRWLOCK;
-#[cfg(not(any(windows, target_vendor = "apple")))]
-#[allow(dead_code)]
-pub(crate) type ExternImpl = u32;
 
 #[cfg(debug_assertions)]
 type ThreadId = u64;
@@ -170,7 +169,7 @@ pub(crate) struct DebugImpl {
 
 #[cfg(debug_assertions)]
 impl DebugImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             locking_thread: AtomicU64::new(0),
             impl_: ReleaseImpl::new(),
@@ -181,7 +180,6 @@ impl DebugImpl {
     fn try_lock(&self) -> bool {
         let locking = self.impl_.try_lock();
         if locking {
-            // PORT NOTE: Zig uses .unordered; Rust's weakest is Relaxed.
             self.locking_thread
                 .store(current_thread_id(), Ordering::Relaxed);
         }
@@ -198,11 +196,15 @@ impl DebugImpl {
         self.locking_thread.store(current_id, Ordering::Relaxed);
     }
 
+    /// See [`Mutex::unlock_raw`] for the contract.
     #[inline]
-    fn unlock(&self) {
-        debug_assert!(self.locking_thread.load(Ordering::Relaxed) == current_thread_id());
-        self.locking_thread.store(0, Ordering::Relaxed);
-        self.impl_.unlock();
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        unsafe {
+            debug_assert!((*this).locking_thread.load(Ordering::Relaxed) == current_thread_id());
+            (*this).locking_thread.store(0, Ordering::Relaxed);
+            ReleaseImpl::unlock_raw(&raw const (*this).impl_);
+        }
     }
 }
 
@@ -232,6 +234,7 @@ unsafe impl Send for WindowsImpl {}
 unsafe extern "system" {
     safe fn AcquireSRWLockExclusive(lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>);
     // Returns BOOLEAN (u8), not BOOL — compare against 0, not the i32 `FALSE`.
+    #[cfg(debug_assertions)]
     safe fn TryAcquireSRWLockExclusive(
         lock: &core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
     ) -> u8;
@@ -239,12 +242,13 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 impl WindowsImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         TryAcquireSRWLockExclusive(&self.srwlock) != 0
     }
@@ -253,10 +257,14 @@ impl WindowsImpl {
         AcquireSRWLockExclusive(&self.srwlock)
     }
 
-    fn unlock(&self) {
-        // SAFETY: caller acquired the lock on this thread (`Mutex::unlock`
-        // contract); releasing without ownership is documented UB on Windows.
-        unsafe { bun_sys::windows::kernel32::ReleaseSRWLockExclusive(self.srwlock.get()) }
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: held by this thread (fn contract), so `*this` is live until the release
+        // inside the call; releasing without ownership is documented UB on Windows.
+        unsafe {
+            let srwlock = core::cell::UnsafeCell::raw_get(&raw const (*this).srwlock);
+            bun_sys::windows::kernel32::ReleaseSRWLockExclusive(srwlock)
+        }
     }
 }
 
@@ -282,27 +290,30 @@ pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
 
-// TODO(port): move to bun_sys (darwin libc externs)
+// Darwin libc externs.
 // `&UnsafeCell<OsUnfairLock>` is ABI-identical to `os_unfair_lock_t` (thin
 // non-null pointer to a `#[repr(C)]` u32; `UnsafeCell` is `#[repr(transparent)]`).
 // The type encodes the only pointer-validity precondition, and Apple's runtime
 // detects misuse (recursive lock / unowned unlock) by aborting — which is safe
 // — so `safe fn` discharges the link-time proof and callers need no `unsafe`.
+// `os_unfair_lock_unlock` takes the address instead: see `Mutex::unlock_raw`.
 #[cfg(target_vendor = "apple")]
 unsafe extern "C" {
+    #[cfg(debug_assertions)]
     safe fn os_unfair_lock_trylock(lock: &core::cell::UnsafeCell<OsUnfairLock>) -> bool;
     safe fn os_unfair_lock_lock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
-    safe fn os_unfair_lock_unlock(lock: &core::cell::UnsafeCell<OsUnfairLock>);
+    fn os_unfair_lock_unlock(lock: *mut OsUnfairLock);
 }
 
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
         }
     }
 
+    #[cfg(debug_assertions)]
     fn try_lock(&self) -> bool {
         os_unfair_lock_trylock(&self.oul)
     }
@@ -311,8 +322,11 @@ impl DarwinImpl {
         os_unfair_lock_lock(&self.oul)
     }
 
-    fn unlock(&self) {
-        os_unfair_lock_unlock(&self.oul)
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
+        // SAFETY: held by this thread (fn contract), so `*this` is live until the release
+        // inside the call.
+        unsafe { os_unfair_lock_unlock(core::cell::UnsafeCell::raw_get(&raw const (*this).oul)) }
     }
 }
 
@@ -324,7 +338,7 @@ pub struct FutexImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
-    pub(crate) const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
         }
@@ -348,8 +362,8 @@ impl FutexImpl {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             let locked_bit: u32 = Self::LOCKED.trailing_zeros();
-            // PERF(port): Zig emits `lock bts` via atomic bitSet; fetch_or is the closest stable
-            // Rust atomic — profile if it shows up on a hot path and consider inline asm if needed.
+            // PERF: a `lock bts` would be tighter; fetch_or is the closest stable Rust
+            // atomic — profile if it shows up on a hot path and consider inline asm if needed.
             return (self.state.fetch_or(1 << locked_bit, Ordering::Acquire) & (1 << locked_bit))
                 == 0;
         }
@@ -391,7 +405,8 @@ impl FutexImpl {
         }
     }
 
-    fn unlock(&self) {
+    /// See [`Mutex::unlock_raw`] for the contract.
+    unsafe fn unlock_raw(this: *const Self) {
         // Unlock the mutex and wake up a waiting thread if any.
         //
         // A waiting thread will acquire with `contended` instead of `locked`
@@ -399,34 +414,32 @@ impl FutexImpl {
         //
         // Release barrier ensures the critical section happens before we let go of the lock
         // and that our critical section happens before the next lock holder grabs the lock.
-        let state = self.state.swap(Self::UNLOCKED, Ordering::Release);
+        //
+        // SAFETY: the lock is still held, so `*this` is live (fn contract).
+        let state_ptr = unsafe { &raw const (*this).state };
+        // SAFETY: as above; this swap is the release, and the last access to `*this`.
+        let state = unsafe { (*state_ptr).swap(Self::UNLOCKED, Ordering::Release) };
         debug_assert!(state != Self::UNLOCKED);
 
         if state == Self::CONTENDED {
-            Futex::wake(&self.state, 1);
+            Futex::wake_raw(state_ptr, 1);
         }
     }
 }
 
-// PORT NOTE: Zig had `pub const Type` inside each impl as an associated alias.
-// Inherent associated types are unstable in Rust; the per-platform alias is
-// already exposed as the module-level `ExternImpl` type above.
-
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
-    unsafe { (*ptr).unlock() }
+    unsafe { ReleaseImpl::unlock_raw(ptr) }
 }
 
 #[unsafe(no_mangle)]
-pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
-
-// ported from: src/threading/Mutex.zig
+static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();

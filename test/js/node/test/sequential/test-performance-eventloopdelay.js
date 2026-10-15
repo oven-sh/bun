@@ -60,9 +60,12 @@ const sleep = typeof Bun === 'object' ? Bun.sleepSync : require('internal/util')
     m = m * 2;
   }
   function spinAWhile() {
-    sleep(1000);
+    // Upstream Node uses sleep(1000) and a 500ms timer. The assertions below are
+    // presence-only, and with resolution: 1 a 100ms block still records delay
+    // samples, so we shrink the magnitudes to keep CI fast.
+    sleep(100);
     if (--m > 0) {
-      setTimeout(spinAWhile, common.platformTimeout(500));
+      setTimeout(spinAWhile, common.platformTimeout(50));
     } else {
       histogram.disable();
       // The values are non-deterministic, so we just check that a value is

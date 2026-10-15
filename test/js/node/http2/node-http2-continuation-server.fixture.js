@@ -22,6 +22,16 @@ const server = http2.createSecureServer({
   },
 });
 
+// Surface session-level errors to stderr (inherited into CI logs): the client tests
+// only see "Session closed with error code N" — node's actual internal error is
+// otherwise swallowed by destroy(err) -> goaway.
+server.on("sessionError", err => {
+  console.error("fixture sessionError:", err && err.message, "code:", err && err.code, "errno:", err && err.errno);
+});
+server.on("error", err => {
+  console.error("fixture serverError:", err && (err.stack || err.message || err));
+});
+
 server.on("stream", (stream, headers) => {
   stream.on("error", err => {
     // Ignore stream errors in fixture - test will handle client-side

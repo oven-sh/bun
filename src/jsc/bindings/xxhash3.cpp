@@ -1,11 +1,11 @@
 // Runtime-dispatched SIMD xxHash3 (XXH3_64bits) via Google Highway.
 //
 // Bun.hash.xxHash3 used the twox-hash Rust crate, which selects its SIMD
-// backend at compile time. On the linux-x64-baseline build (nehalem / SSE2)
-// that meant the long-input stripe loop never reached AVX2, costing ~19% on
-// 128 KB inputs versus the haswell build. This file moves the hot path to
-// Highway's HWY_DYNAMIC_DISPATCH (the same mechanism as highway_strings.cpp),
-// so a single binary picks the widest ISA the CPU actually supports.
+// backend at compile time. On a nehalem (SSE2) target that meant the
+// long-input stripe loop never reached AVX2, costing ~19% on 128 KB inputs.
+// This file moves the hot path to Highway's HWY_DYNAMIC_DISPATCH (the same
+// mechanism as highway_strings.cpp), so a single binary picks the widest ISA
+// the CPU actually supports.
 //
 // Output is bit-identical to the reference XXH3_64bits for every input: only
 // the long-keys stripe loop (accumulate_512 + scrambleAcc) is vectorized, and
@@ -27,6 +27,7 @@
 #include <hwy/foreach_target.h> // Must come before highway.h
 
 #include <hwy/highway.h>
+#include "highway_dispatch.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -271,7 +272,7 @@ static inline void InitCustomSecret(u8* customSecret, u64 seed64)
 // in the reference — each processes a fixed stripe of 16/32 bytes per iteration
 // with scalar integer ops — so they live outside the Highway per-ISA namespace
 // (no runtime dispatch, no baseline-allowlist entries). Straight C++ beats the
-// generic twox-hash Rust codegen and matches Zig's std.hash.XxHash{32,64}.
+// generic twox-hash Rust codegen.
 //
 // Output is bit-identical to the reference (and the retired twox-hash crate);
 // verified against the reference vectors and SMHasher constants in
@@ -643,11 +644,11 @@ static u64 Hash64(const u8* input, size_t len, u64 seed)
     // Long input: seed == 0 uses the default secret directly; otherwise derive
     // a per-seed secret (matches XXH3_hashLong_64b_withSeed_internal).
     if (seed == 0) {
-        return HWY_DYNAMIC_DISPATCH(HashLong)(input, len, kSecret);
+        return BUN_HWY_DISPATCH(HashLong)(input, len, kSecret);
     }
     alignas(64) u8 customSecret[kSecretLen];
     InitCustomSecret(customSecret, seed);
-    return HWY_DYNAMIC_DISPATCH(HashLong)(input, len, customSecret);
+    return BUN_HWY_DISPATCH(HashLong)(input, len, customSecret);
 }
 
 } // namespace xxh3
@@ -667,13 +668,13 @@ uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
     return bun::xxh3::Hash64(input, len, seed);
 }
 
-// XXH32 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash32.
+// XXH32 one-shot. Scalar; bit-identical to the reference.
 uint32_t highway_xxhash32(const uint8_t* input, size_t len, uint32_t seed)
 {
     return bun::xxh3::XXH32(input, len, seed);
 }
 
-// XXH64 one-shot. Scalar; bit-identical to the reference / Zig std.hash.XxHash64.
+// XXH64 one-shot. Scalar; bit-identical to the reference.
 uint64_t highway_xxhash64(const uint8_t* input, size_t len, uint64_t seed)
 {
     return bun::xxh3::XXH64(input, len, seed);

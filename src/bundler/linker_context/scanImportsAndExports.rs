@@ -1,12 +1,10 @@
-//! Port of `src/bundler/linker_context/scanImportsAndExports.zig`.
-//
-// PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
-// (`this.graph.ast.items(.field)`) and freely interleaves them with
+// This pass works over ~20 simultaneous mutable column slices
+// (`this.graph.ast.items(.field)`) freely interleaved with
 // `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
 // overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
 // any `&mut` column across a `&mut self` call into `this.graph`. The columns
 // are physically disjoint (SoA layout) and the underlying `MultiArrayList`
-// never reallocates inside this function, so this port caches the column
+// never reallocates inside this function, so we cache the column
 // base pointers once via `Slice::items_raw` and dereferences them at each
 // use site through `*mut [T]`. This is the documented escape hatch in
 // `bun_collections::multi_array_list::Slice::items_raw`.
@@ -49,7 +47,6 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
         }
     }
 }
-bun_core::named_error_set!(ScanImportsAndExportsError);
 
 /// Short-lived `&mut [T]` deref of a `split_raw()` column pointer at a single
 /// use site.
@@ -78,15 +75,14 @@ macro_rules! col_ref {
     };
 }
 
-pub fn scan_imports_and_exports(
+pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
 
-    // PORT NOTE: `reachable_files` is borrowed out of `this.graph` while the
+    // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
-    // PERF(port): was zero-copy slice; profile.
     let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     // ── cache SoA column base pointers ────────────────────────────────────
@@ -110,13 +106,14 @@ pub fn scan_imports_and_exports(
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
+    let module_types: *mut [crate::options::ModuleType] = ast.module_type;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
     let parts_list: *mut [PartList] = ast.parts;
-    // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
-    // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
+    // Element is a *mutable* nullable
+    // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
     let css_asts: *mut [CssCol] = ast.css;
 
     let input_files: *mut [Source] = input.source;
@@ -129,10 +126,11 @@ pub fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
-    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
-
-    // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
-    // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
+    let dynamic_import_aliases: *mut [bun_ast::ast_result::DynamicImportAliases] =
+        ast.dynamic_import_aliases;
+    let dyn_ref_aliases: *mut [js_meta::DynamicImportReferencedAliases] =
+        meta.dynamic_import_referenced_aliases;
+    let lifted_setter_params: *mut [Ref] = meta.lifted_setter_param;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -171,7 +169,72 @@ pub fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].as_slice() {
+            // Named static imports contribute exactly their aliases to the
+            // importee's observable-export set (see below); `* as ns` and
+            // `export * from` make everything observable.
+            for (import_ref, ni) in col_ref!(named_imports)[id]
+                .keys()
+                .iter()
+                .zip(col_ref!(named_imports)[id].values())
+            {
+                let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(ni.import_record_index as usize)
+                else {
+                    continue;
+                };
+                if record.kind != ImportKind::Stmt || !record.source_index.is_valid() {
+                    continue;
+                }
+                let other = record.source_index.get() as usize;
+                if other >= col_ref!(exports_kind).len() {
+                    continue;
+                }
+                // `Object.freeze`, `defineProperty` and `delete` on a held default import need the real `module.exports`.
+                if col_ref!(ast_flags_list)[other].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    && !ni.alias_is_star
+                    && ni.alias.is_some_and(|alias| alias.slice() == b"default")
+                    && this
+                        .graph
+                        .symbols
+                        .get_const(*import_ref)
+                        .is_some_and(|symbol| {
+                            // `ns.default` can be the module's own `default` export, which only step 3 resolves.
+                            symbol.import_item_status != bun_ast::ImportItemStatus::Generated
+                                && (ni.is_exported || symbol.import_used_as_value())
+                        })
+                {
+                    col!(exports_kind)[other] = ExportsKind::Cjs;
+                    col!(flags)[other].wrap = WrapKind::Cjs;
+                }
+                if col_ref!(exports_kind)[other] != ExportsKind::Esm {
+                    continue;
+                }
+                // The default import of a lifted CommonJS module is its namespace.
+                if ni.alias_is_star
+                    || (col_ref!(ast_flags_list)[other].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && ni.alias.is_some_and(|alias| alias.slice() == b"default"))
+                {
+                    col!(dyn_ref_aliases)[other].merge_all();
+                } else if let Some(alias) = ni.alias {
+                    col!(dyn_ref_aliases)[other].insert(alias.slice());
+                }
+            }
+            for &star in col_ref!(export_star_import_records)[id].iter() {
+                if let Some(record) = col_ref!(import_records_list)[id]
+                    .as_slice()
+                    .get(star as usize)
+                    && record.source_index.is_valid()
+                {
+                    col!(dyn_ref_aliases)[record.source_index.get() as usize].merge_all();
+                }
+            }
+
+            for (import_record_index, record) in col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -183,6 +246,62 @@ pub fn scan_imports_and_exports(
                     continue;
                 }
                 let other_kind = col_ref!(exports_kind)[other_file];
+
+                // Union, per importee, of the export names its importers can
+                // observe: named static imports contribute their aliases, a
+                // tracked `import()` / `require()` its recorded ones, anything
+                // else (`import *`, `export *`, an untracked namespace) all of
+                // them. Step 5 narrows a lazily loaded ES module's export object
+                // (or its chunk's exports when splitting) to this set. CJS
+                // importees synthesize `default` from the filtered list itself,
+                // so they always keep everything.
+                if other_kind != ExportsKind::Esm {
+                    col!(dyn_ref_aliases)[other_file].merge_all();
+                } else {
+                    match record.kind {
+                        // Named / bare static imports were accounted for above.
+                        ImportKind::Stmt
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) => {}
+                        ImportKind::Dynamic | ImportKind::Require => {
+                            match col_ref!(dynamic_import_aliases)[id]
+                                .get(&(import_record_index as u32))
+                            {
+                                None => col!(dyn_ref_aliases)[other_file].merge_all(),
+                                // `default` of a lifted CommonJS module is its namespace.
+                                Some(dynamic_use)
+                                    if record.kind == ImportKind::Dynamic
+                                        && other_flags
+                                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                        && dynamic_use
+                                            .aliases
+                                            .slice()
+                                            .iter()
+                                            .any(|alias| alias.slice() == b"default") =>
+                                {
+                                    col!(dyn_ref_aliases)[other_file].merge_all()
+                                }
+                                Some(dynamic_use) => {
+                                    col!(dyn_ref_aliases)[other_file]
+                                        .merge_partial(dynamic_use.aliases.slice());
+                                    // Observed without being named: `await import()`
+                                    // resolves through a `then` export, and `require()`
+                                    // of an ES module returns its `module.exports`
+                                    // export when it has one.
+                                    col!(dyn_ref_aliases)[other_file].insert(
+                                        if record.kind == ImportKind::Require {
+                                            b"module.exports"
+                                        } else {
+                                            b"then"
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        _ => col!(dyn_ref_aliases)[other_file].merge_all(),
+                    }
+                }
 
                 match record.kind {
                     ImportKind::Stmt => {
@@ -220,24 +339,36 @@ pub fn scan_imports_and_exports(
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
 
+                        // A default import of a lifted CommonJS module binds to its
+                        // namespace (`advance_import_tracker`) unless `__esModule`
+                        // has to be checked at run time.
                         if record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
                             && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && (!other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                || LinkerContext::lifted_default_import_needs_wrapper(
+                                    col_ref!(module_types)[id],
+                                    &col_ref!(named_exports)[other_file],
+                                ))
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
                         }
                     }
                     ImportKind::Require =>
-                    // Files that are imported with require() must be CommonJS modules
+                    // Files that are imported with require() must be CommonJS modules,
+                    // unless a split `require()` loads the file at runtime as its own
+                    // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
-                        if other_kind == ExportsKind::Esm {
-                            col!(flags)[other_file].wrap = WrapKind::Esm;
-                        } else {
-                            // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                        if !this.is_external_dynamic_import(record, id as u32) {
+                            if other_kind == ExportsKind::Esm {
+                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                            } else {
+                                // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
                         }
                     }
                     ImportKind::Dynamic => {
@@ -250,6 +381,30 @@ pub fn scan_imports_and_exports(
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
                                 col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
+                        } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && this.is_external_dynamic_import(record, id as u32)
+                        {
+                            let exports = &col_ref!(named_exports)[other_file];
+                            let user_entry = col_ref!(entry_point_kinds)[other_file]
+                                == EntryPoint::Kind::UserSpecified;
+                            // `__esModule` makes `exports.default` the `default`, as in `bun run`.
+                            let default_is_module_exports = !exports.contains(b"default")
+                                || (other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                    && !user_entry
+                                    && !exports.contains(b"__esModule"));
+                            let default_is_read = user_entry
+                                || col_ref!(dynamic_import_aliases)[id]
+                                    .get(&(import_record_index as u32))
+                                    .is_none_or(|dynamic_use| {
+                                        dynamic_use
+                                            .aliases
+                                            .slice()
+                                            .iter()
+                                            .any(|alias| alias.slice() == b"default")
+                                    });
+                            if default_is_module_exports && default_is_read {
+                                col!(flags)[other_file].needs_synthetic_default_export = true;
                             }
                         }
                     }
@@ -272,29 +427,6 @@ pub fn scan_imports_and_exports(
             }
         }
 
-        if cfg!(feature = "debug_logs") {
-            let mut cjs_count: usize = 0;
-            let mut esm_count: usize = 0;
-            let mut wrap_cjs_count: usize = 0;
-            let mut wrap_esm_count: usize = 0;
-            for kind in col_ref!(exports_kind).iter() {
-                cjs_count += (*kind == ExportsKind::Cjs) as usize;
-                esm_count += (*kind == ExportsKind::Esm) as usize;
-            }
-            for flag in col_ref!(flags).iter() {
-                wrap_cjs_count += (flag.wrap == WrapKind::Cjs) as usize;
-                wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
-            }
-            bun_core::scoped_log!(
-                LinkerCtx,
-                "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
-                cjs_count,
-                wrap_cjs_count,
-                esm_count,
-                wrap_esm_count,
-            );
-        }
-
         // Step 2: Propagate dynamic export status for export star statements that
         // are re-exports from a module whose exports are not statically analyzable.
         // In this case the export star must be evaluated at run time instead of at
@@ -315,10 +447,9 @@ pub fn scan_imports_and_exports(
                     export_star_map: HashMap::default(),
                     export_star_records: &*export_star_import_records,
                     output_format,
+                    wrap_stack: Vec::new(),
                 }
             };
-            // PORT NOTE: `defer dependency_wrapper.export_star_map.deinit()` → Drop handles it.
-
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
                 let id = source_index as usize;
@@ -334,7 +465,19 @@ pub fn scan_imports_and_exports(
 
                 if dependency_wrapper.export_star_records[id].len() > 0 {
                     dependency_wrapper.export_star_map.clear();
-                    let _ = dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+                    let has_dynamic_exports =
+                        dependency_wrapper.has_dynamic_exports_due_to_export_star(source_index);
+
+                    // A lifted file's export star was `module.exports = require("./b")`. With no
+                    // static exports in "./b", keep the wrapper (see `convert_stmts_for_chunk`).
+                    if has_dynamic_exports
+                        && dependency_wrapper.exports_kind[id] != ExportsKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    {
+                        dependency_wrapper.exports_kind[id] = ExportsKind::Cjs;
+                        dependency_wrapper.flags[id].wrap = WrapKind::Cjs;
+                        dependency_wrapper.wrap(source_index);
+                    }
                 }
 
                 // Even if the output file is CommonJS-like, we may still need to wrap
@@ -363,9 +506,6 @@ pub fn scan_imports_and_exports(
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
-            // PORT NOTE: `defer { if (export_star_ctx) |*export_ctx| export_ctx.source_index_stack.deinit(); }`
-            // → Drop on `export_star_ctx` handles freeing `source_index_stack: Vec<u32>`.
-
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
                 let id = source_index as usize;
@@ -387,6 +527,7 @@ pub fn scan_imports_and_exports(
                             source_index_stack: Vec::with_capacity(32),
                             exports_kind,
                             named_exports,
+                            ast_flags: ast_flags_list,
                         });
                     }
                     export_star_ctx.as_mut().unwrap().add_exports(
@@ -419,6 +560,8 @@ pub fn scan_imports_and_exports(
         {
             this.cycle_detector.clear();
             let _trace = perf::trace("Bundler.MatchImportsWithExports");
+            let mut member_resolutions =
+                crate::linker_context_mod::ImportMemberResolutions::default();
             for source_index_ in &reachable {
                 let source_index = source_index_.get() as usize;
 
@@ -436,6 +579,7 @@ pub fn scan_imports_and_exports(
                         unsafe { core::ptr::addr_of!((*named_imports)[source_index]) },
                         &mut col!(imports_to_bind_list)[source_index],
                         source_index_.get(),
+                        &mut member_resolutions,
                     );
 
                     if this.log().errors > 0 {
@@ -473,6 +617,20 @@ pub fn scan_imports_and_exports(
                     col!(flags)[source_index] = flag;
                 }
 
+                let is_lifted_commonjs = col_ref!(ast_flags_list)[source_index]
+                    .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                if is_lifted_commonjs && flag.wrap == WrapKind::Cjs {
+                    // The wrapper prints `exports.x = ...` again, so it takes `exports`.
+                    col!(ast_flags_list)[source_index].insert(AstFlags::USES_EXPORTS_REF);
+                } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {
+                    // Step 5 runs in parallel, so the export setters' parameter is made here.
+                    col!(lifted_setter_params)[source_index] = this.graph.generate_new_symbol(
+                        source_index_.get(),
+                        SymbolKind::Other,
+                        b"value",
+                    );
+                }
+
                 let wrapped_ref = col_ref!(wrapper_refs)[source_index];
 
                 // Create the wrapper part for wrapped files. This is needed by a later step.
@@ -491,11 +649,9 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
-        // doStep5, reachable_files)` (parallel fan-out, blocks until done).
         // `do_step5` only touches distinct SoA rows per `source_index` (the
-        // columns are pre-sized and never reallocate during this step),
-        // matching the Zig invariant. We pass `*mut LinkerContext` through a
+        // columns are pre-sized and never reallocate during this step).
+        // We pass `*mut LinkerContext` through a
         // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
@@ -528,15 +684,51 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // Zig calls `takeAstOwnership` here because `doStep5` appends to
-        // `part.dependencies`/`declared_symbols` with the worker allocator.
-        // In the Rust port those are global-allocator `Vec`s (thread-safe to
-        // grow) and `do_step_5` never pushes to the arena-backed `PartList`/
-        // import-record columns, so no transfer is needed.
+        // No post-fan-out ownership transfer is needed: `do_step5` only grows
+        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
+        // which are thread-safe to grow per-row, and never pushes to the
+        // arena-backed `PartList`/import-record columns.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
         this.check_for_memory_corruption();
+    }
+
+    // An `import()` / `require()` of a wrapped ES module whose every read step
+    // 4 bound to an export needs no value: nothing depends on the namespace
+    // object through it, so tree shaking can drop that object.
+    for source_index_ in &reachable {
+        let id = source_index_.get() as usize;
+        let uses = &col_ref!(dynamic_import_aliases)[id];
+        for (&record_index, dynamic_use) in uses.keys().iter().zip(uses.values()) {
+            let record = &col_ref!(import_records_list)[id].as_slice()[record_index as usize];
+            if dynamic_use.needs_namespace_object
+                || !record.source_index.is_valid()
+                || col_ref!(flags)[record.source_index.get() as usize].wrap != WrapKind::Esm
+                || col_ref!(exports_kind)[record.source_index.get() as usize] != ExportsKind::Esm
+            {
+                continue;
+            }
+            let bound = &col_ref!(imports_to_bind_list)[id];
+            // `ns.a` of a name the importee does not export prints `undefined`.
+            // A pattern would read it off `{}`, which has a prototype.
+            let satisfied = |item: &bun_ast::ast_result::DynamicImportItem| {
+                bound.contains(&item.local)
+                    || this
+                        .graph
+                        .symbols
+                        .get_const(item.local)
+                        .is_some_and(|symbol| {
+                            symbol.import_item_status == bun_ast::ImportItemStatus::Missing
+                                && symbol.namespace_alias.is_some()
+                        })
+            };
+            if dynamic_use.items.slice().iter().all(satisfied) {
+                col!(import_records_list)[id].as_mut_slice()[record_index as usize]
+                    .flags
+                    .insert(ImportRecordFlags::NAMESPACE_UNUSED);
+            }
+        }
     }
 
     // Step 6: Bind imports to exports. This adds non-local dependencies on the
@@ -547,7 +739,10 @@ pub fn scan_imports_and_exports(
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
+        let mut runtime_export_cjs_symbol_ref: Ref = Ref::NONE;
         let mut ident_scratch: Vec<u8> = Vec::new();
+        let module_preload = this.module_preload();
+        this.entry_point_part_indices = vec![u32::MAX; col_ref!(import_records_list).len()];
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
@@ -607,19 +802,18 @@ pub fn scan_imports_and_exports(
             };
 
             // Allocate the identifier-name buffer from the linker arena so it is
-            // reclaimed when the link pass ends (Zig: `this.arena().alloc(u8, ...)`).
+            // reclaimed when the link pass ends.
             // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
             // which is arena-lifetime by construction.
             let string_buffer: &mut [u8] = this
                 .graph
                 .arena()
                 .alloc_slice_fill_default::<u8>(string_buffer_len);
-            // PORT NOTE: `StringBuilder::drop` reconstructs a `Box<[u8]>` from
+            // `StringBuilder::drop` reconstructs a `Box<[u8]>` from
             // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
-            // the arena reclaims the storage on reset, matching Zig's implicit
-            // no-destructor semantics.
+            // the arena reclaims the storage on reset.
             let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
@@ -701,24 +895,33 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // PORT NOTE: Zig `defer bun.assert(builder.len == builder.cap)` —
-            // moved to end-of-scope assert (no early returns inside this block).
+            // End-of-scope assert; relies on there being no
+            // early returns inside this block.
             debug_assert!(builder.len == builder.cap);
 
             // Include the "__export" symbol from the runtime if it was used in the
             // previous step. The previous step can't do this because it's running in
             // parallel and can't safely mutate the "importsToBind" map of another file.
             if flag.needs_export_symbol_from_runtime {
-                if !runtime_export_symbol_ref.is_valid() {
-                    runtime_export_symbol_ref = this.runtime_function(b"__export");
-                }
+                let export_symbol_ref = if col_ref!(lifted_setter_params)[id].is_valid() {
+                    if !runtime_export_cjs_symbol_ref.is_valid() {
+                        runtime_export_cjs_symbol_ref = this.runtime_function(b"__exportCjs");
+                    }
+                    runtime_export_cjs_symbol_ref
+                } else {
+                    if !runtime_export_symbol_ref.is_valid() {
+                        runtime_export_symbol_ref =
+                            this.runtime_function(this.export_runtime_function());
+                    }
+                    runtime_export_symbol_ref
+                };
 
-                debug_assert!(runtime_export_symbol_ref.is_valid());
+                debug_assert!(export_symbol_ref.is_valid());
 
                 this.graph.generate_symbol_import_and_use(
                     source_index,
                     bun_ast::NAMESPACE_EXPORT_PART_INDEX,
-                    runtime_export_symbol_ref,
+                    export_symbol_ref,
                     1,
                     Index::RUNTIME,
                 )?;
@@ -727,7 +930,7 @@ pub fn scan_imports_and_exports(
             {
                 let imports_to_bind = &col_ref!(imports_to_bind_list)[id];
                 debug_assert_eq!(imports_to_bind.keys().len(), imports_to_bind.values().len());
-                // PORT NOTE: reshaped for borrowck — iterate by index so we can
+                // Iterate by index so we can
                 // re-borrow `parts` after each `top_level_symbol_to_parts` call.
                 for itb_i in 0..imports_to_bind.keys().len() {
                     let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
@@ -790,9 +993,14 @@ pub fn scan_imports_and_exports(
             // If this is an entry point, depend on all exports so they are included
             if is_entry_point {
                 let force_include_exports = flag.force_include_exports_for_entry_point;
+                let include_namespace = force_include_exports
+                    || LinkerContext::chunk_default_export_is_namespace(
+                        flag,
+                        col_ref!(ast_flags_list)[id],
+                    );
                 let add_wrapper = wrap != WrapKind::None;
 
-                let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
+                let extra_count = (include_namespace as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
                     bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
@@ -820,11 +1028,10 @@ pub fn scan_imports_and_exports(
                         this.top_level_symbols_to_parts(target_source_index.get(), target_ref);
                     dependencies.reserve(top_to_parts.len());
                     for part_index in top_to_parts {
-                        // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
-                            // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
-                            // `#[repr(transparent)] u32` newtypes ported from the
-                            // same Zig `ast.Index`; bridge by `.value` until B-3
+                            // `crate::Index` ↔ `bun_ast::Index` are both
+                            // `#[repr(transparent)] u32` newtypes;
+                            // bridge by `.value` until B-3
                             // collapses them to a single re-export.
                             source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
@@ -835,8 +1042,7 @@ pub fn scan_imports_and_exports(
                 dependencies.reserve(extra_count);
 
                 // Ensure "exports" is included if the current output format needs it
-                if force_include_exports {
-                    // PERF(port): was appendAssumeCapacity
+                if include_namespace {
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
@@ -845,7 +1051,6 @@ pub fn scan_imports_and_exports(
 
                 // Include the wrapper if present
                 if add_wrapper {
-                    // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: col_ref!(wrapper_part_indices)[id].get(),
@@ -861,9 +1066,6 @@ pub fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — `?` propagates OOM.
-
-                col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if force_include_exports && output_format != Format::InternalBakeDev {
@@ -874,6 +1076,8 @@ pub fn scan_imports_and_exports(
                         1,
                     )?;
                 }
+
+                this.entry_point_part_indices[id] = entry_point_part_index;
             }
 
             // Encode import-specific constraints in the dependency graph
@@ -890,9 +1094,10 @@ pub fn scan_imports_and_exports(
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
+                let mut preload_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
-                // PORT NOTE: iterate by index so each iteration re-borrows
+                // Iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
                 let import_record_indices_len = col_ref!(parts_list)[id].as_slice()[part_index]
                     .import_record_indices
@@ -909,7 +1114,7 @@ pub fn scan_imports_and_exports(
                     let other_id = rec_source_index.value() as usize;
 
                     // Don't follow external imports (this includes import() expressions)
-                    // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
+                    // Short-circuit: `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
                         let record = &col_ref!(import_records_list)[id].as_slice()
@@ -920,81 +1125,87 @@ pub fn scan_imports_and_exports(
                         if output_format == Format::InternalBakeDev {
                             continue;
                         }
+                        if module_preload && is_external_dyn && kind == ImportKind::Dynamic {
+                            preload_uses += 1;
+                        }
 
                         // This is an external import. Check if it will be a "require()" call.
                         if kind == ImportKind::Require
                             || !output_format.keep_es6_import_export_syntax()
                             || kind == ImportKind::Dynamic
                         {
-                            if rec_source_index.is_valid()
-                                && kind == ImportKind::Dynamic
-                                && col_ref!(ast_flags_list)[other_id]
-                                    .contains(AstFlags::FORCE_CJS_TO_ESM)
+                            // We should use "__require" instead of "require" if we're not
+                            // generating a CommonJS output file, since it won't exist otherwise.
+                            // An `import()` is printed as-is and never becomes `__require()`,
+                            // nor does a split `require()` (`import.meta.require`).
+                            if kind != ImportKind::Dynamic
+                                && !is_external_dyn
+                                && should_call_runtime_require(output_format)
                             {
-                                // If the CommonJS module was converted to ESM
-                                // and the developer `import("cjs_module")`, then
-                                // they may have code that expects the default export to return the CommonJS module.exports object
-                                // That module.exports object does not exist.
-                                // We create a default object with getters for each statically-known export
-                                // This is kind of similar to what Node.js does
-                                // Once we track usages of the dynamic import, we can remove this.
-                                if !col_ref!(named_exports)[other_id].contains(b"default") {
-                                    col!(flags)[other_id].needs_synthetic_default_export = true;
-                                }
+                                runtime_require_uses += 1;
+                            }
 
-                                continue;
-                            } else {
-                                // We should use "__require" instead of "require" if we're not
-                                // generating a CommonJS output file, since it won't exist otherwise.
-                                if should_call_runtime_require(output_format) {
-                                    runtime_require_uses += 1;
-                                }
+                            // A split `require()` whose target is CommonJS at link
+                            // time (for example a lifted `module.exports = require()`
+                            // file the linker wrapped again): the chunk exports only
+                            // `default: module.exports`, so the printed call reads
+                            // `.default` to return `module.exports`, the same value
+                            // an unsplit `require()` returns.
+                            if kind == ImportKind::Require
+                                && is_external_dyn
+                                && rec_source_index.is_valid()
+                                && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                    == ExportsKind::Cjs
+                            {
+                                col!(import_records_list)[id].as_mut_slice()
+                                    [import_record_index as usize]
+                                    .flags
+                                    .insert(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT);
+                            }
 
-                                // If this wasn't originally a "require()" call, then we may need
-                                // to wrap this in a call to the "__toESM" wrapper to convert from
-                                // CommonJS semantics to ESM semantics.
-                                //
-                                // Unfortunately this adds some additional code since the conversion
-                                // is somewhat complex. As an optimization, we can avoid this if the
-                                // following things are true:
-                                //
-                                // - The import is an ES module statement (e.g. not an "import()" expression)
-                                // - The ES module namespace object must not be captured
-                                // - The "default" and "__esModule" exports must not be accessed
-                                //
-                                if kind != ImportKind::Require
-                                    && (kind != ImportKind::Stmt
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
-                                        || rec_flags
-                                            .contains(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS))
+                            // If this wasn't originally a "require()" call, then we may need
+                            // to wrap this in a call to the "__toESM" wrapper to convert from
+                            // CommonJS semantics to ESM semantics.
+                            //
+                            // Unfortunately this adds some additional code since the conversion
+                            // is somewhat complex. As an optimization, we can avoid this if the
+                            // following things are true:
+                            //
+                            // - The import is an ES module statement (e.g. not an "import()" expression)
+                            // - The ES module namespace object must not be captured
+                            // - The "default" and "__esModule" exports must not be accessed
+                            //
+                            if kind != ImportKind::Require
+                                && (kind != ImportKind::Stmt
+                                    || rec_flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                    || rec_flags
+                                        .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
+                                    || rec_flags
+                                        .contains(ImportRecordFlags::CONTAINS_ES_MODULE_ALIAS))
+                            {
+                                // For dynamic imports to cross-chunk CJS modules, we need extra
+                                // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
+                                // For other cases (static imports, truly external), use standard wrapping.
+                                if rec_source_index.is_valid()
+                                    && is_external_dyn
+                                    && col_ref!(exports_kind)[rec_source_index.get() as usize]
+                                        == ExportsKind::Cjs
                                 {
-                                    // For dynamic imports to cross-chunk CJS modules, we need extra
-                                    // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
-                                    // For other cases (static imports, truly external), use standard wrapping.
-                                    if rec_source_index.is_valid()
-                                        && is_external_dyn
-                                        && col_ref!(exports_kind)[rec_source_index.get() as usize]
-                                            == ExportsKind::Cjs
-                                    {
-                                        // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                        col!(import_records_list)[id].as_mut_slice()
-                                            [import_record_index as usize]
-                                            .flags
-                                            .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                                        to_esm_uses += 1;
-                                    } else if kind != ImportKind::Dynamic {
-                                        // Static imports to external CJS modules need __toESM wrapping
-                                        col!(import_records_list)[id].as_mut_slice()
-                                            [import_record_index as usize]
-                                            .flags
-                                            .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                                        to_esm_uses += 1;
-                                    }
-                                    // Dynamic imports to truly external modules: no wrapping (preserve native format)
+                                    // Cross-chunk dynamic import to CJS - needs special handling in printer
+                                    col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize]
+                                        .flags
+                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                    to_esm_uses += 1;
+                                } else if kind != ImportKind::Dynamic {
+                                    // Static imports to external CJS modules need __toESM wrapping
+                                    col!(import_records_list)[id].as_mut_slice()
+                                        [import_record_index as usize]
+                                        .flags
+                                        .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+                                    to_esm_uses += 1;
                                 }
+                                // Dynamic imports of an ES module chunk or a truly external module: no wrapping
                             }
                         }
                         continue;
@@ -1019,9 +1230,15 @@ pub fn scan_imports_and_exports(
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
-                        // "__toESM" wrapper as long as it's not a bare "require()"
+                        // "__toESM" wrapper as long as it's not a bare "require()".
+                        // A same-chunk `import()` of a lifted CommonJS module needs it
+                        // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
-                            && other_export_kind == ExportsKind::Cjs
+                            && (other_export_kind == ExportsKind::Cjs
+                                || (kind == ImportKind::Dynamic
+                                    && other_flags.wrap == WrapKind::Esm
+                                    && col_ref!(ast_flags_list)[other_id]
+                                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
                         {
                             col!(import_records_list)[id].as_mut_slice()
@@ -1036,7 +1253,10 @@ pub fn scan_imports_and_exports(
                         // This must be done for "require()" and "import()" expressions
                         // but does not need to be done for "import" statements since
                         // those just cause us to reference the exports directly.
-                        if other_flags.wrap == WrapKind::Esm && kind != ImportKind::Stmt {
+                        if other_flags.wrap == WrapKind::Esm
+                            && kind != ImportKind::Stmt
+                            && !rec_flags.contains(ImportRecordFlags::NAMESPACE_UNUSED)
+                        {
                             this.graph.generate_symbol_import_and_use(
                                 source_index,
                                 part_index as u32,
@@ -1090,6 +1310,39 @@ pub fn scan_imports_and_exports(
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
+
+                    // `convert_stmts_for_chunk` prints a wrapped lifted file's export star as
+                    // `module.exports = <value>`: the part needs `module` and that value.
+                    if wrap == WrapKind::Cjs
+                        && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                        && !(rec_source_index.is_valid() && rec_source_index.get() == source_index)
+                    {
+                        if rec_source_index.is_valid() {
+                            let other_id = rec_source_index.get() as usize;
+                            if col_ref!(exports_kind)[other_id] != ExportsKind::Cjs {
+                                this.graph.generate_symbol_import_and_use(
+                                    source_index,
+                                    part_index as u32,
+                                    col_ref!(exports_refs)[other_id],
+                                    1,
+                                    Index::source(rec_source_index.get()),
+                                )?;
+                            }
+                        } else if output_format.keep_es6_import_export_syntax() {
+                            col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize]
+                                .flags
+                                .insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
+                        this.graph.generate_symbol_import_and_use(
+                            source_index,
+                            part_index as u32,
+                            col_ref!(module_refs)[id],
+                            1,
+                            Index::source(source_index),
+                        )?;
+                        continue;
+                    }
 
                     let mut happens_at_runtime = rec_source_index.is_invalid()
                         && (!is_entry_point || !output_format.keep_es6_import_export_syntax());
@@ -1168,6 +1421,13 @@ pub fn scan_imports_and_exports(
                         b"__reExport",
                         re_export_uses,
                     )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__preload",
+                        preload_uses,
+                    )?;
                 }
             }
         }
@@ -1182,7 +1442,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyWrapper — port of the inner Zig struct.
+// DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
 struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
@@ -1192,6 +1452,7 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    wrap_stack: Vec<IndexInt>,
 }
 
 impl DependencyWrapper<'_> {
@@ -1234,41 +1495,46 @@ impl DependencyWrapper<'_> {
     }
 
     fn wrap(&mut self, source_index: IndexInt) {
-        let mut flag = self.flags[source_index as usize];
+        // Explicit worklist (was per-edge recursive). Only flag bits are
+        // written and never re-read to decide later iterations, so
+        // processing order is irrelevant.
+        debug_assert!(self.wrap_stack.is_empty());
+        self.wrap_stack.push(source_index);
 
-        if flag.did_wrap_dependencies {
-            return;
-        }
-        flag.did_wrap_dependencies = true;
+        while let Some(source_index) = self.wrap_stack.pop() {
+            let flag = &mut self.flags[source_index as usize];
 
-        // Never wrap the runtime file since it always comes first
-        if source_index == Index::RUNTIME.get() {
-            return;
-        }
-
-        // This module must be wrapped
-        if flag.wrap == WrapKind::None {
-            flag.wrap = match self.exports_kind[source_index as usize] {
-                ExportsKind::Cjs => WrapKind::Cjs,
-                _ => WrapKind::Esm,
-            };
-        }
-        self.flags[source_index as usize] = flag;
-
-        // `import_records` is a `&'a [_]` (Copy) field — copy it out so the
-        // recursive `&mut self` call does not overlap the iterator borrow.
-        let records = self.import_records;
-        for record in records[source_index as usize].as_slice() {
-            if !record.source_index.is_valid() {
+            if flag.did_wrap_dependencies {
                 continue;
             }
-            self.wrap(record.source_index.get());
+            flag.did_wrap_dependencies = true;
+
+            // Never wrap the runtime file since it always comes first
+            if source_index == Index::RUNTIME.get() {
+                continue;
+            }
+
+            // This module must be wrapped
+            if flag.wrap == WrapKind::None {
+                flag.wrap = match self.exports_kind[source_index as usize] {
+                    ExportsKind::Cjs => WrapKind::Cjs,
+                    _ => WrapKind::Esm,
+                };
+            }
+
+            for record in self.import_records[source_index as usize].as_slice() {
+                if record.source_index.is_valid()
+                    && !self.flags[record.source_index.get() as usize].did_wrap_dependencies
+                {
+                    self.wrap_stack.push(record.source_index.get());
+                }
+            }
         }
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
+// ExportStarContext — holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
@@ -1277,6 +1543,7 @@ struct ExportStarContext<'a> {
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
+    ast_flags: *mut [AstFlags],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1296,6 +1563,11 @@ impl<'a> ExportStarContext<'a> {
         }
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
+
+        // A lifted file's export star was `module.exports = ns`: it hands over `default` too.
+        let reexports_default = self.source_index_stack[..stack_end_pos].iter().all(|i| {
+            col_ref!(self.ast_flags)[*i as usize].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+        });
 
         for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
@@ -1320,9 +1592,8 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             }
 
-            // PORT NOTE: reshaped for borrowck — collect (alias, name) pairs so the
+            // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
-            // PERF(port): was zero-copy `iter()` over StringArrayHashMap; profile.
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
             'next_export: for ne_i in 0..exports_len {
                 // `BackRef<[u8]>` — points into the `named_exports` key
@@ -1335,7 +1606,7 @@ impl<'a> ExportStarContext<'a> {
 
                 // ES6 export star statements ignore exports named "default"
                 let alias_slice: &[u8] = &alias;
-                if alias_slice == b"default" {
+                if alias_slice == b"default" && !reexports_default {
                     continue;
                 }
 
@@ -1375,7 +1646,6 @@ impl<'a> ExportStarContext<'a> {
                             },
                         )
                         .expect("oom");
-                    // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
                 } else if gop.value_ptr.data.source_index.get() != other_source_index {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr
@@ -1388,7 +1658,6 @@ impl<'a> ExportStarContext<'a> {
                             },
                             ..Default::default()
                         });
-                    // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
                 }
             }
 
@@ -1396,8 +1665,7 @@ impl<'a> ExportStarContext<'a> {
             self.add_exports(resolved_exports, target_id, other_source_index);
         }
 
-        // PORT NOTE: Zig `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
-        // — inlined at scope end (no early returns after the push).
+        // Scope-end truncation (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
     }
 }
@@ -1413,24 +1681,9 @@ mod __css_validation {
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
-    // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
+    // Keep the column element as a raw
+    // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
-
-    /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
-    /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-    struct SliceBoxAdapter;
-    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
-        fn hash(&self, key: &[u8]) -> u32 {
-            // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
-            // (std `Hash` over the byte slice → wyhash truncated to u32).
-            use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext.hash(key)
-        }
-        fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-            a == &**b
-        }
-    }
 
     pub(super) fn validate_css_import_composes(
         this: &mut LinkerContext,
@@ -1465,10 +1718,7 @@ mod __css_validation {
                 };
                 for name in compose.names.slice() {
                     let name_v = name.v();
-                    if !other_css_ast
-                        .local_scope
-                        .contains_adapted(name_v, &SliceBoxAdapter)
-                    {
+                    if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
@@ -1539,8 +1789,6 @@ mod __css_validation {
             log: &'a mut Log,
         }
 
-        // PORT NOTE: `pub fn deinit` → Drop on `visited` / `properties` handles cleanup.
-
         impl<'a, 'bump> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
@@ -1577,11 +1825,11 @@ mod __css_validation {
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        bun_ast::alloc_print(format_args!(
+                        bun_ast::alloc_print!(
                             "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        )),
+                        ),
                     )
                     .clone_line_text(self.log.clone_line_text),
                     notes: Box::<[bun_ast::Data]>::from(
@@ -1592,10 +1840,10 @@ mod __css_validation {
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
-                                bun_ast::alloc_print(format_args!(
+                                bun_ast::alloc_print!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                )),
+                                ),
                             ),
                             bun_ast::Data {
                                 text: {
@@ -1619,8 +1867,6 @@ mod __css_validation {
                     ),
                     ..Default::default()
                 });
-                // PORT NOTE: nested `catch |err| bun.handleOom(err)` chain dropped — aborts on OOM.
-
                 // Don't warn more than once
                 entry.value_ptr.source_index = Index::INVALID.get();
             }
@@ -1657,9 +1903,7 @@ mod __css_validation {
                                 };
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
-                                    let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                    else {
+                                    let Some(other_name) = other_ast.local_scope.get(name_v) else {
                                         continue;
                                     };
                                     let other_name_ref =
@@ -1680,9 +1924,7 @@ mod __css_validation {
                             // inside this file
                             for name in compose.names.slice() {
                                 let name_v = name.v();
-                                let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                else {
+                                let Some(name_entry) = ast.local_scope.get(name_v) else {
                                     continue;
                                 };
                                 self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));
@@ -1725,7 +1967,6 @@ mod __css_validation {
             }
         }
 
-        // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step. Read-only.
         let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
@@ -1745,5 +1986,3 @@ mod __css_validation {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/scanImportsAndExports.zig

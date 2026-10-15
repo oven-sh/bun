@@ -1,0 +1,98 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
+//! A generic disjoint-set (union-find) data structure.
+//!
+//! Ported from TypeScript `src/Utils/DisjointSet.ts`.
+
+use crate::collections::IdMap;
+
+/// A Union-Find data structure for grouping items into disjoint sets.
+///
+/// Corresponds to TS `DisjointSet<T>` in `src/Utils/DisjointSet.ts`.
+/// Uses `IdMap` to preserve insertion order (matching TS `Map` behavior).
+pub(crate) struct DisjointSet<K> {
+    entries: IdMap<K, K>,
+}
+
+impl<K: Copy + Eq + Into<u32> + From<u32>> DisjointSet<K> {
+    pub(crate) fn new() -> Self {
+        DisjointSet {
+            entries: IdMap::new(),
+        }
+    }
+
+    /// Updates the graph to reflect that the given items form a set,
+    /// linking any previous sets that the items were part of into a single set.
+    ///
+    /// Corresponds to TS `union(items: Array<T>): void`.
+    pub(crate) fn union(&mut self, items: &[K]) {
+        if items.is_empty() {
+            return;
+        }
+        let root = self.find(items[0]);
+        for &item in &items[1..] {
+            let item_root = self.find(item);
+            if item_root != root {
+                self.entries.insert(item_root, root);
+            }
+        }
+    }
+
+    /// Find the root of the set containing `item`, with path compression.
+    /// If `item` is not in the set, it is inserted as its own root.
+    ///
+    /// Note: callers that need null/None semantics for missing items should
+    /// use `find_opt()` instead.
+    pub(crate) fn find(&mut self, item: K) -> K {
+        let mut root = item;
+        let mut child_of_root = item;
+        loop {
+            match self.entries.get(root) {
+                Some(&parent) if parent != root => {
+                    child_of_root = root;
+                    root = parent;
+                }
+                Some(_) => break,
+                None => {
+                    self.entries.insert(root, root);
+                    break;
+                }
+            }
+        }
+        let mut current = item;
+        while current != child_of_root {
+            let parent = self.entries.insert(current, root);
+            current = parent.unwrap_or(child_of_root);
+        }
+        root
+    }
+
+    /// Find the root of the set containing `item`, returning `None` if the item
+    /// was never added to the set.
+    ///
+    /// Corresponds to TS `find(item: T): T | null`.
+    pub(crate) fn find_opt(&mut self, item: K) -> Option<K> {
+        if !self.entries.contains_key(item) {
+            return None;
+        }
+        Some(self.find(item))
+    }
+
+    /// Calls the provided callback once for each item in the disjoint set,
+    /// passing the item and the group root to which it belongs.
+    ///
+    /// Corresponds to TS `forEach(fn: (item: T, group: T) => void): void`.
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
+    where
+        F: FnMut(K, K),
+    {
+        let keys: Vec<K> = self.entries.keys().collect();
+        for item in keys {
+            let group = self.find(item);
+            f(item, group);
+        }
+    }
+}

@@ -8,18 +8,57 @@
 //!
 //! Note: This is specifically for WebSocket client implementations, not for server-side WebSockets.
 
-use core::ffi::c_void;
-
-use bun_core::{String as BunString, ZigString};
+use bun_boringssl as boringssl;
+use bun_boringssl::c::OwnedSslCtx;
+use bun_core::ffi::FfiSlice;
+use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_uws_sys::{Socket, SslCtx};
+use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
+use bun_ptr::ThisPtr;
+use bun_uws_sys::Socket;
 
-use super::ErrorCode;
 use super::websocket_deflate;
+use super::{ErrorCode, InitialData, WebSocketProxyTunnel};
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `WebCore::WebSocket` object.
     pub struct CppWebSocket;
+}
+
+/// Whose certificate a TLS handshake presented.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TlsPeer {
+    /// The WebSocket server, reached directly or inside a proxy tunnel.
+    Target,
+    /// An HTTPS proxy. `tls.checkServerIdentity` is for the target only, as in fetch.
+    Proxy,
+}
+
+/// Who decides whether a certificate whose chain verified names the server.
+enum NameCheck {
+    /// `rejectUnauthorized: false` and no callback.
+    Nobody,
+    BuiltIn,
+    /// `tls.checkServerIdentity`. Without `enforce` it still runs, as in Node, and its verdict is dropped.
+    Callback {
+        callback: JSValue,
+        enforce: bool,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TlsHandshake {
+    /// `tls.checkServerIdentity` runs in the context of the script that made the WebSocket.
+    First { context: ContextId, peer: TlsPeer },
+    /// On the connected client's socket. BoringSSL refuses a changed certificate here.
+    Renegotiation,
+}
+
+/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
+#[repr(C)]
+pub struct RawHeader<'a> {
+    pub name: FfiSlice<'a>,
+    pub value: FfiSlice<'a>,
 }
 
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
@@ -29,46 +68,72 @@ bun_opaque::opaque_ffi! {
 // no `readonly`/`noalias` — the C++ side owns and mutates all state behind it.
 // Imports whose only non-value param is that handle are declared `safe fn`.
 unsafe extern "C" {
-    fn WebSocket__didConnect(
+    // `buffered_data` / `secure` / `tunnel` are opaque to C++ (forwarded back
+    // into Rust untouched), so their Rust-only layouts are fine here.
+    #[allow(improper_ctypes)]
+    safe fn WebSocket__didConnect(
         websocket_context: &CppWebSocket,
-        socket: *mut Socket,
-        buffered_data: *mut u8,
-        buffered_len: usize,
-        deflate_params: *const websocket_deflate::Params,
-        secure: *mut SslCtx,
+        socket: &mut Socket,
+        buffered_data: Option<Box<InitialData>>,
+        deflate_params: Option<&websocket_deflate::Params>,
+        secure: Option<OwnedSslCtx>,
+        verified_hostname: FfiSlice<'_>,
     );
-    fn WebSocket__didConnectWithTunnel(
+    #[allow(improper_ctypes)]
+    safe fn WebSocket__didConnectWithTunnel(
         websocket_context: &CppWebSocket,
-        tunnel: *mut c_void,
-        buffered_data: *mut u8,
-        buffered_len: usize,
-        deflate_params: *const websocket_deflate::Params,
+        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        buffered_data: Option<Box<InitialData>>,
+        deflate_params: Option<&websocket_deflate::Params>,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
-    fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
-    fn WebSocket__didReceiveText(
+    safe fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_message: FfiSlice<'_>,
+        headers: FfiSlice<'_, RawHeader<'_>>,
+        body: FfiSlice<'_>,
+    );
+    safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: BunString);
+    safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: *const ZigString,
+        text: &EncodedSlice,
     );
-    fn WebSocket__didReceiveBytes(
+    safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
-        bytes: *const u8,
-        byte_len: usize,
+        bytes: FfiSlice<'_>,
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
-    safe fn WebSocket__incrementPendingActivity(websocket_context: &CppWebSocket);
-    safe fn WebSocket__decrementPendingActivity(websocket_context: &CppWebSocket);
-    fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
+    safe fn WebSocket__isProxyTLS(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
+    safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
+    safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
+    safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
+    safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
+    // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
+    safe fn Bun__X509__toJSLegacyEncoding(
+        cert: &mut boringssl::c::X509,
+        global_object: &JSGlobalObject,
+    ) -> JSValue;
+    safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;
 }
 
-// PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
+// Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
 // an opaque C++ handle with no Rust-visible state; mutation happens entirely on
 // the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
+    /// The context of the script that made this WebSocket: its connection is that context's.
+    pub(crate) fn context(&self) -> &bun_jsc::ScriptExecutionContext {
+        // SAFETY: called while the WebSocket is connecting from its constructor, inside the context
+        // that made it (alive while its script runs); every `WebCore::ScriptExecutionContext` has
+        // its Rust half.
+        unsafe { &*WebSocket__bunContext(self).cast::<bun_jsc::ScriptExecutionContext>() }
+    }
+
     pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
@@ -78,139 +143,228 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+    /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_message: &[u8],
+        headers: &[RawHeader<'_>],
+        body: &[u8],
+    ) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; reason outlives the call.
-        unsafe { WebSocket__didClose(self, code, reason) };
+        WebSocket__didReceiveHandshakeResponse(
+            self,
+            status_code,
+            status_message.into(),
+            headers.into(),
+            body.into(),
+        );
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+    pub(crate) fn did_close(&self, code: u16, reason: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; text outlives the call.
-        unsafe { WebSocket__didReceiveText(self, clone, text) };
+        WebSocket__didClose(self, code, reason);
         event_loop.exit();
     }
 
-    // Forwards `bytes` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn did_receive_bytes(&self, bytes: *const u8, byte_len: usize, opcode: u8) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &EncodedSlice) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; bytes points to byte_len valid bytes.
-        unsafe { WebSocket__didReceiveBytes(self, bytes, byte_len, opcode) };
+        WebSocket__didReceiveText(self, clone, text);
         event_loop.exit();
     }
 
+    pub(crate) fn did_receive_bytes(&self, bytes: &[u8], opcode: u8) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        WebSocket__didReceiveBytes(self, bytes.into(), opcode);
+        event_loop.exit();
+    }
+
+    /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
-        let event_loop = VirtualMachine::get().event_loop_mut();
-        event_loop.enter();
-        let result = WebSocket__rejectUnauthorized(self);
-        event_loop.exit();
-        result
+        WebSocket__rejectUnauthorized(self)
     }
 
-    // Forwards `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// Rooted through the JS wrapper, which is alive while the socket is.
+    fn check_server_identity(&self) -> Option<JSValue> {
+        let callback = WebSocket__checkServerIdentity(self);
+        (!callback.is_empty_or_undefined_or_null() && callback.is_callable()).then_some(callback)
+    }
+
+    fn name_check(&self, peer: TlsPeer) -> NameCheck {
+        let enforce = self.reject_unauthorized();
+        let callback = match peer {
+            TlsPeer::Target => self.check_server_identity(),
+            TlsPeer::Proxy => None,
+        };
+        match callback {
+            Some(callback) => NameCheck::Callback { callback, enforce },
+            None if enforce => NameCheck::BuiltIn,
+            None => NameCheck::Nobody,
+        }
+    }
+
+    /// The name check inside the handshake. `Unchecked` leaves the name to `accepts_tls_peer`.
+    pub(crate) fn server_identity(
+        &self,
+        peer: TlsPeer,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> boringssl::ServerIdentity {
+        match self.name_check(peer) {
+            NameCheck::BuiltIn => boringssl::server_identity(ssl, Some(hostname)),
+            NameCheck::Nobody | NameCheck::Callback { .. } => boringssl::ServerIdentity::Unchecked,
+        }
+    }
+
+    /// The one verdict on a completed TLS handshake. May run JS that closes the WebSocket.
+    pub(crate) fn accepts_tls_peer(
+        &self,
+        handshake: TlsHandshake,
+        ssl: Option<&mut boringssl::c::SSL>,
+        chain_verified: bool,
+        hostname: &[u8],
+    ) -> bool {
+        if !chain_verified {
+            // As in Node, the callback never sees a chain that did not verify.
+            return !self.reject_unauthorized();
+        }
+        let peer = match handshake {
+            TlsHandshake::First { peer, .. } => peer,
+            // Without a tunnel, that socket goes to the target or to the HTTPS proxy of a ws:// target.
+            TlsHandshake::Renegotiation if WebSocket__isProxyTLS(self) => TlsPeer::Proxy,
+            TlsHandshake::Renegotiation => TlsPeer::Target,
+        };
+        match (self.name_check(peer), handshake) {
+            (NameCheck::Nobody, _) | (NameCheck::Callback { .. }, TlsHandshake::Renegotiation) => {
+                true
+            }
+            (NameCheck::BuiltIn, _) => ssl.is_some_and(|ssl| {
+                !hostname.is_empty() && bun_uws::check_server_identity(ssl, hostname)
+            }),
+            (NameCheck::Callback { callback, enforce }, TlsHandshake::First { context, .. }) => {
+                // Before the 101 the upgrade client hears of a renegotiation too.
+                ssl.is_some_and(|ssl| {
+                    SSL_total_renegotiations(ssl) > 0
+                        || run_check_server_identity(context, callback, ssl, hostname)
+                }) || !enforce
+            }
+        }
+    }
+
+    /// `buffered_data` and `secure` are handed on to the connected client.
     pub(crate) fn did_connect(
         &self,
         socket: &mut Socket,
-        buffered_data: *mut u8,
-        buffered_len: usize,
+        buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
-        secure: Option<&mut SslCtx>,
+        secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
     ) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; all pointers are valid for the call duration.
-        unsafe {
-            WebSocket__didConnect(
-                self,
-                socket,
-                buffered_data,
-                buffered_len,
-                deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
-                secure.map_or(core::ptr::null_mut(), std::ptr::from_mut),
-            )
-        };
+        WebSocket__didConnect(
+            self,
+            socket,
+            buffered_data,
+            deflate_params,
+            secure,
+            verified_hostname.into(),
+        );
         event_loop.exit();
     }
 
-    // Forwards `tunnel` and `buffered_data` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    /// `buffered_data` is handed on to the connected client.
     pub(crate) fn did_connect_with_tunnel(
         &self,
-        tunnel: *mut c_void,
-        buffered_data: *mut u8,
-        buffered_len: usize,
+        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {
-        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
-        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; tunnel/buffered_data are valid for the call duration.
-        unsafe {
-            WebSocket__didConnectWithTunnel(
-                self,
-                tunnel,
-                buffered_data,
-                buffered_len,
-                deflate_params.map_or(core::ptr::null(), std::ptr::from_ref),
-            )
-        };
+        WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params);
         event_loop.exit();
     }
 }
 
 impl CppWebSocket {
-    // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
-    pub(crate) fn r#ref(&self) {
+    fn r#ref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__incrementPendingActivity(self);
+        WebSocket__holdPendingActivityForClient(self);
     }
 
-    pub(crate) fn unref(&self) {
+    fn unref(&self) {
         bun_jsc::mark_binding!();
-        WebSocket__decrementPendingActivity(self);
+        WebSocket__releasePendingActivityForClient(self);
     }
 
-    pub(crate) fn set_protocol(&self, protocol: &mut BunString) {
+    pub(crate) fn set_protocol(&self, protocol: BunString) {
         bun_jsc::mark_binding!();
-        // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
-        unsafe { WebSocket__setProtocol(self, protocol) };
+        WebSocket__setProtocol(self, protocol);
     }
+}
+
+fn run_check_server_identity(
+    context: ContextId,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> bool {
+    let vm = VirtualMachineRef::get();
+    let _context = vm.enter_context(context);
+    let event_loop = vm.event_loop_mut();
+    event_loop.enter();
+    let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
+        Ok(approved) => approved,
+        Err(err) => {
+            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            false
+        }
+    };
+    event_loop.exit();
+    verdict
+}
+
+/// `Ok(true)` only if the callback ran and returned a falsy value.
+fn call_check_server_identity(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> JsResult<bool> {
+    let Some(cert) = ssl.peer_leaf_certificate() else {
+        return Ok(false);
+    };
+    let js_cert =
+        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let js_hostname = bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname)?;
+    let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
+    js_hostname.ensure_still_alive();
+    js_cert.ensure_still_alive();
+    if callback.call_may_have_been_dropped(global) {
+        return Ok(false);
+    }
+    // As in `tls.connect()` (src/js/node/net.ts), any truthy verdict rejects: an async callback's Promise too.
+    Ok(!verdict.is_truthy())
 }
 
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
-/// pattern when the ref must outlive the constructing scope (e.g. stored on a
-/// queued task).
+/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
+/// scope (e.g. stored on a queued task).
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
-    /// Take a pending-activity ref on `ws`.
-    ///
-    /// # Safety
-    /// `ws` must point to a live C++ `WebCore::WebSocket` that outlives the
-    /// returned guard.
-    pub(crate) unsafe fn new(ws: core::ptr::NonNull<CppWebSocket>) -> Self {
-        CppWebSocket::opaque_ref(ws.as_ptr()).r#ref();
-        Self(ws)
+    /// Take a pending-activity ref on `ws` (which keeps it alive until `Drop`).
+    pub(crate) fn new(ws: &CppWebSocket) -> Self {
+        ws.r#ref();
+        Self(core::ptr::NonNull::from(ws))
     }
 }
 
@@ -219,5 +373,3 @@ impl Drop for CppWebSocketRef {
         CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
     }
 }
-
-// ported from: src/http_jsc/websocket_client/CppWebSocket.zig

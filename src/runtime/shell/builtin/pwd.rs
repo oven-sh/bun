@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Pwd {
+pub(crate) struct Pwd {
     state: State,
 }
 
@@ -79,5 +79,3 @@ impl Pwd {
         Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
     }
 }
-
-// ported from: src/shell/builtin/pwd.zig

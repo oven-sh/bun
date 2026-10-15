@@ -30,14 +30,18 @@ async function tempDirToBuildIn() {
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
 
-  const install = Bun.spawnSync([bunExe(), "i"], {
+  // This file never launches a browser (only dev-server*.test.ts do), so skip
+  // puppeteer's chromium download entirely. This also keeps the two concurrent
+  // installs independent: they'd otherwise race extracting into a shared cache.
+  const install = Bun.spawn([bunExe(), "i"], {
     cwd: dir,
-    env: bunEnv,
+    env: { ...bunEnv, PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
-  if (!install.success) {
+  await install.exited;
+  if (install.exitCode !== 0) {
     const reason = install.signalCode || `code ${install.exitCode}`;
     throw new Error(`Failed to install dependencies: ${reason}`);
   }
@@ -112,12 +116,13 @@ test(
     rmSync(join(root, ".next"), { recursive: true, force: true });
     copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-    const bunDir = await tempDirToBuildIn();
+    // The two installs are independent (separate temp dirs, no shared
+    // puppeteer cache), so run them concurrently.
+    const [bunDir, nodeDir] = await Promise.all([tempDirToBuildIn(), tempDirToBuildIn()]);
     let lockfile = parseLockfile(bunDir);
     expect(lockfile).toMatchNodeModulesAt(bunDir);
     expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
 
-    const nodeDir = await tempDirToBuildIn();
     lockfile = parseLockfile(nodeDir);
     expect(lockfile).toMatchNodeModulesAt(nodeDir);
     expect(lockfile).toMatchSnapshot("node");

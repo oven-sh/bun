@@ -257,7 +257,7 @@ private:
     // Scratch buffer for proc_listallpids; persisted across scans so a
     // fork-heavy script (e.g. `make -j`) isn't reallocating every NOTE_FORK.
     WTF::Vector<pid_t> m_pids;
-    int m_kq = -1; // borrowed; owned by Zig's spawnPosix
+    int m_kq = -1; // borrowed; owned by spawnPosix
 };
 
 } // namespace Bun

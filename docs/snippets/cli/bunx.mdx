@@ -4,7 +4,7 @@
 bunx [flags] <package>[@version] [flags and arguments for the package]
 ```
 
-Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in `node_modules`.
+Execute an npm package executable (CLI). If the package isn't installed in `node_modules`, Bun installs it into a global shared cache.
 
 ### Flags
 
@@ -19,6 +19,22 @@ Execute an npm package executable (CLI), automatically installing into a global 
 
 <ParamField path="--no-install" type="boolean">
   Skip installation if package is not already installed
+</ParamField>
+
+<ParamField path="--cwd" type="string">
+  Set the working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
+<ParamField path="--trust" type="boolean">
+  Run the lifecycle scripts of the package and of **all** of its dependencies during installation
 </ParamField>
 
 <ParamField path="--verbose" type="boolean">

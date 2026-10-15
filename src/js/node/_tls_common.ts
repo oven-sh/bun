@@ -1,4 +1,10 @@
 // Hardcoded module "node:_tls_common"
+// Deprecated shim mirroring node's lib/_tls_common.js: re-exports the real
+// implementations and warns on load.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_tls_common.js
+const { SecureContext, createSecureContext } = require("node:tls");
+
+process.emitWarning("The _tls_common module is deprecated. Use `node:tls` instead.", "DeprecationWarning", "DEP0192");
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
 // javascript object representations before passing them back to the user.  Can
@@ -11,7 +17,7 @@ function translatePeerCertificate(c) {
   }
   if (c.infoAccess != null) {
     const info = c.infoAccess;
-    c.infoAccess = Object.create(null);
+    const parsed = (c.infoAccess = Object.create(null));
 
     // XXX: More key validation?
     info.replace(/([^\n:]*):([^\n]*)(?:\n|$)/g, (all, key, val) => {
@@ -23,13 +29,15 @@ function translatePeerCertificate(c) {
         // so this should never throw.
         val = JSON.parse(val);
       }
-      if (key in c.infoAccess) c.infoAccess[key].push(val);
-      else c.infoAccess[key] = [val];
+      if (key in parsed) parsed[key].push(val);
+      else parsed[key] = [val];
     });
   }
   return c;
 }
 
 export default {
+  SecureContext,
+  createSecureContext,
   translatePeerCertificate,
 };

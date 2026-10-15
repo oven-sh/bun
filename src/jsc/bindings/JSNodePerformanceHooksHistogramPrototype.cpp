@@ -44,8 +44,8 @@ const ClassInfo JSNodePerformanceHooksHistogramPrototype::s_info = { "Recordable
 void JSNodePerformanceHooksHistogramPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksHistogramPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -149,7 +149,7 @@ static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject,
 
     // TODO: rewrite validateNumber to return the validated value.
     double percentile = value.toNumber(globalObject);
-    scope.assertNoException();
+    RETURN_IF_EXCEPTION(scope, {});
     if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
         Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, value);
         return {};
@@ -423,9 +423,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     return JSValue::encode(histogram);
 }
 
-// Extern declarations for Timer.zig
+// Extern declarations for the native timer implementation
 extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
-extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
+extern "C" void Timer_disableEventLoopDelayMonitoring();
 
 // Create histogram for event loop delay monitoring
 JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -486,7 +486,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * glob
     // Reset histogram data on enable
     histogram->reset();
 
-    // Enable the event loop delay monitor in Timer.zig
+    // Enable the event loop delay monitor in the native timer implementation
     Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -511,13 +511,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
     }
 
-    // Call into Zig to disable monitoring
-    Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
+    // Call into native code to disable monitoring
+    Timer_disableEventLoopDelayMonitoring();
 
     return JSValue::encode(jsUndefined());
 }
 
-// Extern function for Zig to record delays
+// Extern function for native code to record delays
 extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
 {
     if (!histogram || delay_ns <= 0) return;

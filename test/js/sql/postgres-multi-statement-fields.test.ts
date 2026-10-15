@@ -7,106 +7,117 @@
 // not leaked.
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import net from "net";
+import { describeWithContainer } from "harness";
+import {
+  listeningServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgCString,
+  pgDataRow,
+  pgInt32,
+  pgRaw,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
-function pkt(type: string, body: Buffer): Buffer {
-  const header = Buffer.alloc(5);
-  header.write(type, 0);
-  header.writeInt32BE(body.length + 4, 1);
-  return Buffer.concat([header, body]);
-}
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
-function int16(n: number): Buffer {
-  const b = Buffer.alloc(2);
-  b.writeInt16BE(n, 0);
-  return b;
-}
+  test("simple query with multiple statements uses each RowDescription's column names", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
 
-function int32(n: number): Buffer {
-  const b = Buffer.alloc(4);
-  b.writeInt32BE(n, 0);
-  return b;
-}
-
-function cstr(s: string): Buffer {
-  return Buffer.concat([Buffer.from(s), Buffer.from([0])]);
-}
-
-function rowDescription(names: string[]): Buffer {
-  const fields = Buffer.concat(
-    names.map(name =>
-      Buffer.concat([
-        cstr(name), // column name
-        int32(0), // table oid
-        int16(0), // column attr number
-        int32(25), // type oid: text
-        int16(-1), // type size
-        int32(-1), // type modifier
-        int16(0), // format: text
-      ]),
-    ),
-  );
-  return pkt("T", Buffer.concat([int16(names.length), fields]));
-}
-
-function dataRow(values: string[]): Buffer {
-  const cols = Buffer.concat(
-    values.map(v => {
-      const bytes = Buffer.from(v);
-      return Buffer.concat([int32(bytes.length), bytes]);
-    }),
-  );
-  return pkt("D", Buffer.concat([int16(values.length), cols]));
-}
-
-const authenticationOk = pkt("R", int32(0));
-const readyForQuery = pkt("Z", Buffer.from("I"));
-const commandComplete = (tag: string) => pkt("C", cstr(tag));
-
-test("simple query with multiple statements uses each RowDescription's column names", async () => {
-  const server = net.createServer(socket => {
-    let startup = true;
-    socket.on("data", data => {
-      if (startup) {
-        startup = false;
-        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-        return;
-      }
-      if (data[0] !== 0x51 /* 'Q' */) return;
-      // Respond to the simple query with two result sets that have different
-      // column names and shapes, then a third with yet another shape.
-      socket.write(
-        Buffer.concat([
-          rowDescription(["x"]),
-          dataRow(["1"]),
-          commandComplete("SELECT 1"),
-          rowDescription(["y"]),
-          dataRow(["2"]),
-          commandComplete("SELECT 1"),
-          rowDescription(["a", "b", "c"]),
-          dataRow(["3", "4", "5"]),
-          commandComplete("SELECT 1"),
-          readyForQuery,
-        ]),
-      );
-    });
-  });
-
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = (server.address() as net.AddressInfo).port;
-
-  const sql = new SQL({
-    url: `postgres://u@127.0.0.1:${port}/db`,
-    max: 1,
-    idleTimeout: 5,
-    connectionTimeout: 5,
-  });
-
-  try {
-    const result = await sql`select 1 as x; select 2 as y; select 3 as a, 4 as b, 5 as c`.simple();
+    // ::text mirrors the original wire fixture (type oid 25) so the decoded
+    // values stay strings and the assertion below is byte-identical to the
+    // pre-conversion mock-server test.
+    const result =
+      await sql`select '1'::text as x; select '2'::text as y; select '3'::text as a, '4'::text as b, '5'::text as c`.simple();
     expect(result).toEqual([[{ x: "1" }], [{ y: "2" }], [{ a: "3", b: "4", c: "5" }]]);
-  } finally {
-    await sql.close();
-    server.close();
-  }
+  });
+
+  // NoticeResponse ('N') can arrive between result sets — RAISE NOTICE inside a
+  // DO block makes a real server emit one mid-stream. The protocol reader must
+  // consume exactly the message body so the following RowDescription stays
+  // correctly framed and the second result set decodes with its own column name.
+  test("NoticeResponse between result sets does not corrupt message framing", async () => {
+    await container.ready;
+    await using sql = new SQL({ url: url(), max: 1, idleTimeout: 5, connectionTimeout: 5 });
+
+    const result =
+      await sql`select '1'::text as x; do $$ begin raise notice 'relation exists, skipping'; end $$; select '2'::text as y`.simple();
+    // The DO block contributes its own (rowless) CommandComplete, hence the
+    // empty middle entry. The load-bearing checks are unchanged: {x:"1"} and
+    // {y:"2"} — a mis-framed NoticeResponse reader would corrupt or drop the
+    // third result set, and a stale field cache would surface {x:"2"}.
+    expect(result).toEqual([[{ x: "1" }], [], [{ y: "2" }]]);
+  });
 });
+
+// Fault-injection test: requires a server that refuses / drops / sends malformed
+// frames, which a healthy container will not do on demand. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+// Buffer.alloc frame construction here.
+//
+// NotificationResponse ('A', sent by NOTIFY), a degenerate empty NoticeResponse,
+// and unknown async messages can arrive between result sets. A real Postgres
+// will not emit a NotificationResponse mid-result-set (it defers to the
+// ReadyForQuery boundary), nor a length-4 NoticeResponse with no field list,
+// nor a NegotiateProtocolVersion mid-stream — so these stay mocked. The
+// protocol reader must consume exactly the message body so the following
+// messages stay correctly framed.
+for (const [name, asyncMessage] of [
+  // PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
+  [
+    "NotificationResponse",
+    pgRaw("A", Buffer.concat([pgInt32(4321), pgCString("some_channel"), pgCString("some payload")])),
+  ],
+  // Degenerate notice: declared length 4, no field list at all.
+  ["empty NoticeResponse", pgRaw("N", Buffer.alloc(0))],
+  // 'v' = NegotiateProtocolVersion, which the client does not handle explicitly
+  ["unknown message type", pgRaw("v", Buffer.concat([pgInt32(0), pgInt32(0)]))],
+] as const) {
+  test(`${name} between result sets does not corrupt message framing`, async () => {
+    const { port, server } = await listeningServer(socket => {
+      socket.on("error", () => {});
+      let startup = true;
+      socket.on("data", data => {
+        if (startup) {
+          startup = false;
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+          return;
+        }
+        if (data[0] !== 0x51 /* 'Q' */) return;
+        // End the socket after the response so a mis-framed reader stalls into a
+        // connection error instead of waiting for more data forever.
+        socket.end(
+          Buffer.concat([
+            pgRowDescription([{ name: "x", typeOid: 25 }]),
+            pgDataRow([Buffer.from("1")]),
+            pgCommandComplete("SELECT 1"),
+            asyncMessage,
+            pgRowDescription([{ name: "y", typeOid: 25 }]),
+            pgDataRow([Buffer.from("2")]),
+            pgCommandComplete("SELECT 1"),
+            pgReadyForQuery(),
+          ]),
+        );
+      });
+    });
+
+    const sql = new SQL({
+      url: `postgres://u@127.0.0.1:${port}/db`,
+      max: 1,
+      idleTimeout: 5,
+      connectionTimeout: 5,
+    });
+
+    try {
+      const result = await sql`select 1 as x; select 2 as y`.simple();
+      expect(result).toEqual([[{ x: "1" }], [{ y: "2" }]]);
+    } finally {
+      await sql.close().catch(() => {});
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+}

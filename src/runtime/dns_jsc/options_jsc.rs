@@ -10,10 +10,9 @@ use bun_dns::{
     PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
 use bun_dns::{addr_info_count, address_to_string};
-// PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
-// per-field `Invalid*` variants plus `JSError`. The Rust enum lives in
-// `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
-// done locally via the `js()` helper below.
+// `FromJSError` is the union of all the per-field `Invalid*` variants plus
+// `JSError`. The enum lives in `bun_dns` (which has no `bun_jsc` dep), so the
+// `JsError → JSError` mapping is done locally via the `js()` helper below.
 use bun_dns::OptionsFromJsError as FromJSError;
 
 #[inline]
@@ -52,22 +51,22 @@ pub(crate) fn options_from_js(
         }
 
         if let Some(flags) = js(value.get(global, "flags"))? {
-            if !flags.is_number() {
-                return Err(FromJSError::InvalidFlags);
-            }
+            if !flags.is_null() {
+                if !flags.is_number() {
+                    return Err(FromJSError::InvalidFlags);
+                }
 
-            // TODO(port): Zig coerces to `std.c.AI` (packed struct of bools backed
-            // by c_int). Options.flags in Rust should be an `AIFlags` bitflags
-            // newtype; here we coerce to i32 and store/bit-test as u32.
-            let flags_int: i32 = js(flags.coerce::<i32>(global))?;
-            options.flags = flags_int;
+                // Coerce to i32 and store/bit-test as u32.
+                let flags_int: i32 = js(flags.coerce::<i32>(global))?;
+                options.flags = flags_int;
 
-            // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
-            let filter: u32 =
-                !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
-            let int: u32 = flags_int as u32;
-            if int & filter != 0 {
-                return Err(FromJSError::InvalidFlags);
+                // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
+                let filter: u32 =
+                    !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
+                let int: u32 = flags_int as u32;
+                if int & filter != 0 {
+                    return Err(FromJSError::InvalidFlags);
+                }
             }
         }
 
@@ -77,10 +76,7 @@ pub(crate) fn options_from_js(
     Err(FromJSError::InvalidOptions)
 }
 
-pub(crate) fn family_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Family, FromJSError> {
+fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Family::Unspecified);
     }
@@ -95,9 +91,9 @@ pub(crate) fn family_from_js(
     }
 
     if value.is_string() {
-        // PORT NOTE: `Family.map` is a `ComptimeStringMap` ported as
-        // `bun_dns::FAMILY_MAP: phf::Map`; `.from_js` comes from
-        // `bun_jsc::ComptimeStringMapExt`.
+        // `Family.map` is a `ComptimeStringMap` ported as
+        // `bun_dns::FAMILY_MAP` (a `comptime_string_map!`); `.from_js` comes
+        // from `bun_jsc::ComptimeStringMapExt`.
         return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
             None => {
@@ -112,10 +108,7 @@ pub(crate) fn family_from_js(
     Err(FromJSError::InvalidFamily)
 }
 
-pub(crate) fn socket_type_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<SocketType, FromJSError> {
+fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<SocketType, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         // Default to .stream
         return Ok(SocketType::Stream);
@@ -145,10 +138,7 @@ pub(crate) fn socket_type_from_js(
     Err(FromJSError::InvalidSocketType)
 }
 
-pub(crate) fn protocol_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Protocol, FromJSError> {
+fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Protocol, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Protocol::Unspecified);
     }
@@ -178,10 +168,7 @@ pub(crate) fn protocol_from_js(
     Err(FromJSError::InvalidProtocol)
 }
 
-pub(crate) fn backend_from_js(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> Result<Backend, FromJSError> {
+fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Backend::default());
     }
@@ -234,8 +221,6 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
     obj.put(
         global,
         b"family",
-        // PORT NOTE: `this.address.any.family` — Zig's std.net.Address stores a
-        // sockaddr union under `.any` with a `.family` field. The Rust
         // `bun_sys::net::Address` exposes `.family() -> i32`.
         match this.address.family() {
             f if f == super::netc::AF_INET as _ => JSValue::js_number(4.0),
@@ -248,19 +233,14 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
 }
 
 pub(crate) fn address_to_js(
-    // PORT NOTE: `*const std.net.Address` — `bun_dns::Address` is the
-    // `bun_sys::net::Address` sockaddr wrapper.
+    // `bun_dns::Address` is the `bun_sys::net::Address` sockaddr wrapper.
     address: &bun_dns::Address,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    let mut str = match address_to_string(address) {
-        Ok(s) => s,
-        Err(_) => return Err(global.throw_out_of_memory()),
-    };
-    str.transfer_to_js(global)
+    address_to_string(address).into_js(global)
 }
 
-pub(crate) fn addr_info_to_js_array(
+fn addr_info_to_js_array(
     addr_info: &super::netc::addrinfo,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -277,14 +257,9 @@ pub(crate) fn addr_info_to_js_array(
                 array.put_index(global, j, result_to_js(&result, global)?)?;
                 j += 1;
             }
-            // Zig field name is `.next`; libc crate uses `ai_next`.
             current = this_node.ai_next;
         }
     }
 
     Ok(array)
 }
-
-// (unused import in Zig: `JSError = bun.JSError` — dropped)
-
-// ported from: src/runtime/dns_jsc/options_jsc.zig

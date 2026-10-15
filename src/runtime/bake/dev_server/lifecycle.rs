@@ -3,12 +3,7 @@
 //! `Watcher::init::<DevServer>` dispatches through the generic
 //! `WatcherContext` vtable, so the trait methods here are the *only* path the
 //! watcher thread reaches — they forward to the inherent
-//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`
-//! (ported from `DevServer.zig:4093`/`4153`).
-
-// `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
-// struct field gate must mirror `mod.rs` so the initializer below stays in sync.
-#![allow(unexpected_cfgs)]
+//! `DevServer::{on_file_update, on_watch_error}` bodies in `../DevServer.rs`.
 
 use super::{DevServer, HotReloadEvent, WatcherAtomics};
 
@@ -28,9 +23,8 @@ impl bun_watcher::WatcherContext for DevServer {
         DevServer::on_file_update(self, events, changed_files, watchlist);
     }
 
-    /// DevServer.zig only defines `onWatchError` (not `onError`); the trait's
-    /// default `on_watch_error` would forward here, so route both to the
-    /// inherent path-aware impl rather than emitting a generic warn.
+    /// The trait's default `on_watch_error` would forward here, so route both
+    /// to the inherent path-aware impl rather than emitting a generic warn.
     fn on_error(&mut self, err: bun_sys::Error) {
         DevServer::on_watch_error(self, err);
     }
@@ -41,10 +35,9 @@ impl bun_watcher::WatcherContext for DevServer {
 }
 
 impl WatcherAtomics {
-    /// DevServer.zig `WatcherAtomics.init`.
-    pub(crate) fn init(owner: *mut DevServer) -> Self {
+    pub(crate) fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
-        WatcherAtomics {
+        let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
             events: [mk_event(), mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(super::NextEvent::DONE.0),
             current_event: None,
@@ -53,6 +46,14 @@ impl WatcherAtomics {
             dbg_watcher_event: None,
             #[cfg(debug_assertions)]
             dbg_server_event: None,
+        }));
+        // SAFETY: `atomics` is the fresh `heap::into_raw` result; the
+        // allocation is exclusively reachable through it here.
+        unsafe {
+            for ev in &mut (*atomics).events {
+                ev.atomics = atomics;
+            }
+            core::ptr::NonNull::new_unchecked(atomics)
         }
     }
 }

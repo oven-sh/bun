@@ -19,7 +19,7 @@ const server = Bun.serve({
 
 ### `server.subscriberCount(topic)`
 
-Get count of subscribers for a WebSocket topic:
+Get the number of subscribers for a WebSocket topic:
 
 ```ts
 const server = Bun.serve({

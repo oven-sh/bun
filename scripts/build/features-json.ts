@@ -6,7 +6,7 @@
  * crash-report decoder: a crash-report URL carries the enabled-feature set as
  * a VLQ-encoded bitset, and the `features` array here maps bit index → name.
  * Native builds generate it by running the freshly built binary with
- * `scripts/features.mjs` (→ `crash_handler.getFeatureData()`); a
+ * `scripts/features.ts` (→ `crash_handler.getFeatureData()`); a
  * cross-compiled binary can't run on the build host, but every field is a
  * build-time constant we already know:
  *
@@ -43,17 +43,25 @@ export function parsePackedFeaturesList(cwd: string): string[] {
   const sourcePath = resolve(cwd, "src", "analytics", "lib.rs");
   const source = readFileSync(sourcePath, "utf8");
 
-  const invocation = source.match(/define_features!\s*\{([\s\S]*?)\n\s*\}/);
-  if (invocation === null) {
+  // The macro now recurses internally (`define_features! { @storage ... }`),
+  // so several invocation-shaped blocks exist; the entry list is the one whose
+  // body contains `<index> => (...)` arms. Scan every block and keep the
+  // entries we find — the density check below still rejects partial parses.
+  const invocations = [...source.matchAll(/define_features!\s*\{([\s\S]*?)\n\s*\}/g)];
+  if (invocations.length === 0) {
     throw new BuildError(`Could not find the define_features! invocation in ${sourcePath}`, {
       hint: "parsePackedFeaturesList() in scripts/build/features-json.ts needs updating to match the new shape.",
     });
   }
 
   const entries: { index: number; name: string }[] = [];
-  const entryRe = /(\d+)\s*=>\s*\(\s*\w+\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)/g;
-  for (const m of invocation[1]!.matchAll(entryRe)) {
-    entries.push({ index: Number(m[1]), name: m[2]! });
+  // `<index> => (<rust_ident>, "<feature name>")` with an optional
+  // `, core = IDENT` alias of the bun_core feature static.
+  const entryRe = /(\d+)\s*=>\s*\(\s*\w+\s*,\s*"((?:[^"\\]|\\.)*)"\s*(?:,\s*core\s*=\s*\w+\s*)?\)/g;
+  for (const invocation of invocations) {
+    for (const m of invocation[1]!.matchAll(entryRe)) {
+      entries.push({ index: Number(m[1]), name: m[2]! });
+    }
   }
   if (entries.length === 0) {
     throw new BuildError(`Parsed zero entries from define_features! in ${sourcePath}`, {
@@ -80,7 +88,7 @@ export function parsePackedFeaturesList(cwd: string): string[] {
 /**
  * Build the features.json payload for a binary that can't be executed on
  * the build host. Field set and meaning match `crash_handler.getFeatureData()`
- * (src/runtime/api/crash_handler_jsc.rs) / scripts/features.mjs.
+ * (src/runtime/api/crash_handler_jsc.rs) / scripts/features.ts.
  */
 export function crossFeaturesJson(cfg: { cwd: string; version: string; canary: boolean; revision: string }): string {
   return JSON.stringify({

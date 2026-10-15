@@ -5,8 +5,8 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 /// representing the ratio of two numeric values.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ratio {
-    pub numerator: CSSNumber,
-    pub denominator: CSSNumber,
+    pub(crate) numerator: CSSNumber,
+    pub(crate) denominator: CSSNumber,
 }
 
 impl Ratio {
@@ -44,7 +44,6 @@ impl Ratio {
         Ok(())
     }
 
-    // PORT NOTE: dropped unused `std.mem.Allocator` param (was `_` in Zig).
     pub(crate) fn add_f32(self, other: f32) -> Ratio {
         Ratio {
             numerator: self.numerator + other,
@@ -52,5 +51,3 @@ impl Ratio {
         }
     }
 }
-
-// ported from: src/css/values/ratio.zig

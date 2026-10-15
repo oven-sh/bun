@@ -27,9 +27,11 @@ const scripts = [];
     })`);
   });
 
-scripts.forEach((script, i) => {
+scripts.forEach((script) => {
   const node = process.execPath;
   execFile(node, [ '-e', script ], common.mustCall((err, stdout, stderr) => {
-    assert(typeof Bun === 'undefined' ? stderr.includes('Error: xyz') : stderr.includes('error: xyz'), 'createScript crashes');
+    // Bun's uncaught-error printer lowercases the "error:" prefix
+    const expected = typeof Bun === 'undefined' ? 'Error: xyz' : 'error: xyz';
+    assert(stderr.includes(expected), 'createScript crashes');
   }));
 });

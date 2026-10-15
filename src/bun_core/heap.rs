@@ -1,15 +1,13 @@
 //! Centralized heap-pointer round-trip helpers.
 //!
-//! Zig's `bun.TrivialNew(@This())` / `bun.destroy(this)` / `bun.new(T, init)`
-//! pattern was ported file-by-file as open-coded `Box::into_raw(Box::new(..))`
-//! / `drop(Box::from_raw(..))` pairs (~1.8k occurrences). Per
-//! `docs/RUST_PATTERNS.md` §5, every one of those is an unchecked ownership
-//! transfer with the invariant restated in a `// SAFETY:` comment at every
-//! site.
+//! Open-coded `Box::into_raw(Box::new(..))` / `drop(Box::from_raw(..))` pairs
+//! (~1.8k occurrences) are unchecked ownership transfers with the invariant
+//! restated in a `// SAFETY:` comment at every site (per
+//! `docs/RUST_PATTERNS.md` §5).
 //!
 //! These are **thin aliases** — they do not reduce per-site proof
 //! obligations (each `take`/`destroy` is still its own `unsafe { }` block).
-//! They exist for vocabulary consistency with the Zig spelling and as the
+//! They exist for vocabulary consistency and as the
 //! shared primitive *inside* the typed shims; they are NOT the safety
 //! deliverable. The deliverable is the typed `Box<T>`-taking entry points
 //! that own BOTH halves of the round-trip:
@@ -27,9 +25,8 @@
 //! All four are `#[inline(always)]` no-ops — identical machine code to the
 //! open-coded `Box::into_raw`/`from_raw`.
 
-/// Heap-allocate `value` and return the raw pointer (Zig: `bun.new(T, init)` /
-/// `bun.TrivialNew`). Ownership transfers to the caller; pair with [`destroy`]
-/// or [`take`].
+/// Heap-allocate `value` and return the raw pointer.
+/// Ownership transfers to the caller; pair with [`destroy`] or [`take`].
 #[inline(always)]
 pub fn alloc<T>(value: T) -> *mut T {
     Box::into_raw(Box::new(value))
@@ -85,8 +82,7 @@ pub unsafe fn take<T: ?Sized>(ptr: *mut T) -> Box<T> {
     unsafe { Box::from_raw(ptr) }
 }
 
-/// Drop a heap allocation previously produced by [`alloc`] / [`leak`]
-/// (Zig: `bun.destroy(this)` / `bun.TrivialDeinit`).
+/// Drop a heap allocation previously produced by [`alloc`] / [`leak`].
 ///
 /// # Safety
 /// Same as [`take`].

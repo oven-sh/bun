@@ -4,6 +4,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+if (process.features.openssl_is_boringssl)
+  common.skip('BoringSSL does not support DSA key pair generation');
+
 const assert = require('assert');
 
 const {
@@ -11,9 +14,7 @@ const {
 } = require('crypto');
 
 // Test invalid parameter encoding.
-
-// BoringSSL does not support DSA key generation.
-if (!common.openSSLIsBoringSSL) {
+{
   assert.throws(() => generateKeyPairSync('dsa', {
     modulusLength: 1024,
     publicKeyEncoding: {

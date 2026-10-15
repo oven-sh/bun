@@ -1,7 +1,7 @@
-// WebView host subprocess entry point. Reached via cli.zig when
+// WebView host subprocess entry point. Reached from CLI startup when
 // BUN_INTERNAL_WEBVIEW_HOST is set. Runs CFRunLoopRun() as the real main
 // loop — CF manages ignoreWakeUps correctly when it owns the loop. No
-// JSC, no VM, no Zig runtime past the env check.
+// JSC, no VM, no runtime past the env check.
 //
 // Parent death → socket read() returns 0 → CFRunLoopStop → process exits.
 
@@ -348,7 +348,7 @@ static void cfCallback(CFFileDescriptorRef, CFOptionFlags flags, void*)
 } // namespace Bun
 
 // ---------------------------------------------------------------------------
-// Entry. cli.zig calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
+// Entry. CLI startup calls this before anything else when BUN_INTERNAL_WEBVIEW_HOST
 // is set. Never returns.
 // ---------------------------------------------------------------------------
 extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
@@ -369,7 +369,7 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
     // ActivationPolicyAccessory so no dock tile for the host.
     auto* rt = ObjCRuntime::tryLoad();
     if (!rt->m_loaded) {
-        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().data());
+        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().legacyCStringPointer());
         _exit(70);
     }
 

@@ -1,0 +1,67 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+//
+// This source code is licensed under the MIT license found in the
+// LICENSE file in the root directory of this source tree.
+
+//! Assert that all break/continue targets reference existent labels.
+//!
+//! Corresponds to `src/ReactiveScopes/AssertWellFormedBreakTargets.ts`.
+
+use crate::collections::FxHashSet as HashSet;
+use std::cell::Cell;
+
+use crate::hir::{
+    BlockId, ReactiveFunction, ReactiveTerminal, ReactiveTerminalStatement,
+    environment::Environment,
+};
+
+use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
+
+/// Assert that all break/continue targets reference existent labels.
+pub(crate) fn assert_well_formed_break_targets(
+    func: &ReactiveFunction,
+    env: &Environment,
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
+    let visitor = Visitor {
+        env,
+        is_well_formed: Cell::new(true),
+    };
+    let mut state: HashSet<BlockId> = HashSet::default();
+    visit_reactive_function(func, &visitor, &mut state);
+    crate::diagnostics::invariant(
+        visitor.is_well_formed.get(),
+        "Unexpected break/continue to invalid label",
+    )
+}
+
+struct Visitor<'a> {
+    env: &'a Environment,
+    is_well_formed: Cell<bool>,
+}
+
+impl<'a> ReactiveFunctionVisitor for Visitor<'a> {
+    type State = HashSet<BlockId>;
+
+    fn env(&self) -> &Environment {
+        self.env
+    }
+
+    fn visit_terminal(&self, stmt: &ReactiveTerminalStatement, seen_labels: &mut HashSet<BlockId>) {
+        if let Some(label) = &stmt.label {
+            seen_labels.insert(label.id);
+        }
+        let terminal = &stmt.terminal;
+        match terminal {
+            ReactiveTerminal::Break { target, .. } | ReactiveTerminal::Continue { target, .. } => {
+                if !seen_labels.contains(target) {
+                    self.is_well_formed.set(false);
+                }
+            }
+            _ => {}
+        }
+        // Note: intentionally NOT calling self.traverse_terminal() here,
+        // matching TS behavior where visitTerminal override does not call traverseTerminal.
+        // Recursion into child blocks happens via traverseBlock→visitTerminal for nested blocks.
+        // The TS visitor only checks break/continue at the block level, not terminal child blocks.
+    }
+}

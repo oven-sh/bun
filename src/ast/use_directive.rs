@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UseDirective {
     // TODO: Remove this, and provide `UseDirective.Optional` instead
@@ -9,11 +9,6 @@ pub enum UseDirective {
     Client = 1,
     /// "use server"
     Server = 2,
-}
-
-#[derive(Copy, Clone, Default, Debug)]
-pub struct Flags {
-    pub has_any_client: bool,
 }
 
 impl UseDirective {
@@ -49,5 +44,3 @@ impl UseDirective {
         None
     }
 }
-
-// ported from: src/js_parser/ast/UseDirective.zig

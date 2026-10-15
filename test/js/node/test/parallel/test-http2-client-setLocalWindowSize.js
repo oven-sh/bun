@@ -24,7 +24,7 @@ const http2 = require('http2');
   };
 
   server.listen(0, common.mustCall(() => {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
 
     client.on('connect', common.mustCall(() => {
       const outOfRangeNum = 2 ** 32;
@@ -33,7 +33,8 @@ const http2 = require('http2');
         {
           name: 'RangeError',
           code: 'ERR_OUT_OF_RANGE',
-          message: 'The value of "windowSize" is out of range. It must be >= 0 and <= 2147483647. Received ' + outOfRangeNum
+          message: 'The value of "windowSize" is out of range.' +
+            ' It must be >= 0 && <= 2147483647. Received ' + outOfRangeNum
         }
       );
 
@@ -68,7 +69,7 @@ const http2 = require('http2');
   }));
 
   server.listen(0, common.mustCall(() => {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
 
     client.on('connect', common.mustCall(() => {
       const windowSize = 2 ** 20;
@@ -96,7 +97,7 @@ const http2 = require('http2');
   }));
 
   server.listen(0, common.mustCall(() => {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const client = http2.connect(`http://localhost:${server.address().port}`);
 
     client.on('connect', common.mustCall(() => {
       const windowSize = 20;

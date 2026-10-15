@@ -5,7 +5,7 @@ const __dirname = dirname(Bun.fileURLToPath(import.meta.url));
 
 export class SimpleRegistry {
   private debugLogs: boolean;
-  private server: Server | null = null;
+  private server: Server<undefined> | null = null;
   private port: number = 0;
   public requestedUrls: string[] = [];
   private scannerBehavior: "clean" | "warn" | "fatal" = "clean";
@@ -15,6 +15,14 @@ export class SimpleRegistry {
     "is-even": ["1.0.0"],
     "is-odd": ["1.0.0"],
     "test-security-scanner": ["1.0.0"],
+  };
+
+  // `is-even` and `is-odd` depend on each other, so installing either one installs both.
+  public static readonly dependencies: Record<string, Record<string, string>> = {
+    "left-pad": {},
+    "is-even": { "is-odd": "^1.0.0" },
+    "is-odd": { "is-even": "^1.0.0" },
+    "test-security-scanner": {},
   };
 
   setScannerBehavior(behavior: "none" | "warn" | "fatal") {
@@ -66,6 +74,10 @@ export class SimpleRegistry {
     }
   }
 
+  [Symbol.dispose]() {
+    this.stop();
+  }
+
   private handleMetadata(packageName: string): Response {
     const versions = SimpleRegistry.packages[packageName];
     if (!versions) {
@@ -87,23 +99,13 @@ export class SimpleRegistry {
         dist: {
           tarball: `http://localhost:${this.port}/${packageName}-${version}.tgz`,
         },
-        dependencies: this.getDependencies(packageName, version),
+        dependencies: SimpleRegistry.dependencies[packageName],
       };
     }
 
     return new Response(JSON.stringify(metadata), {
       headers: { "Content-Type": "application/json" },
     });
-  }
-
-  private getDependencies(packageName: string, _version: string) {
-    if (packageName === "is-even") {
-      return { "is-odd": "^1.0.0" };
-    }
-    if (packageName === "is-odd") {
-      return { "is-even": "^1.0.0" };
-    }
-    return {};
   }
 
   private async handleTarball(name: string, version: string): Promise<Response> {

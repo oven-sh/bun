@@ -19,36 +19,33 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSDiffieHellman* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::DHPointer&& dh)
+    static JSDiffieHellman* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::DHPointer&& dh, int verifyError)
     {
-        JSDiffieHellman* instance = new (NotNull, JSC::allocateCell<JSDiffieHellman>(vm)) JSDiffieHellman(vm, structure, WTF::move(dh));
+        JSDiffieHellman* instance = new (NotNull, JSC::allocateCell<JSDiffieHellman>(vm)) JSDiffieHellman(vm, structure, WTF::move(dh), verifyError);
         instance->finishCreation(vm, globalObject);
         return instance;
     }
 
     ncrypto::DHPointer& getImpl() { return m_dh; }
     const ncrypto::DHPointer& getImpl() const { return m_dh; }
+    int verifyError() const { return m_verifyError; }
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSDiffieHellman, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSDiffieHellman.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSDiffieHellman = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSDiffieHellman.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSDiffieHellman = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSDiffieHellman, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSDiffieHellman, m_subspaceForJSDiffieHellman));
     }
 
 private:
-    JSDiffieHellman(JSC::VM& vm, JSC::Structure* structure, ncrypto::DHPointer&& dh)
+    JSDiffieHellman(JSC::VM& vm, JSC::Structure* structure, ncrypto::DHPointer&& dh, int verifyError)
         : Base(vm, structure)
         , m_dh(WTF::move(dh))
+        , m_verifyError(verifyError)
     {
     }
 
@@ -56,6 +53,7 @@ private:
     static void destroy(JSC::JSCell* cell) { static_cast<JSDiffieHellman*>(cell)->~JSDiffieHellman(); }
 
     ncrypto::DHPointer m_dh;
+    int m_verifyError = 0;
     unsigned m_sizeForGC = 0;
 };
 

@@ -19,5 +19,3 @@ impl False {
         Yield::done()
     }
 }
-
-// ported from: src/shell/builtin/false_.zig

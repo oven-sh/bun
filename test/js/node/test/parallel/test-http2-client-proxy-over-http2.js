@@ -9,7 +9,7 @@ const h2 = require('http2');
 const server = h2.createServer();
 
 server.listen(0, common.mustCall(function() {
-  const proxyClient = h2.connect(`http://127.0.0.1:${server.address().port}`);
+  const proxyClient = h2.connect(`http://localhost:${server.address().port}`);
 
   const request = proxyClient.request({
     ':method': 'CONNECT',

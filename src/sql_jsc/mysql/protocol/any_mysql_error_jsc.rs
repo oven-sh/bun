@@ -5,9 +5,8 @@ use bun_sql::mysql::protocol::error_packet::MySQLErrorOptions;
 use super::error_packet_jsc::create_mysql_error;
 
 /// Coerces the assorted error types callers thread through (`AnyMySQLError`
-/// enum or the interned `bun_core::Error`) into the Zig-style error *name*
-/// that the match below keys on. In Zig both are the same `error.Foo` value;
-/// in Rust we bridge them via name string.
+/// enum or the interned `crate::Error`) into the error *name*
+/// that the match below keys on.
 pub(crate) trait IntoAnyMySQLError: Copy {
     fn mysql_error_name(self) -> &'static str;
 }
@@ -19,14 +18,14 @@ impl IntoAnyMySQLError for Error {
     }
 }
 
-impl IntoAnyMySQLError for bun_core::Error {
+impl IntoAnyMySQLError for crate::Error {
     #[inline]
     fn mysql_error_name(self) -> &'static str {
         self.name()
     }
 }
 
-/// Zig `?[]const u8`. Callers pass either a bare byte-ish value (`&str`,
+/// Callers pass either a bare byte-ish value (`&str`,
 /// `&[u8]`, `&[u8; N]`, `&Vec<u8>`) or the same wrapped in `Option<_>`, so
 /// this trait — rather than `AsRef<[u8]>` directly — lets one signature
 /// accept both shapes without touching every callsite.
@@ -78,7 +77,7 @@ impl<T: MaybeBytes> MaybeBytes for Option<T> {
 
 pub(crate) fn mysql_error_to_js(
     global_object: &JSGlobalObject,
-    // Zig: `?[]const u8` — `message orelse @errorName(err)`.
+    // Falls back to the error name when no message is given.
     message: impl MaybeBytes,
     err: impl IntoAnyMySQLError,
 ) -> JSValue {
@@ -87,6 +86,8 @@ pub(crate) fn mysql_error_to_js(
 
     let code: &'static [u8] = match name {
         "ConnectionClosed" => b"ERR_MYSQL_CONNECTION_CLOSED",
+        "ConnectionFailed" => b"ERR_MYSQL_CONNECTION_FAILED",
+        "ConnectionRefused" => b"ERR_MYSQL_CONNECTION_REFUSED",
         "Overflow" => b"ERR_MYSQL_OVERFLOW",
         "AuthenticationFailed" => b"ERR_MYSQL_AUTHENTICATION_FAILED",
         "UnsupportedAuthPlugin" => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",
@@ -114,12 +115,8 @@ pub(crate) fn mysql_error_to_js(
         "FailedToEncryptPassword" => b"ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
         "InvalidPublicKey" => b"ERR_MYSQL_INVALID_PUBLIC_KEY",
         "PublicKeyRetrievalNotAllowed" => b"ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED",
-        "InvalidState" => b"ERR_MYSQL_INVALID_STATE",
         "JSError" => {
             return global_object.take_exception(JsError::Thrown);
-        }
-        "JSTerminated" => {
-            return global_object.take_exception(JsError::Terminated);
         }
         "OutOfMemory" => {
             return global_object.create_out_of_memory_error();
@@ -128,7 +125,7 @@ pub(crate) fn mysql_error_to_js(
             unreachable!("Assertion failed: ShortRead should be handled by the caller in mysql");
         }
         // "UnknownError" + any name not in the AnyMySQLError set (possible when
-        // the caller hands us a raw `bun_core::Error`).
+        // the caller hands us a raw `crate::Error`).
         _ => b"ERR_MYSQL_UNKNOWN_ERROR",
     };
 
@@ -143,5 +140,3 @@ pub(crate) fn mysql_error_to_js(
     )
     .unwrap_or_else(|ex| global_object.take_exception(ex))
 }
-
-// ported from: src/sql_jsc/mysql/protocol/any_mysql_error_jsc.zig

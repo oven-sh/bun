@@ -30,6 +30,119 @@ it("a freshly written text lockfile defaults to version 2", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Re-saving an existing lockfile must never bump its version. A v1 `bun.lock`
+// that is rewritten — here because a new dependency is added — keeps
+// `lockfileVersion: 1`, even though every entry would satisfy the v2 invariants.
+// Only a lockfile with no prior version (fresh install / migration) is written
+// at the current version.
+it("re-saving a v1 lockfile keeps it at version 1 even after adding a dependency", async () => {
+  const v1Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { a: "file:./a" } } },
+        packages: { a: ["a@file:a", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-v1-no-bump", {
+    // package.json asks for a second `file:` dep the lockfile doesn't have yet,
+    // forcing a real re-save (not a no-op skip).
+    "package.json": JSON.stringify({ name: "root", dependencies: { a: "file:./a", b: "file:./b" } }),
+    "a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    "b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).not.toContain("error:");
+  // The lockfile was actually rewritten (the new dep is present)...
+  expect(after).toContain(`"b": ["b@file:b"`);
+  // ...but its version was preserved, not bumped to 2.
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(exitCode).toBe(0);
+});
+
+// A v0 lockfile is the one version that must NOT be preserved verbatim: v0→v1
+// was a content-format change (v1 stopped emitting a workspace package's deps
+// object), and the writer only ever emits the v1+ single-element
+// `["name@workspace:path"]` form. Stamping v0 on that output would make the
+// next parse fail with "Missing dependencies object". So a re-saved v0 lockfile
+// is floored to v1 — and, critically, must still parse on the next install.
+it("re-saving a v0 lockfile floors it to version 1 so it stays parseable", async () => {
+  const v0Lockfile =
+    JSON.stringify(
+      {
+        lockfileVersion: 0,
+        workspaces: {
+          "": { name: "root", dependencies: { pkg1: "workspace:*" } },
+          "packages/pkg1": { name: "pkg1" },
+        },
+        // v0 workspace entry shape (with a trailing object).
+        packages: { pkg1: ["pkg1@workspace:packages/pkg1", {}] },
+      },
+      null,
+      2,
+    ) + "\n";
+
+  using dir = tempDir("lockfile-v0-floor", {
+    "package.json": JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { pkg1: "workspace:*" },
+    }),
+    "packages/pkg1/package.json": JSON.stringify({ name: "pkg1" }),
+    "bun.lock": v0Lockfile,
+  });
+
+  // First install re-saves the lockfile.
+  await using first = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, firstErr, firstExit] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(firstErr).not.toContain("error:");
+  // Floored to v1 — never left at v0 (the writer can't emit v0 content), and
+  // not bumped past the existing version to v2 either.
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 0,`);
+  expect(after).not.toContain(`"lockfileVersion": 2,`);
+  expect(firstExit).toBe(0);
+
+  // The re-saved lockfile must still parse. With the version left at v0 this
+  // would fail with "failed to parse lockfile" / "Missing dependencies object".
+  await using second = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, secondErr, secondExit] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+  expect(secondErr).not.toContain("failed to parse lockfile");
+  expect(secondErr).not.toContain("Ignoring lockfile");
+  expect(secondErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(secondExit).toBe(0);
+});
+
 it("an existing v1 lockfile still loads (backward compatible)", async () => {
   const v1Lockfile =
     JSON.stringify(
@@ -227,6 +340,36 @@ it("unsafe github .bun-tag is rejected at every version", async () => {
   }
 });
 
+it("a github resolution whose committish contains a slash reads back with owner, repo and tag intact", async () => {
+  const ghUrl = "github:example/repo#feature/branch";
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: {
+      "": { name: "root", dependencies: { dep: ghUrl } },
+    },
+    packages: {
+      dep: [`dep@${ghUrl}`, {}, "example-repo-abc1234"],
+    },
+  });
+
+  using dir = tempDir("lockfile-github-committish-slash", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: ghUrl } }),
+    "bun.lock": lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "hash-string"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("dep@github:example/repo#abc1234\n");
+  expect(exitCode).toBe(0);
+});
+
 // The writer must not silently upgrade a lockfile to v2 if doing so would make
 // it fail the v2 parse checks on the next install. A v1 lockfile with an
 // off-registry tarball and no integrity hash must round-trip as v1.
@@ -273,6 +416,74 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A nested override rule alone must not push a walk-held v1 file to v3 (v3 implies v2 strictness).
+it("re-saving a v1 off-registry lockfile that gains a nested override rule stays at version 1 and re-reads frozen in the same directory", async () => {
+  await using offRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "no-deps": "1.0.0" } } },
+    packages: {
+      "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
+    },
+  });
+
+  using dir = tempDir("lockfile-v1-nested-override-roundtrip", {
+    "package.json": JSON.stringify({
+      name: "root",
+      dependencies: { "no-deps": "1.0.0" },
+      overrides: { "no-deps": { bar: "1.0.0" } },
+    }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).toContain("Saved lockfile");
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 3,`);
+  expect(after).toContain(`"no-deps": {`);
+  expect(after).toContain(`"bar": "1.0.0"`);
+  expect(after).toContain(`no-deps-1.0.0.tgz", {}, ""]`);
+  expect(exitCode).toBe(0);
+
+  await using frozenProc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, frozenErr, frozenExit] = await Promise.all([
+    frozenProc.stdout.text(),
+    frozenProc.stderr.text(),
+    frozenProc.exited,
+  ]);
+
+  expect(frozenErr).not.toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+  expect(frozenErr).not.toContain("Ignoring lockfile");
+  expect(frozenErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(after);
+  expect(frozenExit).toBe(0);
+});
+
 // The version stamp must not depend on the writer's registry config. A lockfile
 // is committed and shared, so whether the *reader* accepts it cannot hinge on
 // the *writer*'s `~/.npmrc` / scoped registries. A v1 lockfile with a tarball
@@ -309,7 +520,7 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
   // make the writer consider the entry "v2-clean" and stamp v2.
   using writerDir = tempDir("lockfile-scoped-writer", {
     "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
-    "bunfig.toml": `[install.scopes]\nmyorg = { url = "${scopedRegistryUrl}" }\n`,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
     "bun.lock": v1Lockfile,
   });
 
@@ -358,5 +569,86 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
     "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
   );
   // v1 round-trips with no fetch, so the reader exits cleanly.
+  expect(readerExit).toBe(0);
+});
+
+it("re-saving keeps v1 for a writer-only scoped tarball even when a nested override rule is added", async () => {
+  await using scopedRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const scopedRegistryUrl = `http://127.0.0.1:${scopedRegistry.port}/`;
+  const scopedTarball = `${scopedRegistryUrl}@myorg/foo/-/foo-1.0.0.tgz`;
+
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "@myorg/foo": "1.0.0" } } },
+    packages: {
+      "@myorg/foo": ["@myorg/foo@1.0.0", scopedTarball, {}, ""],
+    },
+  });
+  // `bar` is not in the tree, so the new rule re-resolves nothing and the row survives verbatim.
+  const packageJson = JSON.stringify({
+    name: "root",
+    dependencies: { "@myorg/foo": "1.0.0" },
+    overrides: { "@myorg/foo": { bar: "1.0.0" } },
+  });
+
+  using writerDir = tempDir("lockfile-scoped-nested-writer", {
+    "package.json": packageJson,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using writerProc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(writerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, writerErr, writerExit] = await Promise.all([
+    writerProc.stdout.text(),
+    writerProc.stderr.text(),
+    writerProc.exited,
+  ]);
+
+  const rewritten = await file(join(String(writerDir), "bun.lock")).text();
+  expect(writerErr).toContain("Saved lockfile");
+  expect(rewritten).toContain(`"lockfileVersion": 1,`);
+  expect(rewritten).not.toContain(`"lockfileVersion": 3,`);
+  expect(rewritten).toContain(`"@myorg/foo": {`);
+  expect(rewritten).toContain(`"bar": "1.0.0"`);
+  expect(rewritten).toContain(scopedTarball);
+  expect(writerExit).toBe(0);
+
+  using readerDir = tempDir("lockfile-scoped-nested-reader", {
+    "package.json": packageJson,
+    "bun.lock": rewritten,
+  });
+
+  await using readerProc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+    cwd: String(readerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, readerErr, readerExit] = await Promise.all([
+    readerProc.stdout.text(),
+    readerProc.stderr.text(),
+    readerProc.exited,
+  ]);
+
+  expect(readerErr).not.toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+  expect(readerErr).not.toContain("Ignoring lockfile");
+  expect(readerErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(await file(join(String(readerDir), "bun.lock")).text()).toBe(rewritten);
   expect(readerExit).toBe(0);
 });

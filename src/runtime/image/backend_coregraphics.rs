@@ -1,7 +1,7 @@
 //! macOS ImageIO/CoreGraphics backend.
 //!
 //! All framework calls live in `src/jsc/bindings/image_coregraphics_shim.cpp`
-//! — see the header comment there for why (Zig→dlsym'd-function-pointer calls
+//! — see the header comment there for why (dlsym'd-function-pointer calls
 //! into CG segfaulted on x86_64 even after thunking the obvious by-value
 //! struct, so the whole dispatch is in C++ where clang owns the ABI). This
 //! file just allocates the RGBA/output buffers in the global allocator and
@@ -9,7 +9,6 @@
 
 use super::codecs;
 
-/// Zig: `pub const BackendError = codecs.Error || error{BackendUnavailable};`
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BackendError {
     #[error("BackendUnavailable")]
@@ -42,15 +41,12 @@ impl From<codecs::Error> for BackendError {
     }
 }
 
-bun_core::named_error_set!(BackendError);
-
 impl BackendError {
-    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
-    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
+    /// Reshape into the
+    /// caller's `Result<Option<T>, codecs::Error>` convention used by
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn split<T>(r: Result<T, Self>) -> Result<Option<T>, codecs::Error> {
         match r {
             Ok(v) => Ok(Some(v)),
@@ -65,7 +61,6 @@ impl BackendError {
     }
 }
 
-// TODO(port): move to runtime_sys (or a dedicated image_sys crate)
 unsafe extern "C" {
     fn bun_coregraphics_decode(
         bytes: *const u8,
@@ -76,7 +71,6 @@ unsafe extern "C" {
         out: *mut u8, // nullable
     ) -> i32;
 
-    #[allow(dead_code)]
     fn bun_coregraphics_encode(
         rgba: *const u8,
         width: u32,
@@ -104,7 +98,27 @@ fn map_err(rc: i32) -> BackendError {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
+/// Dimensions only: ImageIO parses the container header without running the codec.
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), BackendError> {
+    let mut w: u32 = 0;
+    let mut h: u32 = 0;
+    // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
+    match unsafe {
+        bun_coregraphics_decode(
+            bytes.as_ptr(),
+            bytes.len(),
+            max_pixels,
+            &raw mut w,
+            &raw mut h,
+            core::ptr::null_mut(),
+        )
+    } {
+        CG_OK => Ok((w, h)),
+        rc => Err(map_err(rc)),
+    }
+}
+
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
     // Phase 1: dimensions only (out=null) so we can allocate in the global
@@ -123,8 +137,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc; vec![0u8; n] zero-fills — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let n = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(n);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
@@ -142,6 +156,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
+    // SAFETY: the shim returned CG_OK only after writing all n bytes.
+    unsafe { out.set_len(n) };
     Ok(codecs::Decoded {
         rgba: out,
         width: w,
@@ -150,7 +166,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     })
 }
 
-#[allow(dead_code)]
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
@@ -179,7 +194,7 @@ pub(crate) fn encode(
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; len];
     // Phase 2: copy out and release the CFData.
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
@@ -206,9 +221,7 @@ pub(crate) fn encode(
 // Highway path in `codecs.rs` so the dispatch site is `system_backend.x()
 // .or_else(|_| fallback.x())`.
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_scale(
         src: *const u8,
         sw: u32,
@@ -217,7 +230,6 @@ unsafe extern "C" {
         dw: u32,
         dh: u32,
     ) -> i32;
-    #[allow(dead_code)]
     fn bun_coregraphics_rotate90(
         src: *const u8,
         w: u32,
@@ -225,7 +237,6 @@ unsafe extern "C" {
         dst: *mut u8,
         quarters: u32,
     ) -> i32;
-    #[allow(dead_code)]
     fn bun_coregraphics_reflect(
         src: *const u8,
         w: u32,
@@ -238,7 +249,6 @@ unsafe extern "C" {
 /// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
 /// we only take this path for the `.lanczos3` default — explicit non-Lanczos
 /// filters fall through to the Highway kernel which honours them exactly.
-#[allow(dead_code)]
 pub(crate) fn scale(
     src: &[u8],
     sw: u32,
@@ -250,7 +260,7 @@ pub(crate) fn scale(
     if filter != codecs::Filter::Lanczos3 {
         return Err(BackendError::BackendUnavailable);
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
     if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
@@ -259,9 +269,8 @@ pub(crate) fn scale(
     Ok(out)
 }
 
-#[allow(dead_code)]
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
@@ -271,9 +280,8 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
     Ok(out)
 }
 
-#[allow(dead_code)]
 pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
@@ -289,16 +297,12 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 // the static `Bun.Image.fromClipboard()` accessor calls this synchronously
 // before constructing the Image — the heavy decode still goes to WorkPool).
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_clipboard(out: *mut u8, out_len: *mut usize, probe_only: i32) -> i32;
 }
 
 /// `None` ⇔ no image on the pasteboard. Returned bytes are an opaque container
 /// (PNG/TIFF/HEIC/…); feed straight to `new Bun.Image(…)`.
-// Zig error set: `error{BackendUnavailable, OutOfMemory}` — subset of BackendError.
-#[allow(dead_code)]
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=0 → shim fills len with required byte count.
@@ -308,7 +312,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     if len == 0 {
         return Ok(None);
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; len];
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
     if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
@@ -318,7 +322,6 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     Ok(Some(out))
 }
 
-#[allow(dead_code)]
 pub(crate) fn has_clipboard_image() -> bool {
     let mut len: usize = 0;
     // SAFETY: out=null + probe_only=1 → shim only checks for image presence.
@@ -327,16 +330,10 @@ pub(crate) fn has_clipboard_image() -> bool {
     }
 }
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
-    #[allow(dead_code)]
     fn bun_coregraphics_clipboard_change_count() -> i64;
 }
-// Zig: `pub const clipboardChangeCount = bun_coregraphics_clipboard_change_count;`
-#[allow(dead_code)]
 pub(crate) fn clipboard_change_count() -> i64 {
     // SAFETY: pure getter, no preconditions.
     unsafe { bun_coregraphics_clipboard_change_count() }
 }
-
-// ported from: src/runtime/image/backend_coregraphics.zig

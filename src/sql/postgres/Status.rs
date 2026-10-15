@@ -8,5 +8,3 @@ pub enum Status {
     Connected,
     Failed,
 }
-
-// ported from: src/sql/postgres/Status.zig

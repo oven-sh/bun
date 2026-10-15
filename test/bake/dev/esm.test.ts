@@ -1,5 +1,6 @@
 // ESM tests are about various esm features in development mode.
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
@@ -273,6 +274,58 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+devTest("importer tracking survives flipping a module from ESM to CJS", {
+  // https://github.com/oven-sh/bun/issues/31942
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './dep';
+      import.meta.hot.data.runs = (import.meta.hot.data.runs ?? 0) + 1;
+      console.log('index run ' + import.meta.hot.data.runs);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `
+      export const value = 'esm';
+    `,
+    "leaf.ts": `
+      console.log('leaf 1');
+      export const value = 'leaf1';
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("index run 1");
+    // Flip `dep` from ESM to CJS. The dead branch gets `leaf` bundled (direct
+    // `require` calls are statically rewritten to `hmr.require`, which binds
+    // `this` correctly), while the indirect `m.require(...)` call is emitted
+    // verbatim and goes through the `require` function bound onto the
+    // replacement CJS module object, which must record `dep` as an importer
+    // of `leaf`.
+    await dev.write(
+      "dep.ts",
+      `
+        if (globalThis.__never_set) require('./leaf');
+        const m = module;
+        module.exports = { value: m.require(module.id.replace('dep', 'leaf')).value };
+      `,
+    );
+    await c.expectMessage("leaf 1", "index run 2");
+    // Editing `leaf` must propagate through the flipped module up to the
+    // self-accepting root as a hot update. If the importer edge was dropped,
+    // the dev server forces a full page reload instead (the client harness
+    // fails on unexpected reloads).
+    await dev.write(
+      "leaf.ts",
+      `
+        console.log('leaf 2');
+        export const value = 'leaf2';
+      `,
+    );
+    await c.expectMessage("leaf 2", "index run 3");
+  },
+});
 devTest("cannot require a module with top level await", {
   // TODO: after the module-loader rewrite the dev server's /_bun/report_error
   // handler can hang (never responds), so the client overlay never mounts and
@@ -511,5 +564,57 @@ devTest("html routes reject requests whose host header does not match the dev se
     const normal = await dev.fetch("/");
     expect(await normal.text()).toContain("/_bun/client/");
     expect(normal.status).toBe(200);
+  },
+});
+
+// A host that the resolver reads as a number passes the check, because DNS
+// cannot rebind it. Outside Windows that covers the IPv4 shorthand, which wget
+// and Python send as typed. ares_inet_pton also took an IPv6 text with "/bits"
+// or with a shortened IPv4 part, and no resolver reads those.
+devTest("html routes accept a numeric host header and reject one that no resolver reads", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("loaded");
+    `,
+  },
+  async test(dev) {
+    const statuses = async (hosts: string[]) =>
+      Object.fromEntries(
+        await Promise.all(
+          hosts.map(async host => {
+            const res = await dev.fetch("/", { headers: { Host: host } });
+            await res.text();
+            return [host, res.status];
+          }),
+        ),
+      );
+
+    const numeric = [
+      "127.0.0.1",
+      "127.0.0.1:3000",
+      "10.0.0.1",
+      "[::1]",
+      "[::1]:3000",
+      "[::ffff:127.0.0.1]",
+      // The longest text of an address, 45 bytes.
+      "[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:3000",
+    ];
+    expect(await statuses(numeric)).toEqual(Object.fromEntries(numeric.map(host => [host, 200])));
+
+    const shorthand = ["127.1", "127.1:3000", "10", "0x7f000001", "127.000.000.001", "1.2.3"];
+    expect(await statuses(shorthand)).toEqual(Object.fromEntries(shorthand.map(host => [host, isWindows ? 403 : 200])));
+
+    // inet_aton stops at whitespace, and the check does not.
+    const unread = [
+      "[::1/64]",
+      "[::1/128]:3000",
+      "[::ffff:127.1]",
+      "127.0.0.1 rebound-host.example",
+      "rebound-host.example",
+    ];
+    expect(await statuses(unread)).toEqual(Object.fromEntries(unread.map(host => [host, 403])));
   },
 });

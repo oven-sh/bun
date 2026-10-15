@@ -9,7 +9,6 @@ bun_opaque::opaque_ffi! {
     pub struct CookieMap;
 }
 
-// TODO(port): move to runtime_sys (or webcore_sys) — extern decls belong in the *_sys crate
 unsafe extern "C" {
     // Reference params discharge the non-null/aligned preconditions; `JSGlobalObject`
     // wraps `UnsafeCell` so `&JSGlobalObject` permits C++ interior mutation.
@@ -27,7 +26,7 @@ unsafe extern "C" {
 }
 
 impl CookieMap {
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         global_this: &JSGlobalObject,
         kind: ResponseKind,
@@ -57,20 +56,15 @@ impl CookieMap {
 /// without a fresh `ref()` — is deliberately omitted until a caller needs it;
 /// every construction site in the tree goes through `new_ref`.)
 #[repr(transparent)]
-pub struct CookieMapRef(NonNull<CookieMap>);
+pub(crate) struct CookieMapRef(NonNull<CookieMap>);
 
 impl CookieMapRef {
     /// Bump the refcount of a borrowed `CookieMap` and wrap it (the caller
     /// keeps its own ref; this `CookieMapRef` owns the freshly-added one).
     #[inline]
-    pub fn new_ref(cookie_map: &CookieMap) -> Self {
+    pub(crate) fn new_ref(cookie_map: &CookieMap) -> Self {
         CookieMap__ref(cookie_map);
         Self(NonNull::from(cookie_map))
-    }
-
-    #[inline]
-    pub fn as_ptr(&self) -> *mut CookieMap {
-        self.0.as_ptr()
     }
 }
 
@@ -104,5 +98,3 @@ impl Drop for CookieMapRef {
         CookieMap__deref(self)
     }
 }
-
-// ported from: src/runtime/webcore/CookieMap.zig

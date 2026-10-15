@@ -1,14 +1,14 @@
-//! XxHash32 / XxHash64 / XxHash3.
+//! XxHash32 / XxHash64.
 //!
 //! Thin wrappers over the C++/Highway xxHash kernel in
-//! `src/jsc/bindings/xxhash3.cpp` (exposed by `bun_highway`). XXH3's long-input
-//! stripe loop is runtime-dispatched to the widest SIMD ISA the CPU supports;
-//! XXH32/XXH64 are scalar (no SIMD form exists in the reference). Output is
-//! bit-identical to `std.hash.XxHash{32,64,3}` in Zig and to the xxHash
+//! `src/jsc/bindings/xxhash3.cpp` (exposed by `bun_highway`).
+//! XXH32/XXH64 are scalar (no SIMD form exists in the reference);
+//! `HashObject.rs` calls `bun_highway::xxhash3_64` directly for XXH3. Output is
+//! bit-identical to the xxHash
 //! reference test vectors — verified against the reference (and across every
 //! dispatch target) by `test/js/bun/util/hash.test.js`, which runs in CI.
 //!
-//! `HashObject.zig` exposes these via `hashWrap` with a `(seed, bytes)`
+//! `HashObject.rs` exposes these via `hash_wrap` with a `(seed, bytes)`
 //! signature (seed first, unlike Murmur/CityHash).
 
 pub struct XxHash32;
@@ -29,11 +29,11 @@ impl XxHash64 {
     }
 }
 
-/// Streaming `std.hash.XxHash64` — used by the bundler's `ContentHasher`
+/// Streaming XxHash64 — used by the bundler's `ContentHasher`
 /// (length-prefixed chunk hashing across many `update()` calls before a single
 /// `digest()`), plus the dev-server source-map hash and the resolver stat hash.
 /// Wraps `bun_highway::XxHash64State` so the workspace has exactly one xxhash
-/// implementation; output is bit-identical to Zig's `std.hash.XxHash64`.
+/// implementation; output is bit-identical to the xxHash reference.
 pub struct XxHash64Streaming(bun_highway::XxHash64State);
 
 impl XxHash64Streaming {
@@ -57,14 +57,5 @@ impl Default for XxHash64Streaming {
     #[inline]
     fn default() -> Self {
         Self::new(0)
-    }
-}
-
-pub struct XxHash3;
-
-impl XxHash3 {
-    #[inline]
-    pub fn hash(seed: u64, input: &[u8]) -> u64 {
-        bun_highway::xxhash3_64(seed, input)
     }
 }

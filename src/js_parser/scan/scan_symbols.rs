@@ -4,32 +4,25 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-// PORT NOTE: Zig's `fn Symbols(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// is the file-split mixin pattern: a fieldless namespace whose associated fns all take `*P` as the
-// first arg, where `P = js_parser.NewParser_(ts, jsx, scan_only)`. In Rust this is a plain
-// `impl<const ...> P<...> { }` block — multiple impl blocks on the same type across files in one
-// crate are allowed.
-//
-// adt_const_params: lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn find_symbol(
+    pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         self.find_symbol_with_record_usage::<true>(loc, name)
     }
 
-    pub fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
+    pub(crate) fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;
         let mut is_inside_with_scope = false;
+        let mut scope_use = true;
         // This function can show up in profiling.
         // That's part of why we do this.
         // Instead of rehashing `name` for every scope, we do it just once.
@@ -62,6 +55,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Is the symbol a member of this scope?
                 if let Some(member) = scope.get_member_with_hash(name, hash) {
                     declare_loc = member.loc;
+                    // Unbound globals live in the module scope.
+                    scope_use = self.track_scope_uses
+                        && (scope.parent.is_some()
+                            || self.symbols[member.ref_.inner_index() as usize].kind
+                                != js_ast::symbol::Kind::Unbound);
                     break 'brk member.ref_;
                 }
 
@@ -79,23 +77,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // If this is an identifier from a sibling TypeScript namespace, then we're
                                 // going to have to generate a property access instead of a simple reference.
                                 // Lazily-generate an identifier that represents this property access.
-                                // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key/value
-                                // pointers while we also call self.new_symbol (&mut self). Split into
-                                // get-then-insert so the &mut self borrow does not overlap the map borrow.
+                                // Split into get-then-insert so the &mut self borrow
+                                // (self.new_symbol) does not overlap the map borrow.
                                 if let Some(existing) = ts.property_accesses.get(name) {
                                     break 'brk *existing;
                                 }
                                 let arg_ref = ts.arg_ref;
-                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
+                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
                                 // Re-borrow ts_namespace mutably after &mut self.
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
                                 self.symbols[new_ref.inner_index() as usize].namespace_alias =
-                                    Some(js_ast::NamespaceAlias {
+                                    Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                                         namespace_ref: arg_ref,
                                         alias: js_ast::StoreStr::new(name),
                                         ..Default::default()
-                                    });
+                                    }));
                                 break 'brk new_ref;
                             }
                         }
@@ -115,9 +112,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
-            let gpe = self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash);
+            // SAFETY: `name` is a slice of the source or the lexer's string table.
+            let gpe = unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            };
 
             // I don't think this happens?
             if gpe.found_existing {
@@ -126,21 +125,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break 'brk existing.ref_;
             }
 
-            // PORT NOTE: reshaped for borrowck — gpe borrows self.module_scope while
-            // self.new_symbol needs &mut self. Drop gpe, allocate, then re-insert.
-            let new_ref = self
-                .new_symbol(js_ast::symbol::Kind::Unbound, name)
-                .expect("unreachable");
+            // gpe borrows self.module_scope while self.new_symbol needs &mut self.
+            // Drop gpe, allocate, then re-insert.
+            let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
 
-            *self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash)
-                .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
-            // TODO(port): the line above conflates key_ptr/value_ptr writes from Zig's
-            // `gpe.key_ptr.* = name; gpe.value_ptr.* = Scope.Member{...}` — verify
-            // get_or_put_member_with_hash's Rust API shape.
+            // SAFETY: as above.
+            *unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            }
+            .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 
             declare_loc = loc;
+            scope_use = false;
 
             break 'brk new_ref;
         };
@@ -150,12 +147,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // property on the target object of the "with" statement. We must not rename
         // it or we risk changing the behavior of the code.
         if is_inside_with_scope {
-            self.symbols[ref_.inner_index() as usize].must_not_be_renamed = true;
+            self.set_must_not_be_renamed_through_links(ref_);
         }
 
         // Track how many times we've referenced this symbol
         if RECORD_USAGE {
-            self.record_usage(ref_);
+            self.record_usage_impl(ref_, scope_use);
         }
 
         Ok(FindSymbolResult {
@@ -165,5 +162,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/symbols.zig

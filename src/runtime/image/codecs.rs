@@ -13,23 +13,23 @@ use core::ptr::NonNull;
 
 // Per-format implementations live in their own files; codecs.rs is the
 // dispatch surface only.
-pub use super::codec_bmp as bmp;
-pub use super::codec_gif as gif;
-pub use super::codec_jpeg as jpeg;
-pub use super::codec_png as png;
-pub use super::codec_webp as webp;
+pub(crate) use super::codec_bmp as bmp;
+pub(crate) use super::codec_gif as gif;
+pub(crate) use super::codec_jpeg as jpeg;
+pub(crate) use super::codec_png as png;
+pub(crate) use super::codec_webp as webp;
 
 /// Optional OS-native backend. Absent on Linux (and any platform we haven't
 /// written one for) so the dispatch in `decode`/`encode` compiles away. The
 /// backend module is only `use`d inside the matching cfg arm so non-target
 /// platforms never see its symbols. Exposed for `Image.fromClipboard()`.
 #[cfg(target_os = "macos")]
-pub use super::backend_coregraphics as system_backend;
+pub(crate) use super::backend_coregraphics as system_backend;
 #[cfg(windows)]
-pub use super::backend_wic as system_backend;
+pub(crate) use super::backend_wic as system_backend;
 
 /// `true` on platforms where `system_backend` is present.
-pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
+const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
@@ -56,11 +56,12 @@ pub enum Backend {
     System = 0,
     Bun = 1,
 }
-// PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → phf map keyed by lowercase variant name.
-pub(crate) static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
-    b"system" => Backend::System,
-    b"bun" => Backend::Bun,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static BACKEND_MAP: Backend = {
+        b"system" => Backend::System,
+        b"bun" => Backend::Bun,
+    };
+}
 
 impl bun_jsc::FromJsEnum for Backend {
     fn from_js_value(
@@ -72,8 +73,8 @@ impl bun_jsc::FromJsEnum for Backend {
     }
 }
 
-// PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
-// "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
+// Read from WorkPool threads + written from JS; a torn read of a 1-byte enum
+// is harmless, so a relaxed atomic is sufficient.
 pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(if HAS_SYSTEM_BACKEND {
         Backend::System as u8
@@ -81,10 +82,10 @@ pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
         Backend::Bun as u8
     });
 
-/// Runtime half of the dispatch check; the comptime half is the
+/// Runtime half of the dispatch check; the compile-time half is the
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
 /// can't be runtime-conditional, so the two stay separate). On platforms with
-/// no backend the cfg is comptime-dead and this is never referenced.
+/// no backend the cfg is compile-time dead and this is never referenced.
 #[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
@@ -93,7 +94,7 @@ fn use_system() -> bool {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Format {
+pub(crate) enum Format {
     Jpeg,
     Png,
     Webp,
@@ -172,7 +173,7 @@ impl Format {
     /// final dotted segment is considered; case-insensitive. Returns `None`
     /// when there's no extension or it's not one we recognise.
     pub(crate) fn from_extension(path: &[u8]) -> Option<Format> {
-        let dot = path.iter().rposition(|&b| b == b'.')?;
+        let dot = bun_core::strings::last_index_of_char(path, b'.')?;
         let mut buf = [0u8; 5];
         let src = &path[dot + 1..];
         let n = src.len().min(buf.len());
@@ -197,18 +198,20 @@ impl Format {
     }
 }
 
-static EXT_MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
-    b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
-    b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
-    b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
-    b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
-};
+bun_core::comptime_string_map! {
+    static EXT_MAP: Format = {
+        b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
+        b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
+        b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
+        b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
+    };
+}
 
 #[derive(Default)]
-pub struct Decoded {
-    pub rgba: Vec<u8>, // global allocator (mimalloc)
-    pub width: u32,
-    pub height: u32,
+pub(crate) struct Decoded {
+    pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
@@ -220,9 +223,8 @@ pub struct Decoded {
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
     /// would reinterpret the values as sRGB and visibly shift the
     /// colours. See issue #30197.
-    pub icc_profile: Option<Vec<u8>>,
+    pub(crate) icc_profile: Option<Vec<u8>>,
 }
-// PORT NOTE: `deinit` only freed owned fields → Drop is automatic via Vec/Option<Vec>.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
@@ -245,8 +247,6 @@ pub enum Error {
     OutOfMemory,
 }
 
-bun_core::named_error_set!(Error);
-
 bun_core::oom_from_alloc!(Error);
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
@@ -259,13 +259,13 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 /// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
 /// is the same trick Sharp/libvips use and is where most of the perf gap was.
 #[derive(Copy, Clone, Default)]
-pub struct DecodeHint {
+pub(crate) struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
-    pub target_w: u32,
-    pub target_h: u32,
+    pub(crate) target_w: u32,
+    pub(crate) target_h: u32,
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     match fmt {
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
@@ -295,16 +295,13 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             };
             // GIF transparency is a binary palette-index flag — the RGB at
             // α=0 is whatever the colour-table slot happened to hold and has
-            // no defined meaning. The static decoder emits `[0,0,0,0]`
-            // (codec_gif.zig: `pal[t] = .{0,0,0,0}`) and ImageIO does the
+            // no defined meaning. The static decoder (codec_gif.rs) emits
+            // `[0,0,0,0]` and ImageIO does the
             // same, but WIC's indexed→32bppRGBA converter expands the palette
-            // entry verbatim, leaving the original RGB with α=0. Zig never
-            // hit this because `bun.windows.GetProcAddressA` widens the
-            // symbol to UTF-16 for the narrow-only Win32 `GetProcAddress`,
-            // so `WICConvertBitmapSource` was never resolved and WIC decode
-            // always fell through to the static path. Normalise here so
+            // entry verbatim, leaving the original RGB with α=0. Normalise
+            // here so
             // every backend yields identical bytes for the same GIF.
-            for px in d.rgba.chunks_exact_mut(4) {
+            for px in d.rgba.as_chunks_mut::<4>().0 {
                 if px[3] == 0 {
                     px[0] = 0;
                     px[1] = 0;
@@ -316,8 +313,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
     }
 }
 
-// PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
-// reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
+// `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
 fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
@@ -361,21 +357,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
-                != 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            // SAFETY: handle is live and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
-            // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
-            if rw <= 0 || rh <= 0 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(rw).expect("int cast");
-            h = u32::try_from(rh).expect("int cast");
+            (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -406,15 +388,25 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
                 as u32;
         }
-        Format::Tiff => {
-            // IFD walk would be a full TIFF parser; defer to whoever
-            // actually decodes it (system backend on mac/win, else error).
+        Format::Tiff | Format::Heic | Format::Avif => {
+            // ImageIO reads the dimensions from the container; the codec only runs in decode().
+            #[cfg(not(target_os = "macos"))]
             return Err(Error::UnsupportedOnPlatform);
-        }
-        Format::Heic | Format::Avif => {
-            // System backend handles these; fall through to a full decode if
-            // available, otherwise UnsupportedOnPlatform.
-            return Err(Error::UnsupportedOnPlatform);
+            #[cfg(target_os = "macos")]
+            {
+                if !use_system() {
+                    return Err(Error::UnsupportedOnPlatform);
+                }
+                match system_backend::BackendError::split(system_backend::probe(bytes, max_pixels))
+                {
+                    Ok(Some((pw, ph))) => {
+                        w = pw;
+                        h = ph;
+                    }
+                    Ok(None) => return Err(Error::UnsupportedOnPlatform),
+                    Err(e) => return Err(e),
+                }
+            }
         }
     }
     // The PNG/JPEG/BMP specs all cap each dimension at 2³¹−1; a header with
@@ -433,35 +425,36 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 }
 
 #[derive(Copy, Clone)]
-pub struct EncodeOptions {
-    pub format: Format,
+pub(crate) struct EncodeOptions {
+    pub(crate) format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
-    pub quality: u8,
+    pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
-    pub lossless: bool,
+    pub(crate) lossless: bool,
     /// PNG only: zlib level 0–9. -1 = libspng default.
-    pub compression_level: i8,
+    pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
-    pub palette: bool,
-    pub colors: u16,
+    pub(crate) palette: bool,
+    pub(crate) colors: u16,
     /// PNG palette only: Floyd–Steinberg error-diffusion dither.
-    pub dither: bool,
+    pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
-    pub progressive: bool,
+    pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
     /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
-    // TODO(port): lifetime — borrowed from caller for the duration of `encode()`;
-    // raw ptr per rule "never put a lifetime param on a struct".
-    pub icc_profile: Option<NonNull<[u8]>>,
+    // SAFETY invariant: borrowed from the caller and only valid for the
+    // duration of `encode()`; raw ptr instead of a lifetime param per the
+    // repo rule against lifetime params on structs.
+    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
-            format: Format::Png, // TODO(port): Zig has no default for `format`; pick at construction
+            format: Format::Png, // arbitrary; callers set it at construction
             quality: 80,
             lossless: false,
             compression_level: -1,
@@ -480,13 +473,13 @@ impl Default for EncodeOptions {
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
-/// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
+/// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
-pub struct Encoded {
+pub(crate) struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub bytes: NonNull<[u8]>,
-    pub free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    pub(crate) bytes: NonNull<[u8]>,
+    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
 }
 
 impl Drop for Encoded {
@@ -501,11 +494,10 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
+/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
 /// 2-arg JSC deallocator signature.
-// PORT NOTE: Zig `wrap(comptime f: anytype)` generated a distinct static fn per
-// call site. Rust cannot capture a runtime fn pointer in a non-capturing
-// `extern "C" fn`, so this is a macro that mints a static trampoline per call.
+// Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
+// so this is a macro that mints a static trampoline per call site.
 #[macro_export]
 macro_rules! encoded_wrap_free {
     ($f:path) => {{
@@ -518,7 +510,7 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[allow(dead_code)]
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
@@ -598,7 +590,7 @@ pub(crate) fn encode(
 
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Filter {
+pub(crate) enum Filter {
     Box = 0,
     Bilinear = 1,
     Lanczos3 = 2,
@@ -610,23 +602,24 @@ pub enum Filter {
     Mks2021 = 8,
 }
 
-/// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
-/// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
-/// error message still lists only the canonical tags.
-pub(crate) static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
-    b"box" => Filter::Box,
-    b"bilinear" => Filter::Bilinear,
-    b"linear" => Filter::Bilinear,
-    b"lanczos3" => Filter::Lanczos3,
-    b"mitchell" => Filter::Mitchell,
-    b"nearest" => Filter::Nearest,
-    b"cubic" => Filter::Cubic,
-    b"lanczos2" => Filter::Lanczos2,
-    b"mks2013" => Filter::Mks2013,
-    b"mks2021" => Filter::Mks2021,
-};
+bun_core::comptime_string_map! {
+    /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
+    /// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
+    /// error message still lists only the canonical tags.
+    pub(crate) static FILTER_MAP: Filter = {
+        b"box" => Filter::Box,
+        b"bilinear" => Filter::Bilinear,
+        b"linear" => Filter::Bilinear,
+        b"lanczos3" => Filter::Lanczos3,
+        b"mitchell" => Filter::Mitchell,
+        b"nearest" => Filter::Nearest,
+        b"cubic" => Filter::Cubic,
+        b"lanczos2" => Filter::Lanczos2,
+        b"mks2013" => Filter::Mks2013,
+        b"mks2021" => Filter::Mks2021,
+    };
+}
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn bun_image_resize_scratch_size(
         src_w: i32,
@@ -648,6 +641,13 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
+    fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
+}
+
+/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
+pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
+    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
+    unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is
@@ -666,7 +666,7 @@ pub(crate) fn resize(
     dh: u32,
     f: Filter,
 ) -> Result<Vec<u8>, Error> {
-    // Zig: `if (@hasDecl(b, "scale"))` — only `backend_coregraphics` provides
+    // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
@@ -691,8 +691,8 @@ pub(crate) fn resize(
             f as i32,
         )
     };
-    let mut block: Vec<u8> = vec![0u8; out_sz + scratch_sz];
-    // SAFETY: block has out_sz + scratch_sz bytes; dst at [0..out_sz), scratch at [out_sz..).
+    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
@@ -708,11 +708,12 @@ pub(crate) fn resize(
     if rc != 0 {
         return Err(Error::OutOfMemory);
     }
+    // SAFETY: rc 0 means the vertical pass stored all dst_w×dst_h pixels, i.e. out_sz bytes.
+    unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.truncate(out_sz);
     block.shrink_to_fit();
-    // PERF(port): Zig used realloc directly; Vec::shrink_to_fit may not be in-place — profile if hot.
+    // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
 
@@ -737,8 +738,9 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
-    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes; degrees is multiple of 90.
+    let out_len = (dw as usize) * (dh as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
             src.as_ptr(),
@@ -748,6 +750,8 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             i32::try_from(degrees).expect("int cast"),
         )
     };
+    // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -765,8 +769,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
-    // SAFETY: src and out both have w*h*4 bytes.
+    let out_len = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(
             src.as_ptr(),
@@ -776,7 +781,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             horizontal as i32,
         )
     };
+    // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(out)
 }
-
-// ported from: src/runtime/image/codecs.zig

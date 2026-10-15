@@ -28,8 +28,7 @@ enum PositionKeyword {
 }
 
 fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
-    // ≤8 entries → plain match per PORTING.md (Zig: `bun.ComptimeEnumMap` +
-    // `getASCIIICaseInsensitive`).
+    // ≤8 entries → plain match.
     use bun_core::eql_case_insensitive_ascii_check_length as eq;
     Some(if eq(ident, b"static") {
         PositionKeyword::Static
@@ -80,5 +79,3 @@ impl Position {
         }
     }
 }
-
-// ported from: src/css/properties/position.zig

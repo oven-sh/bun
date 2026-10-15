@@ -6,7 +6,7 @@
 //
 // Backs the JS-side dedup of `tls.createSecureContext()`: same config digest
 // → same `JSSecureContext` cell while it's alive. The native `SSL_CTX*` cache
-// (Zig `SSLContextCache`) is independent — BoringSSL's refcount is the single
+// (`SSLContextCache`) is independent — BoringSSL's refcount is the single
 // source of truth, so the two never need to coordinate.
 
 #include "root.h"
@@ -24,7 +24,7 @@ public:
     }
 
     JSC::JSObject* get(uint64_t key) { return m_map.get(key); }
-    void set(uint64_t key, JSC::JSObject* value) { m_map.set(key, JSC::Weak<JSC::JSObject>(value)); }
+    void set(uint64_t key, JSC::JSObject* value) { m_map.set(key, value); }
 
 private:
     JSC::WeakGCMap<uint64_t, JSC::JSObject, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_map;

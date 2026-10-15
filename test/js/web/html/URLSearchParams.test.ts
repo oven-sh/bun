@@ -84,7 +84,6 @@ describe("URLSearchParams", () => {
       params.set(key, props[key as keyof typeof props]);
     }
 
-    // @ts-expect-error
     expect(params.toJSON()).toEqual(props);
 
     expect(Array.from(params.keys())).toHaveLength(params.size);
@@ -119,7 +118,7 @@ describe("URLSearchParams", () => {
       params.append("foo", "boop");
       params.append("bar", "baz");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         foo: ["bar", "boop"],
         bar: "baz",
       });
@@ -195,7 +194,7 @@ describe("URLSearchParams", () => {
       params.append("100", "second");
       params.append("name", "test");
       // @ts-ignore
-      expect(params.toJSON()).toEqual({
+      expect(params.toJSON() as Record<string, string | string[]>).toEqual({
         "100": ["first", "second"],
         "name": "test",
       });
@@ -221,16 +220,88 @@ it("size property should be configurable (issue #9251)", () => {
 
 it(".delete second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  params.delete("a", 1);
+  params.delete("a", 1 as any);
   params.delete("b", undefined);
   expect(params + "").toBe("a=2");
 });
 
+describe("USVString conversion of lone surrogates", () => {
+  const loneHigh = "a\uD800b";
+  const loneLow = "a\uDC00b";
+  const replaced = "a\uFFFDb";
+
+  it("get/getAll/has find an entry appended under a lone surrogate name", () => {
+    const params = new URLSearchParams();
+    params.append(loneHigh, "1");
+    params.append(loneHigh, "2");
+
+    expect([...params]).toEqual([
+      [replaced, "1"],
+      [replaced, "2"],
+    ]);
+    expect(params.has(loneHigh)).toBe(true);
+    expect(params.get(loneHigh)).toBe("1");
+    expect(params.getAll(loneHigh)).toEqual(["1", "2"]);
+
+    // the converted spelling names the same entry
+    expect(params.has(replaced)).toBe(true);
+    expect(params.get(replaced)).toBe("1");
+    expect(params.getAll(replaced)).toEqual(["1", "2"]);
+  });
+
+  it("lone high and lone low surrogates both convert to U+FFFD", () => {
+    const params = new URLSearchParams();
+    params.append(loneLow, "low");
+    expect(params.get(loneLow)).toBe("low");
+    expect(params.get(loneHigh)).toBe("low");
+    expect(params.has(loneHigh)).toBe(true);
+  });
+
+  it("converts the value argument of .has()", () => {
+    const params = new URLSearchParams();
+    params.append("k", loneHigh);
+    expect(params.get("k")).toBe(replaced);
+    expect(params.has("k", loneHigh)).toBe(true);
+    expect(params.has("k", replaced)).toBe(true);
+  });
+
+  it(".set() and .delete() address the converted entry", () => {
+    const params = new URLSearchParams();
+    params.append(loneHigh, "1");
+    params.set(loneHigh, "2");
+    expect([...params]).toEqual([[replaced, "2"]]);
+    params.delete(loneHigh);
+    expect(params.size).toBe(0);
+  });
+
+  it("serializes and round-trips the converted name", () => {
+    const params = new URLSearchParams();
+    params.append(loneHigh, "1");
+    expect(params.toString()).toBe("a%EF%BF%BDb=1");
+    expect(new URLSearchParams(params.toString()).get(loneHigh)).toBe("1");
+
+    const url = new URL("https://example.com/");
+    url.searchParams.append(loneHigh, "1");
+    expect(url.search).toBe("?a%EF%BF%BDb=1");
+    expect(url.searchParams.get(loneHigh)).toBe("1");
+  });
+
+  it("leaves valid surrogate pairs alone", () => {
+    const params = new URLSearchParams();
+    params.append("\u{1F600}", "emoji");
+    expect(params.has("\u{1F600}")).toBe(true);
+    expect(params.get("\u{1F600}")).toBe("emoji");
+    expect(params.getAll("\u{1F600}")).toEqual(["emoji"]);
+    expect(params.get("\uFFFD")).toBeNull();
+    expect(params.toString()).toBe("%F0%9F%98%80=emoji");
+  });
+});
+
 it(".has second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
-  expect(params.has("a", 1)).toBe(true);
-  expect(params.has("a", 2)).toBe(true);
-  expect(params.has("a", 3)).toBe(false);
-  expect(params.has("b", 3)).toBe(true);
-  expect(params.has("b", 4)).toBe(false);
+  expect(params.has("a", 1 as any)).toBe(true);
+  expect(params.has("a", 2 as any)).toBe(true);
+  expect(params.has("a", 3 as any)).toBe(false);
+  expect(params.has("b", 3 as any)).toBe(true);
+  expect(params.has("b", 4 as any)).toBe(false);
 });

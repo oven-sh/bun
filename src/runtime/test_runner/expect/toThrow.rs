@@ -3,20 +3,20 @@ use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_core::{strings, ZigString};
+use bun_core::strings;
 
 use super::Expect;
 use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
+    // The scopeguard owns the &mut Expect and runs
     // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
     // runs on every exit path (Ok and Err alike).
     let this = scopeguard::guard(this, |t| t.post_match(global));
@@ -67,7 +67,6 @@ pub(crate) fn to_throw(
     let did_throw = result_.is_some();
 
     if not {
-        // PERF(port): was comptime — get_signature should be const fn returning &'static str
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
 
         if !did_throw {
@@ -87,18 +86,24 @@ pub(crate) fn to_throw(
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
                 let mut formatter2 = super::make_formatter(global);
-                return Err(global.throw_pretty(format_args!(
-                    "{signature_no_args}\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
+                return throw!(
+                    this,
+                    global,
+                    signature_no_args,
+                    "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
                     name.to_fmt(&mut formatter),
                     message.to_fmt(&mut formatter2),
-                )));
+                );
             }
 
             // non error thrown
-            return Err(global.throw_pretty(format_args!(
-                "{signature_no_args}\n\nThrown value: <red>{}<r>\n",
+            return throw!(
+                this,
+                global,
+                signature_no_args,
+                "\n\nThrown value: <red>{}<r>\n",
                 result.to_fmt(&mut formatter),
-            )));
+            );
         }
 
         if expected_value.is_string() {
@@ -108,29 +113,25 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // TODO: remove this allocation
             // partial match
             {
-                let expected_slice = expected_value.to_slice_or_null(global)?;
-                let received_slice = received_message.to_slice_or_null(global)?;
+                let expected_slice = expected_value.to_utf8(global)?;
+                let received_slice = received_message.to_utf8(global)?;
                 if !strings::contains(received_slice.slice(), expected_slice.slice()) {
                     return Ok(JSValue::UNDEFINED);
                 }
             }
 
             let mut formatter2 = super::make_formatter(global);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter),
-                    received_message.to_fmt(&mut formatter2),
-                ),
+                "\n\nExpected substring: not <green>{}<r>\nReceived message: <red>{}<r>\n",
+                expected_value.to_fmt(&mut formatter),
+                received_message.to_fmt(&mut formatter2),
             );
         }
 
@@ -142,28 +143,22 @@ pub(crate) fn to_throw(
             })
             .unwrap_or(JSValue::UNDEFINED);
 
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             if let Some(test_fn) = expected_value.get(global, "test")? {
-                let matches = test_fn
-                    .call(global, expected_value, &[received_message])
-                    .unwrap_or_else(|err| global.take_exception(err));
+                let matches = test_fn.call(global, expected_value, &[received_message])?;
                 if !matches.to_boolean() {
                     return Ok(JSValue::UNDEFINED);
                 }
             }
 
             let mut formatter2 = super::make_formatter(global);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter),
-                    received_message.to_fmt(&mut formatter2),
-                ),
+                "\n\nExpected pattern: not <green>{}<r>\nReceived message: <red>{}<r>\n",
+                expected_value.to_fmt(&mut formatter),
+                received_message.to_fmt(&mut formatter2),
             );
         }
 
@@ -174,22 +169,18 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // no partial match for this case
             if !expected_message.is_same_value(received_message, global)? {
                 return Ok(JSValue::UNDEFINED);
             }
 
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected message: not <green>{}<r>\n",
-                    expected_message.to_fmt(&mut formatter),
-                ),
+                "\n\nExpected message: not <green>{}<r>\n",
+                expected_message.to_fmt(&mut formatter),
             );
         }
 
@@ -197,19 +188,17 @@ pub(crate) fn to_throw(
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut expected_class = ZigString::EMPTY;
-        expected_value.get_class_name(global, &mut expected_class)?;
+        let expected_class = expected_value.get_class_name(global)?;
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
             .unwrap_or(JSValue::UNDEFINED);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
-                expected_class,
-                received_message.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected constructor: not <green>{}<r>\n\nReceived message: <red>{}<r>\n",
+            expected_class,
+            received_message.to_fmt(&mut formatter),
         );
     }
 
@@ -234,8 +223,8 @@ pub(crate) fn to_throw(
             if let Some(received_message) = received_message_opt {
                 // TODO: remove this allocation
                 // partial match
-                let expected_slice = expected_value.to_slice_or_null(global)?;
-                let received_slice = received_message.to_slice(global)?;
+                let expected_slice = expected_value.to_utf8(global)?;
+                let received_slice = received_message.to_utf8(global)?;
                 if strings::contains(received_slice.slice(), expected_slice.slice()) {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -248,25 +237,23 @@ pub(crate) fn to_throw(
 
             let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nExpected substring: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
-                    ),
+                    "\n\nExpected substring: <green>{}<r>\nReceived message: <red>{}<r>\n",
+                    expected_value.to_fmt(&mut formatter),
+                    received_message.to_fmt(&mut formatter2),
                 );
             }
 
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected substring: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_value.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                ),
+                "\n\nExpected substring: <green>{}<r>\nReceived value: <red>{}<r>",
+                expected_value.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             );
         }
 
@@ -274,9 +261,7 @@ pub(crate) fn to_throw(
             if let Some(received_message) = received_message_opt {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if let Some(test_fn) = expected_value.get(global, "test")? {
-                    let matches = test_fn
-                        .call(global, expected_value, &[received_message])
-                        .unwrap_or_else(|err| global.take_exception(err));
+                    let matches = test_fn.call(global, expected_value, &[received_message])?;
                     if matches.to_boolean() {
                         return Ok(JSValue::UNDEFINED);
                     }
@@ -289,26 +274,24 @@ pub(crate) fn to_throw(
             let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
                 let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nExpected pattern: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_value.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
-                    ),
+                    "\n\nExpected pattern: <green>{}<r>\nReceived message: <red>{}<r>\n",
+                    expected_value.to_fmt(&mut formatter),
+                    received_message.to_fmt(&mut formatter2),
                 );
             }
 
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected pattern: <green>{}<r>\nReceived value: <red>{}<r>",
-                    expected_value.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                ),
+                "\n\nExpected pattern: <green>{}<r>\nReceived value: <red>{}<r>",
+                expected_value.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             );
         }
 
@@ -316,24 +299,19 @@ pub(crate) fn to_throw(
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
             let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
 
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
-
             if is_equal {
                 return Ok(JSValue::UNDEFINED);
             }
 
             let mut formatter = Formatter::new(global).with_quote_strings(true);
             let mut formatter2 = super::make_formatter(global);
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
-                    expected_value.to_fmt(&mut formatter2),
-                    result.to_fmt(&mut formatter),
-                ),
+                "\n\nExpected value: <green>{}<r>\nReceived value: <red>{}<r>\n",
+                expected_value.to_fmt(&mut formatter2),
+                result.to_fmt(&mut formatter),
             );
         }
 
@@ -354,25 +332,23 @@ pub(crate) fn to_throw(
             let mut formatter2 = super::make_formatter(global);
 
             if let Some(received_message) = received_message_opt {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n",
-                        expected_message.to_fmt(&mut formatter),
-                        received_message.to_fmt(&mut formatter2),
-                    ),
+                    "\n\nExpected message: <green>{}<r>\nReceived message: <red>{}<r>\n",
+                    expected_message.to_fmt(&mut formatter),
+                    received_message.to_fmt(&mut formatter2),
                 );
             }
 
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    "\n\nExpected message: <green>{}<r>\nReceived value: <red>{}<r>\n",
-                    expected_message.to_fmt(&mut formatter),
-                    result.to_fmt(&mut formatter2),
-                ),
+                "\n\nExpected message: <green>{}<r>\nReceived value: <red>{}<r>\n",
+                expected_message.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             );
         }
 
@@ -382,98 +358,93 @@ pub(crate) fn to_throw(
 
         // error: received error not instance of received error constructor
         let mut formatter = Formatter::new(global).with_quote_strings(true);
-        let mut expected_class = ZigString::EMPTY;
-        let mut received_class = ZigString::EMPTY;
-        expected_value.get_class_name(global, &mut expected_class)?;
-        result.get_class_name(global, &mut received_class)?;
+        let expected_class = expected_value.get_class_name(global)?;
+        let received_class = result.get_class_name(global)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
         if let Some(received_message) = received_message_opt {
-            return Err(global.throw_pretty(format_args!(
-                "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
+            return throw!(
+                this,
+                global,
+                signature,
+                "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived message: <red>{}<r>\n",
                 expected_class,
                 received_class,
                 received_message.to_fmt(&mut formatter),
-            )));
+            );
         }
 
-        return Err(global.throw_pretty(format_args!(
-            "{signature}\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
+        return throw!(
+            this,
+            global,
+            signature,
+            "\n\nExpected constructor: <green>{}<r>\nReceived constructor: <red>{}<r>\n\nReceived value: <red>{}<r>\n",
             expected_class,
             received_class,
             result.to_fmt(&mut formatter),
-        )));
+        );
     }
 
     // did not throw
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
     let mut formatter2 = super::make_formatter(global);
-    // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
-    // below; Rust `format_args!` only accepts literals so the value is inlined at each site.
+    // `format_args!` only accepts literal fmt strings, so `received_line` is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
     if expected_value.is_empty() || expected_value.is_undefined() {
         let signature: &'static str = get_signature("toThrow", "", false);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                result.to_fmt(&mut formatter),
-            ),
+            "\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            result.to_fmt(&mut formatter),
         );
     }
 
     let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
     if expected_value.is_string() {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected substring: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected substring: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            expected_value.to_fmt(&mut formatter),
+            result.to_fmt(&mut formatter2),
         );
     }
 
     if expected_value.is_reg_exp() {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected pattern: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                expected_value.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected pattern: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            expected_value.to_fmt(&mut formatter),
+            result.to_fmt(&mut formatter2),
         );
     }
 
     if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected message: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-                expected_message.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected message: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+            expected_message.to_fmt(&mut formatter),
+            result.to_fmt(&mut formatter2),
         );
     }
 
-    let mut expected_class = ZigString::EMPTY;
-    expected_value.get_class_name(global, &mut expected_class)?;
-    this.throw(
+    let expected_class = expected_value.get_class_name(global)?;
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
-            expected_class,
-            result.to_fmt(&mut formatter),
-        ),
+        "\n\nExpected constructor: <green>{}<r>\n\nReceived function did not throw\nReceived value: <red>{}<r>\n",
+        expected_class,
+        result.to_fmt(&mut formatter),
     )
 }
-
-// ported from: src/test_runner/expect/toThrow.zig

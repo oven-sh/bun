@@ -726,6 +726,24 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The next attempt would go round the same circle.
+  it.each([
+    ["manifest", "error: TooManyRedirects downloading package manifest bar"],
+    ["tarball", "error: TooManyRedirects downloading tarball bar@0.0.2"],
+  ] as const)("names a %s that redirects in a circle, and does not retry it", async (circling, message) => {
+    using registry = flakyRegistry((kind, hit) =>
+      kind === circling
+        ? Response.redirect(`${registry.url}${kind === "tarball" ? `${hit}/bar-0.0.2.tgz` : `bar?${hit}`}`, 302)
+        : undefined,
+    );
+    using dir = project(registry.url);
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.startsWith("error: "))).toContain(message);
+    // As many as `fetch()` follows.
+    expect(registry.at[circling]).toHaveLength(127);
+    expect(exitCode).toBe(1);
+  });
+
   // What `bun init` writes. Peers are resolved after everything else, so offline they doubled the wait.
   it("does not ask for the project's peers once a dependency has failed", async () => {
     const requested: string[] = [];

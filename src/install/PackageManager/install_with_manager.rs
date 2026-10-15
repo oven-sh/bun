@@ -113,7 +113,6 @@ pub fn install_with_manager(
     };
 
     update_lockfile_if_needed(manager, &load_result)?;
-    read_bins_of_migrated_tarballs(manager, &load_result)?;
 
     // Snapshot the loaded-from-lockfile package count so
     // `Lockfile::get_package_id` can tell loaded pins apart from packages
@@ -1619,40 +1618,6 @@ pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'stat
 // hot verify-and-exit path during fat-LTO emission, so a no-op
 // `bun install` / `bun install --frozen-lockfile` (node_modules already up to
 // date) faults in far fewer distinct `.text` pages.
-
-/// yarn.lock and pnpm-lock.yaml do not record the bins of a tarball: its package.json does.
-/// Runs before `mark_loaded_packages`: `append_extracted_package` then keeps the row's dependencies.
-#[cold]
-#[inline(never)]
-fn read_bins_of_migrated_tarballs(
-    manager: &mut PackageManager,
-    load_result: &lockfile::LoadResult,
-) -> crate::Result<()> {
-    if !matches!(
-        load_result,
-        lockfile::LoadResult::Ok(ok)
-            if matches!(ok.migrated, lockfile::Migrated::Yarn | lockfile::Migrated::Pnpm)
-    ) {
-        return Ok(());
-    }
-    let offline =
-        manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline;
-    let packages = manager.lockfile.packages.slice();
-    let tarballs: Vec<PackageID> = (packages.items_resolution().iter())
-        .zip(packages.items_bin())
-        .enumerate()
-        .filter(|(_, (resolution, bin))| {
-            bin.tag == crate::bin::Tag::None
-                && (resolution.tag == ResolutionTag::LocalTarball
-                    || (resolution.tag == ResolutionTag::RemoteTarball && !offline))
-        })
-        .map(|(id, _)| id as PackageID)
-        .collect();
-    for id in tarballs {
-        super::populate_package_cache::download_pinned_packages(manager, Some(id), false)?;
-    }
-    Ok(())
-}
 
 #[cold]
 #[inline(never)]

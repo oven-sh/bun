@@ -657,7 +657,7 @@ impl UpgradeCommand {
                 b"",
                 b"",
                 http_proxy,
-                HTTP::ProxySettings::from_env(env_loader),
+                HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the

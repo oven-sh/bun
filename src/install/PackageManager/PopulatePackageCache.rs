@@ -53,7 +53,7 @@ pub fn fetch(
     download_pinned_packages(manager, None, count_only)
 }
 
-/// `only`: just that package, without a look at the cache.
+/// `only`: just that package, which the caller did not find in the cache.
 /// `count_only`: `fetched` is what a run without it would download.
 pub(crate) fn download_pinned_packages(
     manager: &mut PackageManager,
@@ -185,7 +185,7 @@ pub(crate) fn download_pinned_packages(
     if manager.pending_task_count() > 0 {
         if log_level.show_progress() {
             manager.start_progress_bar();
-        } else if log_level != LogLevel::Silent && only.is_none() {
+        } else if log_level != LogLevel::Silent {
             bun_core::pretty_errorln!("Fetching packages");
             Output::flush();
         }

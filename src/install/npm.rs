@@ -1672,7 +1672,7 @@ pub mod package_manifest {
                         }
                         4 => {
                             let names_and_paths = bin_value.read_struct::<ExternalStringList>()?;
-                            names_and_paths.len % 2 == 0
+                            names_and_paths.len.is_multiple_of(2)
                                 && names_and_paths.is_within(extern_strings_bin_entries)
                         }
                         _ => false,

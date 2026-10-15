@@ -1372,8 +1372,6 @@ pub(crate) struct Stream {
     reading_paused: bool,
     // RST_STREAM is submitted for the stream (set_closing), as nghttp2's NGHTTP2_STREAM_CLOSING.
     closing: bool,
-    // close() came while node keeps RST_STREAM on its pending list. destroy() then drops the queue.
-    reset_parked: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1889,7 +1887,6 @@ impl Stream {
             signal: None,
             reading_paused: false,
             closing: false,
-            reset_parked: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -4199,7 +4196,6 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
-        self.headers_end_stream.set(0);
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let stream = unsafe { &mut *stream };
@@ -5255,10 +5251,6 @@ impl H2FrameParser {
         let has_queue = {
             // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
             let stream = unsafe { &mut *stream };
-            if !stream.closing {
-                // set_stream_closing left the reset parked, or JS did not call it.
-                this.set_closing(stream, BeforeReset::QueuedData);
-            }
             !stream.data_frame_queue.is_empty()
         };
         if has_queue {
@@ -5669,26 +5661,29 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
-        // node parks RST_STREAM(CANCEL) that is submitted under a frame callback.
-        // rewrite_read holds the engine borrow for the whole read.
-        let cancel_in_read = code_arg.is_number()
-            && code_arg.to_u32() == ErrorCode::CANCEL.0
-            && this.engine.try_borrow_mut().is_err();
-        // node parks the frame while the socket has not taken the last write.
-        let writing = this.write_buffer.get().len_u32() > 0;
+        // node parks the frame while the socket has not taken the last write. destroy() submits
+        // it at once all the same, and the queued DATA then does not leave.
         if destroyed_arg.to_boolean() {
-            // destroy() submits a parked frame at once: the queued DATA does not leave.
-            if stream.reset_parked || (!stream.closing && writing) {
-                this.set_closing(stream, BeforeReset::Nothing);
-            } else if !stream.closing {
-                this.set_closing(stream, BeforeReset::QueuedData);
-            }
-        } else if !stream.closing {
-            stream.reset_parked = writing || cancel_in_read;
-            if !cancel_in_read {
-                this.set_closing(stream, BeforeReset::QueuedData);
-            }
+            let writing = this.write_buffer.get().len_u32() > 0;
+            this.set_closing(
+                stream,
+                if writing {
+                    BeforeReset::Nothing
+                } else {
+                    BeforeReset::QueuedData
+                },
+            );
+            return Ok(JSValue::UNDEFINED);
         }
+        // node parks RST_STREAM(CANCEL) that close() submits under a frame callback: the stream
+        // stays as it is. rewrite_read holds the engine borrow for the whole read.
+        if code_arg.is_number()
+            && code_arg.to_u32() == ErrorCode::CANCEL.0
+            && this.engine.try_borrow_mut().is_err()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        this.set_closing(stream, BeforeReset::QueuedData);
         Ok(JSValue::UNDEFINED)
     }
 

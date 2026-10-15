@@ -27,6 +27,9 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
+// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
+// with uint64 words and returns 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -38,7 +41,10 @@ export const highwayStringsForTesting: (
     | "memmem"
     | "memrmem"
     | "memmem16"
-    | "memrmem16",
+    | "memrmem16"
+    | "scannerRunStops"
+    | "lineStarts"
+    | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -76,6 +82,18 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+  left: string,
+  right: string,
+) => boolean;
+
+/** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
+export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+  text: string,
+  kind: "module" | "script" | "builtin" | "internal",
+  chunkPaths?: string,
+) => string | null | undefined;
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -101,6 +119,9 @@ export const subprocessInternals = {
   injectStdioReadError: $newRustFunction("subprocess.rs", "TestingAPIs.injectStdioReadError", 2) as (
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
+  ) => boolean,
+  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
+    subprocess: import("bun").Subprocess,
   ) => boolean,
 };
 
@@ -582,7 +603,7 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
@@ -595,7 +616,8 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "ssl_write";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -807,6 +829,30 @@ export const fetchH3Internals = {
   },
 };
 
+const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
+  entries: string[],
+  url: string,
+) => string | null;
+
+export const proxyInternals = {
+  /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
+  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
+    list: string,
+    hostname: string,
+    port: number,
+  ) => boolean,
+  /** The proxy an environment of exactly `env` selects for `url`, or null. */
+  proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** What the HTTP client's URL parser makes of `href`. */
+  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+    username: string;
+    password: string;
+    hostname: string;
+    port: string;
+    pathname: string;
+  },
+};
+
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
@@ -826,6 +872,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
   0,
+);
+
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
 );
 
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds

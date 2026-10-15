@@ -111,7 +111,7 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
-#include "wtf/GregorianDateTime.h"
+#include "wtf/PlainGregorianDateTime.h"
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
@@ -176,6 +176,7 @@
 #include "JSURLSearchParams.h"
 
 #include "AsyncContextFrame.h"
+#include "ModuleGraph.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
@@ -674,6 +675,11 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+static bool mayBeAsymmetricMatcher(JSValue value)
+{
+    return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -820,7 +826,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        if (mayBeAsymmetricMatcher(v2)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -831,7 +837,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        } else if (mayBeAsymmetricMatcher(v1)) {
             switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -1003,6 +1009,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if constexpr (!isStrict) {
                 if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
                     continue;
+                }
+            }
+
+            if constexpr (enableAsymmetricMatchers) {
+                // A matcher gets what reading the element gives: the value of a getter, undefined for a hole or past the end.
+                if (left.isEmpty() && mayBeAsymmetricMatcher(right)) {
+                    left = o1->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
+                } else if (right.isEmpty() && mayBeAsymmetricMatcher(left)) {
+                    right = o2->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
 
@@ -2425,9 +2442,9 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
     auto iter = headers->createIterator(false);
     unsigned int i = 0;
 
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
-        const auto name = pair->key;
-        const auto value = pair->value;
+    while (auto* entry = iter.nextEntry()) {
+        const auto& name = *entry->key;
+        const auto& value = *entry->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
@@ -2469,16 +2486,26 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    auto iter = headers->createIterator();
-    size_t i = 0;
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
+    uint32_t entries = 0;
+    size_t bytes = 0;
+    auto add = [&](const String& name, const String& value) {
+        // copyTo's iterator passes over a null value.
+        if (value.isNull())
+            return;
+        entries++;
         // copyTo isomorphic-encodes: one byte per code unit.
-        i += pair->key.length();
-        i += pair->value.length();
-    }
+        bytes += name.length() + value.length();
+    };
+    auto& map = headers->internalHeaders();
+    for (auto& header : map.commonHeaders())
+        add(WTF::httpHeaderNameStringImpl(header.key), header.value);
+    for (auto& header : map.uncommonHeaders())
+        add(header.key, header.value);
+    for (auto& cookie : map.getSetCookieHeaders())
+        add(WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), cookie);
 
-    *count = headers->size();
-    *buf_len = i;
+    *count = entries;
+    *buf_len = bytes;
 }
 
 typedef struct ZigSliceString {
@@ -3161,9 +3188,33 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
 void JSC__VM__collectAsyncIdle(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
+    if (!JSC::Options::useGC())
+        return;
+    auto* clientData = WebCore::clientData(*vm);
     JSC::GCRequest request(JSC::CollectionScope::Full);
     request.isIdle = true;
+    // See Bun__JSC_onBeforeWait. The end phase may run on the collector thread while the JS thread is parked, and the
+    // epilogue that sweeps what the collection freed runs when the JS thread takes heap access back: wake it for that. A
+    // request with this hook is never coalesced into another, so the count always comes back down.
+    if (!clientData->idleCollectionDidFinish) {
+        clientData->idleCollectionDidFinish = createSharedTask<void()>([vm, clientData] {
+            clientData->idleCollectionsPending.fetch_sub(1);
+            if (!vm->currentThreadIsHoldingAPILock() && clientData->vmHandle)
+                Bun__VmHandle__wake(clientData->vmHandle);
+        });
+    }
+    request.didFinishEndPhase = clientData->idleCollectionDidFinish;
+    clientData->idleCollectionsPending.fetch_add(1);
     vm->heap.collectAsync(request);
+}
+
+bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    // Deleting code waits for a collection that is under way (Heap::preventCollection).
+    if (vm->heap.collectionScope())
+        return false;
+    return vm->shrinkFootprintNow({ JSC::VM::ShrinkFootprint::LeaveCollectionToCaller, JSC::VM::ShrinkFootprint::KeepCodeInUse });
 }
 
 void JSC__VM__setStartupJITDeferralScale(JSC::VM* vm, double scale)
@@ -3271,6 +3322,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSValue restoreAsyncContext;
     InternalFieldTuple* asyncContextData = nullptr;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get())) [[unlikely]]
+            return JSValue::encode(jsUndefined());
         jsObject = wrapper->callback.get();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);
@@ -3392,40 +3445,6 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
-}
-
-JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* arg1,
-    size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
-    JSC::EncodedJSValue JSValue5, JSC::EncodedJSValue* arg6)
-{
-    WTF::String src = WTF::String::fromUTF8(std::span { arg1, arg2 }).isolatedCopy();
-    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
-    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
-        WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), nullptr, nullptr);
-
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-    }
-
-    auto status = promise->status();
-
-    if (status == JSC::JSPromise::Status::Fulfilled) {
-        return JSC::JSValue::encode(promise->result());
-    } else if (status == JSC::JSPromise::Status::Rejected) {
-        *arg6 = JSC::JSValue::encode(promise->result());
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    } else {
-        return JSC::JSValue::encode(promise);
-    }
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,
@@ -5783,6 +5802,16 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
+    // A callback stored with its async context: the job runs the function in that context. One of
+    // a Bun.ModuleGraph that was disposed is not called, as on the other two routes a stored
+    // callback is called through (Bun__JSValue__call, AsyncContextFrame::call).
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(microtaskArgs[0])) {
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, wrapper->context.get())) [[unlikely]]
+            return;
+        microtaskArgs[1] = wrapper->context.get();
+        microtaskArgs[0] = wrapper->callback.get();
+    }
+
     if (microtaskArgs[1].isEmpty()) {
         microtaskArgs[1] = jsUndefined();
     }
@@ -5822,7 +5851,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
     return abortSignal.leakRef();
 }
@@ -5830,7 +5859,7 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    auto* context = thisObject->scriptExecutionContext();
+    auto* context = thisObject->currentScriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
     return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(abortSignal)));
@@ -6780,7 +6809,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         JSC::SourceTaintedOrigin::Untainted,
         filename,
         WTF::TextPosition(),
-        JSC::SourceProviderSourceType::Program);
+        JSC::SourceProviderSourceType::Program,
+        // What was typed at the terminal, or Bun's own text (`bun lint`): never a JavaScript value.
+        JSC::SourceProvenance::Static);
 
     WTF::NakedPtr<JSC::Exception> evalException;
     JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);

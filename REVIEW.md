@@ -39,7 +39,6 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 - **One source of truth; update every consumer atomically.** When a fact lives in two places (mirrored tables, encode/decode pairs), derive one from the other. New enum variant or struct field → audit every switch on the discriminant, every constructor/clone site, every hasher/serialization pair. Signature changes and renames → grep the whole repo including cfg-gated code and generated-binding inputs; stale call sites compile fine and silently miss the new behavior.
 - **Cache keys cover every input that shapes the output** (target OS/arch, config, registry of origin; for pooled connections, establishment-time TLS mode/SNI/credentials). A false hit is far worse than a false miss. Completion markers are written only after the last mutation. Any change to cached/serialized output bumps the format version constant. File-keyed caches include mtime/size or content hash.
 - **It's never a conservative stack scanner bug** - JSC runs sanitizeStack at every interpreter entrance site. Never blame the conservative stack scanner. It's always a bug in YOUR code.
-- **No code shaped for the stack scanner** - Reject an inlining attribute, a call shape, a moved or zeroed buffer, or a comment whose reason is stack layout, frame size or what a conservative scan would see. Stack layout is the compiler's output. See rule 16 in `CLAUDE.md`.
 
 ## Error handling
 

@@ -1634,7 +1634,7 @@ describe("Socket fd adoption", () => {
       const socket = new Socket({ fd: rfd, writable: false });
       const handle = (socket as any)._handle;
       const chunks: Buffer[] = [];
-      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("data", chunk => chunks.push(chunk as Buffer));
       const ended = once(socket, "end");
       const closed = once(socket, "close");
       fs.writeSync(wfd, "hello ");
@@ -1655,6 +1655,41 @@ describe("Socket fd adoption", () => {
       if (fstatCode(rfd) === "open") fs.closeSync(rfd);
     }
   });
+
+  // The lifetime cases of the handle itself, through process.binding("pipe_wrap").
+  // In a subprocess: a sanitizer abort is then an exit code, not the end of this runner.
+  it.skipIf(isWindows)(
+    "the Pipe handle survives close() inside onread, collection, and readStart() after EOF",
+    async () => {
+      using dir = tempDir("pipe-handle-lifecycle", {});
+      execFileSync(
+        "mkfifo",
+        [0, 1, 2, 3, 4, 5].map(i => join(String(dir), `fifo-${i}`)),
+      );
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "pipe-handle-lifecycle-fixture.js"), String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        // One read, then the close callback. Nothing after close().
+        closeInsideOnread: [5, "closed"],
+        // No callback on a handle that was collected while stopped.
+        collectedWhileStopped: 0,
+        // Data, then UV_EOF, on a handle that only its own read keeps alive.
+        aliveWhileReading: [4, -4095],
+        // readStart() after EOF and after close() returns 0 and reads nothing.
+        readStartAfterEof: [1, -4095, "inside=0", "after=0", "closed=0"],
+        // "three" arrives only after the handle starts again.
+        stopAndStart: ["one", "two", "stopped", "three"],
+      });
+      // The fixture leaves an unref()ed handle reading on an open FIFO.
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A Pipe handle makes the fd non-blocking, and a synchronous write(2) to a
   // full non-blocking pipe fails with EAGAIN.

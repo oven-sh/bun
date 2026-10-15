@@ -20,8 +20,8 @@ enum class CodeGenerationFromStrings : uint8_t {
     // As Node.js: eval and the Function constructors throw. JSGlobalObject::evalEnabled() of
     // every global object but a node:vm context's, which keeps its own `codeGeneration.strings`.
     DisallowedLikeNode = 1,
-    // "=strict": nothing turns a string into script. evalEnabled() of every global object, and
-    // what Bun compiles from a string itself asks mayNotMakeScriptFromStrings().
+    // "=strict": nothing turns a string into script. The engine runs static code only (JSC::SourceProvenance,
+    // JSC::Options::disallowNonStaticCode). What asks mayNotMakeScriptFromStrings() only throws earlier than that.
     Disallowed = 2,
 };
 

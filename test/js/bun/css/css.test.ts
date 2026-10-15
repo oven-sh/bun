@@ -7,6 +7,7 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   cssTest,
+  cssTestTodo,
   indoc,
   minify_error_test_with_options,
   minify_test,
@@ -7354,16 +7355,13 @@ describe("css tests", () => {
     // calc() payloads must survive the transform property handler's deep clone.
     minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
     minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
-    // A later `transform` declaration resets buffered individual properties.
+    // `transform` is not a shorthand: it does not reset the individual transform properties.
     minify_test(
       ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
-      ".foo{transform:translate(2px,3px)}",
+      ".foo{transform:translate(2px,3px);translate:calc(50% - 80px)}",
     );
-
-    // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/buncss/issues/288
-    // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
-    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+    minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(3);scale:.5}");
+    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3);scale:.5}");
 
     prefix_test(
       `
@@ -7415,6 +7413,213 @@ describe("css tests", () => {
         transform: translateX(20px);
       }
       `,
+    );
+  });
+
+  // https://github.com/parcel-bundler/lightningcss/pull/1340
+  describe("individual transforms", () => {
+    for (const [property, value, identity] of [
+      ["translate", "10px", "0"],
+      ["rotate", "30deg", "0deg"],
+      ["scale", "2", "1"],
+    ]) {
+      // `transform` is not a shorthand that resets the individual properties.
+      for (const [transform, individual] of [
+        ["scale(3)", value],
+        ["none", "none"],
+        ["none", identity],
+      ]) {
+        // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+        const check = individual === "0deg" ? cssTestTodo : cssTest;
+        const expected = `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+        `;
+        check(
+          `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+          `,
+          expected,
+        );
+        check(
+          `
+          .box {
+            ${property}: ${individual};
+            transform: ${transform};
+          }
+          `,
+          expected,
+        );
+      }
+    }
+
+    cssTest(
+      `
+      .box {
+        transform: translateX(5px);
+        scale: 2;
+        rotate: 30deg;
+        translate: 10px;
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+      `
+      .box {
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+    );
+
+    // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+    cssTestTodo(
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+        transform: none;
+      }
+      `,
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        transform: none;
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: scale(2) !important;
+        translate: 10px;
+        rotate: 30deg !important;
+        scale: 3;
+        translate: 20px !important;
+        transform: none;
+        translate: 30px !important;
+      }
+      `,
+      `
+      .box {
+        transform: none;
+        translate: 10px;
+        scale: 3;
+        transform: scale(2) !important;
+        translate: 30px !important;
+        rotate: 30deg !important;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+    );
+
+    prefix_test(
+      `
+      .box {
+        translate: 10px;
+        transform: scale(2);
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        -moz-transform: scale(2);
+        transform: scale(2);
+        translate: 10px;
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
     );
   });
 

@@ -272,6 +272,43 @@ fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// WriterParent
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Refcount of the type a writer is a field of. Freeing the parent frees the writer.
+///
+/// Takes `*mut Self` for the same reason as the callback traits below.
+pub trait WriterParent {
+    /// # Safety
+    /// `this` must point to a live `Self`.
+    unsafe fn ref_(this: *mut Self);
+    /// # Safety
+    /// `this` must point to a live `Self` that the caller holds a ref on. May free `this`.
+    unsafe fn deref(this: *mut Self);
+}
+
+/// One ref on a writer's parent. Dropping it can free the parent and the writer
+/// inside it, so declare it before anything that uses the writer.
+struct KeepParentAlive<Parent: WriterParent>(*mut Parent);
+
+impl<Parent: WriterParent> KeepParentAlive<Parent> {
+    /// # Safety
+    /// `parent` must point to a live `Parent`.
+    unsafe fn new(parent: *mut Parent) -> Self {
+        // SAFETY: caller contract.
+        unsafe { Parent::ref_(parent) };
+        Self(parent)
+    }
+}
+
+impl<Parent: WriterParent> Drop for KeepParentAlive<Parent> {
+    fn drop(&mut self) {
+        // SAFETY: the ref taken in `new` kept the parent live until here.
+        unsafe { Parent::deref(self.0) };
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PosixBufferedWriter
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -283,7 +320,7 @@ fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
-pub trait PosixBufferedWriterParent {
+pub trait PosixBufferedWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
@@ -432,6 +469,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     fn _on_error(&mut self, err: sys::Error) {
         debug_assert!(!err.is_retry());
+
+        // `on_error` can release every other ref on the parent, and `close()` still has to run.
+        // SAFETY: type invariant, see `parent_event_loop`.
+        let _keep_alive = unsafe { KeepParentAlive::new(self.parent()) };
 
         self.parent_on_error(err);
 
@@ -611,7 +652,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Materializing `&mut Parent` while a `&mut writer` is live would alias under
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
-pub trait PosixStreamingWriterParent {
+pub trait PosixStreamingWriterParent: WriterParent {
     /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
@@ -785,9 +826,26 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.is_done = true;
         self.outgoing.reset();
 
-        // SAFETY: parent BACKREF set via set_parent; outlives this writer.
-        unsafe { Parent::on_error(self.parent(), err) };
-        self.close();
+        self.report_error_and_close(err);
+    }
+
+    /// `self` may be freed when this returns.
+    fn report_error_and_close(&mut self, err: sys::Error) {
+        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
+        // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
+        // a fresh `&mut Self` from the parent's intrusive `writer`
+        // field and may write `self.is_done` / `self.handle`.
+        // ASM-verified PROVEN_CACHED on the `self.close()` path's
+        // field reads. Launder so `close()` sees fresh state.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        let parent = Self::r(this).parent();
+        // `FileSink::on_error` rejects a promise and drains microtasks. That JS can close
+        // this writer and release every other ref on the parent before `close()` below runs.
+        // SAFETY: parent BACKREF set via set_parent; live, this writer is a field of it.
+        let _keep_alive = unsafe { KeepParentAlive::new(parent) };
+        // SAFETY: as above.
+        unsafe { Parent::on_error(parent, err) };
+        Self::r(this).close();
     }
 
     fn _on_write(&mut self, written: usize, status: WriteStatus) {
@@ -829,20 +887,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::loop_(self.parent()) }.cast();
         match poll.register_with_fd(loop_, FilePollKind::Writable, poll.fd()) {
-            sys::Result::Err(err) => {
-                // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-                // `Parent::on_error` (e.g. `FileSink::on_error`) re-enters via
-                // a fresh `&mut Self` from the parent's intrusive `writer`
-                // field and may write `self.is_done` / `self.handle`.
-                // ASM-verified PROVEN_CACHED on the `self.close()` path's
-                // field reads. Launder so `close()` sees fresh state.
-                let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-                // SAFETY: parent BACKREF valid.
-                unsafe { Parent::on_error(Self::r(this).parent(), err) };
-                // `this` is still live (parent owns this writer; an on_error
-                // handler may end/detach but never frees mid-call).
-                Self::r(this).close();
-            }
+            sys::Result::Err(err) => self.report_error_and_close(err),
             sys::Result::Ok(()) => {}
         }
     }
@@ -1395,16 +1440,10 @@ extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
 /// raw pointers and never form a Rust reference to `Parent` inside the
 /// writer.
 #[cfg(windows)]
-pub trait WindowsWriterParent {
+pub trait WindowsWriterParent: WriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn loop_(this: *mut Self) -> *mut uv::Loop;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn ref_(this: *mut Self);
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn deref(this: *mut Self);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2657,7 +2696,7 @@ pub mod __parent_macro {
     pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
-/// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +
+/// Stamp `WriterParent` + `PosixStreamingWriterParent` + `WindowsWriterParent` +
 /// `WindowsStreamingWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_streaming_writer_parent {
@@ -2666,7 +2705,7 @@ macro_rules! impl_streaming_writer_parent {
     (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
     (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
 
-    // Internal: expand the three impls once generics are normalized.
+    // Internal: expand the impls once generics are normalized.
     (@emit
         [$($gen:tt)*] $Ty:ty;
         poll_tag   = $poll_tag:expr,
@@ -2724,6 +2763,23 @@ macro_rules! impl_streaming_writer_parent {
             }
         }
 
+        impl $($gen)* $crate::pipe_writer::WriterParent for $Ty {
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: BACKREF set via `set_parent`. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see ref_. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
+            }
+        }
+
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
             #[inline]
@@ -2732,20 +2788,6 @@ macro_rules! impl_streaming_writer_parent {
                 let $uv_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $uv }
-            }
-            #[inline]
-            unsafe fn ref_(this: *mut Self) {
-                // SAFETY: see loop_. Intrusive refcount bump.
-                let $ref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $ref_ };
-            }
-            #[inline]
-            unsafe fn deref(this: *mut Self) {
-                // SAFETY: see loop_. May free `this`.
-                let $deref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $deref };
             }
         }
 
@@ -2795,7 +2837,7 @@ macro_rules! impl_streaming_writer_parent {
     };
 }
 
-/// Stamp `PosixBufferedWriterParent` + `WindowsWriterParent` +
+/// Stamp `WriterParent` + `PosixBufferedWriterParent` + `WindowsWriterParent` +
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
@@ -2852,6 +2894,23 @@ macro_rules! impl_buffered_writer_parent {
             }
         }
 
+        impl $($gen)* $crate::pipe_writer::WriterParent for $Ty {
+            #[inline]
+            unsafe fn ref_(this: *mut Self) {
+                // SAFETY: BACKREF set via `set_parent`. Intrusive refcount bump.
+                let $ref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $ref_ };
+            }
+            #[inline]
+            unsafe fn deref(this: *mut Self) {
+                // SAFETY: see ref_. May free `this`.
+                let $deref_this = this;
+                #[allow(unused_unsafe)]
+                unsafe { $deref };
+            }
+        }
+
         #[cfg(windows)]
         impl $($gen)* $crate::pipe_writer::WindowsWriterParent for $Ty {
             #[inline]
@@ -2860,20 +2919,6 @@ macro_rules! impl_buffered_writer_parent {
                 let $uv_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $uv }
-            }
-            #[inline]
-            unsafe fn ref_(this: *mut Self) {
-                // SAFETY: see loop_. Intrusive refcount bump.
-                let $ref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $ref_ };
-            }
-            #[inline]
-            unsafe fn deref(this: *mut Self) {
-                // SAFETY: see loop_. May free `this`.
-                let $deref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $deref };
             }
         }
 

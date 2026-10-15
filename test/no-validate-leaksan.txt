@@ -46,7 +46,6 @@ test/cli/install/bunx.test.ts
 test/cli/install/isolated-install.test.ts
 test/cli/install/migration/complex-workspace.test.ts
 test/cli/install/npmrc.test.ts
-test/cli/install/overrides.test.ts
 test/cli/install/test-dev-peer-dependency-priority.test.ts
 test/cli/run/commonjs-invalid.test.ts
 test/cli/run/preload-test.test.js
@@ -355,6 +354,10 @@ test/js/third_party/resvg/bbox.test.js
 test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
+
+# `bun create ./Component.tsx` exits from inside the bundler's dependency scan, so the
+# bundle (its worker map, the CSS it parsed) is never torn down.
+test/cli/create/create-jsx.test.ts
 
 # There are some leaks related to the dev server closing on process exit, the fix is to
 # tick the event loop on globalExit but this breaks like 50 tests. Since the

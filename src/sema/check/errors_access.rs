@@ -651,7 +651,7 @@ impl<'p> Checker<'p, '_> {
                 // `compareSymbols` breaks ties between equally close candidates.
                 candidates.push(((self.order_of_property(prop), candidate), prop.name));
             }
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
         }
@@ -991,7 +991,14 @@ impl<'p> Checker<'p, '_> {
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
         }
+        let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
+        // `NodeCheckFlagsTypeChecked`: tsgo reports for a node once. What it reports while a loop is analysed, with the
+        // types collected so far, is the report: the walk does not make another with the final type.
+        if self.is_in_flow_loop() {
+            self.log_reported_in_flow_loop(reported, file, e);
+            self.non_existent_properties.insert((file, e), true);
+        }
     }
 
     /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that
@@ -1293,9 +1300,8 @@ impl<'p> Checker<'p, '_> {
                     flags
                 }
             }
-            (None, PropSource::Intersected(..)) => {
-                let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
-                super::relate::for_each_property(prop, &mut |p| parts.push(p));
+            (None, PropSource::Intersected(_, parts)) => {
+                let parts: SmallVec<[&Prop; 4]> = parts.iter().collect();
                 self.modifier_flags_of_synthetic_property(&parts)
             }
             _ => Flags::empty(),
@@ -1373,11 +1379,14 @@ impl<'p> Checker<'p, '_> {
         // `forEachProperty`: a property of a union or of an intersection is composed of the
         // properties of the members.
         let mut parts: SmallVec<[&Prop; 4]> = SmallVec::new();
+        // Those of the members themselves: that of an intersection in a union is one of them.
+        let mut constituents: SmallVec<[&Prop; 4]> = SmallVec::new();
         for &member in self.parts(containing) {
             let member = self.apparent_type(member);
             let Some((prop, _)) = self.prop_ref(member, name) else {
                 return true;
             };
+            constituents.push(prop);
             super::relate::for_each_property(prop, &mut |p| parts.push(p));
         }
         let Some(&first) = parts.first() else {
@@ -1402,13 +1411,14 @@ impl<'p> Checker<'p, '_> {
             self.mark_property_as_referenced(file, containing, name, node_for_check_write_only);
         }
         let hidden = Flags::PRIVATE | Flags::PROTECTED;
-        // If all of them share one declaration, its modifiers are used
-        // (`createUnionOrIntersectionProperty`).
-        let is_declared_once = parts.len() == 1 || parts.iter().all(|p| p.source == first.source);
+        // With one declaration for all of them, its modifiers and its parent are used.
+        let declared = Self::with_value_declaration_of_all(constituents.iter().copied());
+        let is_declared_once = parts.len() == 1 || declared.is_some();
+        let first = declared.unwrap_or(first);
         let flags = if is_declared_once {
             self.get_declaration_modifier_flags_from_symbol_ex(first, writing)
         } else {
-            self.modifier_flags_of_synthetic_property(&parts)
+            self.modifier_flags_of_synthetic_property(&constituents)
         };
         let is_static = flags.contains(Flags::STATIC);
         if is_super {

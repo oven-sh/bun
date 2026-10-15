@@ -290,7 +290,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getRestrictiveInstantiation`, with `getRestrictiveTypeParameter`. Restrictive type
     /// parameters map to themselves, so the restrictive instantiation of a restrictive instantiation is itself.
     pub(super) fn restrictive_instantiation(&mut self, t: TypeId) -> TypeId {
+        if !self.restrictive_instantiations_kept.is_empty()
+            && let Some(&kept) = self.restrictive_instantiations_kept.get(&t)
+        {
+            return kept;
+        }
+        let around = self.kept_a_renamed_param.replace(false);
         let result = self.instantiate_type_parameters(t, |c, param| match c.data(param) {
+            // `tp.constraint == nil && getConstraintDeclaration(tp) == nil`
+            TypeData::TypeParam(..) if c.unresolved_renamed_params.contains(&param) => {
+                c.kept_a_renamed_param.set(true);
+                param
+            }
             TypeData::Marker(
                 Marker::Super | Marker::Other | Marker::SuperForCheck | Marker::Restrictive(_),
             ) => param,
@@ -307,6 +318,10 @@ impl<'p, 's> Checker<'p, 's> {
         // Only `getConstraintOfDistributiveConditionalType` asks.
         if matches!(self.data(result), TypeData::Cond { .. }) {
             self.restrictive_instantiations.insert(result);
+        }
+        if self.kept_a_renamed_param.replace(around) {
+            self.restrictive_instantiations_kept.insert(t, result);
+            self.restrictive_instantiations_kept.insert(result, result);
         }
         result
     }
@@ -398,6 +413,74 @@ impl<'p, 's> Checker<'p, 's> {
             self.instantiation_count = count;
         }
         ty
+    }
+
+    /// `links.resolvedType` of the symbol that `instantiateSymbol` makes of `sym` for `prop`, or with
+    /// `is_write_type` its `links.writeType`, if `assign_link_of_instantiated_symbol` has kept one.
+    pub(super) fn link_of_instantiated_symbol(
+        &mut self,
+        prop: &Prop,
+        sym: Sym,
+        outer: MapperId,
+        is_write_type: bool,
+    ) -> Option<TypeId> {
+        if !self.instantiated_symbol_links.contains_key(&sym) {
+            return None;
+        }
+        let mapper = self.compose(prop.mapper, outer);
+        let links = self.instantiated_symbol_links.get(&sym)?;
+        let kept = links
+            .iter()
+            .find(|link| (link.0, link.1) == (mapper, is_write_type));
+        kept.map(|link| link.2)
+    }
+
+    /// The assignment in `getTypeOfInstantiatedSymbol`, after a `getTypeOfSymbol(links.target)` that
+    /// made a query: `getTypeOfAccessors` returns `errorType` unassigned where `pushTypeResolution` fails.
+    #[inline(never)]
+    pub(super) fn assign_resolved_type_of_instantiated_symbol(
+        &mut self,
+        prop: &Prop,
+        sym: Sym,
+        outer: MapperId,
+        target_type: TypeId,
+    ) {
+        let is_unassigned = self.found_cycle
+            && self.is_resolving(Query::Symbol(sym))
+            && self.p.symbol_types.get(&self.task, &sym).is_none();
+        if !is_unassigned && !self.instantiated_symbol_links.contains_key(&sym) {
+            return;
+        }
+        if prop.flags.contains(PropFlags::THISLESS) {
+            return;
+        }
+        let mapper = self.compose(prop.mapper, outer);
+        if mapper == MapperId::IDENTITY || self.is_thisless_for_this_mapper(sym) {
+            return;
+        }
+        // Assigned, it is what the type of `sym` gives: that replaces what a nested request has kept.
+        let resolved_type = match is_unassigned {
+            true => Some(self.instantiate(target_type, mapper)),
+            false => None,
+        };
+        self.assign_link_of_instantiated_symbol(sym, mapper, false, resolved_type);
+    }
+
+    /// Keeps `ty` as `links.resolvedType`, or with `is_write_type` as `links.writeType`, of the
+    /// instantiated symbol with the target `sym` and `mapper`. `None`: nothing is kept for it.
+    pub(super) fn assign_link_of_instantiated_symbol(
+        &mut self,
+        sym: Sym,
+        mapper: MapperId,
+        is_write_type: bool,
+        ty: Option<TypeId>,
+    ) {
+        let links = self.instantiated_symbol_links.entry(sym).or_default();
+        links.retain(|link| (link.0, link.1) != (mapper, is_write_type));
+        links.extend(ty.map(|ty| (mapper, is_write_type, ty)));
+        if links.is_empty() {
+            self.instantiated_symbol_links.remove(&sym);
+        }
     }
 
     /// `getTypeAliasInstantiation` without an alias. `declared`: the declared type of the symbol.
@@ -653,11 +736,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.intern_key(TypeKey::Fns { decls, mapper: new })
             }
             TypeData::Synth(shape) => {
-                // `getObjectTypeInstantiation` of an `InstantiationExpressionType`: `newMapper` maps
-                // `links.outerTypeParameters`, and `instantiateAnonymousType` instantiates the
-                // members of `target` with it, whatever else they mention.
+                // `getObjectTypeInstantiation`: `newMapper` maps `links.outerTypeParameters`, and
+                // `instantiateAnonymousType` instantiates the members of `target` with it, whatever
+                // else they mention. Where it maps them to what they are mapped to already, the
+                // type is its own instantiation. See `Shape::mapper`.
                 let (mut shape, mut mapper, mut target) = (shape, mapper, None);
-                if shape.instantiation_expression.is_some() {
+                if shape.instantiation_expression.is_some() || shape.mapper != MapperId::IDENTITY {
                     let new_mapper = self.map_mapper(shape.mapper, mapper);
                     if new_mapper == shape.mapper {
                         return ty;
@@ -711,7 +795,7 @@ impl<'p, 's> Checker<'p, 's> {
                 new.symbol_declared_at = shape.symbol_declared_at;
                 new.symbol = shape.symbol;
                 new.spread_rank = shape.spread_rank;
-                new.spread_of = shape.spread_of.map(|(left, right)| {
+                new.created_from = shape.created_from.map(|(left, right)| {
                     (
                         self.instantiate(left, mapper),
                         self.instantiate(right, mapper),

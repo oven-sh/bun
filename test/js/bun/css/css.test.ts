@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7954,6 +7954,141 @@ describe("css tests", () => {
     minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+
+    // `font-family` is a comma-separated list of family names:
+    // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
+    minify_test(
+      "@font-palette-values --x{font-family:Foo,Bar;base-palette:2}",
+      "@font-palette-values --x{font-family:Foo,Bar;base-palette:2}",
+    );
+    minify_test(
+      '@font-palette-values --x { font-family: Bixa, "Bungee Spice"; base-palette: 1 }',
+      "@font-palette-values --x{font-family:Bixa,Bungee Spice;base-palette:1}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: foo, bar, baz; }",
+      "@font-palette-values --x{font-family:foo,bar,baz}",
+    );
+    minify_test('@font-palette-values --x { font-family: "A", "B" }', "@font-palette-values --x{font-family:A,B}");
+    minify_test(
+      '@font-palette-values --x { font-family: A B, "C D", E }',
+      "@font-palette-values --x{font-family:A B,C D,E}",
+    );
+    minify_test(
+      '@font-palette-values --x { font-family: A, "serif" }',
+      '@font-palette-values --x{font-family:A,"serif"}',
+    );
+    minify_test('@font-palette-values --x { font-family: "" }', '@font-palette-values --x{font-family:""}');
+    minify_test("@font-palette-values --x { FONT-FAMILY: A, B }", "@font-palette-values --x{font-family:A,B}");
+    minify_test("@font-palette-values --x { font-family: A/**/,B }", "@font-palette-values --x{font-family:A,B}");
+    minify_test("@font-palette-values --x { font-family: A/**/B, C }", "@font-palette-values --x{font-family:A B,C}");
+    minify_test("@font-palette-values --x{font-family:A,B", "@font-palette-values --x{font-family:A,B}");
+    minify_test(
+      "@media print{@font-palette-values --x{font-family:A,B}}",
+      "@media print{@font-palette-values --x{font-family:A,B}}",
+    );
+    minify_test(
+      "@supports (color:red){@font-palette-values --x{font-family:A,B}}",
+      "@supports (color:red){@font-palette-values --x{font-family:A,B}}",
+    );
+    minify_test(
+      "@layer base{@font-palette-values --x{font-family:A,B}}",
+      "@layer base{@font-palette-values --x{font-family:A,B}}",
+    );
+
+    // Every declaration stays, in source order. A browser uses the last valid one.
+    minify_test(
+      "@font-palette-values --x { font-family: A; font-family: B, C; base-palette: 1 }",
+      "@font-palette-values --x{font-family:A;font-family:B,C;base-palette:1}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: B, C; font-family: A }",
+      "@font-palette-values --x{font-family:B,C;font-family:A}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: A, B; font-family: 1 }",
+      "@font-palette-values --x{font-family:A,B;font-family:1}",
+    );
+
+    // A list that a generic family or another token breaks is invalid. It is
+    // dropped, and it must not come back in a spelling that a browser accepts.
+    minify_test("@font-palette-values --x { font-family: serif }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A, serif }", "@font-palette-values --x{}");
+    minify_test('@font-palette-values --x { font-family: "A", serif }', "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A, SERIF }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A, }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A, var(--x) }", "@font-palette-values --x{}");
+    minify_test('@font-palette-values --x { font-family: A "B" }', "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A) }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A !important }", "@font-palette-values --x{}");
+    minify_test("@font-palette-values --x { font-family: A, B !important }", "@font-palette-values --x{}");
+    minify_test(
+      "@font-palette-values --x { font-family: Z; font-family: A, #f00 }",
+      "@font-palette-values --x{font-family:Z}",
+    );
+    minify_test(
+      "@font-palette-values --x { font-family: Z; font-family: U+26 }",
+      "@font-palette-values --x{font-family:Z}",
+    );
+    minify_test(
+      '@font-palette-values --x { font-family: Z; font-family: A "B" }',
+      "@font-palette-values --x{font-family:Z}",
+    );
+
+    test("bun build keeps every family of a font-family list", async () => {
+      using dir = tempDir("css-font-palette-values-list", {
+        "in.css": [
+          "@font-palette-values --one { font-family: Bixa; base-palette: 1 }",
+          '@font-palette-values --two { font-family: Bixa, "Bungee Spice"; base-palette: 1 }',
+          "@font-palette-values --three { font-family: A, B, C; base-palette: 1 }",
+          "",
+        ].join("\n"),
+      });
+
+      const build = async (...flags: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./in.css", ...flags],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const [minified, pretty] = await Promise.all([build("--minify"), build()]);
+
+      expect(minified).toEqual({
+        stdout:
+          "@font-palette-values --one{font-family:Bixa;base-palette:1}" +
+          "@font-palette-values --two{font-family:Bixa,Bungee Spice;base-palette:1}" +
+          "@font-palette-values --three{font-family:A,B,C;base-palette:1}\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(pretty).toEqual({
+        stdout:
+          indoc`
+            /* in.css */
+            @font-palette-values --one {
+              font-family: Bixa;
+              base-palette: 1;
+            }
+
+            @font-palette-values --two {
+              font-family: Bixa, Bungee Spice;
+              base-palette: 1;
+            }
+
+            @font-palette-values --three {
+              font-family: A, B, C;
+              base-palette: 1;
+            }
+          ` + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("grid-template-areas", () => {

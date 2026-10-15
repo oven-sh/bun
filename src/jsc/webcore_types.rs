@@ -125,9 +125,7 @@ pub struct Blob {
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
-    /// Set on a view of a `File` (`file.slice()`, `new Blob([file])`,
-    /// `response.blob()`) and inherited by every copy of that view. The view
-    /// has no name, so its store's path must not stand in for one.
+    /// A view of a `File`: it has no name, and its store's path must not stand in for one.
     pub name_detached: Cell<bool>,
     /// `bun.ptr.RawRefCount(u32, .single_threaded)` — counts in-flight `*Blob`
     /// borrows handed to async readers; not the JS GC retain count. Zero while
@@ -142,8 +140,7 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// `name_detached` sits in the padding before `ref_count`. Release only:
-// `RawRefCount` carries a debug-only `ThreadLock`.
+// Release only: `RawRefCount` carries a debug-only `ThreadLock`.
 #[cfg(not(debug_assertions))]
 const _: () = assert!(core::mem::size_of::<Blob>() == 104);
 
@@ -346,10 +343,7 @@ impl Blob {
         self.store.set(None);
     }
 
-    /// New view onto the same store, +1 ref. A `File`'s brand, `name` and
-    /// `last_modified` belong to that one object, so the view of a `File` is
-    /// a plain Blob. A holder that gives the same `File` back to JS asks for
-    /// [`Self::dupe_with_identity`].
+    /// New view onto the same store, +1 ref. The view of a `File` is a plain Blob.
     #[inline]
     pub fn dupe(&self) -> Blob {
         self.dupe_with_content_type(false)
@@ -374,21 +368,18 @@ impl Blob {
         self.copy_fields(true)
     }
 
-    /// Exact copy: a `File` stays that `File`. For the holders that give it
-    /// back to JS (a FormData entry, a Response body, an object URL).
+    /// Exact copy, for a holder that gives the same `File` back to JS.
     pub fn dupe_with_identity(&self) -> Blob {
         self.copy_fields(true)
     }
 
-    /// Out of line, so the copy of a Blob that is not a `File` stays as small
-    /// as it was.
+    /// Out of line: the copy of a Blob that is not a `File` stays as small as it was.
     #[inline(never)]
     fn dupe_file_as_blob(&self) -> Blob {
         self.copy_fields(false)
     }
 
-    /// `identity` is a constant at each call site. Without it, the copy has
-    /// no brand, no `last_modified` and no `name`, and takes no ref on the name.
+    /// `identity` is a constant at each call site.
     #[inline(always)]
     fn copy_fields(&self, identity: bool) -> Blob {
         Blob {
@@ -485,10 +476,7 @@ impl Blob {
         self.store_name().map(bun_core::Utf8Bytes::Borrowed)
     }
 
-    /// [`store_path`] as the name of a Blob that has none of its own. `None`
-    /// for a view of a `File`.
-    ///
-    /// [`store_path`]: Self::store_path
+    /// [`Self::store_path`] as a name. `None` for a view of a `File`.
     pub fn store_name(&self) -> Option<&[u8]> {
         if self.name_detached.get() {
             return None;
@@ -496,8 +484,7 @@ impl Blob {
         self.store_path()
     }
 
-    /// Whether a Blob rebuilt from these bytes (a stream read back into a
-    /// Blob) is a view of a `File`, and so has no name.
+    /// True when a Blob rebuilt from a stream of these bytes has no name.
     #[inline]
     pub fn is_file_or_view(&self) -> bool {
         self.is_jsdom_file.get() || self.name_detached.get()

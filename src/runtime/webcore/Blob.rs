@@ -112,8 +112,7 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-/// 5: Added byte for `name_detached`, so a view of a File does not take its
-///    store's path as a name on the receiving side
+/// 5: Added the `name_detached` byte, so a view of a File has no name after a clone
 const SERIALIZATION_VERSION: u8 = 5;
 
 pub(crate) use bun_jsc::generated::JSBlob as js;
@@ -4011,8 +4010,7 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) 
     }
 }
 
-/// The copy a FormData entry holds and the one `get()` returns: a `File`
-/// stays that `File`.
+/// A FormData entry and the value `get()` returns keep the `File` identity.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
     Blob::new(this.dupe_with_identity())

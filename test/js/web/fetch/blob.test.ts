@@ -978,8 +978,7 @@ describe("Blob from ArrayBuffer-like values", () => {
   });
 });
 
-// https://w3c.github.io/FileAPI/#slice-method-algo returns a new Blob, and so do
-// the Blob constructor and Body.blob(). None of them hands out the source File.
+// https://w3c.github.io/FileAPI/#slice-method-algo
 describe("a Blob made from a File is a plain Blob", () => {
   const makeFile = () => new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 });
   class SubFile extends File {}
@@ -1112,8 +1111,7 @@ describe("a Blob made from a File is a plain Blob", () => {
   });
 
   test("a File record serialized before version 5 still deserializes", async () => {
-    // bun:jsc serialize(new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 }))
-    // from Bun 1.4.3. Its Blob record is version 4, which ends after the name.
+    // A version 4 record of new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 }).
     const version4 = Buffer.from(
       "0e000000fe0400000000000000000f0000006170706c69636174696f6e2f70646601010a000000" +
         "30313233343536373839000000000100000000004893400a0000007265706f72742e706466",

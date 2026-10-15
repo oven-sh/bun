@@ -241,6 +241,8 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
     "dep.mjs": `export default "dep.mjs"; export const url = import.meta.url;`,
     "dep.cjs": `module.exports = __filename;`,
     "config.json": `{ "json": true }`,
+    "worker.mjs": `postMessage(import.meta.path.split("/").slice(-2).join("/"));`,
+    "child.cjs": `process.send(__filename.split("/").slice(-2).join("/"), () => process.exit(0));`,
     // The last two segments of what each way to load a file sees.
     "main.mjs": `
       import dep from "./dep.mjs";
@@ -318,6 +320,61 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
     ["./x.mjs", ["--preload", "./we?ird.mjs"], "we?ird.mjs"],
   ])("bun runs %s (%j)", async (name, args, stdout) => {
     expect(await run(name, undefined, ...args)).toEqual({ stdout, stderr: "", exitCode: 0 });
+  });
+
+  test("a worker and a forked process run a file in such a folder", async () => {
+    const source = `
+      import { fork } from "node:child_process";
+      const worker = new Worker("./mi?d/worker.mjs");
+      const fromWorker = await new Promise((resolve, reject) => {
+        worker.onmessage = event => resolve(event.data);
+        worker.onerror = reject;
+      });
+      worker.terminate();
+      const fromChild = await new Promise(resolve => fork("./end?/child.cjs").on("message", resolve));
+      console.log(JSON.stringify({ fromWorker, fromChild }));
+    `;
+    const { stdout, stderr, exitCode } = await run("entry.mjs", source);
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      stdout: { fromWorker: "mi?d/worker.mjs", fromChild: "end?/child.cjs" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/7928
+  test.each([[[]], [["./some-path?/my.test.js", "./so?me"]]])("bun test %j runs the test files in such folders", async args => {
+    const testFile = `
+      import { expect, test } from "bun:test";
+      import { folder } from "./dep.js";
+      test("in " + folder, () => {
+        expect(import.meta.dir.split("/").pop()).toBe(folder);
+        console.log("RAN " + folder);
+      });
+    `;
+    using dir = tempDir("import-query-question-mark-test", {
+      "some-path?/my.test.js": testFile,
+      "some-path?/dep.js": `export const folder = "some-path?";`,
+      "so?me/my.test.js": testFile,
+      "so?me/dep.js": `export const folder = "so?me";`,
+      // What the part before each "?" names.
+      "some-path/index.js": `console.log("SHOULD NOT RUN some-path/index.js");`,
+      "so/index.js": `console.log("SHOULD NOT RUN so/index.js");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN some-path?");
+    expect(stdout).toContain("RAN so?me");
+    expect(stdout).not.toContain("SHOULD NOT RUN");
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
   });
 
   // As in node: require() takes a path. A query is bun's addition to it, for a name that is not there.

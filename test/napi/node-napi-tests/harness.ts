@@ -159,6 +159,9 @@ export async function warmNodeGyp() {
   try {
     const child = spawn({
       cmd: [bunExe(), "--bun", "x", "node-gyp@11", "--version"],
+      // bunx keys its cache entry on the project config files above the cwd, so
+      // warm the entry that the addon directories below this one resolve to.
+      cwd: import.meta.dir,
       stderr: "pipe",
       stdout: "ignore",
       stdin: "ignore",

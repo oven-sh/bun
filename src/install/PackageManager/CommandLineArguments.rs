@@ -1681,10 +1681,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     Output::err_generic("--bunx-install-dir cannot be used with --global\n", ());
                     Global::crash();
                 }
-                if !bun_paths::is_absolute(dir) {
-                    Output::err_generic("--bunx-install-dir must be an absolute path\n", ());
-                    Global::crash();
-                }
                 cli.bunx_install_dir = Some(dir);
             }
         }

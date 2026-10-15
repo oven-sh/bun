@@ -1040,23 +1040,13 @@ impl BunxCommand {
             .map(|age| [b"--minimum-release-age=".as_slice(), age].concat());
         // The install runs from the invoking directory, so it takes bunfig.toml, .npmrc and
         // .env from the root `bun add` would pick there, and installs into the cache directory.
-        let mut install_dir_buf = bun_paths::path_buffer_pool::get();
-        let install_dir: &[u8] = if bun_paths::is_absolute(bunx_cache_dir) {
-            bunx_cache_dir
-        } else {
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::resolve_path::platform::Auto>(
-                top_level_dir,
-                &mut install_dir_buf[..],
-                &[bunx_cache_dir],
-            )
-        };
         let mut args: Vec<&[u8]> = vec![
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
             install_param.as_slice(),
             b"--no-summary",
             b"--bunx-install-dir",
-            install_dir,
+            bunx_cache_dir,
         ];
         if update_request.version.tag == VersionTag::DistTag || tree == Tree::Stale {
             // No manifest cache, so that @latest is fetched from the registry.

@@ -2024,7 +2024,8 @@ pub fn init(
                 }
             }
             if cli.no_project_ok || read_only_walk {
-                // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
+                // Registry-only commands (`bun pm diff a b`) and the install of `bunx` run fine from any folder:
+                // no root file, no workspaces.
                 this_cwd = original_cwd;
                 no_project = true;
                 break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
@@ -2048,11 +2049,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            // Above `bunx`'s tree are the user's cache and home: no workspace of it.
-            // A read-only walk starts in the project that `bunx` runs in.
-            let is_bunx_install = !read_only_walk
-                && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
-            if !created_package_json && !no_project && !is_bunx_install {
+            if !created_package_json && !no_project {
                 // A read-only walk ends the workspace search at a parent package.json it
                 // cannot read or parse. The install does not use that file.
                 macro_rules! read_parent {
@@ -2308,7 +2305,17 @@ pub fn init(
     let mut config_root: &'static [u8] = b"";
     if let Some(install_dir) = cli.bunx_install_dir {
         config_root = fs.dirname_store().append(fs.top_level_dir())?;
-        bun_sys::chdir(&ZBox::from_bytes(install_dir))?;
+        {
+            // A relative one is relative to where `bunx` ran, not to the project root.
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let install_dir = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                &original_cwd_clone,
+                &mut buf,
+                &[install_dir],
+            )
+            .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG))?;
+            bun_sys::chdir(install_dir)?;
+        }
         // SAFETY: main-thread globals, written the same way as after `load_config` above.
         unsafe {
             let cwd = &mut *CWD_BUF.get();

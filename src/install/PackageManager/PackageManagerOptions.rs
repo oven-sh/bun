@@ -735,14 +735,19 @@ impl Options {
         if let Some(config) = bun_install_ref {
             if let Some(cache_directory) = config.cache_directory.as_deref() {
                 let cache_directory = expand_home_tilde(cache_directory);
-                self.cache_directory =
-                    if self.config_root.is_empty() || bun_paths::is_absolute(&cache_directory) {
-                        leak_static(&cache_directory)
-                    } else {
-                        leak_static(bun_paths::resolve_path::join_abs_string::<
-                            bun_paths::resolve_path::platform::Loose,
-                        >(self.config_root, &[&cache_directory]))
-                    };
+                self.cache_directory = if self.config_root.is_empty() {
+                    leak_static(&cache_directory)
+                } else {
+                    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
+                    // A relative one is a directory of the project, not of the install directory.
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let in_project = join_abs_string_buf_checked::<platform::Auto>(
+                        self.config_root,
+                        &mut buf.0,
+                        &[&cache_directory],
+                    );
+                    leak_static(in_project.unwrap_or(&cache_directory))
+                };
             }
 
             if let Some(ca) = &config.ca {

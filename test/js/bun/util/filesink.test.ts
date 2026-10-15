@@ -1268,6 +1268,39 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
     }
   });
 
+  // The flush at the end of the tick takes the tail of the short write and resumes the pump from
+  // inside the flush, with the parked write's promise not settled yet. The empty chunk is what
+  // the pump writes then, and nothing would resume a pump that parked on it.
+  it.skipIf(!isPosix).each([
+    ["string", ""],
+    ["ArrayBuffer", new ArrayBuffer(0)],
+  ])("an empty %s chunk behind a short write does not park the pump again", async (_, empty) => {
+    using dir = tempDir("filesink-piped-empty", {});
+    const path = join(String(dir), "piped.fifo");
+    mkfifo(path, 0o666);
+    const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      // A little more than a pipe holds, so the tail fits once the pipe is empty.
+      const short = Buffer.alloc(64 * 1024 + 1000, 97);
+      const source = new ReadableStream({
+        start(c) {
+          c.enqueue(short);
+          c.enqueue(empty);
+          c.enqueue("end");
+          c.close();
+        },
+      });
+      const written = Bun.write(Bun.file(path), new Response(source));
+      const head = fs.readSync(fd, Buffer.alloc(short.length));
+      expect(head).toBeLessThan(short.length);
+      const [tail, total] = await Promise.all([drain(fd), written]);
+      expect(head + tail.length).toBe(short.length + 3);
+      expect(total).toBe(short.length + 3);
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
   // With a listener the stream arrives on unfixed code too: the loop goes back to work each
   // time the listener has run. It comes to the edge of its exit after each drain, though,
   // and the listener hears of each one.

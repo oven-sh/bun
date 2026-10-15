@@ -1498,12 +1498,12 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    /// Done once the chunks queued before it are: the caller gets their promise.
+    /// Behind the chunks the fd refused, like any other chunk written now.
     fn write_empty(&mut self) -> streams::Writable {
-        if !self.done.get() && self.pending_state_is_pending() {
-            return streams::Writable::Pending(self.pending.as_ptr());
+        if self.done.get() || !self.writer.get().is_backed_up() {
+            return streams::Writable::Temporary(0);
         }
-        streams::Writable::Temporary(0)
+        self.to_result(WriteResult::Pending(0), 0)
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         Self::end_from_js(self, cx)

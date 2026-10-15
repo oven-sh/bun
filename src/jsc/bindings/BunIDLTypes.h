@@ -40,7 +40,7 @@ struct IDLLooseInteger : IDLStrictInteger<T> {};
 
 // The alternatives of a union, for IDLHumanReadableName.
 template<typename... IDL>
-struct IDLOrderedUnion;
+struct IDLOrderedUnion {};
 
 namespace Detail {
 template<typename IDL>

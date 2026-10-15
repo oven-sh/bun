@@ -344,8 +344,7 @@ impl Snapshots {
     }
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        // Taken before any early return: a `.snap` that failed to parse or to write must not
-        // leave its bytes for the next file's `.snap` to be appended to.
+        // Taken before any early return, so a failed parse or write leaves nothing for the next file.
         let file_buf = core::mem::take(&mut self.file_buf);
         self.values.clear();
         if let Some(file) = self._current_file.take() {

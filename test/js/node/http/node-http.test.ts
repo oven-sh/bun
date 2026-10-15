@@ -6905,6 +6905,140 @@ describe("res.strictContentLength", () => {
     });
     expect(result).toEqual([undefined, MISMATCH]);
   });
+
+  // A response that waits behind another one on its connection (res.socket is null) keeps its calls until it gets
+  // the connection. Like Node, it checks each call when it is made, as a response that has the connection does.
+  describe.each([
+    ["a response that has the connection", false],
+    ["a response that waits behind another one", true],
+  ])("%s", (_, waits) => {
+    // Sends one request, or two in one write. With two, the first response ends after `handler` returned.
+    // Resolves with what `handler` returned and with the bytes of its response.
+    async function respond(handler: (res: http.ServerResponse) => unknown) {
+      let first: http.ServerResponse | undefined;
+      const ran = Promise.withResolvers<{ waits: boolean; result: unknown }>();
+      const server = http.createServer((req, res) => {
+        if (req.url === "/first") return void (first = res);
+        try {
+          ran.resolve({ waits: res.socket === null, result: handler(res) });
+        } catch (e) {
+          ran.reject(e);
+        }
+        first?.end("first");
+      });
+      // A stored call that is checked when the response gets the connection throws there, outside of every handler.
+      const received = Promise.withResolvers<void>();
+      process.once("uncaughtException", received.reject);
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      try {
+        let wire = "";
+        socket.on("data", chunk => (wire += chunk));
+        socket.on("close", () => received.resolve());
+        socket.on("error", received.reject);
+        socket.write(
+          (waits ? "GET /first HTTP/1.1\r\nHost: x\r\n\r\n" : "") +
+            "GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        );
+        const seen = await ran.promise;
+        await received.promise;
+        return { ...seen, response: wire.slice(wire.lastIndexOf("HTTP/1.1 ")).replace(/Date: [^\r]+\r\n/, "") };
+      } finally {
+        process.off("uncaughtException", received.reject);
+        socket.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    }
+
+    const sends = (length: number, body: string) =>
+      `HTTP/1.1 200 OK\r\nContent-Length: ${length}\r\nConnection: close\r\n\r\n${body}`;
+
+    const cases: [name: string, handler: (res: http.ServerResponse) => unknown, result: unknown, response: string][] = [
+      [
+        "a write() over the Content-Length of writeHead() throws",
+        res => {
+          res.strictContentLength = true;
+          res.writeHead(200, { "Content-Length": 1 });
+          return [code(() => res.write("ok")), code(() => res.end("E"))];
+        },
+        [MISMATCH, undefined],
+        sends(1, "E"),
+      ],
+      [
+        "an end() that does not meet the Content-Length of writeHead() throws",
+        res => {
+          res.strictContentLength = true;
+          res.writeHead(200, { "Content-Length": 1 });
+          return [code(() => res.end("ok")), res.finished, code(() => res.end("E"))];
+        },
+        [MISMATCH, false, undefined],
+        sends(1, "E"),
+      ],
+      [
+        "the write() that decides the head is counted, the next one is checked",
+        res => {
+          res.strictContentLength = true;
+          res.setHeader("Content-Length", 3);
+          return [code(() => res.write("ok")), code(() => res.write("ok")), code(() => res.end("E"))];
+        },
+        [undefined, MISMATCH, undefined],
+        sends(3, "okE"),
+      ],
+      [
+        "an end() with no chunk that leaves the body short throws",
+        res => {
+          res.strictContentLength = true;
+          res.setHeader("Content-Length", 2);
+          return [code(() => res.write("a")), code(() => res.end()), res.finished, code(() => res.end("b"))];
+        },
+        [undefined, MISMATCH, false, undefined],
+        sends(2, "ab"),
+      ],
+      [
+        // Node counts the chunk of the end() that throws, so its second end() throws too.
+        "an end() that does not meet the Content-Length of setHeader() throws and writes nothing",
+        res => {
+          res.strictContentLength = true;
+          res.setHeader("Content-Length", 1);
+          return [code(() => res.end("ok")), res.finished, code(() => res.end("E"))];
+        },
+        [MISMATCH, false, undefined],
+        sends(1, "E"),
+      ],
+      [
+        // Node takes no chunk of these kinds.
+        "the bytes of a chunk are counted, not its elements",
+        res => {
+          res.strictContentLength = true;
+          res.writeHead(200, { "Content-Length": 4 });
+          return [
+            code(() => res.write(new Uint16Array([0x6161]))),
+            code(() => res.write(new Uint16Array([0x6262, 0x6363]).buffer as any)),
+            code(() => res.end(new DataView(new Uint8Array([0x64, 0x65]).buffer))),
+          ];
+        },
+        [undefined, MISMATCH, undefined],
+        sends(4, "aade"),
+      ],
+      [
+        "the option is read when the call is made, not later",
+        res => {
+          res.setHeader("Content-Length", 1);
+          const result = code(() => res.end("ok"));
+          res.strictContentLength = true;
+          return result;
+        },
+        undefined,
+        sends(1, "ok"),
+      ],
+    ];
+
+    test.each(cases)("%s", async (_, handler, result, response) => {
+      expect(await respond(handler)).toEqual({ waits, result, response });
+    });
+  });
 });
 
 describe("connectionListener maxRequestsPerSocket", () => {

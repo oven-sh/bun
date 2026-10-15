@@ -194,6 +194,8 @@ function onServerResponseClose() {
 // Node's write_() checks before _implicitHeader(): the write that renders the headers is counted but not checked. end() is always checked.
 function strictContentLength(response, headerState, fromEnd) {
   if (!response.strictContentLength) return;
+  // The calls of a queued response were checked when they were made (checkQueuedBodyLength).
+  if (response[kReplayingPipelinedOps]) return;
   if (!fromEnd && headerState === NodeHTTPHeaderState.none) return;
   let contentLength = response._contentLength ?? response.getHeader("content-length");
   if (
@@ -2828,6 +2830,8 @@ function queuePipelinedResponse(socket, res, isAncient) {
   res[kPipelinedQueuedState] = {
     ops: [],
     bytes: 0,
+    // The body bytes of the stored calls, for res.strictContentLength.
+    bodyBytes: 0,
     headerBytes: 0,
     needDrain: false,
     ended: false,
@@ -3080,7 +3084,29 @@ function accountQueuedHeaderBytes(res, queued) {
   addPipelineOutgoingData(queued, bytes);
 }
 
+// The bytes of a chunk, as Node's write_() counts them: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L962
+function chunkByteLength(chunk, encoding) {
+  if (typeof chunk === "string") return Buffer.byteLength(chunk, encoding);
+  // A view or an ArrayBuffer. The native handle also takes a String object.
+  return chunk.byteLength ?? Buffer.byteLength(String(chunk), encoding);
+}
+
+// Node's write_() and end() hold the body of a response with strictContentLength to its Content-Length in the call.
+// The native handle does that for the response that has the connection. This is for one that waits for it.
+function checkQueuedBodyLength(res, queued, chunk, encoding, fromEnd) {
+  // Like Node, the write() that decides the head is counted and not checked.
+  const headerState = queued.headerBytes !== 0 ? NodeHTTPHeaderState.assigned : res[headerStateSymbol];
+  const contentLength = strictContentLength(res, headerState, fromEnd);
+  // The handle of internal/http1_server_fallback holds no body to its length, and has no getBytesWritten().
+  if (contentLength === undefined || res[kHandle]?.getBytesWritten === undefined) return;
+  const written = queued.bodyBytes + (chunk ? chunkByteLength(chunk, encoding) : 0);
+  if (fromEnd ? written !== contentLength : written > contentLength) {
+    throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(written, contentLength);
+  }
+}
+
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
+  checkQueuedBodyLength(res, queued, chunk, encoding, false);
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
@@ -3095,10 +3121,12 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
     if (typeof callback === "function") process.nextTick(callback);
     return true;
   }
+  // Counted before the call is stored: a chunk that cannot be counted throws here.
+  const bytes = chunk ? chunkByteLength(chunk, encoding) : 0;
   queued.ops.push(["write", chunk, encoding, callback]);
   if (chunk) {
-    const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
+    queued.bodyBytes += bytes;
     // Node buffers these writes through outputData while no socket is
     // assigned, so outputSize reflects them until the response is flushed.
     res.outputSize += bytes;
@@ -3116,6 +3144,7 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, res.statusCode);
   }
+  checkQueuedBodyLength(res, queued, chunk, encoding, true);
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
     if (res[kRejectNonStandardBodyWrites]) {
@@ -3123,10 +3152,12 @@ function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
     }
     chunk = undefined;
   }
+  // Counted before the call is stored: a chunk that cannot be counted throws here.
+  const bytes = chunk ? chunkByteLength(chunk, encoding) : 0;
   queued.ops.push(["end", chunk, encoding, callback]);
   if (chunk) {
-    const bytes = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
     queued.bytes += bytes;
+    queued.bodyBytes += bytes;
     // Node buffers these writes through outputData while no socket is
     // assigned, so outputSize reflects them until the response is flushed.
     res.outputSize += bytes;

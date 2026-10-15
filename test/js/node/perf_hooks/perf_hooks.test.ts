@@ -428,11 +428,13 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("an entry goes to the observers of the type its producer made, whatever script wrote on it since", async () => {
-    // (In a process of its own: the setter is on Object.prototype.)
-    const { stdout, stderr, exitCode } = await run([
-      "-e",
-      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+  test.concurrent(
+    "an entry goes to the observers of the type its producer made, whatever script wrote on it since",
+    async () => {
+      // (In a process of its own: the setter is on Object.prototype.)
+      const { stdout, stderr, exitCode } = await run([
+        "-e",
+        `const { performance, PerformanceObserver } = require("node:perf_hooks");
        const observer = new PerformanceObserver(() => {});
        observer.observe({ entryTypes: ["function"] });
        Object.defineProperty(Object.prototype, 0, {
@@ -442,11 +444,12 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
        performance.timerify(function work() {})(1);
        delete Object.prototype[0];
        console.log(JSON.stringify(observer.takeRecords().map(entry => entry.name + " is a " + entry.entryType)));`,
-    ]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["work is a mark"]);
-    expect(exitCode).toBe(0);
-  });
+      ]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["work is a mark"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a node: module times its work only while an observer observes its entry type", async () => {
     const server = net.createServer(socket => socket.end());

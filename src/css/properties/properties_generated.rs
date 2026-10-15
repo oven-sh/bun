@@ -1824,14 +1824,14 @@ pub enum Property {
     ScrollMarginBlock(margin_padding::ScrollMarginBlock),
     ScrollMarginInline(margin_padding::ScrollMarginInline),
     ScrollMargin(margin_padding::ScrollMargin),
-    ScrollPaddingTop(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingBottom(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingLeft(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingRight(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingBlockStart(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingBlockEnd(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingInlineStart(css::css_values::length::LengthPercentageOrAuto),
-    ScrollPaddingInlineEnd(css::css_values::length::LengthPercentageOrAuto),
+    ScrollPaddingTop(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingBottom(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingLeft(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingRight(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingBlockStart(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingBlockEnd(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingInlineStart(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
+    ScrollPaddingInlineEnd(NonNegative<css::css_values::length::LengthPercentageOrAuto>),
     ScrollPaddingBlock(margin_padding::ScrollPaddingBlock),
     ScrollPaddingInline(margin_padding::ScrollPaddingInline),
     ScrollPadding(margin_padding::ScrollPadding),
@@ -3530,57 +3530,65 @@ impl Property {
                 }
             }
             PropertyId::ScrollPaddingTop => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingTop(c));
                 }
             }
             PropertyId::ScrollPaddingBottom => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingBottom(c));
                 }
             }
             PropertyId::ScrollPaddingLeft => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingLeft(c));
                 }
             }
             PropertyId::ScrollPaddingRight => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingRight(c));
                 }
             }
             PropertyId::ScrollPaddingBlockStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingBlockStart(c));
                 }
             }
             PropertyId::ScrollPaddingBlockEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingBlockEnd(c));
                 }
             }
             PropertyId::ScrollPaddingInlineStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingInlineStart(c));
                 }
             }
             PropertyId::ScrollPaddingInlineEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_value::<
+                    NonNegative<css::css_values::length::LengthPercentageOrAuto>,
+                >(input, options)
                 {
                     return Ok(Property::ScrollPaddingInlineEnd(c));
                 }

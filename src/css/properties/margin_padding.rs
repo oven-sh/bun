@@ -1,6 +1,8 @@
 #![warn(unused_must_use)]
 use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::number::NonNegative;
+use crate::generics::ToCss as _;
 use crate::logical::PropertyCategory;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::{DeclarationList, PropertyHandlerContext};
@@ -48,13 +50,13 @@ impl_size_shorthand!(
 );
 impl_size_shorthand!(
     ScrollPaddingBlock,
-    LengthPercentageOrAuto,
+    NonNegative<LengthPercentageOrAuto>,
     block_start,
     block_end
 );
 impl_size_shorthand!(
     ScrollPaddingInline,
-    LengthPercentageOrAuto,
+    NonNegative<LengthPercentageOrAuto>,
     inline_start,
     inline_end
 );
@@ -227,9 +229,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingBlock {
     /// The block start value.
-    pub(crate) block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: NonNegative<LengthPercentageOrAuto>,
     /// The block end value.
-    pub(crate) block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: NonNegative<LengthPercentageOrAuto>,
 }
 
 impl ScrollPaddingBlock {
@@ -241,9 +243,9 @@ impl ScrollPaddingBlock {
 #[derive(Clone, PartialEq)]
 pub struct ScrollPaddingInline {
     /// The inline start value.
-    pub(crate) inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: NonNegative<LengthPercentageOrAuto>,
     /// The inline end value.
-    pub(crate) inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: NonNegative<LengthPercentageOrAuto>,
 }
 
 impl ScrollPaddingInline {
@@ -253,7 +255,7 @@ impl ScrollPaddingInline {
 
 define_rect_shorthand! {
     /// A value for the [scroll-padding](https://drafts.csswg.org/css-scroll-snap/#scroll-padding) shorthand property.
-    ScrollPadding, LengthPercentageOrAuto,
+    ScrollPadding, NonNegative<LengthPercentageOrAuto>,
     top: ScrollPaddingTop,
     right: ScrollPaddingRight,
     bottom: ScrollPaddingBottom,

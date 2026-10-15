@@ -129,6 +129,8 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
+    /// The block ends in a declaration with no `;` yet. Printer state: a minified `@media all` prints no block.
+    pub(crate) pending_semicolon: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -306,6 +308,7 @@ impl<'a> Printer<'a> {
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
+            pending_semicolon: false,
             in_calc: false,
             css_module: None,
             ctx: None,
@@ -746,6 +749,7 @@ impl<'a> Printer<'a> {
         self.write_char(b'{')?;
         self.indent();
         f(self)?;
+        self.pending_semicolon = false;
         self.dedent();
         self.newline()?;
         self.write_char(b'}')
@@ -811,7 +815,11 @@ impl<'a> Printer<'a> {
             None
         };
 
-        let ctx = css::StyleContext { selectors, parent };
+        let ctx = css::StyleContext {
+            selectors,
+            parent,
+            vendor_prefix: self.vendor_prefix,
+        };
 
         // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
         // soundness relies on restoring `parent` before this frame returns.

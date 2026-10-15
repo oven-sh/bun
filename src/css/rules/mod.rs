@@ -36,7 +36,7 @@ pub mod viewport;
 // lifetime-free here.
 
 // ─── CssRule variant table ────────────────────────────────────────────────
-// Single source of truth for the 20 typed at-rule payloads. Adding a new
+// Single source of truth for the 21 typed rule payloads. Adding a new
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
 // their `to_css` arms are special-cased (see the note on `Custom`).
@@ -117,6 +117,8 @@ css_rule_variants! {
     MozDocument(document::MozDocumentRule<R>),
     /// A `@nest` rule.
     Nesting(nesting::NestingRule<R>),
+    /// A nested declarations rule.
+    NestedDeclarations(nesting::NestedDeclarationsRule),
     /// A `@viewport` rule.
     Viewport(viewport::ViewportRule),
     /// A `@custom-media` rule.
@@ -134,6 +136,9 @@ css_rule_variants! {
     /// A `@starting-style` rule.
     StartingStyle(starting_style::StartingStyleRule<R>),
 }
+
+// Rule lists hold `CssRule` by value: a new variant must not make every rule larger.
+const _: () = assert!(core::mem::size_of::<CssRule<css::DefaultAtRule>>() == 160);
 
 // SAFETY: the CSS AST contains `SmallList<T, N>` (raw `*mut T`) and
 // `bun_alloc::ArenaVec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
@@ -475,6 +480,10 @@ impl<R> CssRuleList<R> {
                 }
                 dest.newline()?;
             }
+            // After nested declarations: see `Printer::pending_semicolon`.
+            if core::mem::take(&mut dest.pending_semicolon) {
+                dest.write_char(b';')?;
+            }
             rule.to_css(dest)?;
             last_without_block = matches!(
                 rule,
@@ -488,6 +497,19 @@ impl<R> CssRuleList<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+    ) -> Result<(), MinifyErr>
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
+        self.minify_nested(context, parent_is_unused, None)
+    }
+
+    /// `enclosing`: the handler context of the style rule that owns this list (`NestedDeclarationsRule::minify`).
+    pub(crate) fn minify_nested(
+        &mut self,
+        context: &mut MinifyContext<'_, '_>,
+        parent_is_unused: bool,
+        mut enclosing: Option<&mut css::PropertyHandlerContext<'_>>,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -568,6 +590,18 @@ impl<R> CssRuleList<R> {
                             &mut merge_state,
                             context,
                             parent_is_unused,
+                        )?;
+                        break 'arm;
+                    }
+                    CssRule::NestedDeclarations(_) => {
+                        minify_nested_declarations_arm(
+                            rule,
+                            &mut rules,
+                            &mut style_rules,
+                            &mut merge_state,
+                            context,
+                            parent_is_unused,
+                            enclosing.as_deref_mut(),
                         )?;
                         break 'arm;
                     }
@@ -761,12 +795,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // re-minify re-runs the staging declarations and stages their rules
     // again, and the per-merge re-minify this replaces also ran before
     // collection, so the re-staged entries belong in this rule's extras.
-    if merge_state.pending_minify
-        && !(context.handler_context.supports.is_empty()
-            && context.handler_context.ltr.is_empty()
-            && context.handler_context.rtl.is_empty()
-            && context.handler_context.dark.is_empty())
-    {
+    if merge_state.pending_minify && context.handler_context.has_staged_rules() {
         flush_pending_style_merge(rules, style_rules, merge_state, context);
     }
 
@@ -815,18 +844,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         && sty.selectors.v.len() > 0
         && (!logical.is_empty() || !supps.is_empty() || !incompatible_rules.is_empty())
     {
-        let mut rulesss = CssRuleList::<R>::default();
-        core::mem::swap(&mut sty.rules, &mut rulesss);
-        // Empty block: route through the centralized `'bump`-erasure helper
-        // instead of fabricating
-        // `&'static Arena` here (PORTING.md §Forbidden).
-        Some(style::StyleRule {
-            selectors: sty.selectors.deep_clone(),
-            declarations: dc::decl_block_empty_static(context.arena),
-            rules: rulesss,
-            vendor_prefix: sty.vendor_prefix,
-            loc: sty.loc,
-        })
+        Some(split_off_nested_rules(sty, context.arena))
     } else {
         None
     };
@@ -879,7 +897,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
     rules.extend(supps);
     while incompatible_rules.len() > 0 {
-        let entry = incompatible_rules.ordered_remove(0);
+        let mut entry = incompatible_rules.ordered_remove(0);
+        // The same split as for `sty` above: the extra rules go before the nested rules.
+        let nested = (!entry.rule.rules.v.is_empty()
+            && (!entry.logical.is_empty() || !entry.supports.is_empty()))
+        .then(|| split_off_nested_rules(&mut entry.rule, context.arena));
         if !entry.rule.is_empty() {
             rules.push(CssRule::Style(entry.rule));
         }
@@ -889,11 +911,65 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             rules.append(&mut log.v);
         }
         rules.extend(entry.supports);
+        if let Some(nested) = nested {
+            rules.push(CssRule::Style(nested));
+        }
     }
     if let Some(nested) = nested_rule {
         rules.push(CssRule::Style(nested));
     }
 
+    Ok(())
+}
+
+/// Moves the nested rules of `rule` into a second rule with the same selectors and no declarations.
+fn split_off_nested_rules<R>(
+    rule: &mut style::StyleRule<R>,
+    arena: &bun_alloc::Arena,
+) -> style::StyleRule<R> {
+    style::StyleRule {
+        selectors: rule.selectors.deep_clone(),
+        declarations: dc::decl_block_empty_static(arena),
+        rules: core::mem::take(&mut rule.rules),
+        vendor_prefix: rule.vendor_prefix,
+        loc: rule.loc,
+    }
+}
+
+/// The arm for a nested declarations rule. lightningcss does not place the fallback rules: parcel-bundler/lightningcss#1049
+fn minify_nested_declarations_arm<R: for<'b> css::generics::DeepClone<'b>>(
+    rule: &mut CssRule<R>,
+    rules: &mut Vec<CssRule<R>>,
+    style_rules: &mut StyleRuleKeyMap,
+    merge_state: &mut StyleRuleMergeState,
+    context: &mut MinifyContext<'_, '_>,
+    parent_is_unused: bool,
+    enclosing: Option<&mut css::PropertyHandlerContext<'_>>,
+) -> Result<(), MinifyErr> {
+    let CssRule::NestedDeclarations(nested) = rule else {
+        unreachable!()
+    };
+
+    if parent_is_unused {
+        return Ok(());
+    }
+
+    // A flush expects the handler context drained, and the declarations below stage rules in it.
+    flush_pending_style_merge(rules, style_rules, merge_state, context);
+
+    let fallbacks = nested.minify::<R>(context, enclosing)?;
+    let is_empty = nested.declarations.is_empty();
+    if is_empty && fallbacks.is_empty() {
+        return Ok(());
+    }
+
+    // Like the other non-style rules, a barrier for the style rule merge and the duplicate check.
+    merge_state.last_compat = None;
+    style_rules.clear();
+    if !is_empty {
+        rules.push(core::mem::replace(rule, CssRule::Ignored));
+    }
+    rules.extend(fallbacks);
     Ok(())
 }
 
@@ -976,7 +1052,12 @@ impl StyleRuleKeyMap {
     }
 
     fn clear(&mut self) {
-        self.buckets.clear();
+        // `HashMap::clear` rewrites every slot it keeps, so a table that is mostly empty is dropped.
+        if self.buckets.capacity() > 16 && self.buckets.len() * 8 < self.buckets.capacity() {
+            self.buckets = Default::default();
+        } else {
+            self.buckets.clear();
+        }
         self.keys.clear();
     }
 }
@@ -1203,6 +1284,8 @@ pub use crate::Location;
 pub struct StyleContext<'a> {
     pub(crate) selectors: &'a crate::selectors::SelectorList,
     pub(crate) parent: Option<&'a StyleContext<'a>>,
+    /// The vendor prefix pass in which the rule of `selectors` prints its block.
+    pub(crate) vendor_prefix: crate::VendorPrefix,
 }
 
 /// Upper bound on the number of selectors that compiling nested rules away for
@@ -1254,4 +1337,28 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
+}
+
+impl MinifyContext<'_, '_> {
+    /// See `StyleRule::charge_selector_expansion`. `selectors` is the number the rule at `loc` prints.
+    pub(crate) fn charge_selector_expansion(
+        &mut self,
+        selectors: u32,
+        loc: Location,
+    ) -> Result<(), MinifyErr> {
+        if self.selector_expansion_multiplier > 1 {
+            self.selector_expansion_total = self.selector_expansion_total.saturating_add(
+                self.selector_expansion_multiplier
+                    .saturating_mul(selectors.max(1)),
+            );
+            if self.selector_expansion_total > MAX_SELECTOR_EXPANSION {
+                self.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
+        Ok(())
+    }
 }

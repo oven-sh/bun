@@ -79,6 +79,14 @@ impl<'a> PropertyHandlerContext<'a> {
         self.rtl.push(rtl);
     }
 
+    /// Whether `get_supports_rules` or `get_additional_rules` would build a rule.
+    pub(crate) fn has_staged_rules(&self) -> bool {
+        !(self.supports.is_empty()
+            && self.ltr.is_empty()
+            && self.rtl.is_empty()
+            && self.dark.is_empty())
+    }
+
     pub(crate) fn should_compile_logical(&self, feature: css::compat::Feature) -> bool {
         // Don't convert logical properties in style attributes because
         // our fallbacks rely on extra rules to define --ltr and --rtl.
@@ -116,9 +124,38 @@ impl<'a> PropertyHandlerContext<'a> {
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
 
+    /// The rule for `declarations` in a fallback rule: a style rule, or with no selectors a nested declarations rule.
+    fn fallback_leaf<T>(
+        selectors: Option<&css::SelectorList>,
+        declarations: css::DeclarationBlock<'static>,
+        loc: css::Location,
+    ) -> css::CssRule<T> {
+        match selectors {
+            Some(selectors) => css::CssRule::Style(css::StyleRule {
+                selectors: selectors.deep_clone(),
+                vendor_prefix: css::VendorPrefix::NONE,
+                declarations,
+                rules: css::CssRuleList::default(),
+                loc,
+            }),
+            None => {
+                css::CssRule::NestedDeclarations(css::NestedDeclarationsRule { declarations, loc })
+            }
+        }
+    }
+
     pub(crate) fn get_supports_rules<T>(
         &self,
         style_rule: &css::StyleRule<T>,
+    ) -> Vec<css::CssRule<T>> {
+        self.get_supports_rules_on(Some(&style_rule.selectors), style_rule.loc)
+    }
+
+    /// See [`Self::fallback_leaf`] for `selectors`.
+    pub(crate) fn get_supports_rules_on<T>(
+        &self,
+        selectors: Option<&css::SelectorList>,
+        loc: css::Location,
     ) -> Vec<css::CssRule<T>> {
         if self.supports.is_empty() {
             return Vec::new();
@@ -130,18 +167,16 @@ impl<'a> PropertyHandlerContext<'a> {
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
-                    v: vec![css::CssRule::Style(css::StyleRule {
-                        selectors: style_rule.selectors.deep_clone(),
-                        vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
+                    v: vec![Self::fallback_leaf(
+                        selectors,
+                        css::DeclarationBlock {
                             declarations: self.clone_decls(&entry.declarations),
                             important_declarations: self.clone_decls(&entry.important_declarations),
                         },
-                        rules: css::CssRuleList::default(),
-                        loc: style_rule.loc,
-                    })],
+                        loc,
+                    )],
                 },
-                loc: style_rule.loc,
+                loc,
             }));
         }
 
@@ -154,13 +189,25 @@ impl<'a> PropertyHandlerContext<'a> {
     ) -> Vec<css::CssRule<T>> {
         // TODO: :dir/:lang raises the specificity of the selector. Use :where to lower it?
         let mut dest: Vec<css::CssRule<T>> = Vec::new();
+        self.get_logical_rules(&style_rule.selectors, style_rule.loc, &mut dest);
+        self.get_dark_rule(Some(&style_rule.selectors), style_rule.loc, &mut dest);
+        dest
+    }
 
+    /// The `:dir(ltr)` and `:dir(rtl)` rules for the staged logical properties.
+    pub(crate) fn get_logical_rules<T>(
+        &self,
+        selectors: &css::SelectorList,
+        loc: css::Location,
+        dest: &mut Vec<css::CssRule<T>>,
+    ) {
         if !self.ltr.is_empty() {
             self.get_additional_rules_helper(
                 css::selector::parser::Direction::Ltr,
                 &self.ltr,
-                style_rule,
-                &mut dest,
+                selectors,
+                loc,
+                dest,
             );
         }
 
@@ -168,11 +215,20 @@ impl<'a> PropertyHandlerContext<'a> {
             self.get_additional_rules_helper(
                 css::selector::parser::Direction::Rtl,
                 &self.rtl,
-                style_rule,
-                &mut dest,
+                selectors,
+                loc,
+                dest,
             );
         }
+    }
 
+    /// The `prefers-color-scheme: dark` rule for the staged `color-scheme` variables.
+    pub(crate) fn get_dark_rule<T>(
+        &self,
+        selectors: Option<&css::SelectorList>,
+        loc: css::Location,
+        dest: &mut Vec<css::CssRule<T>>,
+    ) {
         if !self.dark.is_empty() {
             dest.push(css::CssRule::Media(MediaRule {
                 query: MediaList {
@@ -203,26 +259,22 @@ impl<'a> PropertyHandlerContext<'a> {
                 rules: {
                     let mut list: css::CssRuleList<T> = css::CssRuleList::default();
 
-                    list.v.push(css::CssRule::Style(css::StyleRule {
-                        selectors: style_rule.selectors.deep_clone(),
-                        vendor_prefix: css::VendorPrefix::NONE,
-                        declarations: css::DeclarationBlock {
+                    list.v.push(Self::fallback_leaf(
+                        selectors,
+                        css::DeclarationBlock {
                             declarations: self.clone_decls(&self.dark),
                             important_declarations: css::DeclarationList::new_in(
                                 self.bump_static(),
                             ),
                         },
-                        rules: css::CssRuleList::default(),
-                        loc: style_rule.loc,
-                    }));
+                        loc,
+                    ));
 
                     list
                 },
-                loc: style_rule.loc,
+                loc,
             }));
         }
-
-        dest
     }
 
     // Takes the Direction value and a borrow of the decls Vec directly.
@@ -230,10 +282,11 @@ impl<'a> PropertyHandlerContext<'a> {
         &self,
         dir: css::selector::parser::Direction,
         decls: &[css::Property],
-        sty: &css::StyleRule<T>,
+        selectors: &css::SelectorList,
+        loc: css::Location,
         dest: &mut Vec<css::CssRule<T>>,
     ) {
-        let mut selectors = sty.selectors.deep_clone();
+        let mut selectors = selectors.deep_clone();
         for selector in selectors.v.slice_mut() {
             selector.append(css::Component::NonTsPseudoClass(css::PseudoClass::Dir {
                 direction: dir,
@@ -248,7 +301,7 @@ impl<'a> PropertyHandlerContext<'a> {
                 important_declarations: css::DeclarationList::new_in(self.bump_static()),
             },
             rules: css::CssRuleList::default(),
-            loc: sty.loc,
+            loc,
         };
 
         dest.push(css::CssRule::Style(rule));

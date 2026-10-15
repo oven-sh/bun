@@ -31,6 +31,7 @@ import {
 } from "node:fs";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
+import { configWorld, type PrefixRegistry, prefixRegistry } from "./prefix-registry";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -2444,5 +2445,367 @@ describe("paths that do not fit in the path buffer", () => {
         exitCode: 1,
       });
     }
+  });
+});
+
+// bunx installs the package it runs with a spawned `bun add` whose root is a
+// directory of the bunx cache. That install takes bunfig.toml, .npmrc and .env
+// from the root that `bun add` picks for the invoking directory.
+// https://github.com/oven-sh/bun/issues/5361
+describe("the project's install config", () => {
+  const packageJson = (name: string, more: object = {}) => JSON.stringify({ name, version: "1.0.0", ...more });
+
+  // `cwd` is where the command runs. `config` is where the case puts its files.
+  // `applies` is whether `bun add` run from `cwd` reads config in that directory.
+  const layouts = {
+    "the project root": {
+      files: { "package.json": packageJson("proj") },
+      cwd: ".",
+      config: ".",
+      applies: true,
+    },
+    "a subdirectory": {
+      files: { "package.json": packageJson("proj"), src: { deep: { keep: "" } } },
+      cwd: "src/deep",
+      config: ".",
+      applies: true,
+    },
+    "a workspace member": {
+      files: {
+        "package.json": packageJson("root", { workspaces: ["packages/*"] }),
+        packages: { app: { "package.json": packageJson("app") } },
+      },
+      cwd: "packages/app",
+      config: ".",
+      applies: true,
+    },
+    "a directory with no package.json": {
+      files: { keep: "" },
+      cwd: ".",
+      config: ".",
+      applies: true,
+    },
+    "a project below the config": {
+      files: { proj: { "package.json": packageJson("proj") } },
+      cwd: "proj",
+      config: ".",
+      applies: false,
+    },
+    "a subdirectory that holds the config": {
+      files: { "package.json": packageJson("proj"), sub: { keep: "" } },
+      cwd: "sub",
+      config: "sub",
+      applies: false,
+    },
+  };
+  type Layout = (typeof layouts)[keyof typeof layouts];
+
+  const inputs = {
+    "a bunfig.toml registry": {
+      pkg: "px-probe",
+      authorization: null,
+      files: (registry: PrefixRegistry) => ({ "bunfig.toml": `[install]\nregistry = "${registry.url("PROJECT")}"\n` }),
+    },
+    "a bunfig.toml scope": {
+      pkg: "@probe/px-probe",
+      authorization: null,
+      files: (registry: PrefixRegistry) => ({
+        "bunfig.toml": `[install.scopes]\nprobe = { url = "${registry.url("PROJECT")}" }\n`,
+      }),
+    },
+    "an .npmrc registry": {
+      pkg: "px-probe",
+      authorization: null,
+      files: (registry: PrefixRegistry) => ({ ".npmrc": `registry=${registry.url("PROJECT")}\n` }),
+    },
+    "an .npmrc scope with a token from .env": {
+      pkg: "@probe/px-probe",
+      authorization: "Bearer from-dotenv",
+      files: (registry: PrefixRegistry) => ({
+        ".npmrc":
+          `@probe:registry=${registry.url("PROJECT")}\n` +
+          `//127.0.0.1:${registry.port}/PROJECT/:_authToken=\${PROBE_TOKEN}\n`,
+        ".env": "PROBE_TOKEN=from-dotenv\n",
+      }),
+    },
+    "a bunfig.toml scope with a token from .env.local": {
+      pkg: "@probe/px-probe",
+      authorization: "Bearer from-dotenv-local",
+      files: (registry: PrefixRegistry) => ({
+        "bunfig.toml": `[install.scopes]\nprobe = { url = "${registry.url("PROJECT")}", token = "$PROBE_TOKEN" }\n`,
+        ".env.local": "PROBE_TOKEN=from-dotenv-local\n",
+      }),
+    },
+  };
+
+  function world(registry: PrefixRegistry, layout: Layout, config: Record<string, string>, home = {}) {
+    const made = configWorld(registry, { project: layout.files, home });
+    for (const [name, contents] of Object.entries(config)) {
+      writeFileSync(join(made.project, layout.config, name), contents);
+    }
+    return made;
+  }
+
+  describe.each(Object.entries(layouts))("from %s", (_, layout) => {
+    it.concurrent.each(Object.entries(inputs))("uses the same registry as bun add for %s", async (_, input) => {
+      using registry = prefixRegistry();
+      const config = input.files(registry);
+      const expected = layout.applies
+        ? [{ prefix: "PROJECT", authorization: input.authorization }]
+        : [{ prefix: "USER", authorization: null }];
+
+      using forAdd = world(registry, layout, config);
+      const add = await forAdd.bun(["add", input.pkg], layout.cwd);
+      const addUsed = registry.used();
+      registry.requests.length = 0;
+
+      using forBunx = world(registry, layout, config);
+      const before = forBunx.projectFiles();
+      const bunx = await forBunx.bun(["x", input.pkg], layout.cwd);
+
+      expect({
+        add: addUsed,
+        bunx: registry.used(),
+        stdout: bunx.stdout,
+        project: forBunx.projectFiles(),
+      }).toEqual({
+        add: expected,
+        bunx: expected,
+        stdout: `SERVED-BY-${expected[0].prefix}`,
+        project: before,
+      });
+      expect({ add: add.exitCode, bunx: bunx.exitCode }).toEqual({ add: 0, bunx: 0 });
+    });
+  });
+
+  it.concurrent("reads a scope from the project when the environment names the default registry", async () => {
+    using registry = prefixRegistry();
+    const config = {
+      "bunfig.toml":
+        `[install]\nregistry = "${registry.url("PROJECT")}"\n` +
+        `[install.scopes]\nprobe = { url = "${registry.url("SCOPE")}" }\n`,
+    };
+    const env = { npm_config_registry: registry.url("ENV") };
+
+    using forAdd = world(registry, layouts["the project root"], config);
+    await forAdd.bun(["add", "px-probe"], ".", { env });
+    const addUsed = registry.used();
+    registry.requests.length = 0;
+
+    using forBunx = world(registry, layouts["the project root"], config);
+    const unscoped = await forBunx.bun(["x", "px-probe"], ".", { env });
+    const unscopedUsed = registry.used();
+    registry.requests.length = 0;
+    const scoped = await forBunx.bun(["x", "@probe/px-probe"], ".", { env });
+
+    expect({ unscoped: unscopedUsed, scoped: registry.used(), stdout: scoped.stdout }).toEqual({
+      unscoped: addUsed,
+      scoped: [{ prefix: "SCOPE", authorization: null }],
+      stdout: "SERVED-BY-SCOPE",
+    });
+    expect({ unscoped: unscoped.exitCode, scoped: scoped.exitCode }).toEqual({ unscoped: 0, scoped: 0 });
+  });
+
+  it.concurrent("fails on a malformed project bunfig.toml, as bun add does", async () => {
+    using registry = prefixRegistry();
+    const config = { "bunfig.toml": "[install\nregistry = \n" };
+
+    using forAdd = world(registry, layouts["a subdirectory"], config);
+    const add = await forAdd.bun(["add", "px-probe"], "src/deep");
+
+    using forBunx = world(registry, layouts["a subdirectory"], config);
+    const bunx = await forBunx.bun(["x", "px-probe"], "src/deep");
+
+    expect(bunx.stderr).toContain("failed to load bunfig");
+    expect({ stdout: bunx.stdout, requests: registry.requests }).toEqual({ stdout: "", requests: [] });
+    expect({ add: add.exitCode, bunx: bunx.exitCode }).toEqual({ add: 1, bunx: 1 });
+  });
+
+  // `bun add` skips a bunfig.toml that it finds but cannot read.
+  it.skipIf(isWindows)("skips a project bunfig.toml that it cannot read", async () => {
+    using registry = prefixRegistry();
+    using forBunx = world(registry, layouts["the project root"], {
+      "bunfig.toml": `[install]\nregistry = "${registry.url("UNREADABLE")}"\n`,
+      ".npmrc": `registry=${registry.url("PROJECT")}\n`,
+    });
+    using unprivileged = unprivilegedSpawnOptions(forBunx.dir);
+    chmodSync(join(forBunx.project, "bunfig.toml"), 0o000);
+
+    const bunx = await forBunx.bun(["x", "px-probe"], ".", unprivileged);
+
+    expect({ used: registry.used(), stdout: bunx.stdout }).toEqual({
+      used: [{ prefix: "PROJECT", authorization: null }],
+      stdout: "SERVED-BY-PROJECT",
+    });
+    expect(bunx.exitCode).toBe(0);
+  });
+
+  it.concurrent("does not read config files in the directory it installs into", async () => {
+    using registry = prefixRegistry();
+    using forBunx = world(registry, layouts["a directory with no package.json"], {});
+
+    const cold = await forBunx.bun(["x", "px-probe"]);
+    const trees = forBunx.bunxTrees();
+    expect({ stdout: cold.stdout, trees: trees.length }).toEqual({ stdout: "SERVED-BY-USER", trees: 1 });
+
+    const planted = registry.url("PLANTED");
+    writeFileSync(join(trees[0], "bunfig.toml"), `[install]\nregistry = "${planted}"\n`);
+    writeFileSync(join(trees[0], ".npmrc"), `registry=${planted}\n`);
+    writeFileSync(join(trees[0], ".env"), `BUN_CONFIG_REGISTRY=${planted}\n`);
+    registry.requests.length = 0;
+
+    // An explicit dist-tag asks the registry again.
+    const again = await forBunx.bun(["x", "px-probe@latest"]);
+
+    expect({ used: registry.used(), stdout: again.stdout }).toEqual({
+      used: [{ prefix: "USER", authorization: null }],
+      stdout: "SERVED-BY-USER",
+    });
+    expect(again.exitCode).toBe(0);
+  });
+
+  // A project's bunfig.toml or .npmrc can name another registry, so a project
+  // that has one gets its own tree, and a new one when the file changes.
+  it.concurrent("keeps a tree per project config file", async () => {
+    using registry = prefixRegistry();
+    const bunfig = (prefix: string) => `[install]\nregistry = "${registry.url(prefix)}"\n`;
+    using forBunx = configWorld(registry, {
+      project: {
+        plain: { keep: "" },
+        a: { "package.json": packageJson("a"), "bunfig.toml": bunfig("A") },
+        b: { "package.json": packageJson("b"), "bunfig.toml": bunfig("B"), src: { keep: "" } },
+      },
+    });
+
+    const stdout: string[] = [];
+    for (const cwd of ["plain", "a", "b/src"]) {
+      stdout.push((await forBunx.bun(["x", "px-probe"], cwd)).stdout);
+    }
+    const trees = forBunx.bunxTrees();
+    // Without a project config file the tree has the plain name.
+    expect(trees.filter(tree => tree.endsWith("px-probe@latest"))).toHaveLength(1);
+
+    registry.requests.length = 0;
+    stdout.push((await forBunx.bun(["x", "px-probe"], "a")).stdout);
+    const warmRequests = [...registry.requests];
+
+    writeFileSync(join(forBunx.project, "a", "bunfig.toml"), "# moved\n" + bunfig("C"));
+    stdout.push((await forBunx.bun(["x", "px-probe"], "a")).stdout);
+
+    expect({ stdout, trees: trees.length, warmRequests, afterEdit: forBunx.bunxTrees().length }).toEqual({
+      stdout: ["SERVED-BY-USER", "SERVED-BY-A", "SERVED-BY-B", "SERVED-BY-A", "SERVED-BY-C"],
+      trees: 3,
+      warmRequests: [],
+      afterEdit: 4,
+    });
+  });
+
+  // The scanner gates what bunx downloads and runs. It is found from the project
+  // root. A scanner that cannot be found there stops the install.
+  describe("with a security scanner", () => {
+    const scanner = (advisories: string) =>
+      `export const scanner = {\n` +
+      `  version: "1",\n` +
+      `  async scan({ packages }) {\n` +
+      `    console.error("SCANNED " + packages.map(p => p.name).join(","));\n` +
+      `    return ${advisories};\n` +
+      `  },\n` +
+      `};\n`;
+    const fatal = `packages.map(p => ({ package: p.name, level: "fatal", description: "blocked by the test" }))`;
+    const installed = (advisories = "[]") => ({
+      node_modules: {
+        "probe-scanner": {
+          "package.json": packageJson("probe-scanner", { type: "module", main: "index.js" }),
+          "index.js": scanner(advisories),
+        },
+      },
+    });
+    const named = `[install.security]\nscanner = "probe-scanner"\n`;
+
+    const cases = {
+      "the project names a scanner that is installed in it": {
+        project: { "bunfig.toml": named, ...installed() },
+        home: {},
+        expected: { scanned: true, ran: true, exitCode: 0 },
+      },
+      "the project names a scanner file by relative path": {
+        project: { "bunfig.toml": `[install.security]\nscanner = "./scanner.js"\n`, "scanner.js": scanner("[]") },
+        home: {},
+        expected: { scanned: true, ran: true, exitCode: 0 },
+      },
+      "the user config names a scanner that is installed in the project": {
+        project: installed(),
+        home: { ".bunfig.toml": named },
+        expected: { scanned: true, ran: true, exitCode: 0 },
+      },
+      "the scanner reports a fatal advisory": {
+        project: { "bunfig.toml": named, ...installed(fatal) },
+        home: {},
+        expected: { scanned: true, ran: false, exitCode: 1 },
+      },
+      "the project names a scanner that is not installed": {
+        project: { "bunfig.toml": named },
+        home: {},
+        expected: { scanned: false, ran: false, exitCode: 1 },
+      },
+      "the user config names a scanner that is not installed": {
+        project: {},
+        home: { ".bunfig.toml": named },
+        expected: { scanned: false, ran: false, exitCode: 1 },
+      },
+    };
+
+    it.concurrent.each(Object.entries(cases))("%s", async (_, { project, home, expected }) => {
+      using registry = prefixRegistry();
+      using forBunx = configWorld(registry, {
+        project: { "package.json": packageJson("proj"), src: { keep: "" }, ...project },
+        home,
+      });
+
+      const bunx = await forBunx.bun(["x", "px-probe"], "src");
+
+      expect({
+        scanned: bunx.stderr.includes("SCANNED px-probe"),
+        ran: bunx.stdout.includes("SERVED-BY-USER"),
+        exitCode: bunx.exitCode,
+      }).toEqual(expected);
+    });
+  });
+
+  // A new version changes the lockfile in the directory bunx installs into, so
+  // a frozen lockfile cannot hold there.
+  it.concurrent.each([
+    ["frozenLockfile", "frozenLockfile = true"],
+    ["production", "production = true"],
+  ])("installs a new version after the user bunfig.toml sets %s", async (_, setting) => {
+    using registry = prefixRegistry({ cli: (prefix, version) => `console.log("${prefix}@${version}");` });
+    using forBunx = world(registry, layouts["a directory with no package.json"], {});
+
+    const first = await forBunx.bun(["x", "px-probe"]);
+    writeFileSync(join(forBunx.home, ".bunfig.toml"), `[install]\n${setting}\n`);
+    registry.publish("2.0.0");
+    // An explicit dist-tag asks the registry again.
+    const second = await forBunx.bun(["x", "px-probe@latest"]);
+
+    expect({ first: first.stdout, second: second.stdout }).toEqual({ first: "USER@1.0.0", second: "USER@2.0.0" });
+    expect({ first: first.exitCode, second: second.exitCode }).toEqual({ first: 0, second: 0 });
+  });
+
+  // The release-age gate covers the command that downloads and runs a package,
+  // not only `bun add`.
+  it.concurrent("applies the project's minimumReleaseAge to the package it would run", async () => {
+    using registry = prefixRegistry({ published: new Date(Date.now() - 60 * 60 * 1000) });
+    using forBunx = world(registry, layouts["a subdirectory"], {
+      "bunfig.toml": "[install]\nminimumReleaseAge = 86400\n",
+    });
+
+    const bunx = await forBunx.bun(["x", "px-probe"], "src/deep");
+
+    expect(bunx.stderr).toContain("blocked by minimum-release-age: 86400 seconds");
+    expect({ stdout: bunx.stdout, used: registry.used() }).toEqual({
+      stdout: "",
+      used: [{ prefix: "USER", authorization: null }],
+    });
+    expect(bunx.exitCode).toBe(1);
   });
 });

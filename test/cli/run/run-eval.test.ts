@@ -348,3 +348,50 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+describe.concurrent.skipIf(isWindows)("in a working directory with `?` in its name", () => {
+  const scripts = {
+    "an ES module": `
+      import config from "./config.json";
+      console.log(JSON.stringify({
+        json: config.from,
+        require: require("./dep.cjs"),
+        dir: import.meta.dir.split("/").pop(),
+        file: import.meta.file,
+      }));
+    `,
+    "a CommonJS module": `
+      console.log(JSON.stringify({
+        json: require("./config.json").from,
+        require: require("./dep.cjs"),
+        dir: __dirname.split("/").pop(),
+        file: __filename.split("/").pop(),
+      }));
+    `,
+  };
+  describe.each(["what?", "wh?at"])("%s", name => {
+    test.each(Object.keys(scripts))("%s script loads the files of that directory", async kind => {
+      using dir = tempDir("eval-question-mark", {
+        [`${name}/config.json`]: `{ "from": "the working directory" }`,
+        [`${name}/dep.cjs`]: `module.exports = "the working directory";`,
+        // What the part before the "?" names.
+        [`${name.split("?")[0]}/config.json`]: `{ "from": "another directory" }`,
+        [`${name.split("?")[0]}/dep.cjs`]: `module.exports = "another directory";`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", scripts[kind]],
+        env: bunEnv,
+        cwd: join(String(dir), name),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+        stdout: { json: "the working directory", require: "the working directory", dir: name, file: "[eval]" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});

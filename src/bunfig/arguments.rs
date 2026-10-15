@@ -65,18 +65,21 @@ fn unreadable_config(
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
-        if err.is_unreadable_file(config_path) {
-            if !ctx.debug.silent
-                && bun_ast::DEFAULT_LOG_LEVEL
-                    .load()
-                    .at_least(bun_ast::Level::Warn)
-            {
-                bun_core::warn!(
-                    "{}\nThe settings in <b>{}<r> are not applied.",
-                    err,
-                    BStr::new(config_path),
-                );
-            }
+        // A directory in its place holds no settings: worth the warning, and nothing to stop for.
+        let is_file = err.is_unreadable_file(config_path);
+        if (is_file || err.is_directory())
+            && !ctx.debug.silent
+            && bun_ast::DEFAULT_LOG_LEVEL
+                .load()
+                .at_least(bun_ast::Level::Warn)
+        {
+            bun_core::warn!(
+                "{}\nThe settings in <b>{}<r> are not applied.",
+                err,
+                BStr::new(config_path),
+            );
+        }
+        if is_file {
             ctx.unreadable_config
                 .get_or_insert_with(|| config_path.into());
         }

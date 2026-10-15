@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
 import { createServer as createTlsServer } from "node:tls";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -299,15 +299,13 @@ registry = http://localhost:${registry.port}/
       expect(result.exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("bun install stops when $NPM_CONFIG_USERCONFIG is there and cannot be read", async () => {
+    it.skipIf(isWindows)("bun install warns and goes on when $NPM_CONFIG_USERCONFIG is a directory", async () => {
       using dir = tempDir("npmrc-userconfig-directory", { ...pkg, "home/.keep": "", "elsewhere/ci.npmrc/.keep": "" });
       const directory = join(String(dir), "elsewhere", "ci.npmrc");
       const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: directory }, "install");
       expect(result.stderr).toContain(`The registry and auth settings in ${directory} are not applied.\n`);
-      expect(result.stderr).toEndWith(
-        `error: This file cannot be read, and bun does not install packages without its settings\n    at ${directory}\n`,
-      );
-      expect(result.exitCode).toBe(1);
+      expect(result.stderr).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
     });
 
     it.concurrent.each(["NPM_CONFIG_USERCONFIG", "npm_config_userconfig"])(
@@ -5247,6 +5245,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     prepare: (dir: string, lock: (path: string) => void) => void,
     xdg = false,
     registry?: string,
+    extra: Record<string, string> = {},
   ) {
     using dir = tempDir("npmrc-unreadable", {
       // No dependencies, so no network.
@@ -5274,6 +5273,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
           XDG_CONFIG_HOME: xdg ? join(String(dir), "xdg") : undefined,
           BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
           BUN_CONFIG_REGISTRY: registry,
+          ...extra,
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -5301,16 +5301,36 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     `    at <dir>/${path}\n`;
   const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
 
-  test.each(files)("%s is a directory", async (_, path, message) => {
-    const { stderr, exitCode } = await run(["install"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
+  /** `prepare` for a file that is there and cannot be read. */
+  const mode000 = (path: string) => (dir: string, lock: (path: string) => void) => {
+    writeFileSync(join(dir, path), "");
+    lock(path);
+  };
+
+  // What Docker makes of a `-v` mount of `~/.npmrc` when the host has no such file. It holds no settings to go without.
+  test.each(files)("%s is a directory, which is no file", async (_, path) => {
+    const { stdout, stderr, exitCode } = await run(
+      ["install"],
+      dir => {
+        mkdirSync(join(dir, path));
+        mkdirSync(join(dir, "project/dep"));
+        writeFileSync(join(dir, "project/dep/package.json"), JSON.stringify({ name: "dep", version: "1.0.0" }));
+        writeFileSync(
+          join(dir, "project/package.json"),
+          JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
+        );
+      },
+      path.startsWith("xdg"),
+    );
     expect(stderr).toContain("warn: EISDIR");
-    expect(stderr).toContain(message);
-    expect(withoutDir(stderr)).toEndWith(refusal(path));
-    expect(exitCode).toBe(1);
+    expect(stderr).toContain(`${basename(path)} are not applied.\n`);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
   });
 
   test.each(files)("--silent leaves the error about %s", async (_, path) => {
-    const silent = await run(["install", "--silent"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
+    const silent = await run(["install", "--silent"], mode000(path), path.startsWith("xdg"));
     expect({ ...silent, stderr: withoutDir(silent.stderr) }).toEqual({
       stdout: "",
       stderr: refusal(path),
@@ -5318,7 +5338,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     });
   });
 
-  const unreadableBunfig = (dir: string) => mkdirSync(join(dir, "project/bunfig.toml"));
+  const unreadableBunfig = mode000("project/bunfig.toml");
 
   test.each([
     "add no-deps",
@@ -5354,7 +5374,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     });
     const { stderr, exitCode } = await run(
       ["publish"],
-      dir => mkdirSync(join(dir, path)),
+      mode000(path),
       path.startsWith("xdg"),
       // The credentials that the settings which can be read have for it.
       `http://user:password@localhost:${registry.port}/`,
@@ -5370,17 +5390,17 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     expect(exitCode).toBe(0);
   });
 
-  function runnable(dir: string) {
+  function runnable(dir: string, lock: (path: string) => void) {
     writeFileSync(join(dir, "project/a.js"), "console.log('ran')");
     writeFileSync(join(dir, "project/package.json"), JSON.stringify({ scripts: { s: "echo ran" } }));
-    mkdirSync(join(dir, "project/bunfig.toml"));
+    unreadableBunfig(dir, lock);
   }
 
   // Running a file looks for a bunfig.toml at up to three stages.
   test.each(["a.js", "run a.js", "-e console.log('ran')"])("bun %s warns about ./bunfig.toml once", async cmd => {
     const { stdout, stderr, exitCode } = await run(cmd.split(" "), runnable);
     expect(stderr.split("\n")).toEqual([
-      expect.stringContaining("warn: EISDIR"),
+      expect.stringContaining("warn: EACCES"),
       expect.stringContaining("bunfig.toml are not applied."),
       "",
     ]);
@@ -5393,17 +5413,19 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   });
 
   test.each(files)("%s has mode 000", async (_, path, message) => {
-    const { stderr, exitCode } = await run(
-      ["install"],
-      (dir, lock) => {
-        writeFileSync(join(dir, path), "");
-        lock(path);
-      },
-      path.startsWith("xdg"),
-    );
+    const { stderr, exitCode } = await run(["install"], mode000(path), path.startsWith("xdg"));
     expect(stderr).toContain("warn: EACCES");
     expect(stderr).toContain(message);
     expect(withoutDir(stderr)).toEndWith(refusal(path));
+    expect(exitCode).toBe(1);
+  });
+
+  test("$NPM_CONFIG_USERCONFIG has mode 000", async () => {
+    const { stderr, exitCode } = await run(["install"], mode000("home/ci.npmrc"), false, undefined, {
+      NPM_CONFIG_USERCONFIG: "../home/ci.npmrc",
+    });
+    expect(stderr).toContain("home/ci.npmrc are not applied.\n");
+    expect(withoutDir(stderr)).toEndWith(refusal("home/ci.npmrc"));
     expect(exitCode).toBe(1);
   });
 

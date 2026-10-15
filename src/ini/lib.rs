@@ -1096,16 +1096,19 @@ mod draft {
             ) {
                 Ok(source) => sources.push(source),
                 Err(err) => {
-                    if err.is_unreadable_file(npmrc_path.as_bytes()) {
-                        if diagnostics == NpmrcDiagnostics::Print
-                            && log.level.at_least(bun_ast::Level::Warn)
-                        {
-                            bun_core::warn!(
-                                "{}\nThe registry and auth settings in <b>{}<r> are not applied.",
-                                err,
-                                bstr::BStr::new(npmrc_path.as_bytes()),
-                            );
-                        }
+                    // A directory in its place holds no settings: worth the warning, and nothing to stop for.
+                    let is_file = err.is_unreadable_file(npmrc_path.as_bytes());
+                    if (is_file || err.is_directory())
+                        && diagnostics == NpmrcDiagnostics::Print
+                        && log.level.at_least(bun_ast::Level::Warn)
+                    {
+                        bun_core::warn!(
+                            "{}\nThe registry and auth settings in <b>{}<r> are not applied.",
+                            err,
+                            bstr::BStr::new(npmrc_path.as_bytes()),
+                        );
+                    }
+                    if is_file {
                         unreadable.get_or_insert(npmrc_path);
                     }
                     continue;

@@ -2355,11 +2355,17 @@ describe.concurrent("auto-install is off when a security scanner is configured",
 
   type Options = { cwd?: string; args?: string[]; env?: Record<string, string | undefined>; warm?: boolean };
 
+  /** A file with this text gets mode 000, and bun runs as a user that file modes apply to. Not for Windows. */
+  const UNREADABLE = "# mode 000\n";
+
   /** Runs `app/index.js`. The user's own bunfig is `home/.bunfig.toml`. */
   async function run(files: DirectoryTree, options: Options = {}) {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-scanner", { "home/.keep": "", "elsewhere/index.js": requireIt, ...files });
     const at = (path: string) => join(String(dir), path);
+    const locked = Object.keys(files).filter(path => files[path] === UNREADABLE);
+    for (const path of locked) chmodSync(at(path), 0o000);
+    using unprivileged = locked.length ? unprivilegedSpawnOptions(String(dir)) : undefined;
     const spawn = async (cwd: string, home: string, args: string[]) => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
@@ -2375,6 +2381,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
         },
         stdout: "pipe",
         stderr: "pipe",
+        ...unprivileged,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
@@ -2507,13 +2514,13 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(configured));
   });
 
-  test.each([
+  test.skipIf(isWindows).each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
     ["bunfig.toml", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
   ])("the project's %s cannot be read, run from %s", async (name, _, options) => {
     const files = {
-      [`app/${name}`]: {},
+      [`app/${name}`]: UNREADABLE,
       "app/package.json": JSON.stringify({ name: "app" }),
       "app/src/index.js": requireIt,
     };
@@ -2525,13 +2532,17 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { args: ["--config=other.toml", "index.js"] })).toEqual(refused(configured));
   });
 
-  test.each([
-    ["the user's bunfig cannot be read", { "home/.bunfig.toml": {} }],
-    ["the user's bunfig cannot be parsed", { "home/.bunfig.toml": "[install.security\n" }],
-    ["the user's .npmrc cannot be read", { "home/.npmrc": {} }],
-    ["the project's .npmrc cannot be read", { "app/.npmrc": {} }],
-  ])("%s", async (_, files) => {
-    expect(await run({ ...files, "app/index.js": requireIt })).toEqual(refused(unreadable));
+  test("the user's bunfig cannot be parsed", async () => {
+    const files = { "home/.bunfig.toml": "[install.security\n", "app/index.js": requireIt };
+    expect(await run(files)).toEqual(refused(unreadable));
+  });
+
+  test.skipIf(isWindows).each([
+    ["the user's bunfig", "home/.bunfig.toml"],
+    ["the user's .npmrc", "home/.npmrc"],
+    ["the project's .npmrc", "app/.npmrc"],
+  ])("%s cannot be read", async (_, path) => {
+    expect(await run({ [path]: UNREADABLE, "app/index.js": requireIt })).toEqual(refused(unreadable));
   });
 
   // `bun install` in `app/src` reads the bunfig.toml of `app`, and none above it.
@@ -2543,11 +2554,13 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
   };
 
-  describe.each([
-    ["cannot be read", {}, unreadable],
-    ["cannot be parsed", "[install.security\n", unreadable],
-    ["configures a scanner", scanner, configured],
-  ])("a bunfig.toml that %s", (_, bunfig, why) => {
+  describe.each(
+    [
+      ["cannot be read", UNREADABLE, unreadable],
+      ["cannot be parsed", "[install.security\n", unreadable],
+      ["configures a scanner", scanner, configured],
+    ].filter(([, bunfig]) => !isWindows || bunfig !== UNREADABLE),
+  )("a bunfig.toml that %s", (_, bunfig, why) => {
     test("in the project root", async () => {
       expect(await run({ ...project, "app/bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(refused(why));
     });
@@ -2562,16 +2575,22 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     });
   });
 
-  describe.each([
-    ["cannot be read", {}],
-    ["cannot be parsed", "{"],
-  ])("a package.json that %s", (_, packageJson) => {
+  describe.each(
+    (
+      [
+        ["cannot be read", UNREADABLE],
+        ["is a directory", {}],
+        ["cannot be parsed", "{"],
+      ] as [string, string | DirectoryTree][]
+    ).filter(([, packageJson]) => !isWindows || packageJson !== UNREADABLE),
+  )("a package.json that %s", (_, packageJson) => {
     test("beside the importing file, below a project", async () => {
       const result = await run({ ...project, "app/src/package.json": packageJson }, { cwd: "app/src" });
       expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
     });
 
-    test("above the project, which may be a member of its workspace", async () => {
+    // One that does not open is passed over on the way up, as `bun install` passes over it.
+    test.skipIf(packageJson === UNREADABLE)("above the project, which may be a member of its workspace", async () => {
       const result = await run({ ...project, "package.json": packageJson }, { cwd: "app/src" });
       expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
     });
@@ -2592,11 +2611,20 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
   });
 
-  test("the project's bunfig.toml cannot be read", async () => {
-    const result = await run({ "app/bunfig.toml": {}, "app/index.js": requireIt });
+  test.skipIf(isWindows)("the project's bunfig.toml cannot be read", async () => {
+    const result = await run({ "app/bunfig.toml": UNREADABLE, "app/index.js": requireIt });
     expect(result.stderr).toContain("bunfig.toml are not applied.");
     expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
   });
+
+  // What Docker makes of a `-v` mount of a file that the host does not have. It holds no settings.
+  test.each(["home/.bunfig.toml", "home/.npmrc", "app/.npmrc", "app/bunfig.toml"])(
+    "on when %s is a directory",
+    async path => {
+      const result = await run({ [path]: {}, "app/index.js": requireIt });
+      expect({ ...result, stderr: "" }).toEqual(installed);
+    },
+  );
 
   test("on when no bunfig configures one", async () => {
     const files = {

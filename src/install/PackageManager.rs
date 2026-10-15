@@ -2155,7 +2155,8 @@ fn find_project<'a>(
             b"optionalDependencies",
             b"peerDependencies",
         ];
-        if opened.is_err_and(|err| !err.is_unreadable_file(&walk.path)) {
+        // Unix opens a directory and fails to read it below. So does Windows, which does not open one.
+        if opened.is_err_and(|err| !err.is_unreadable_file(&walk.path) && !err.is_directory()) {
             continue;
         }
         match workspace_package_json_cache

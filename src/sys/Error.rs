@@ -120,11 +120,20 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
-    /// Reading `path` failed on a file that is there, as opposed to finding none.
+    #[inline]
+    pub fn is_directory(&self) -> bool {
+        self.get_errno() == E::EISDIR
+    }
+
+    /// Reading `path` failed on a file that is there, as opposed to finding none. A directory is none.
     pub fn is_unreadable_file(&self, path: &[u8]) -> bool {
-        let is_there = || crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok();
+        let is_there = || {
+            crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok_and(|stat| {
+                crate::kind_from_mode(stat.st_mode as crate::Mode) != crate::FileKind::Directory
+            })
+        };
         match self.get_errno() {
-            E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG => false,
+            E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG | E::EISDIR => false,
             // Also what a directory on the way gives when it cannot be searched, which says nothing about the file.
             E::EACCES | E::EPERM => is_there(),
             // Windows has many more codes for a place where no file can be, so there the file has to be seen.

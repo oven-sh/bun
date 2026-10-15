@@ -3037,6 +3037,7 @@ fn init_with_runtime_once(
         if manager.lockfile.packages.len() > 0 {
             manager.root_dir = &mut **entries;
             // Auto-install passes over a rule that leads away from the registry, so also what it gave.
+            use crate::lockfile_real::package::PackageColumns as _;
             let lockfile = &mut *manager.lockfile;
             let resolved_as = lockfile.packages.items_resolution();
             for (row, package_id) in

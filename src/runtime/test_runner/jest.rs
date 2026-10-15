@@ -795,8 +795,8 @@ pub(crate) fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    let str = current_arg.json_stringify_fast(global_this)?;
+                    // Use JSC's FastStringifier for SIMD-optimized serialization
+                    let str = current_arg.json_stringify_for_format(global_this)?;
                     let owned_slice = str.to_owned_slice();
                     list.extend_from_slice(&owned_slice);
                     idx += 1;

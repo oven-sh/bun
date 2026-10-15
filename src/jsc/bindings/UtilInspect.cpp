@@ -10,6 +10,8 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/JSONObject.h"
 
 namespace Bun {
 
@@ -66,6 +68,28 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+// `JSON.stringify(value)` for a `%j` specifier: a cyclic value is "[Circular]". Node's tryStringify reads err.name and err.message of whatever was thrown (https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/util/inspect.js#L2751-L2771); this checks JSC's own error, so no user code runs.
+extern "C" void JSC__JSValue__jsonStringifyForFormat(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject, BunString* out)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String json = JSONStringify(globalObject, JSValue::decode(encodedValue), jsUndefined());
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        auto* error = dynamicDowncast<ErrorInstance>(exception->value());
+        if (!error || error->errorType() != ErrorType::TypeError)
+            return;
+        // JSC gives the cycle no error kind: Stringifier::appendStringifiedValue throws a plain TypeError with this text.
+        JSValue message = error->getDirect(vm, vm.propertyNames->message);
+        if (!message || !message.isString() || !WTF::equal(asString(message)->tryGetValueImpl(), "JSON.stringify cannot serialize cyclic structures."_s))
+            return;
+        if (!scope.tryClearException()) [[unlikely]]
+            return;
+        json = "[Circular]"_s;
+    }
+    *out = Bun::toStringRef(json);
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

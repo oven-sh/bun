@@ -615,14 +615,15 @@ pub fn enqueue_dependency_to_root(
         // Copy to the stack: `bind_row` can call `Package::from_npm`, which grows
         // `buffers.dependencies` and would invalidate a pointer taken directly into it.
         let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
+        let (install_peer, is_root) = (false, true);
         if let Err(err) = bind_row(
             this,
             dep_id,
             &dependency,
             invalid_package_id,
-            false,
+            install_peer,
             PackageManager::assign_root_resolution,
-            true,
+            is_root,
         ) {
             return DependencyToEnqueue::Failure(err);
         }

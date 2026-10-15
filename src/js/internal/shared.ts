@@ -334,7 +334,10 @@ function stopPerf(target, key, type: number, context?) {
   // passed to stopPerf() (e.g. http entries carry both req and res).
   const detail =
     ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined;
-  enqueueNodeEntry(new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail), type);
+  enqueueNodeEntry(
+    new PerformanceNodeEntry(ctx.name, ctx.type, startTime, performance.now() - startTime, detail),
+    type,
+  );
 }
 
 const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);

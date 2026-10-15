@@ -35,8 +35,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
-import type { Sources } from "../glob-sources.ts";
 import { featureCratesOf, manifestOf } from "../../src/codegen/class-owners.ts";
+import type { Sources } from "../glob-sources.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";

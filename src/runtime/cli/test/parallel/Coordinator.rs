@@ -652,6 +652,8 @@ impl<'a> Coordinator<'a> {
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
+        } else if is_panic_status(status) && self.stop_reason != Some(StopReason::WorkerPanicked) {
+            self.abort_on_idle_worker_panic(status);
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
@@ -803,6 +805,23 @@ impl<'a> Coordinator<'a> {
         );
         Output::flush();
         self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
+    }
+
+    /// `abort_on_worker_panic` for a worker that was waiting for a file, or exiting
+    /// after `.shutdown`. Every file may have passed by now, so the crash counts as an error of its own.
+    fn abort_on_idle_worker_panic(&mut self, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        bun_core::pretty_error!(
+            concat!(
+                "\n<red>error<r>: a test worker process crashed with <b>{}<r> while it was not running a test file.\n",
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            ),
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        );
+        Output::flush();
+        self.reporter.jest.unhandled_errors_between_tests += 1;
+        self.terminate_workers_after_panic(b"aborted: worker panicked between files");
     }
 
     fn terminate_workers_after_panic(&mut self, sweep_reason: &'static [u8]) {

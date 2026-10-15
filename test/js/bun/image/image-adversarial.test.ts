@@ -1014,6 +1014,31 @@ describe("lossless roundtrip", () => {
   });
 });
 
+// ─── 6b. pixel values chosen against the palette quantizer ───────────────────
+
+describe("hostile pixel values", () => {
+  // The palette quantizer counts colours in an open-addressing table with a
+  // fixed hash: the top bits of key * 0x9E3779B1. Every colour below hashes
+  // to the same few slots at every table size. A probe gives up after 256
+  // slots and the colours are counted by sorting. Without that limit each
+  // colour walks all the others: about 2 billion steps for this image.
+  test("colours that collide in the quantizer's table do not stall the encode", async () => {
+    // 0x9E3779B1 * inverse == 1 (mod 2^32)
+    let inverse = 1;
+    for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
+    expect(Math.imul(0x9e3779b1, inverse) >>> 0).toBe(1);
+    const [w, h] = [512, 256];
+    const src = makePng(w, h, (x, y) => {
+      // Two pixels per colour: 65,536 colours, as many as the table takes.
+      const key = Math.imul(0x5a5a0000 | ((y * w + x) >> 1), inverse);
+      return [key & 255, (key >> 8) & 255, (key >> 16) & 255, key >>> 24];
+    });
+    const out = await new Bun.Image(src).png({ palette: true, colors: 64 }).bytes();
+    expect(out[25]).toBe(3); // indexed
+    expect(await new Bun.Image(out).metadata()).toEqual({ width: w, height: h, format: "png" });
+  });
+});
+
 // ─── 7. memory hygiene under repetition ──────────────────────────────────────
 
 describe("memory hygiene", () => {

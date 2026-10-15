@@ -228,8 +228,8 @@ describe("resize filter properties", () => {
 // ─── Floyd–Steinberg dither ─────────────────────────────────────────────────
 
 describe("Floyd–Steinberg dither", () => {
-  // A 0..255 horizontal grey ramp quantised to 2 colours. Median-cut on a
-  // uniform ramp yields palette ≈ [64, 192] (means of the two halves), so
+  // A 0..255 horizontal grey ramp quantised to 2 colours. The quantizer cuts
+  // a uniform ramp in the middle: palette ≈ [64, 192] (means of the halves), so
   // values outside [64,192] saturate — FS can only track the source *within
   // the palette's gamut*. Inside that band, the local mean over any window
   // should converge to the source value (the defining property of error
@@ -238,7 +238,7 @@ describe("Floyd–Steinberg dither", () => {
     const ramp = makePng(256, 8, x => [x, x, x, 255]);
     const png = await new Bun.Image(ramp).png({ palette: true, colors: 2, dither: true }).bytes();
     const back = decodePng(await new Bun.Image(png).png().bytes());
-    // Discover the two greys median-cut actually picked.
+    // Discover the two greys the quantizer actually picked.
     const seen = new Set<number>();
     for (let i = 0; i < back.data.length; i += 4) seen.add(back.data[i]);
     expect(seen.size).toBeLessThanOrEqual(2);

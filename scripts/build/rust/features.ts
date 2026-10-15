@@ -3,8 +3,10 @@
  *
  * Which crates are a feature's is read off the crate graph. Bun is `bun_runtime` and what it depends on. A crate with
  * `[package.metadata.bun] feature = "lint"` is where a feature starts, and what it depends on and Bun does not is the
- * feature's too. The C and C++ in the directory of such a crate is the crate's. All of it is compiled with
- * feature-pass.cpp.
+ * feature's too. The C and C++ in the directory of such a crate is the crate's.
+ *
+ * What the same features need is an island, and has a number. All of it is compiled with feature-pass.cpp, which is given
+ * the number.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -34,8 +36,8 @@ export function registerFeaturePassRule(n: Ninja, cfg: Config): void {
     description: "host-plugin $out",
   });
   n.rule("check_features", {
-    command: `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "check-features.ts"))} $nm $manifest $out`,
-    description: "check that nothing names what a feature can take with it",
+    command: `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "check-features.ts"))} $nm $readobj $manifest $exe $out`,
+    description: "check that the islands are islands",
   });
 }
 
@@ -78,8 +80,8 @@ export function featuresThatNeed(units: RustUnit[], root: RustUnit): Map<RustUni
 }
 
 /** `["lint", "fmt"]` → `"2,3"` */
-function numbersOf(cfg: Config, crate: string, features: string[]): string {
-  const ids = readFileSync(resolve(cfg.cwd, "src", "bun_core", "feature", "ids.rs"), "utf8");
+function numbersOf(root: string, crate: string, features: string[]): string {
+  const ids = readFileSync(resolve(root, "src", "bun_core", "feature", "ids.rs"), "utf8");
   const names = [...(/NAMES: \[&str; \d+\] = \[([^\]]*)\]/.exec(ids)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(
     m => m[1]!,
   );
@@ -91,14 +93,31 @@ function numbersOf(cfg: Config, crate: string, features: string[]): string {
   return numbers.sort((a, b) => a - b).join(",");
 }
 
-/** What rustc is given for a crate that `features` need: arguments, after everything else, and environment. */
+export interface Islands {
+  /** The features that need each island, from number 1: `"1;1,2,3;2,3"`. `bun_core::feature` puts it in the executable. */
+  table: string;
+  of: Map<RustUnit, number>;
+}
+
+export function islandsOf(root: string, neededBy: Map<RustUnit, string[]>): Islands {
+  const features = new Map([...neededBy].map(([unit, names]) => [unit, numbersOf(root, unit.crateName, names)]));
+  const table = [...new Set(features.values())].sort();
+  return { table: table.join(";"), of: new Map([...features].map(([unit, it]) => [unit, table.indexOf(it) + 1])) };
+}
+
+/** What rustc is given for `unit`: arguments, after everything else, and environment. */
 export function featureFlags(
   cfg: Config,
-  crate: string,
-  features: string[] | undefined,
+  unit: RustUnit,
+  neededBy: Map<RustUnit, string[]>,
+  islands: Islands,
 ): { args: string[]; env: Record<string, string> } {
-  if (features === undefined) return { args: [], env: {} };
   const pass = featurePass(cfg);
+  if (unit.crateName === "bun_core" && unit.platform !== "host" && pass !== undefined) {
+    return { args: [], env: { BUN_FEATURE_ISLANDS: islands.table } };
+  }
+  const features = neededBy.get(unit);
+  if (features === undefined) return { args: [], env: {} };
   return {
     // `#[feature::behind]` asks.
     args: [
@@ -107,53 +126,66 @@ export function featureFlags(
       ...features.flatMap(feature => ["--cfg", `bun_needed_by="${feature}"`]),
       ...(pass !== undefined ? [`-Zllvm-plugins=${pass}`] : []),
     ],
-    env: pass !== undefined ? { BUN_FEATURES: numbersOf(cfg, crate, features) } : {},
+    env: pass !== undefined ? { BUN_ISLAND: String(islands.of.get(unit)) } : {},
   };
 }
 
-/** A crate that is a feature's: where it is, what the link takes of it, and the features that need it, "2,3". */
+/** A crate that is a feature's: where it is, what the link takes of it, and its island. */
 export interface FeatureCrate {
   directory: string;
   rlib: string;
-  features: string;
+  island: number;
 }
 
-export function featureCrates(cfg: Config, neededBy: Map<RustUnit, string[]>): FeatureCrate[] {
-  return [...neededBy].map(([unit, features]) => ({
+export function featureCrates(islands: Islands): FeatureCrate[] {
+  return [...islands.of].map(([unit, island]) => ({
     directory: dirname(unit.pkg.manifest_path),
     rlib: unit.output,
-    features: numbersOf(cfg, unit.crateName, features),
+    island,
   }));
 }
 
-/** The features that need `source`, a C or C++ file: those of the crate whose directory it is in. */
-export function featuresOfSource(crates: FeatureCrate[], source: string): string | undefined {
-  return crates.find(crate => source.startsWith(crate.directory + sep))?.features;
+/** The island of `source`, a C or C++ file: that of the crate whose directory it is in. */
+export function islandOfSource(crates: FeatureCrate[], source: string): number | undefined {
+  return crates.find(crate => source.startsWith(crate.directory + sep))?.island;
 }
 
-/** What clang is given for a file that `features` need, and what it then reads beside the file. */
-export function clangFeatureFlags(cfg: Config, features: string | undefined): { flags: string[]; inputs: string[] } {
+/** What clang is given for a file of `island`, and what it then reads beside the file. */
+export function clangFeatureFlags(cfg: Config, island: number | undefined): { flags: string[]; inputs: string[] } {
   const pass = featurePass(cfg);
-  if (features === undefined || pass === undefined) return { flags: [], inputs: [] };
+  if (island === undefined || pass === undefined) return { flags: [], inputs: [] };
   const plugin = cfg.windows ? ["-Xclang", `-fpass-plugin=${pass}`] : [`-fpass-plugin=${pass}`];
   return {
-    flags: ["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-features=${features}`],
+    flags: ["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-island=${island}`],
     inputs: [pass],
   };
 }
 
-/** Returns the stamp of check-features.ts over `inputs`, what the link takes, each with the features that need it. */
-export function emitFeatureCheck(n: Ninja, cfg: Config, inputs: Map<string, string | undefined>): string[] {
-  if (featurePass(cfg) === undefined || cfg.nm === undefined) return [];
+/**
+ * Returns the stamp of check-features.ts over `exe`, which was linked, and `inputs`, what the link took, each with its island.
+ */
+export function emitFeatureCheck(
+  n: Ninja,
+  cfg: Config,
+  table: string,
+  inputs: Map<string, number | undefined>,
+  exe: string,
+): string[] {
+  if (featurePass(cfg) === undefined || cfg.nm === undefined || cfg.readobj === undefined) return [];
   const manifest = join(cfg.buildDir, "features-checked.manifest");
-  writeIfChanged(manifest, [...inputs].map(([path, features]) => `${features ?? "-"} ${path}\n`).join(""));
+  writeIfChanged(manifest, `${table}\n` + [...inputs].map(([path, island]) => `${island ?? 0} ${path}\n`).join(""));
   const stamp = join(cfg.buildDir, "features-checked");
   n.build({
     outputs: [stamp],
     rule: "check_features",
-    inputs: [...inputs.keys()],
+    inputs: [...inputs.keys(), exe],
     implicitInputs: [manifest, resolve(cfg.cwd, "scripts", "build", "check-features.ts")],
-    vars: { nm: quote(cfg.nm, false), manifest: quote(manifest, false) },
+    vars: {
+      nm: quote(cfg.nm, false),
+      readobj: quote(cfg.readobj, false),
+      manifest: quote(manifest, false),
+      exe: quote(exe, false),
+    },
   });
   return [stamp];
 }

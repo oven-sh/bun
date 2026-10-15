@@ -697,7 +697,7 @@ export function emitRust(
   n: Ninja,
   cfg: Config,
   inputs: RustBuildInputs,
-): { rlibs: string[]; featureCrates: FeatureCrate[] } {
+): { rlibs: string[]; featureCrates: FeatureCrate[]; islands: string } {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
   });
@@ -763,7 +763,7 @@ export function emitRust(
   if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
     n.phony("bun-rust", planFiles);
     n.blank();
-    return { rlibs: [], featureCrates: [] };
+    return { rlibs: [], featureCrates: [], islands: "" };
   }
   const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
@@ -825,7 +825,7 @@ export function emitRust(
   const rlibs = linkedRlibs(graph).map(unit => unit.output);
   n.phony("bun-rust", rlibs);
   n.blank();
-  return { rlibs, featureCrates: featureCrates(cfg, graph.neededBy) };
+  return { rlibs, featureCrates: featureCrates(graph.islands), islands: graph.islands.table };
 }
 
 /**

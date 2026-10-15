@@ -1,11 +1,13 @@
 //! Features of the runtime that `bun build --compile --compile-exclude-features=<name>` can leave out of an executable.
 //!
 //! A FEATURE IS CRATES THAT THE REST OF BUN DOES NOT DEPEND ON. They depend on Bun, like a plugin would, and are linked into
-//! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go:
-//! Bun's build has the executable say where everything is that was compiled for those crates
-//! (scripts/build/feature-pass.cpp), and `bun build --compile` leaves that out (src/exe_features).
+//! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go.
 //!
-//! There can be any number of features. Nothing about them is a bit in a word or a header of the executable.
+//! WHAT THE SAME FEATURES NEED IS AN ISLAND: a stretch of the executable that the linker itself says the bounds of, a section
+//! or the like. Everything that is compiled for those crates goes there (scripts/build/feature-pass.cpp). Within an island
+//! the linker drops, folds and moves what it likes, and nothing is shared between one and what is outside it, which
+//! Bun's build checks in what it linked (scripts/build/check-features.ts). So whether a byte stays is a matter of where it
+//! is, and `bun build --compile` leaves out the islands that none of the features that stay need (src/exe_features).
 //!
 //! The crate that a feature starts at says so in its `Cargo.toml`:
 //!
@@ -87,6 +89,29 @@ static NAMES_IN_THE_EXECUTABLE: [u8; NAMES_LENGTH] = {
             (at, j) = (at + 1, j + 1);
         }
         (at, i) = (at + 1, i + 1);
+    }
+    bytes
+};
+
+/// The features that need each island, from island 1: `1;1,2,3;2,3`. Bun's build knows (scripts/build/rust/features.ts). It is
+/// empty where that cannot make islands, and `bun build --compile` then says that nothing can be left out.
+const ISLANDS: &str = match option_env!("BUN_FEATURE_ISLANDS") {
+    Some(islands) => islands,
+    None => "",
+};
+
+#[used(linker)]
+#[cfg_attr(
+    not(any(target_os = "macos", windows)),
+    unsafe(link_section = ".bun_feature_islands")
+)]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_isl"))]
+#[cfg_attr(windows, unsafe(link_section = ".bunfisl"))]
+static ISLANDS_IN_THE_EXECUTABLE: [u8; ISLANDS.len()] = {
+    let (mut bytes, mut i) = ([0; ISLANDS.len()], 0);
+    while i < bytes.len() {
+        bytes[i] = ISLANDS.as_bytes()[i];
+        i += 1;
     }
     bytes
 };

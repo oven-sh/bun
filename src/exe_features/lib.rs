@@ -1,11 +1,11 @@
 //! Leaves features out of a bun executable, for `bun build --compile --compile-exclude-features`.
 //!
-//! `bun_core::feature` says what a feature is. The executable has a byte for each that says whether it is there, which the
-//! rest of Bun asks before it goes into one, and it says, in records, where the parts are that were compiled for features,
-//! with the features that need each. Leaving features out is then
+//! `bun_core::feature` says what a feature and an island are. The executable has a byte for each feature that says whether it
+//! is there, which the rest of Bun asks before it goes into one, and it says which features need each island. Leaving
+//! features out is then
 //!
 //! 1. clear their bytes,
-//! 2. overwrite the parts that no other feature needs, with an instruction that traps,
+//! 2. overwrite the islands that no other feature needs, with an instruction that traps,
 //! 3. leave the pages that hold nothing else out of the file.
 //!
 //! The first two are done to all of it, however many features there are and however small. The third is a matter of size
@@ -108,18 +108,58 @@ impl Container {
         Ok(sections)
     }
 
-    /// What the section with the names of the features is called, the one that says which are there (`bun_core::feature`) and
-    /// the one with the parts (scripts/build/feature-pass.cpp).
+    /// What the section with the names of the features is called, the one that says which are there and the one that says
+    /// which need each island (`bun_core::feature`).
     fn names(self) -> [&'static [u8]; 3] {
         match self {
             Container::Elf => [
                 b".bun_feature_names",
                 b".bun_feature_present",
-                b".bun_feature_parts",
+                b".bun_feature_islands",
             ],
-            Container::MachO => [b"__bun_feat_names", b"__bun_feat_pres", b"__bun_feat_part"],
-            Container::Pe => [b".bunfnam", b".bunfprs", b".bunfprt"],
+            Container::MachO => [b"__bun_feat_names", b"__bun_feat_pres", b"__bun_feat_isl"],
+            Container::Pe => [b".bunfnam", b".bunfprs", b".bunfisl"],
         }
+    }
+
+    /// Where the islands are, each with its number (scripts/build/feature-pass.cpp). One has code and constants, apart.
+    fn islands(self, file: &[u8], sections: &[Section<'_>]) -> Result<Vec<(usize, Range<u64>)>> {
+        let mut islands = Vec::new();
+        let prefixes: [&[u8]; 2] = match self {
+            Container::Elf => [b".bun_island_x.", b".bun_island_r."],
+            Container::MachO => [b"__bun_x", b"__bun_r"],
+            // Has room for few sections. A record for each: {where it starts, where it ends, its number}, in words of 32 bits, the
+            // first two as distances from the record.
+            Container::Pe => {
+                for section in sections.iter().filter(|s| s.name == b".bunisl") {
+                    let length = (section.addresses.end - section.addresses.start) as usize;
+                    let records = slice(file, section.offset, length)?;
+                    for at in (0..records.len() / 12).map(|index| index * 12) {
+                        let address = section.addresses.start + at as u64;
+                        let start = address.wrapping_add_signed(i32_at(records, at)?.into());
+                        let end = address.wrapping_add_signed(i32_at(records, at + 4)?.into());
+                        // What is after the last record, up to where the section ends.
+                        if (start, end) != (address, address) {
+                            islands.push((u32_at(records, at + 8)? as usize, start..end));
+                        }
+                    }
+                }
+                return Ok(islands);
+            }
+        };
+        for section in sections {
+            let number = prefixes
+                .iter()
+                .find_map(|it| section.name.strip_prefix(*it));
+            if let Some(number) = number {
+                let number = core::str::from_utf8(number)
+                    .ok()
+                    .and_then(|it| it.parse().ok());
+                let number = number.ok_or(Error::InvalidExecutable)?;
+                islands.push((number, section.addresses.clone()));
+            }
+        }
+        Ok(islands)
     }
 
     fn without_pages(self, file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
@@ -131,91 +171,57 @@ impl Container {
     }
 }
 
-/// The contents of the section with the names: each ends with a 0, the first is of feature 1.
-fn names_in<'a>(file: &'a [u8], sections: &[Section<'_>], called: &[u8]) -> Result<Vec<&'a [u8]>> {
+fn contents_of<'a>(file: &'a [u8], sections: &[Section<'_>], called: &[u8]) -> Result<&'a [u8]> {
     let section = (sections.iter().find(|s| s.name == called)).ok_or(Error::NoFeatures)?;
     let length = (section.addresses.end - section.addresses.start) as usize;
-    let names = slice(file, section.offset, length)?;
-    let mut names: Vec<&[u8]> = bun_core::strings::split(names, b"\0").collect();
-    while names.pop_if(|name| name.is_empty()).is_some() {}
-    if names.is_empty() {
-        return Err(Error::NoFeatures);
-    }
-    Ok(names)
+    let contents = slice(file, section.offset, length)?;
+    let end = contents.iter().rposition(|byte| *byte != 0);
+    Ok(&contents[..=end.ok_or(Error::NoFeatures)?])
+}
+
+/// Each ends with a 0, the first is of feature 1.
+fn names_in<'a>(file: &'a [u8], sections: &[Section<'_>], called: &[u8]) -> Result<Vec<&'a [u8]>> {
+    Ok(bun_core::strings::split(contents_of(file, sections, called)?, b"\0").collect())
 }
 
 /// The features that can be left out of `file`, an executable.
 pub fn names(file: &[u8]) -> Result<Vec<&[u8]>> {
     let container = Container::of(file)?;
-    let [called_names, _, called_parts] = container.names();
+    let [called_names, _, called_islands] = container.names();
     let sections = container.sections(file)?;
-    // Only the doors could be shut, and all of the features would still be there.
-    if !sections.iter().any(|s| s.name == called_parts) {
-        return Err(Error::NoFeatures);
-    }
+    // Without islands only the doors could be shut, and all of the features would still be there.
+    contents_of(file, &sections, called_islands)?;
     names_in(file, &sections, called_names)
 }
 
-/// What was compiled for features, of one compilation unit and in one section.
-struct Part {
-    start: u64,
-    end: u64,
-    /// None of the features that need it stays.
-    is_excluded: bool,
-}
-
-/// The parts, which the sections `called` have a record of each: {where it starts, where it ends, how many features need it, the
-/// features}, in words of 32 bits. The first two are distances from the record. `is_excluded` is of the features, the first
-/// of which is number 1.
-fn parts(
-    file: &[u8],
-    sections: &[Section<'_>],
-    called: &[u8],
-    is_excluded: &[bool],
-) -> Result<Vec<Part>> {
-    let mut parts = Vec::new();
-    for section in sections.iter().filter(|s| s.name == called) {
-        let length = (section.addresses.end - section.addresses.start) as usize;
-        let words = slice(file, section.offset, length)?;
-        let mut at = 0;
-        while at < words.len() {
-            let address = section.addresses.start + at as u64;
-            let count = u32_at(words, at + 8)? as usize;
-            let features = slice(
-                words,
-                at + 12,
-                count.checked_mul(4).ok_or(Error::InvalidExecutable)?,
-            )?;
-            let mut all = count > 0;
-            for feature in features.as_chunks::<4>().0 {
-                let number = u32::from_le_bytes(*feature) as usize;
-                let index = number.checked_sub(1).ok_or(Error::InvalidExecutable)?;
-                all &= *is_excluded.get(index).ok_or(Error::InvalidExecutable)?;
+/// For each island, from number 1, whether none of the features that need it stays. `table` is `1;1,2,3;2,3`, `is_excluded` is of
+/// the features, the first of which is number 1.
+fn dead_islands(table: &[u8], is_excluded: &[bool]) -> Result<Vec<bool>> {
+    bun_core::strings::split(table, b";")
+        .map(|features| {
+            let mut all = true;
+            for feature in bun_core::strings::split(features, b",") {
+                let number = core::str::from_utf8(feature)
+                    .ok()
+                    .and_then(|it| it.parse().ok());
+                let index = number.and_then(|it: usize| it.checked_sub(1));
+                all &=
+                    *(index.and_then(|it| is_excluded.get(it))).ok_or(Error::InvalidExecutable)?;
             }
-            if count == 0 {
-                return Err(Error::InvalidExecutable);
-            }
-            parts.push(Part {
-                start: address.wrapping_add_signed(i32_at(words, at)?.into()),
-                end: address.wrapping_add_signed(i32_at(words, at + 4)?.into()),
-                is_excluded: all,
-            });
-            at += 12 + features.len();
-        }
-    }
-    parts.sort_by_key(|part| part.start);
-    Ok(parts)
+            Ok(all)
+        })
+        .collect()
 }
 
 /// `file`, an executable, without the features `excluded`.
 pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
     let container = Container::of(&file)?;
     let is_arm64 = container.is_arm64(&file)?;
-    let [called_names, called_present, called_parts] = container.names();
+    let [called_names, called_present, called_islands] = container.names();
 
     // ---- what to do, read from the file. Then the file is written to.
     let mut zeros: Vec<(usize, usize)> = Vec::new();
-    let mut traps: Vec<(usize, Range<u64>)> = Vec::new();
+    let mut traps: Vec<(usize, usize)> = Vec::new();
     let mut dead: Vec<Range<u64>> = Vec::new();
     {
         let sections = container.sections(&file)?;
@@ -225,12 +231,6 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
         }
         let is_excluded: Vec<bool> = names.iter().map(|name| excluded.contains(name)).collect();
         let length_of = |s: &Section<'_>| (s.addresses.end - s.addresses.start) as usize;
-        let index_of = |address: u64| {
-            let holds = |s: &Section<'_>| s.addresses.contains(&address);
-            (sections.iter().position(holds)).ok_or(Error::InvalidExecutable)
-        };
-        let offset_in =
-            |s: &Section<'_>, address: u64| s.offset + (address - s.addresses.start) as usize;
 
         // A byte for each feature.
         let present = sections.iter().find(|s| s.name == called_present);
@@ -240,63 +240,54 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
             zeros.push((present.offset + index, 1));
         }
 
-        let parts = parts(&file, &sections, called_parts, &is_excluded)?;
-        let mut before: Option<(&Part, usize)> = None;
-        for part in &parts {
-            let index = index_of(part.start)?;
-            let section = &sections[index];
-            if part.end < part.start
-                || part.end > section.addresses.end
-                || before.is_some_and(|(before, _)| before.end > part.start)
-            {
-                return Err(Error::InvalidExecutable);
+        let is_dead = dead_islands(contents_of(&file, &sections, called_islands)?, &is_excluded)?;
+        let mut islands = container.islands(&file, &sections)?;
+        islands.sort_by_key(|(_, addresses)| addresses.start);
+        for (number, addresses) in islands {
+            let index = number.checked_sub(1).ok_or(Error::InvalidExecutable)?;
+            if !*is_dead.get(index).ok_or(Error::InvalidExecutable)? {
+                continue;
             }
-            if part.is_excluded {
-                // A linker keeps what an object has in a section together, and between two sections there is only padding. So
-                // what is between two parts that follow each other is of the one, of the other, or padding, and goes if
-                // both do.
-                match before.filter(|(before, _)| before.is_excluded) {
-                    Some((before, same)) if same == index => {
-                        traps.push((offset_in(section, before.end), before.end..part.end));
-                    }
-                    Some((before, previous)) if previous + 1 == index => {
-                        let previous = &sections[previous];
-                        let rest = before.end..previous.addresses.end;
-                        traps.push((offset_in(previous, rest.start), rest));
-                        traps.push((section.offset, section.addresses.start..part.end));
-                    }
-                    _ => {
-                        traps.push((offset_in(section, part.start), part.start..part.end));
-                        dead.push(part.start..part.start);
-                    }
-                }
-                dead.last_mut().ok_or(Error::InvalidExecutable)?.end = part.end;
+            let holds = |s: &&Section<'_>| {
+                s.addresses.start <= addresses.start && addresses.end <= s.addresses.end
+            };
+            let section = sections
+                .iter()
+                .find(holds)
+                .filter(|_| addresses.start <= addresses.end);
+            let section = section.ok_or(Error::InvalidExecutable)?;
+            let offset = section.offset + (addresses.start - section.addresses.start) as usize;
+            traps.push((offset, (addresses.end - addresses.start) as usize));
+            // What no section has, between this one and the one before it, holds nothing.
+            match dead.last_mut().filter(|before| {
+                let between = before.end..addresses.start;
+                !(sections.iter())
+                    .any(|s| s.addresses.start < between.end && between.start < s.addresses.end)
+            }) {
+                Some(before) => before.end = addresses.end,
+                None => dead.push(addresses),
             }
-            before = Some((part, index));
         }
 
         // An executable with features left out does not say what can be left out: the room for more headers is used up.
         for section in sections
             .iter()
-            .filter(|s| [called_names, called_parts].contains(&s.name))
+            .filter(|s| [called_names, called_islands].contains(&s.name))
         {
             zeros.push((section.offset, length_of(section)));
         }
     }
 
-    // int3; brk #1
+    // int3; brk #1. Code starts where an instruction can.
     let trap: &[u8] = if is_arm64 {
         &[0x20, 0x00, 0x20, 0xd4]
     } else {
         &[0xcc]
     };
-    for (at, addresses) in traps {
-        let length = (addresses.end - addresses.start) as usize;
-        for (byte, address) in slice_mut(&mut file, at, length)?
-            .iter_mut()
-            .zip(addresses.start as usize..)
-        {
-            *byte = trap[address % trap.len()];
+    let many = trap.repeat(4096);
+    for (at, length) in traps {
+        for some in slice_mut(&mut file, at, length)?.chunks_mut(many.len()) {
+            some.copy_from_slice(&many[..some.len()]);
         }
     }
     for (at, length) in zeros {

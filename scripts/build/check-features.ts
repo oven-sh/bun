@@ -1,69 +1,170 @@
 /**
- * check-features.ts <nm> <manifest> <stamp>
+ * check-features.ts <nm> <readobj> <manifest> <executable> <stamp>
  *
- * Nothing may name what can be gone while it stays (src/bun_core/feature.rs). rustc sees to that between crates. Nothing
- * does for a symbol that is declared by hand: in C and C++, and in `extern` blocks.
+ * That the islands of what was linked are islands (src/bun_core/feature.rs), so that one can be left out and the rest works:
  *
- * The manifest has a line for each input of the link: the features that need it, "2,3", or "-", and its path.
+ * 1. Every function that an input of an island defines is in that island.
+ * 2. Everything in an island was defined by an input of it. What the linker folds keeps its names, so a function of Bun's that
+ *    was folded into one of an island shows here.
+ * 3. Nothing names what can be gone while it stays. rustc sees to that between crates. Nothing does for a symbol that is
+ *    declared by hand: in C and C++, and in `extern` blocks.
+ *
+ * The manifest has the features that need each island, "1;1,2,3;2,3", and then a line for each input of the link: its island, or
+ * 0, and its path.
  */
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
-const [nm, manifest, stamp] = process.argv.slice(2);
-if (nm === undefined || manifest === undefined || stamp === undefined)
-  throw new Error("usage: <nm> <manifest> <stamp>");
+const [nm, readobj, manifest, executable, stamp] = process.argv.slice(2);
+if (
+  nm === undefined ||
+  readobj === undefined ||
+  manifest === undefined ||
+  executable === undefined ||
+  stamp === undefined
+)
+  throw new Error("usage: <nm> <readobj> <manifest> <executable> <stamp>");
 
-const neededBy = new Map<string, Set<string> | undefined>();
-for (const line of readFileSync(manifest, "utf8").split("\n").filter(Boolean)) {
-  const [features, path] = [line.slice(0, line.indexOf(" ")), line.slice(line.indexOf(" ") + 1)];
-  neededBy.set(path, features === "-" ? undefined : new Set(features.split(",")));
+function run(tool: string, args: string[]): string[] {
+  const { status, stdout, stderr, error } = spawnSync(tool, args, { encoding: "utf8", maxBuffer: 1 << 30 });
+  if (error || status !== 0) throw new Error(`${tool} failed: ${error ?? stderr}`);
+  return stdout.split("\n");
 }
+
+function fail(count: number, what: string, offenders: Iterable<string>): never {
+  console.error(`error: ${count} ${what}\n${[...offenders].slice(0, 20).join("\n")}`);
+  process.exit(1);
+}
+
+const [table, ...lines] = readFileSync(manifest, "utf8").split("\n").filter(Boolean);
+/** The features that need each island. Bun, which is island 0 here, is needed by all there is. */
+const neededBy = [undefined, ...table!.split(";").map(features => new Set(features.split(",")))];
+const islandOf = new Map(
+  lines.map(line => [line.slice(line.indexOf(" ") + 1), Number(line.slice(0, line.indexOf(" ")))]),
+);
+
+// ---- what the link took
 
 // `<input>[:<member>]: <value> <type> <name>`, the same for ELF, COFF, Mach-O and bitcode, where the value is dashes. It is
 // blank for what is not defined. See fetch-cli.ts.
 const line = /^(.*): +(?:[0-9a-f-]+ +)?([A-Za-z]) +(\S+)\s*$/;
+/** The islands whose inputs define a name, in whatever way. */
+const definers = new Map<string, Set<number>>();
+/** Those names that are functions and that the linker cannot replace by another's copy, which stay where they are (feature-pass.cpp). */
+const functions = new Set<string>();
+/** The input of an island that has the one definition of a name that others can use. */
 const definedBy = new Map<string, string>();
 const uses: [symbol: string, by: string][] = [];
-const paths = [...neededBy.keys()];
+const paths = [...islandOf.keys()];
 for (let start = 0; start < paths.length; start += 100) {
-  const { status, stdout, stderr, error } = spawnSync(nm, ["-A", ...paths.slice(start, start + 100)], {
-    encoding: "utf8",
-    maxBuffer: 1 << 30,
-  });
-  if (error || status !== 0) throw new Error(`${nm} failed: ${error ?? stderr}`);
-  for (const text of stdout.split("\n")) {
+  for (const text of run(nm, ["-A", ...paths.slice(start, start + 100)])) {
     const match = line.exec(text);
     if (match === null) continue;
     const [, where, type, symbol] = match as unknown as [string, string, string, string];
-    const path = neededBy.has(where) ? where : where.slice(0, where.lastIndexOf(":"));
-    if (type === "U") uses.push([symbol, path]);
-    // What the linker may replace by another's copy stays where it is (feature-pass.cpp), so not W, V or C.
-    else if ("TDRBS".includes(type) && neededBy.get(path) !== undefined) definedBy.set(symbol, path);
+    const path = islandOf.has(where) ? where : where.slice(0, where.lastIndexOf(":"));
+    if (type === "U") {
+      uses.push([symbol, path]);
+      continue;
+    }
+    const island = islandOf.get(path)!;
+    const islands = definers.get(symbol);
+    if (islands === undefined) definers.set(symbol, new Set([island]));
+    else islands.add(island);
+    if (island === 0) continue;
+    if (type === "T" || type === "t") functions.add(symbol);
+    if ("TDRBS".includes(type)) definedBy.set(symbol, path);
   }
 }
 // Else the output is not what is parsed above, and nothing would be checked.
-const hasFeatures = [...neededBy.values()].some(features => features !== undefined);
-if (uses.length === 0 || (hasFeatures && definedBy.size === 0))
+if (uses.length === 0 || definedBy.size === 0 || functions.size === 0)
   throw new Error(`nothing parsed from the output of ${nm}`);
 
-const offenders = new Set<string>();
+/** LLVM makes `f.cold.1` and `f.llvm.123` of `f`. */
+function definersOf(symbol: string): [name: string, Set<number> | undefined] {
+  for (let name = symbol; ; name = name.slice(0, name.lastIndexOf("."))) {
+    const islands = definers.get(name);
+    if (islands !== undefined || !name.includes(".")) return [name, islands];
+  }
+}
+
+// ---- 3
+
+const named = new Set<string>();
 for (const [symbol, by] of uses) {
   const definer = definedBy.get(symbol);
   // What is behind a door.
   if (definer === undefined || /^_?bun_feature_/.test(symbol)) continue;
-  const [user, used] = [neededBy.get(by), neededBy.get(definer)!];
+  const [user, used] = [neededBy[islandOf.get(by)!], neededBy[islandOf.get(definer)!]!];
   if (user === undefined || ![...user].every(feature => used.has(feature))) {
-    offenders.add(
-      `  ${symbol}\n    of ${definer} (${[...used]})\n    named by ${by} (${user ? [...user] : "all of Bun"})`,
-    );
+    named.add(`  ${symbol}\n    of ${definer} (${[...used]})\n    named by ${by} (${user ? [...user] : "all of Bun"})`);
   }
 }
-if (offenders.size > 0) {
-  console.error(
-    `error: ${offenders.size} symbols of a feature are named by what can stay without it. ` +
-      `Go through a door (src/runtime/features.rs), or move one of the two.\n${[...offenders].slice(0, 20).join("\n")}`,
-  );
-  process.exit(1);
+if (named.size > 0) {
+  const what = "symbols of a feature are named by what can stay without it.";
+  fail(named.size, `${what} Go through a door (src/runtime/features.rs), or move one of the two.`, named);
 }
-writeFileSync(stamp, "");
+
+// ---- what was linked
+
+interface Stretch {
+  island: number;
+  isCode: boolean;
+  start: number;
+  end: number;
+}
+const stretches: Stretch[] = [];
+const sections = run(readobj, ["--sections", executable]);
+// A PE has no symbols, and its islands are not sections.
+const hasSymbols = !sections.some(text => text.startsWith("Format: COFF"));
+for (const [index, text] of sections.entries()) {
+  const match = /^ +Name: (?:\.bun_island_|__bun_)([xr])\.?(\d+) /.exec(text);
+  if (match === null) continue;
+  const field = (name: string) =>
+    Number(
+      sections
+        .slice(index, index + 12)
+        .find(it => it.trimStart().startsWith(`${name}: `))!
+        .split(": ")[1],
+    );
+  const start = field("Address");
+  stretches.push({ island: Number(match[2]), isCode: match[1] === "x", start, end: start + field("Size") });
+}
+
+let [functionsSeen, symbolsSeen] = [0, 0];
+if (hasSymbols) {
+  const [outside, foreign] = [new Set<string>(), new Set<string>()];
+  for (const text of run(nm, [executable])) {
+    const match = /^([0-9a-f]+) +([A-Za-z]) +(\S+)$/.exec(text);
+    if (match === null || "aAU".includes(match[2]!)) continue;
+    const [address, symbol] = [parseInt(match[1]!, 16), match[3]!];
+    const [name, islands] = definersOf(symbol);
+    const stretch = stretches.find(it => it.start <= address && address < it.end);
+
+    if (functions.has(name) && islands!.size === 1) {
+      functionsSeen++;
+      const [island] = islands!;
+      if (stretch === undefined || stretch.island !== island || !stretch.isCode) {
+        outside.add(`  ${symbol}\n    of island ${island}, is in ${stretch ? `island ${stretch.island}` : "none"}`);
+      }
+    }
+    if (stretch !== undefined) {
+      symbolsSeen++;
+      if (!islands?.has(stretch.island)) {
+        foreign.add(
+          `  ${symbol}\n    in island ${stretch.island}, is of ${islands ? [...islands] : "nothing that was linked"}`,
+        );
+      }
+    }
+  }
+  if (functionsSeen === 0 || symbolsSeen === 0) throw new Error(`${executable} has no islands, or nothing in them`);
+  if (outside.size > 0)
+    fail(outside.size, "functions of an island are not in it, and would stay without the features.", outside);
+  if (foreign.size > 0)
+    fail(foreign.size, "symbols in an island are not of it, and would go with the features.", foreign);
+}
+
+writeFileSync(
+  stamp,
+  `${functionsSeen} functions are in their island\n${symbolsSeen} symbols in islands are of them\n${uses.length} uses\n`,
+);

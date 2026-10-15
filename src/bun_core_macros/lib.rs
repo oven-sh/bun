@@ -817,6 +817,7 @@ pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
         compile_error!("one of the features of the door does not depend on this crate");
         const _: #unsafety #abi fn(#(#types),*) #output = #door;
         #[unsafe(export_name = #symbol)]
+        #[inline(never)]
         #function
     }
     .into()

@@ -1,23 +1,19 @@
-// Puts what is compiled for a feature where `bun build --compile --compile-exclude-features` can find it and leave it out
-// (src/bun_core/feature.rs says what a feature is, src/exe_features leaves it out).
+// Puts what is compiled for features into an island, which `bun build --compile --compile-exclude-features` can leave out
+// (src/bun_core/feature.rs says what a feature and an island are, src/exe_features leaves them out).
 //
 // An LLVM pass, as a plugin, because that is what every compiler bun is built with has in common:
 //
-//   BUN_FEATURES=2,3 rustc -Zllvm-plugins=<this>
-//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-features=2,3
+//   BUN_ISLAND=7 rustc -Zllvm-plugins=<this>
+//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-island=7
 //
 // rustc reads its options before it loads a plugin. ccache knows nothing of the environment.
 //
-// The numbers are the features that need the compilation unit. The whole unit is theirs: nothing that stays depends on it, so
-// nothing that stays can refer to what it alone defines.
-//
-// Its functions go to one section and its constants to another, each between two marks, and a record says where the marks are
-// and whose they are. A linker keeps what one object has in a section together, so what is between the marks is this
-// unit's. There are as many records as there are units, and a record is as long as its features are many: nothing
-// here is counted in the headers of the executable, which have room for few sections.
+// The whole compilation unit is the island's: nothing that stays depends on it, so nothing that stays can refer to what it
+// alone defines. It stands in for an annotation that Rust does not have. `#[link_section]` is for one function that has a
+// name, and much of what is compiled for a crate has none in the source: closures, the copies of generic functions of
+// other crates that are made for its types, drop glue.
 
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -31,9 +27,9 @@ using namespace llvm;
 
 namespace {
 
-cl::opt<std::string> featuresOption("bun-features", cl::desc("The features that need this compilation unit"));
+cl::opt<std::string> islandOption("bun-island", cl::desc("The number of the island of this compilation unit"));
 
-// What goes with the features. Not all of it is where it can be left out.
+// What goes with the island. Not all of it is in it.
 using Owned = SmallPtrSet<const GlobalObject*, 32>;
 
 // What the linker may replace by the copy of another unit is not this unit's alone: a C++ template, an inline function.
@@ -81,68 +77,49 @@ struct NoConstructors : PassInfoMixin<NoConstructors> {
     static bool isRequired() { return true; }
 };
 
-// A sanitizer puts room around a variable, and these are read one after the other.
-void keepAsItIs(GlobalVariable* variable)
-{
-    GlobalValue::SanitizerMetadata metadata;
-    metadata.NoAddress = metadata.NoHWAddress = true;
-    variable->setSanitizerMetadata(metadata);
-}
+struct IslandPass : PassInfoMixin<IslandPass> {
+    std::string island;
 
-struct FeaturePass : PassInfoMixin<FeaturePass> {
-    // "2,3"
-    std::string features;
-
-    // {where `begin` is, where `end` is, how many features, the features}. The first two are distances from the record.
-    void record(Module& module, StringRef section, GlobalObject* begin, GlobalObject* end)
+    // COFF has room for few sections, and sorts what goes into one by what follows the "$" in its name. So there an island is
+    // what has the name "$bun7.m", and this is what has the names before and after it, of which every unit has a copy and
+    // the linker keeps one: where it starts, where it ends, and a record of {the two, as distances from it, the number}.
+    template<typename MakeEdge> void recordEdges(Module& module, StringRef kind, MakeEdge makeEdge)
     {
-        LLVMContext& context = module.getContext();
-        auto* word = Type::getInt32Ty(context);
-        auto* address = Type::getInt64Ty(context);
-        SmallVector<StringRef, 4> numbers;
-        StringRef(features).split(numbers, ',');
+        auto keepOne = [&](GlobalObject* global) {
+            global->setLinkage(GlobalValue::LinkOnceODRLinkage);
+            global->setComdat(module.getOrInsertComdat(global->getName()));
+            return global;
+        };
+        std::string name = "bun_island_" + island + "_" + kind.str();
+        GlobalObject* start = keepOne(makeEdge(name + "_start", "bun" + island + ".a"));
+        GlobalObject* end = keepOne(makeEdge(name + "_end", "bun" + island + ".z"));
 
-        auto* type = ArrayType::get(word, 3 + numbers.size());
-        auto* record = new GlobalVariable(module, type, true, GlobalValue::InternalLinkage, nullptr, "bun_feature_part");
-        auto distanceTo = [&](GlobalObject* mark) {
-            auto* distance = ConstantExpr::getSub(ConstantExpr::getPtrToInt(mark, address), ConstantExpr::getPtrToInt(record, address));
+        auto* word = Type::getInt32Ty(module.getContext());
+        auto* address = Type::getInt64Ty(module.getContext());
+        auto* type = ArrayType::get(word, 3);
+        auto* record = new GlobalVariable(module, type, true, GlobalValue::LinkOnceODRLinkage, nullptr, name);
+        auto distanceTo = [&](GlobalObject* edge) {
+            auto* distance = ConstantExpr::getSub(ConstantExpr::getPtrToInt(edge, address), ConstantExpr::getPtrToInt(record, address));
             return ConstantExpr::getTrunc(distance, word);
         };
-        SmallVector<Constant*, 8> words { distanceTo(begin), distanceTo(end), ConstantInt::get(word, numbers.size()) };
-        for (StringRef number : numbers) {
-            unsigned feature;
-            if (number.getAsInteger(10, feature))
-                report_fatal_error("BUN_FEATURES is not a list of numbers");
-            words.push_back(ConstantInt::get(word, feature));
-        }
-        record->setInitializer(ConstantArray::get(type, words));
-        record->setSection(section);
+        record->setInitializer(ConstantArray::get(type, { distanceTo(start), distanceTo(end), ConstantInt::get(word, std::stoul(island)) }));
+        record->setSection(".bunisl");
         record->setAlignment(Align(4));
-        keepAsItIs(record);
-        appendToUsed(module, { record });
+        appendToUsed(module, { keepOne(record) });
     }
 
     PreservedAnalyses run(Module& module, ModuleAnalysisManager&)
     {
-        // src/exe_features/lib.rs has the name of the records. What is after the "." and the "$" only has the linker put what
-        // the same features need side by side, which Mach-O has no way to ask for. There the linker folds what is
-        // identical in a section of nothing but instructions, also a function of one feature into that of another.
+        // src/exe_features/lib.rs has these names too. An island is what the linker itself says is one, and within one it drops,
+        // folds and moves as it likes: lld folds only what ends up in the same section, or on COFF has the same name.
+        //
+        // What is given the name of a section is one piece per unit, though, of which the linker can neither drop nor fold a
+        // part. Not on Mach-O. On ELF a flag of the link has each function and constant be a piece
+        // (scripts/build/flags.ts). On COFF a function with a prefix stays one.
         const Triple& target = module.getTargetTriple();
-        std::string key = features;
-        std::replace(key.begin(), key.end(), ',', '.');
         bool isMachO = target.isOSBinFormatMachO(), isCOFF = target.isOSBinFormatCOFF();
-        std::string code = isMachO ? "__TEXT,__bun_feat_x" : ".bun_feature_x." + key;
-        std::string constants = isMachO ? "__TEXT,__bun_feat_r" : isCOFF ? ".bunfr$" + key : ".bun_feature_r." + key;
-        StringRef records = isMachO ? "__TEXT,__bun_feat_part" : isCOFF ? ".bunfprt" : ".bun_feature_parts";
-        // What is given the name of a section is one piece per unit, of which the linker can neither drop nor fold a function.
-        // On ELF a flag of the link has each be a piece (scripts/build/flags.ts). On COFF a function with a prefix stays
-        // one, in `.text$bunf.2.3`, and only what has the same name is folded.
-        auto place = [&](Function& function) {
-            if (isCOFF)
-                function.setSectionPrefix("bunf." + key);
-            else
-                function.setSection(code);
-        };
+        std::string code = isMachO ? "__TEXT,__bun_x" + island + ",regular,pure_instructions" : ".bun_island_x." + island;
+        std::string constants = isMachO ? "__TEXT,__bun_r" + island : isCOFF ? ".rdata$bun" + island + ".m" : ".bun_island_r." + island;
 
         // Those that there are by now are the compiler's, a sanitizer's for one, and stay.
         SmallPtrSet<const Value*, 4> runBeforeMain;
@@ -152,64 +129,65 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
         }
 
         Owned owned;
-        bool hasCode = false, hasConstants = false;
-        for (Function& function : module) {
-            if (isThisUnitsAlone(function) && !runBeforeMain.count(&function)) {
-                place(function);
-                owned.insert(&function);
-                hasCode = true;
-            }
+        for (GlobalObject& global : module.global_objects()) {
+            if (isThisUnitsAlone(global) && !runBeforeMain.count(&global))
+                owned.insert(&global);
         }
-        // One without a name may also be used by what stays, and one may be used by another. A constant that holds an address
-        // stays where the loader has something to do to it, which is where code can be loaded anywhere. What only it
-        // points to goes all the same.
-        bool isLoadedAnywhere = isMachO || isCOFF || module.getPICLevel() != PICLevel::NotPIC;
+        // What stays can use what only this unit can name: an inline function of a header calls a static one, and it may be
+        // this unit's copy of the inline one that the linker keeps for all of Bun. That stays too, and what it uses.
         for (bool changed = true; changed;) {
             changed = false;
-            for (GlobalVariable& variable : module.globals()) {
-                if (owned.count(&variable) || !isThisUnitsAlone(variable) || !variable.isConstant() || variable.isThreadLocal())
-                    continue;
+            for (const GlobalObject* global : SmallVector<const GlobalObject*, 0>(owned.begin(), owned.end())) {
                 SmallPtrSet<const Value*, 16> seen;
-                if (variable.hasLocalLinkage() && !isUsedOnlyBy(owned, variable, seen))
-                    continue;
-                owned.insert(&variable);
-                changed = true;
-                if (variable.getInitializer()->needsRelocation() && isLoadedAnywhere)
-                    continue;
+                if (global->hasLocalLinkage() && !isUsedOnlyBy(owned, *global, seen)) {
+                    owned.erase(global);
+                    changed = true;
+                }
+            }
+        }
+
+        // Code and constants are what an island has. What is written to is not moved, nor a constant that holds an address where
+        // the loader has something to do to it, which is where code can be loaded anywhere. What only they point to goes
+        // all the same.
+        bool isLoadedAnywhere = isMachO || isCOFF || module.getPICLevel() != PICLevel::NotPIC;
+        bool hasCode = false, hasConstants = false;
+        for (GlobalObject& global : module.global_objects()) {
+            if (!owned.count(&global))
+                continue;
+            if (auto* function = dyn_cast<Function>(&global)) {
+                if (isCOFF)
+                    function->setSectionPrefix("bun" + island + ".m");
+                else
+                    function->setSection(code);
+                hasCode = true;
+                continue;
+            }
+            auto& variable = cast<GlobalVariable>(global);
+            bool isPatched = variable.getInitializer()->needsRelocation() && isLoadedAnywhere;
+            if (variable.isConstant() && !variable.isThreadLocal() && !isPatched) {
                 variable.setSection(constants);
                 hasConstants = true;
             }
         }
 
-        // Functions and variables are written in the order of these lists. Where that were not so, what is outside the marks
-        // would stay in an executable without the feature. It would not be taken for another unit's.
         LLVMContext& context = module.getContext();
-        if (hasCode) {
-            auto mark = [&](StringRef name) {
+        if (isCOFF && hasCode) {
+            recordEdges(module, "code", [&](const Twine& name, const Twine& prefix) {
                 auto* type = FunctionType::get(Type::getVoidTy(context), false);
-                auto* function = Function::Create(type, GlobalValue::InternalLinkage, name);
+                auto* function = Function::Create(type, GlobalValue::LinkOnceODRLinkage, name, module);
                 new UnreachableInst(context, BasicBlock::Create(context, "", function));
-                place(*function);
+                function->setSectionPrefix(prefix.str());
                 function->addFnAttr(Attribute::NoUnwind);
                 return function;
-            };
-            Function *begin = mark("bun_feature_code_begin"), *end = mark("bun_feature_code_end");
-            module.getFunctionList().push_front(begin);
-            module.getFunctionList().push_back(end);
-            record(module, records, begin, end);
+            });
         }
-        if (hasConstants) {
-            auto mark = [&](StringRef name) {
+        if (isCOFF && hasConstants) {
+            recordEdges(module, "constants", [&](const Twine& name, const Twine& suffix) {
                 auto* byte = Type::getInt8Ty(context);
-                auto* variable = new GlobalVariable(byte, true, GlobalValue::InternalLinkage, ConstantInt::get(byte, 0), name);
-                variable->setSection(constants);
-                keepAsItIs(variable);
+                auto* variable = new GlobalVariable(module, byte, true, GlobalValue::LinkOnceODRLinkage, ConstantInt::get(byte, 0), name);
+                variable->setSection((".rdata$" + suffix).str());
                 return variable;
-            };
-            GlobalVariable *begin = mark("bun_feature_constants_begin"), *end = mark("bun_feature_constants_end");
-            module.insertGlobalVariable(module.global_begin(), begin);
-            module.insertGlobalVariable(module.global_end(), end);
-            record(module, records, begin, end);
+            });
         }
         return PreservedAnalyses::all();
     }
@@ -222,15 +200,15 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo()
 {
-    return { LLVM_PLUGIN_API_VERSION, "bun-feature", "1", [](PassBuilder& builder) {
-                const char* features = featuresOption.empty() ? std::getenv("BUN_FEATURES") : featuresOption.c_str();
-                if (!features)
-                    report_fatal_error("neither -bun-features nor BUN_FEATURES is set");
+    return { LLVM_PLUGIN_API_VERSION, "bun-island", "1", [](PassBuilder& builder) {
+                const char* island = islandOption.empty() ? std::getenv("BUN_ISLAND") : islandOption.c_str();
+                if (!island)
+                    report_fatal_error("neither -bun-island nor BUN_ISLAND is set");
                 builder.registerPipelineStartEPCallback(
                     [](ModulePassManager& passes, OptimizationLevel) { passes.addPass(NoConstructors()); });
                 builder.registerOptimizerLastEPCallback(
-                    [features](ModulePassManager& passes, OptimizationLevel, ThinOrFullLTOPhase) {
-                        passes.addPass(FeaturePass { {}, features });
+                    [island](ModulePassManager& passes, OptimizationLevel, ThinOrFullLTOPhase) {
+                        passes.addPass(IslandPass { {}, island });
                     });
             } };
 }

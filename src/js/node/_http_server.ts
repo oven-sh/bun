@@ -1109,20 +1109,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Case-insensitive, token-boundary match like Node's
             // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
             // case-insensitively); computed natively into the bitfield.
-            if ((dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0) {
-              http_res._expect_continue = true;
-              if (server.listenerCount("checkContinue") > 0) {
-                server.emit("checkContinue", http_req, http_res);
-              } else {
-                http_res.writeContinue();
-                server.emit("request", http_req, http_res);
-              }
-            } else if (server.listenerCount("checkExpectation") > 0) {
-              server.emit("checkExpectation", http_req, http_res);
-            } else {
-              http_res.writeHead(417);
-              http_res.end();
-            }
+            routeExpectation(server, http_req, http_res, (dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0);
           } else {
             server.emit("request", http_req, http_res);
           }
@@ -2366,6 +2353,7 @@ function ServerResponse(req, options): void {
   this.req = req;
   this.sendDate = true;
   this._sent100 = false;
+  this._expect_continue = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
   this.finished = false;
@@ -2452,16 +2440,6 @@ let renderedKeepAliveSecs = 0;
 // The value of a response's Connection header: one string, or an array of them.
 function connectionHeaderHasClose(value) {
   return RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value));
-}
-
-// Node's writeHead and matchHeader: no keep-alive after a final response to an unanswered Expect: 100-continue.
-function clearKeepAliveIfContinueNotSent(res) {
-  if (res._expect_continue && !res._sent100) {
-    const connection = res[kOutHeaders]?.connection;
-    if (connection === undefined || connectionHeaderHasClose(connection[1])) {
-      res.shouldKeepAlive = false;
-    }
-  }
 }
 
 function renderNativeHeaders(res) {
@@ -2578,9 +2556,6 @@ function renderNativeHeaders(res) {
         }
       }
     }
-
-    // writeHead() does not run for an implicit header.
-    clearKeepAliveIfContinueNotSent(res);
 
     if (res._removedConnection) {
       // Node's _storeHeader: `this._last = !this.shouldKeepAlive` - no
@@ -3335,9 +3310,6 @@ ServerResponse.prototype.setTimeout = function setTimeout(msecs, callback) {
 
 ServerResponse.prototype._removedConnection = false;
 
-// Set by the dispatcher on the response to a request that carries Expect: 100-continue.
-ServerResponse.prototype._expect_continue = false;
-
 ServerResponse.prototype._removedContLen = false;
 
 ServerResponse.prototype._hasBody = true;
@@ -3966,6 +3938,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
+  callWriteHeadIfObservable(this, this[headerStateSymbol]);
   const strict = strictContentLength(this, this[headerStateSymbol], false);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
@@ -4005,7 +3978,11 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   }
   _writeHead(statusCode, statusMessage, headers, this);
 
-  clearKeepAliveIfContinueNotSent(this);
+  // Node's writeHead and matchHeader: no keep-alive after a final response to an unanswered Expect: 100-continue.
+  if (this._expect_continue && !this._sent100) {
+    const connection = this[kOutHeaders]?.connection;
+    if (connection === undefined || connectionHeaderHasClose(connection[1])) this.shouldKeepAlive = false;
+  }
 
   // Node.js renders the header block immediately in writeHead(), so mutating
   // res.statusCode/statusMessage afterwards has no effect on the wire.
@@ -4163,7 +4140,9 @@ let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
-    !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
+    // The implicit header of an unanswered Expect: 100-continue takes Node's rule in writeHead().
+    ((self._expect_continue && !self._sent100) ||
+      !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn))
   ) {
     // Node's end(chunk) assigns _contentLength before _implicitHeader reaches
     // _storeHeader, so this implicit call must not freeze the framing to chunked
@@ -4195,6 +4174,24 @@ function failPendingWriteCallbacks(res, error) {
 
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
+
+// Node's parserOnIncoming Expect routing, for the native dispatcher and internal/http1_server_fallback.
+function routeExpectation(server, req, res, isContinue) {
+  if (isContinue) {
+    res._expect_continue = true;
+    if (server.listenerCount("checkContinue") > 0) {
+      server.emit("checkContinue", req, res);
+    } else {
+      res.writeContinue();
+      server.emit("request", req, res);
+    }
+  } else if (server.listenerCount("checkExpectation") > 0) {
+    server.emit("checkExpectation", req, res);
+  } else {
+    res.writeHead(417);
+    res.end();
+  }
+}
 
 function defaultShouldUpgradeCallback(this: any) {
   return this.listenerCount("upgrade") > 0;
@@ -4322,6 +4319,7 @@ http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
+http1ServerPipeline.routeExpectation = routeExpectation;
 
 export default {
   Server,

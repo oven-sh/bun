@@ -57,6 +57,7 @@ const http1ServerPipeline: {
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
+  routeExpectation?: (server: unknown, req: unknown, res: unknown, isContinue: boolean) => void;
 } = {};
 
 export const enum NodeHTTPResponseAbortEvent {

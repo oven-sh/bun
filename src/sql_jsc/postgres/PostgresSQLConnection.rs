@@ -1387,10 +1387,10 @@ impl PostgresSQLConnection {
                 .get()
                 .unwrap_or(false)
         {
-            let _ = match *this.socket.get() {
-                uws::AnySocket::SocketTcp(s) => s.set_keep_alive(true, TCP_KEEPALIVE_IDLE_SECS),
-                uws::AnySocket::SocketTls(s) => s.set_keep_alive(true, TCP_KEEPALIVE_IDLE_SECS),
-            };
+            let _ = this
+                .socket
+                .get()
+                .set_keep_alive(true, TCP_KEEPALIVE_IDLE_SECS);
         }
         Ok(JSValue::UNDEFINED)
     }

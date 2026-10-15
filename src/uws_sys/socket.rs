@@ -974,6 +974,7 @@ impl AnySocket {
         fn close_now(&self);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
+        fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool;
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;

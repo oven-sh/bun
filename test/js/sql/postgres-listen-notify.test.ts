@@ -172,11 +172,11 @@ function keepaliveSeconds(clientPort: number, serverPort: number, table = readFi
 }
 
 /**
- * Makes the peer of this process's socket on 127.0.0.1:`clientPort` vanish. A drop-all socket filter
- * has the kernel discard every segment that arrives for the socket before TCP sees it: no data, no
- * ACK, no FIN, no RST. The wait is shortened on that socket to 1 s of silence and one unanswered
- * probe. Keepalive itself is not turned on here. Linux, and bun:ffi because Bun.SQL does not expose
- * its fd.
+ * Makes the peer of this process's socket on 127.0.0.1:`clientPort` vanish. With IP_MINTTL 255 the
+ * kernel discards every segment that arrives for the socket, because loopback segments carry TTL
+ * 64: no data, no ACK, no FIN, no RST. The wait is shortened on that socket to 1 s of silence and
+ * one unanswered probe. Keepalive itself is not turned on here. Linux, and bun:ffi because Bun.SQL
+ * does not expose its fd.
  */
 function vanishPeerOf(clientPort: number) {
   const libc = dlopen(libcPathForDlopen(), {
@@ -194,20 +194,13 @@ function vanishPeerOf(clientPort: number) {
         return address[0] === 2 /* AF_INET */ && ((address[2] << 8) | address[3]) === clientPort;
       });
     if (fd === undefined) throw new Error(`no socket bound to port ${clientPort}`);
-    const set = (level: number, option: number, value: ArrayBufferView, size: number) => {
-      if (libc.symbols.setsockopt(fd, level, option, ptr(value), size) !== 0)
-        throw new Error(`setsockopt(${level}, ${option}) failed`);
+    const set = (level: number, option: number, value: number) => {
+      if (libc.symbols.setsockopt(fd, level, option, ptr(new Int32Array([value])), 4) !== 0)
+        throw new Error(`setsockopt(${level}, ${option}, ${value}) failed`);
     };
-    set(6 /* IPPROTO_TCP */, 4 /* TCP_KEEPIDLE */, new Int32Array([1]), 4);
-    set(6 /* IPPROTO_TCP */, 6 /* TCP_KEEPCNT */, new Int32Array([1]), 4);
-    // struct sock_fprog { u16 len = 1; struct sock_filter *filter; } and the instruction it points
-    // to: BPF_RET | BPF_K with k = 0, which keeps 0 bytes of every packet.
-    const program = new Uint8Array(24);
-    const view = new DataView(program.buffer);
-    view.setUint16(0, 1, true);
-    view.setBigUint64(8, BigInt(ptr(program)) + 16n, true);
-    view.setUint16(16, 0x06, true);
-    set(1 /* SOL_SOCKET */, 26 /* SO_ATTACH_FILTER */, program, 16);
+    set(6 /* IPPROTO_TCP */, 4 /* TCP_KEEPIDLE */, 1);
+    set(6 /* IPPROTO_TCP */, 6 /* TCP_KEEPCNT */, 1);
+    set(0 /* IPPROTO_IP */, 21 /* IP_MINTTL */, 255);
   } finally {
     libc.close();
   }

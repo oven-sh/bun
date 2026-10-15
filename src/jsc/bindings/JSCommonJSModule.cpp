@@ -309,9 +309,10 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     // Call the CommonJS module wrapper function.
     //
-    //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
+    //    fn(exports, require, module, __filename, __dirname) { /* code */ }.call(exports, exports, require, module, __filename, __dirname)
     //
-    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    // `this` is module.exports, as in Node. The parser leaves a top-level `this` to this call.
+    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, exports, args);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }

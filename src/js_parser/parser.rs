@@ -1314,16 +1314,20 @@ pub struct FnOrArrowDataVisit {
 #[derive(Default)]
 pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
-    /// That means it's "undefined" for ECMAScript modules and "exports" for
-    /// CommonJS modules. We track this information so that we can substitute the
-    /// correct value for these top-level "this" references at compile time instead
-    /// of passing the "this" expression through to the output and leaving the
-    /// interpretation up to the run-time behavior of the generated code.
+    /// That means it's "undefined" for ECMAScript modules and `module.exports`
+    /// for CommonJS modules. We track this information so that `value_for_this`
+    /// can substitute the value at compile time for ECMAScript modules, and can
+    /// see each top-level "this" of a CommonJS module, which the caller of the
+    /// module body provides at run time.
     ///
     /// If true, the value for "this" is nested inside something (either a function
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
+
+    /// The expression being visited is the computed key of a field that
+    /// `lower_class` moves into the constructor, where "this" is the instance.
+    pub(crate) is_key_moved_into_constructor: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's

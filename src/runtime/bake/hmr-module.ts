@@ -309,7 +309,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     try {
       const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
+      loadOrEsmModule.call(cjs.exports, mod, cjs, cjs.exports);
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
@@ -409,7 +409,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
     try {
       const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
+      loadOrEsmModule.call(cjs.exports, mod, cjs, cjs.exports);
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};

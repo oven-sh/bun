@@ -638,7 +638,8 @@ void evaluateCommonJSCustomExtension(
     MarkedArgumentBuffer arguments;
     arguments.append(target);
     arguments.append(filenameValue);
-    JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
+    // Node: `Module._extensions[extension](this, filename)`.
+    JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, globalObject->lazyRequireExtensionsObject(), arguments);
     RETURN_IF_EXCEPTION(scope, );
 }
 

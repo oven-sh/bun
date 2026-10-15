@@ -1057,6 +1057,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
+            let lowers_standard_decorators = class.should_lower_standard_decorators;
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1112,7 +1113,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let class_body = self.current_scope;
                         self.field_init_class_bodies.push(class_body);
                     }
+                    // The legacy decorator lowering in `lower_class` does it for a
+                    // decorated instance field.
+                    let old_is_key_moved = self.fn_only_data_visit.is_key_moved_into_constructor;
+                    self.fn_only_data_visit.is_key_moved_into_constructor = old_is_key_moved
+                        || (is_field
+                            && !lowers_standard_decorators
+                            && property.initializer.is_some()
+                            && property.ts_decorators.len_u32() > 0
+                            && !property.flags.contains(flags::Property::IsStatic));
                     self.visit_expr(key);
+                    self.fn_only_data_visit.is_key_moved_into_constructor = old_is_key_moved;
                     if is_field {
                         self.field_init_class_bodies.pop();
                     }

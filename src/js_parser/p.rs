@@ -6092,10 +6092,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.fn_only_data_visit.is_this_nested {
             // In the REPL, top-level `this` must evaluate to the global object
             // (matching Node's `> this` and `deno repl > this`). The REPL wraps
-            // user input in an arrow IIFE that has no `exports` binding, so the
-            // CommonJS substitution below would emit a reference to an
-            // undefined `exports`. Leaving `E::This` in place lets the arrow
-            // inherit `this` from the enclosing (global) scope at runtime.
+            // user input in an arrow IIFE, which inherits `this` from the
+            // enclosing (global) scope at runtime. It has no `exports` binding,
+            // so the CommonJS arm below must not count a use of one.
             if self.options.repl_mode {
                 return None;
             }
@@ -6108,23 +6107,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data: null_value_expr(),
                 });
             } else {
-                // In a CommonJS module, "this" is supposed to be the same as "exports".
-                // Instead of doing this at runtime using "fn.call(module.exports)", we
-                // do it at compile time using expression substitution here.
+                // In a CommonJS module, "this" is `module.exports` as it was when the
+                // module started. Every caller of a CommonJS body passes that value
+                // as the receiver (`evaluateCommonJSModuleOnce`, `__commonJS`, the dev
+                // server's module loader), so the expression stays as it is. It still
+                // counts as a use of `exports`: that use makes the file CommonJS.
                 let exports_ref = self.exports_ref;
                 self.record_usage(exports_ref);
                 self.deoptimize_common_js_named_exports();
-                return Some(self.new_expr(
-                    E::Identifier {
-                        ref_: exports_ref,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
+                if self.this_needs_exports_stand_in() {
+                    return Some(self.new_expr(
+                        E::Identifier {
+                            ref_: exports_ref,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
+                }
             }
         }
 
         None
+    }
+
+    /// Where the receiver of the module body cannot give a top-level CommonJS
+    /// `this` its value, the `exports` identifier stands in for it.
+    fn this_needs_exports_stand_in(&self) -> bool {
+        // The linker can print the entry point of a CommonJS-format bundle outside
+        // a `__commonJS` wrapper. Its caller is then the host's module loader, and
+        // a Bun older than this bundler passes the module object there.
+        let is_cjs_bundle_entry = self.options.bundle
+            && self.options.output_format == options::Format::Cjs
+            && self.options.is_entry_point;
+        is_cjs_bundle_entry || self.fn_only_data_visit.is_key_moved_into_constructor
     }
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies

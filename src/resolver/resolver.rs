@@ -3548,14 +3548,16 @@ impl<'a> Resolver<'a> {
             // covers a typical node_modules package dir; larger dirs still
             // rehash from there (cheap relative to starting at 0).
             let listing = match rfs!().read_listing(
-                in_place,
-                dir_path,
-                false,
-                self.generation,
+                Fs::ListingRead {
+                    in_place,
+                    dir_path,
+                    dir_needs_sep: false,
+                    generation: self.generation,
+                    owns_handle: true,
+                    store_fd: self.store_fd,
+                    reserve: 64,
+                },
                 &mut open_dir,
-                true,
-                self.store_fd,
-                64,
                 (),
             ) {
                 Ok(listing) => listing,
@@ -4674,14 +4676,16 @@ impl<'a> Resolver<'a> {
                     // covers a typical node_modules package dir; larger dirs
                     // still rehash from there (cheap relative to starting at 0).
                     let read = rfs!().read_listing(
-                        in_place,
-                        queue_top_unsafe_path,
-                        dir_needs_sep,
-                        self.generation,
+                        Fs::ListingRead {
+                            in_place,
+                            dir_path: queue_top_unsafe_path,
+                            dir_needs_sep,
+                            generation: self.generation,
+                            owns_handle: opened_here,
+                            store_fd: self.store_fd,
+                            reserve: 64,
+                        },
                         &mut open_dir,
-                        opened_here,
-                        self.store_fd,
-                        64,
                         (),
                     );
                     if opened_here {

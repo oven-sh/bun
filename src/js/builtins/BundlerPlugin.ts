@@ -90,7 +90,11 @@ export function loadAndResolvePluginsForServe(
       let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
       if (pluginModuleResolved.includes("?")) {
         // The path of the resolved key is imported as a file URL: a "?" in it is part of a name.
-        const pathLength = $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength", 1)(pluginModuleResolved);
+        const pathLength = $newCppFunction(
+          "NodeModuleModule.cpp",
+          "jsFunctionModuleKeyPathLength",
+          1,
+        )(pluginModuleResolved);
         pluginModuleResolved =
           Bun.pathToFileURL(pluginModuleResolved.slice(0, pathLength)).href + pluginModuleResolved.slice(pathLength);
       }

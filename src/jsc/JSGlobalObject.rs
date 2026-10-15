@@ -1445,7 +1445,13 @@ extern "C" fn Zig__GlobalObject__resolve(
     specifier: &BunString,
     source: &BunString,
 ) {
-    resolve_module_key(res, global, specifier, source, crate::virtual_machine::ResolveMode::Esm);
+    resolve_module_key(
+        res,
+        global,
+        specifier,
+        source,
+        crate::virtual_machine::ResolveMode::Esm,
+    );
 }
 
 /// [`Zig__GlobalObject__resolve`] for a filesystem path: a `?` in it is part of a name.
@@ -1456,7 +1462,13 @@ extern "C" fn Zig__GlobalObject__resolvePath(
     path: &BunString,
     source: &BunString,
 ) {
-    resolve_module_key(res, global, path, source, crate::virtual_machine::ResolveMode::Path);
+    resolve_module_key(
+        res,
+        global,
+        path,
+        source,
+        crate::virtual_machine::ResolveMode::Path,
+    );
 }
 
 fn resolve_module_key(

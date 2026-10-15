@@ -343,39 +343,42 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/7928
-  test.each([[[]], [["./some-path?/my.test.js", "./so?me"]]])("bun test %j runs the test files in such folders", async args => {
-    const testFile = `
-      import { expect, test } from "bun:test";
-      import { folder } from "./dep.js";
-      test("in " + folder, () => {
-        expect(import.meta.dir.split("/").pop()).toBe(folder);
-        console.log("RAN " + folder);
+  test.each([[[]], [["./some-path?/my.test.js", "./so?me"]]])(
+    "bun test %j runs the test files in such folders",
+    async args => {
+      const testFile = `
+        import { expect, test } from "bun:test";
+        import { folder } from "./dep.js";
+        test("in " + folder, () => {
+          expect(import.meta.dir.split("/").pop()).toBe(folder);
+          console.log("RAN " + folder);
+        });
+      `;
+      using dir = tempDir("import-query-question-mark-test", {
+        "some-path?/my.test.js": testFile,
+        "some-path?/dep.js": `export const folder = "some-path?";`,
+        "so?me/my.test.js": testFile,
+        "so?me/dep.js": `export const folder = "so?me";`,
+        // What the part before each "?" names.
+        "some-path/index.js": `console.log("SHOULD NOT RUN some-path/index.js");`,
+        "so/index.js": `console.log("SHOULD NOT RUN so/index.js");`,
       });
-    `;
-    using dir = tempDir("import-query-question-mark-test", {
-      "some-path?/my.test.js": testFile,
-      "some-path?/dep.js": `export const folder = "some-path?";`,
-      "so?me/my.test.js": testFile,
-      "so?me/dep.js": `export const folder = "so?me";`,
-      // What the part before each "?" names.
-      "some-path/index.js": `console.log("SHOULD NOT RUN some-path/index.js");`,
-      "so/index.js": `console.log("SHOULD NOT RUN so/index.js");`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...args],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("RAN some-path?");
-    expect(stdout).toContain("RAN so?me");
-    expect(stdout).not.toContain("SHOULD NOT RUN");
-    expect(stderr).toContain(" 2 pass");
-    expect(exitCode).toBe(0);
-  });
+      expect(stdout).toContain("RAN some-path?");
+      expect(stdout).toContain("RAN so?me");
+      expect(stdout).not.toContain("SHOULD NOT RUN");
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // As in node: require() takes a path. A query is bun's addition to it, for a name that is not there.
   test("require() reads a `?` as part of a name that exists", async () => {

@@ -5259,10 +5259,11 @@ impl VirtualMachine {
                 let mut query = Some(first);
                 if !cfg!(windows) && !mode.is_esm() && !bun_resolver::is_package_path(specifier) {
                     first_question_mark = Some(first);
-                    query = self
-                        .transpiler
-                        .resolver
-                        .query_start_in_path(source_to_use, specifier, first);
+                    query = self.transpiler.resolver.query_start_in_path(
+                        source_to_use,
+                        specifier,
+                        first,
+                    );
                 }
                 if let Some(query) = query {
                     query_string = &specifier[query..];

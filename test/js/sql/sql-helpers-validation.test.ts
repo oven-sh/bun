@@ -113,6 +113,8 @@ describe("postgres nested sql.unsafe with values", () => {
         sql`select * from t where id in ${sql([1, 2, 3])} and ${sql.unsafe("b = $1", [4])}`,
       ),
       "string values": await outcome(sql`select * from t where a = ${"a"} and ${sql.unsafe("b = $1", ["b"])}`),
+      // Not an array, so it has no length. The guard must not let it through.
+      "object values": await outcome(sql`select * from t where a = ${1} and ${sql.unsafe("b = $1", { b: 2 })}`),
       "values() on the outer query": await outcome(
         sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])}`.values(),
       ),

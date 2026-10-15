@@ -428,10 +428,11 @@ function normalizeQuery(
           const sub_strings = q[_strings];
           const [sub_query, sub_values] = normalizeQuery(adapter, sub_strings, q[_values], binding_idx);
 
+          // `length !== 0` so that values that are not an array (length undefined) are not let through.
           if (
             typeof sub_strings === "string" &&
             binding_idx > 1 &&
-            sub_values.length > 0 &&
+            sub_values.length !== 0 &&
             q[_flags] & SQLQueryFlags.unsafe
           ) {
             adapter.checkNestedUnsafeValues();

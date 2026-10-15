@@ -1190,18 +1190,25 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// `npm:^1.0.0` -> `^1.0.0`, as Yarn reads it: a range of the dependency's own name. An alias stays whole.
-/// `npm:x`, `npm:v8`, `npm:1` and `npm:1.x` can name a package, so they are aliases, as in npm.
+/// Of what follows `npm:` with no `@` in it: `^1.0.0` and `1.0.0` are, as Yarn reads them, a range of the dependency's own name.
+/// `x`, `v8`, `1` and `1.x` can name a package, so they do, as in npm.
+#[cold]
+fn is_range_after_npm_protocol(target: &[u8]) -> bool {
+    (strings::index_of_any(target, b"^~><=*| ").is_some()
+        || Semver::Version::parse_exact(SlicedString::init(target, target)).is_some())
+        && Tag::infer(target) == Tag::Npm
+}
+
+/// `npm:^1.0.0` -> `^1.0.0`. An alias stays whole.
 pub(crate) fn without_npm_protocol(literal: &[u8]) -> &[u8] {
-    let Some(range) = literal.strip_prefix(b"npm:") else {
-        return literal;
-    };
-    let is_no_name = strings::index_of_any(range, b"^~><=*| ").is_some()
-        || Semver::Version::parse_exact(SlicedString::init(range, range)).is_some();
-    if is_no_name && split_npm_alias(range).1.is_none() && Tag::infer(range) == Tag::Npm {
-        return range;
+    match literal.strip_prefix(b"npm:") {
+        Some(target)
+            if split_npm_alias(target).1.is_none() && is_range_after_npm_protocol(target) =>
+        {
+            target
+        }
+        _ => literal,
     }
-    literal
 }
 
 /// `npm:`, `npm:@1.0.0`, `npm:@scope/@1`: it parses, as a lockfile may hold one.
@@ -1223,14 +1230,19 @@ pub(crate) fn parse_with_tag(
     let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
-            let mut input = without_npm_protocol(dependency);
+            let mut input = dependency;
 
             let mut is_alias = false;
             let name = if let Some(target) = input.strip_prefix(b"npm:") {
-                is_alias = true;
                 let (name, version) = split_npm_alias(target);
-                input = version.unwrap_or_else(|| &target[target.len()..]);
-                sliced.sub(name).value()
+                if version.is_none() && is_range_after_npm_protocol(target) {
+                    input = target;
+                    alias
+                } else {
+                    is_alias = true;
+                    input = version.unwrap_or_else(|| &target[target.len()..]);
+                    sliced.sub(name).value()
+                }
             } else {
                 alias
             };

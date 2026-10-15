@@ -1142,6 +1142,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       "command": [{}, { bin: { tool: "./cli.js" } }],
       "folder": [{}, { directories: { bin: "./scripts" } }],
       "absent": [{ dependencies: { dep: "1.0.0" } }, {}],
+      "unlisted": [{ bin: { tool: "./cli.js" } }, {}],
     };
     const added = (name: string, version: string, where: 0 | 1) => (version === "2.0.0" ? cases[name][where] : {});
     using server = Bun.serve({
@@ -1206,6 +1207,11 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         'directories added: { "bin": "./scripts" }',
       ],
       "absent": [disagree("absent", "dependencies", "nothing", '{ "dep": "1.0.0" }')],
+      // Other tools read the file.
+      "unlisted": [
+        disagree("unlisted", "bin", "nothing", '{ "tool": "./cli.js" }'),
+        'bin added: { "tool": "./cli.js" }',
+      ],
     });
   });
 

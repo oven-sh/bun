@@ -613,7 +613,7 @@ describe.concurrent("bun-install", () => {
   });
 
   it.each([
-    "npm:^0.0.2",
+    "npm:^0.0.3",
     "npm:~0.0.2",
     "npm:*",
     "npm:>=0.0.2 <1",

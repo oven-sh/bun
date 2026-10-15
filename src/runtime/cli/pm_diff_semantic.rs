@@ -21,6 +21,8 @@ pub(crate) struct Op<'a> {
     pub text: &'a [u8],
     /// An unchanged line whose canonical form nevertheless changed (it moved into or out of dead code).
     pub affected: bool,
+    /// A line of brackets right under the `+` lines it came in with: drawn unmarked, yet no line of the old side.
+    pub came_along: bool,
 }
 
 pub(crate) struct Projection<'a> {
@@ -36,7 +38,8 @@ impl Projection<'_> {
     pub(crate) fn holds(&self, path: &[u8], old: &[u8], new: &[u8], same_key: bool) -> bool {
         let mut shown = Vec::with_capacity(old.len());
         let mut removed = Vec::new();
-        let on_old_side = self.ops.iter().filter(|op| op.kind != Operation::Insert);
+        let on_old_side =
+            (self.ops.iter()).filter(|op| op.kind != Operation::Insert && !op.came_along);
         for (line, op) in on_old_side.enumerate() {
             if op.kind == Operation::Delete {
                 removed.push(line as u32);
@@ -73,6 +76,7 @@ pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
                 new_no: n,
                 text: line,
                 affected: false,
+                came_along: false,
             });
         }
         for line in super::pm_diff_command::Lines(&old[h.a_lo..h.a_hi]) {
@@ -83,6 +87,7 @@ pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
                 new_no: n,
                 text: line,
                 affected: false,
+                came_along: false,
             });
         }
         for line in super::pm_diff_command::Lines(&new[h.b_lo..h.b_hi]) {
@@ -93,6 +98,7 @@ pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
                 new_no: n,
                 text: line,
                 affected: false,
+                came_along: false,
             });
         }
         oa = h.a_hi;
@@ -345,36 +351,61 @@ pub(crate) fn project<'a>(
                 (ws(a.text, alo, ahi) || aside.mapped_within(al, alo, ahi))
                     && (ws(b.text, blo, bhi) || bside.mapped_within(bl, blo, bhi))
             };
-            for d in &dels {
+            let fold_old = |d: &Op| {
                 let dl = d.old_no - 1;
-                let fold = ok(&so, dl, d.text, &unseen_new)
+                ok(&so, dl, d.text, &unseen_new)
                     && (so.no_image(dl)
                         || ins.is_empty()
                         || ins.iter().any(|n| {
                             !sn.no_image(n.new_no - 1)
                                 && code_only(d, &so, dl, n, &sn, n.new_no - 1)
-                        }));
-                if fold {
-                    hidden += usize::from(!trivial(d.text));
-                } else {
-                    ops.push(*d);
-                }
-            }
-            for n in &ins {
+                        }))
+            };
+            let fold_new = |n: &Op| {
                 let nl = n.new_no - 1;
-                let fold = ok(&sn, nl, n.text, &unseen_old)
+                ok(&sn, nl, n.text, &unseen_old)
                     && (sn.no_image(nl)
                         || dels.is_empty()
                         || dels.iter().any(|d| {
                             !so.no_image(d.old_no - 1)
                                 && code_only(n, &sn, nl, d, &so, d.old_no - 1)
-                        }));
-                if fold {
+                        }))
+            };
+            // Where the run starts with folded lines on both sides, those of the new side stand for those of the old
+            // one, ahead of the first `-` line.
+            let lead = match dels.first() {
+                Some(d) if fold_old(d) => ins.iter().take_while(|n| fold_new(n)).count(),
+                _ => 0,
+            };
+            let (head, rest) = ins.split_at(lead);
+            ops.extend(head.iter().map(|n| Op {
+                kind: Operation::Equal,
+                ..*n
+            }));
+            // The brackets that close a block go, or come, with the lines of it right above them.
+            let closes = |text: &[u8]| {
+                trivial(text) && bun_core::strings::index_of_any(text, b"(){}[]").is_some()
+            };
+            let mut after_removed = false;
+            for d in &dels {
+                after_removed = !fold_old(d) || (after_removed && closes(d.text));
+                if after_removed {
+                    ops.push(*d);
+                } else {
+                    hidden += usize::from(!trivial(d.text));
+                }
+            }
+            let mut after_added = false;
+            for n in rest {
+                if fold_new(n) {
+                    after_added = after_added && closes(n.text);
                     ops.push(Op {
                         kind: Operation::Equal,
+                        came_along: after_added,
                         ..*n
                     });
                 } else {
+                    after_added = true;
                     ops.push(*n);
                 }
             }

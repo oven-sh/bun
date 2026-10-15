@@ -1413,8 +1413,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     None => (no, nn),
                 };
                 let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
-                let faithful = normalize::stands_for(path, o, &shown_o.text, nopts)
-                    && normalize::stands_for(path, n, &shown_n.text, nopts);
+                let faithful = [(o, &shown_o), (n, &shown_n)].iter().all(|(raw, shown)| {
+                    normalize::stands_for(path, raw, &shown.text, nopts, renamed.is_some())
+                });
                 let keys = if js_family && faithful {
                     normalize::normalize_key_pair(path, o, n)
                 } else {
@@ -1533,7 +1534,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     _ => None,
                 };
                 reprint
-                    .filter(|shown| normalize::stands_for(path, raw, shown, nopts))
+                    .filter(|shown| normalize::stands_for(path, raw, shown, nopts, false))
                     .unwrap_or_else(|| raw.to_vec())
             };
             let body_owned;
@@ -2408,11 +2409,19 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         b"bundleDependencies",
         b"bundledDependencies",
     ] {
-        let (o, n) = (old.get(field), new.get(field));
         // The whole values decide; what a note shows of them is cut to size.
-        if o.map(|e| json_text(&e, true)) == n.map(|e| json_text(&e, true)) {
+        let differ = |(o, n): &(Option<bun_ast::Expr>, Option<bun_ast::Expr>)| {
+            o.map(|e| json_text(&e, true)) != n.map(|e| json_text(&e, true))
+        };
+        // What `bun install` goes by, then the files: other tools read those.
+        let Some((o, n)) = [
+            (old.get(field), new.get(field)),
+            (old.file.get(field), new.file.get(field)),
+        ]
+        .into_iter()
+        .find(differ) else {
             continue;
-        }
+        };
         match (o, n) {
             (Some(o), Some(n)) => {
                 let (o, n) = (expr_text(&o, &bump), expr_text(&n, &bump));

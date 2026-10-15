@@ -1017,7 +1017,7 @@ importers:
       expect(bunLock).not.toContain("is-positive@3.1.0@");
 
       const packageJson = await Bun.file(join(String(dir), "package.json")).json();
-      expect(packageJson.patchedDependencies).toStrictEqual({ "is-positive@3.1.0": "patches/is-positive@3.1.0.patch" });
+      expect(packageJson.patchedDependencies).toStrictEqual({ [IS_POSITIVE]: "patches/is-positive@3.1.0.patch" });
     });
 
     test.concurrent("bare hash whose patch is not in the config is skipped with a warning", async () => {

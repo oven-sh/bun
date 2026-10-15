@@ -314,6 +314,7 @@ impl<'a> DepSorter<'a> {
 
 /// Calls `emit(first, later)` for each row of one package that lists again the name of an earlier
 /// dev or optional row. `id_at(0..len)`: its rows as `DepSorter` and `Dependency::cmp` sort them.
+#[inline]
 pub(crate) fn names_listed_again(
     len: usize,
     id_at: impl Fn(usize) -> DependencyID,
@@ -321,12 +322,24 @@ pub(crate) fn names_listed_again(
     buf: &[u8],
     mut emit: impl FnMut(DependencyID, DependencyID),
 ) {
+    // workspaces, dev, optional, prod, peer: nearly every package starts at prod.
+    if len >= 2 && {
+        let first = deps[id_at(0) as usize].behavior;
+        !first.is_prod() && !first.is_peer()
+    } {
+        names_listed_in_two_groups(len, &id_at, deps, buf, &mut emit);
+    }
+}
+
+fn names_listed_in_two_groups(
+    len: usize,
+    id_at: &dyn Fn(usize) -> DependencyID,
+    deps: &[Dependency],
+    buf: &[u8],
+    emit: &mut dyn FnMut(DependencyID, DependencyID),
+) {
     use dependency::Behavior;
     let row = |i: usize| &deps[id_at(i) as usize];
-    // workspaces, dev, optional, prod, peer: nearly every package starts at prod.
-    if len < 2 || row(0).behavior.is_prod() || row(0).behavior.is_peer() {
-        return;
-    }
     let end_of = |from: usize, group: fn(Behavior) -> bool| {
         (from..len)
             .find(|&i| !group(row(i).behavior))

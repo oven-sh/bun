@@ -254,9 +254,15 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
 }
 
 /// Whether `shown`, a re-print under `options` put on screen in place of the file `raw`, is the same file to the
-/// parser: printed once more under them, the two are one text.
-pub(crate) fn stands_for(path: &[u8], raw: &[u8], shown: &[u8], options: Options) -> bool {
-    if let Some(Kind::Js(_)) = kind_for(path) {
+/// parser: printed once more under them, the two are one text. `renamed`: but for the names of locals.
+pub(crate) fn stands_for(
+    path: &[u8],
+    raw: &[u8],
+    shown: &[u8],
+    options: Options,
+    renamed: bool,
+) -> bool {
+    if renamed {
         return same_key(path, raw, shown, &[], options);
     }
     let print = |bytes: &[u8]| normalize(path, bytes, options);
@@ -316,7 +322,7 @@ fn parse_js<'a>(
     opts.features.minify_syntax = options.minify_syntax;
     // A call marked `@__PURE__` runs like any other unless a bundler drops it.
     opts.ignore_dce_annotations = true;
-    opts.keep_use_strict = true;
+    opts.keep_directives = true;
     // What the runtime takes.
     opts.features.top_level_await = true;
     opts.features.standard_decorators = !loader.is_typescript();

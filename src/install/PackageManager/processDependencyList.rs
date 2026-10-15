@@ -222,19 +222,22 @@ impl PackageManager {
         let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
         self.parse_extracted(package, &source, resolver)?;
         self.adopt_contained_folders(package, &json.path, &mut |this, source| {
-            this.parse_extracted(&mut Package::default(), source, resolver)
+            let start = this.lockfile.buffers.dependencies.len();
+            this.parse_extracted(&mut Package::default(), source, resolver)?;
+            this.lockfile.buffers.resolutions.truncate(start);
+            Ok(this.lockfile.buffers.dependencies.split_off(start))
         })
     }
 
     /// A `file:` folder inside a package is part of it, and Node looks up what the folder imports
     /// in the `node_modules` of the package: the folder's dependencies become rows of the package.
-    /// `package` is parsed and not appended yet, so its rows end the buffer. `parse` appends the
-    /// rows of a folder's package.json there, with the resolver that `package` was parsed with.
+    /// `package` is parsed and not appended yet, so its rows end the buffer. `parse` returns the
+    /// rows of a folder's package.json, parsed with the resolver that `package` was parsed with.
     fn adopt_contained_folders(
         &mut self,
         package: &mut Package,
         package_json_path: &[u8],
-        parse: &mut dyn FnMut(&mut Self, &bun_ast::Source) -> crate::Result<()>,
+        parse: &mut dyn FnMut(&mut Self, &bun_ast::Source) -> crate::Result<Vec<Dependency>>,
     ) -> crate::Result<()> {
         let off = package.dependencies.off as usize;
         let own_len = package.dependencies.len as usize;
@@ -285,11 +288,7 @@ impl PackageManager {
                 .append(&[package_dir, b"/", &folder, b"/package.json"].concat())?;
             let source = bun_ast::Source::init_path_string(path, &json[..]);
 
-            let start = self.lockfile.buffers.dependencies.len();
-            parse(self, &source)?;
-            let declared = self.lockfile.buffers.dependencies.split_off(start);
-            self.lockfile.buffers.resolutions.truncate(start);
-            for declared in declared {
+            for declared in parse(self, &source)? {
                 // One row for a name: the package's own, or that of the folder that came first.
                 if (self.lockfile.buffers.dependencies[off..].iter())
                     .any(|row| row.name_hash == declared.name_hash)

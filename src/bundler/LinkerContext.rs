@@ -4415,9 +4415,7 @@ impl<'a> LinkerContext<'a> {
             && exports.contains(b"default")
     }
 
-    /// `Part::removable_if_namespace_reads_bind`: every read off a `require()`
-    /// / `import()` local that runs with `part` prints as a binding
-    /// (`bind_namespace_local_read`), so none of them reads a property.
+    /// Every use in `part` with `symbol::Use::runs_namespace_read` prints as a binding.
     fn part_namespace_reads_are_bound(&self, part: &Part) -> bool {
         part.symbol_uses
             .keys()
@@ -4503,8 +4501,7 @@ impl<'a> LinkerContext<'a> {
             // A named import that holds a namespace (`export * as`) prints as
             // an import identifier.
             bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
-            // So does a read off a `require()` / `import()` local that is
-            // bound (`bind_namespace_local_read`).
+            // So does a bound read off a `require()` / `import()` local.
             bun_ast::ExprData::EDot(dot) if dot.is_import_property_use => {
                 let bun_ast::ExprData::EIdentifier(local) = dot.target.data else {
                     return false;
@@ -4979,12 +4976,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// `import_ref` is the item of `ns.name`, a read off a local that holds a
-    /// `require()` / `import()` namespace. The linker resolved it, so the
-    /// printer writes the item in place of each such read
-    /// (`E::Dot::is_import_property_use`). A read with no entry prints as
-    /// written. A local that a pattern binds is no such read: its symbol has
-    /// no `namespace_alias`.
+    /// Lets the printer write `import_ref` in place of each read `ns.name` off a namespace local.
     fn bind_namespace_local_read(&mut self, import_ref: Ref, named_import: &NamedImport) {
         let Some(alias) = named_import.alias else {
             return;

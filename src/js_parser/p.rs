@@ -362,13 +362,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
-    /// The refs that `namespace_tracked_uses` counted in the current part,
-    /// once per count. A part that leaves no statement takes its counts back.
+    /// The refs `namespace_tracked_uses` counted in the current part. A dead part takes them back.
     pub(crate) part_tracked_namespace_uses: Vec<Ref>,
-    /// On while `append_part` asks whether the part can be removed if unused.
-    /// A marked read off a `require()` / `import()` local then counts as free
-    /// of side effects, which it is when the linker binds it
-    /// (`Part::removable_if_namespace_reads_bind`).
+    /// On while `append_part` judges the part: a marked namespace-local read then counts as pure.
     pub(crate) part_removal_assumes_namespace_reads_bind: bool,
     /// Whether the answer relied on such a read.
     pub(crate) part_removal_relies_on_namespace_reads: bool,
@@ -3031,8 +3027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EDot(mut e) => {
-                    // A read the linker may bind to an export: the `require()` /
-                    // `import()` of its local must stay in the declaration.
+                    // The initializer of a namespace local must not move into its own marked read.
                     if e.is_import_property_use
                         && matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
                     {
@@ -6762,10 +6757,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// namespace-member binding in the linker can drop `X` when every use was
     /// resolved that way. Returns whether it was recorded; the caller marks the
     /// node (`E::Dot::is_import_property_use`) so the printer knows the two agree.
-    ///
-    /// `ns.name` off a `require()` / `import()` local is marked too, when
-    /// `maybe_rewrite_property_access` counted its import item in this part:
-    /// the linker binds that item or the read prints as written.
+    /// Also true for `ns.name` off a `require()` / `import()` local whose item this part counts.
     pub(crate) fn record_import_property_use(
         &mut self,
         target: &Expr,
@@ -6835,8 +6827,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !opts.is_delete_target()
     }
 
-    /// The import item that `maybe_rewrite_property_access` made for `ns.name`,
-    /// where `ns` is a local that holds a `require()` / `import()` namespace.
+    /// The import item of `ns.name`, where `ns` holds a `require()` / `import()` namespace.
     pub(crate) fn namespace_local_import_item(&self, ns: Ref, name: &[u8]) -> Option<Ref> {
         if !self.dynamic_import_namespace_locals.contains_key(&ns) {
             return None;
@@ -6845,8 +6836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.is_import_item.contains_key(&item).then_some(item)
     }
 
-    /// The import item of `expr` when it is such a read and is marked
-    /// (`E::Dot::is_import_property_use`).
+    /// The import item of `expr` when it is a marked read off such a local.
     fn namespace_local_read_item(&self, expr: &Expr) -> Option<Ref> {
         let (target, name) = match &expr.data {
             js_ast::ExprData::EDot(dot) if dot.is_import_property_use => {
@@ -6864,10 +6854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.namespace_local_import_item(id.ref_, name)
     }
 
-    /// `expr` is a marked read off a `require()` / `import()` local, in a
-    /// position that runs when the part runs. The part can still be removed if
-    /// the linker binds the read, so its use of the import item says so
-    /// (`symbol::Use::runs_namespace_read`).
+    /// Marks the part use of the item of `expr`, a marked read that runs with the part.
     fn rely_on_namespace_read(&mut self, expr: &Expr) -> bool {
         let Some(item) = self.namespace_local_read_item(expr) else {
             return false;

@@ -1457,9 +1457,7 @@ describe.skipIf(!isPosix)("FileSink: a buffered write that fails after write() r
         await turn();
         console.log(JSON.stringify({ wrote, flush, again, end: typeof (await sink.end()), text: text() }));
       `);
-      expect(result).toEqual(
-        printed({ wrote: line.length, flush: "EFBIG", again: 6, end: "number", text: "after\n" }),
-      );
+      expect(result).toEqual(printed({ wrote: line.length, flush: "EFBIG", again: 6, end: "number", text: "after\n" }));
     });
 
     it.concurrent("the bytes land once the file has room again", async () => {

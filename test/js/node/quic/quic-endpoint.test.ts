@@ -6,9 +6,9 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { createCipheriv, createDecipheriv, createHmac, createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
-import { BlockList } from "node:net";
+import { BlockList, type SocketAddress } from "node:net";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint } from "node:quic";
+import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -418,8 +418,8 @@ async function udpPeer(reply?: (datagram: Buffer) => Buffer | undefined) {
   const endpoint = new QuicEndpoint();
   const dial = (servername = "localhost") =>
     connect(
-      { address: "127.0.0.1", port: socket.address().port },
-      { endpoint, servername, verifyPeer: "manual", onerror() {} },
+      { address: "127.0.0.1", port: socket.address().port } as SocketAddress,
+      { endpoint, servername, verifyPeer: "manual", onerror() {} } as SessionOptions,
     );
   /** Waits for a datagram that is `wanted`. Returns what every datagram so far carries. */
   async function until(wanted: (initials: ClientInitials) => boolean) {
@@ -608,7 +608,7 @@ describe("session close options against a server", () => {
       { sni: sniOpt, handshakeTimeout: 3000 },
     );
     await using endpoint = new QuicEndpoint();
-    const session = await connect(server.address, { endpoint, ...clientOpt });
+    const session = await connect(server.address!, { endpoint, ...clientOpt });
     session.opened.catch(() => {});
     await session.close({ code: 5n });
 
@@ -652,7 +652,7 @@ describe("session close options against a server", () => {
         { sni: sniOpt },
       );
       await using endpoint = new QuicEndpoint();
-      const session = await connect(server.address, { endpoint, ...clientOpt });
+      const session = await connect(server.address!, { endpoint, ...clientOpt });
       const clientSaw = outcome(session.closed);
       clientOpened.resolve(session.opened);
       await clientOpened.promise;
@@ -680,7 +680,7 @@ describe("session close options against a server", () => {
       { alpn: "quic-test", sni: sniOpt },
     );
     await using endpoint = new QuicEndpoint();
-    const session = await connect(server.address, { endpoint, alpn: "quic-test", ...clientOpt });
+    const session = await connect(server.address!, { endpoint, alpn: "quic-test", ...clientOpt });
     const closed = outcome(session.closed);
     await session.opened;
     const stream = await session.createBidirectionalStream();
@@ -711,7 +711,7 @@ describe("session close options against a server", () => {
         { sni: sniOpt },
       );
       await using endpoint = new QuicEndpoint();
-      const session = await connect(server.address, { endpoint, ...clientOpt });
+      const session = await connect(server.address!, { endpoint, ...clientOpt });
       const closed = outcome(session.closed);
       clientOpened.resolve(session.opened);
       await destroyed.promise;
@@ -744,7 +744,7 @@ describe("session close options against a server", () => {
         { sni: sniOpt },
       );
       await using endpoint = new QuicEndpoint();
-      const session = await connect(server.address, { endpoint, ...clientOpt });
+      const session = await connect(server.address!, { endpoint, ...clientOpt });
 
       expect({ opened: await outcome(session.opened), closed: await outcome(session.closed) }).toEqual({
         opened: "fulfilled",
@@ -768,7 +768,7 @@ describe("session close options against a server", () => {
       },
       { sni: sniOpt, transportParams: { maxIdleTimeout: 1 } },
     );
-    const serverPort = server.address.port;
+    const serverPort = server.address!.port;
 
     // The end of the long header packets (RFC 9000 s17.2) that start `datagram`.
     const longHeadersEnd = (datagram: Buffer) => {
@@ -806,7 +806,10 @@ describe("session close options against a server", () => {
     await new Promise<void>(resolve => relay.bind(0, "127.0.0.1", resolve));
     try {
       await using endpoint = new QuicEndpoint();
-      const session = await connect({ address: "127.0.0.1", port: relay.address().port }, { endpoint, ...clientOpt });
+      const session = await connect({ address: "127.0.0.1", port: relay.address().port } as SocketAddress, {
+        endpoint,
+        ...clientOpt,
+      });
       // `opened` waits for the server's HANDSHAKE_DONE, a 1-RTT frame.
       session.opened.catch(() => {});
       await serverOpened.promise;

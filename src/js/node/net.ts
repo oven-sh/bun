@@ -1855,7 +1855,8 @@ function serverHandlersFor(server) {
 
 // node.net.native trace events: one 'b'/'e' pair per connect *attempt*, including
 // failed ones. 'b' fires where the attempt is issued; the per-req flag dedupes the
-// 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout paths.
+// 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout /
+// refused-by-the-handle paths.
 const kNetTraceCat = "node,node.net,node.net.native";
 const kTraceConnectActive = Symbol("kTraceConnectActive");
 let traceEvents: typeof import("internal/trace_events").default;

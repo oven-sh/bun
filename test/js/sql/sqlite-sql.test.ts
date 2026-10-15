@@ -85,6 +85,29 @@ describe("Connection & Initialization", () => {
     expect(oncloseArg instanceof Error).toBe(true);
   });
 
+  test("what onconnect and onclose throw is reported, as on the other adapters", async () => {
+    const script = `
+      const reported = [];
+      process.on("uncaughtException", error => void reported.push(error.message));
+      const sql = new Bun.SQL({
+        adapter: "sqlite",
+        filename: ":memory:",
+        onconnect() { throw new Error("from onconnect"); },
+        onclose() { throw new Error("from onclose"); },
+      });
+      const rows = await sql\`select 1 as x\`;
+      await sql.close();
+      console.log(JSON.stringify({ rows, reported }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ rows: [{ x: 1 }], reported: ["from onconnect", "from onclose"] }) + "\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   test("onconnect receives Error when open fails (readonly non-existent)", async () => {
     await using dir = tempDir("sqlite-onconnect-error", {});
     const dbPath = join(dir, "missing.db");

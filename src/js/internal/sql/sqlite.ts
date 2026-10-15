@@ -137,7 +137,9 @@ class SQLiteAdapter
     }
     try {
       if (onconnect) onconnect(this.storedError);
-    } catch {}
+    } catch (thrown) {
+      reportError(thrown);
+    }
   }
 
   createQueryHandle(sql: string, values: unknown[] | Record<string, unknown>): SQLiteQueryHandle {
@@ -217,7 +219,9 @@ class SQLiteAdapter
     try {
       const onclose = this.connectionInfo.onclose;
       if (onclose) onclose(this.storedError);
-    } catch {}
+    } catch (thrown) {
+      reportError(thrown);
+    }
   }
 
   flush() {

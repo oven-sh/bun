@@ -1877,7 +1877,7 @@ impl TestCommand {
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate,
+            short_lived_globals: ctx.test_options.isolate && !ctx.test_options.isolate_modules,
             ..Default::default()
         });
         bun_http::http_thread::init(&Default::default());
@@ -2070,6 +2070,7 @@ impl TestCommand {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
         }
+        vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
 
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;
@@ -3011,6 +3012,7 @@ impl TestCommand {
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point()?;
+        vm.enter_module_graph_for_test_isolation();
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
@@ -3058,8 +3060,9 @@ impl TestCommand {
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
             // `--isolate` swaps the global after the last repeat.
-            let next_load_shares_global =
-                !vm.test_isolation_enabled || repeat_index + 1 < repeat_count;
+            let next_load_shares_global = !vm.test_isolation_enabled
+                || vm.test_isolation_state.shares_global
+                || repeat_index + 1 < repeat_count;
             let _entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,

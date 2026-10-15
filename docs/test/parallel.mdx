@@ -86,6 +86,28 @@ To keep that cost low, Bun caches transpiled source and bytecode at the process 
 
 Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
 
+### `--isolate=modules`
+
+```sh terminal icon="terminal"
+bun test --isolate=modules
+```
+
+Keeps one global object for the whole run and gives each file its own copy of every module. JIT-compiled code belongs to a global object, so with `--isolate` every file starts in the interpreter again. With `--isolate=modules`, a file runs the code that was compiled for the files before it.
+
+|                                                                      | `--isolate`  | `--isolate=modules` |
+| -------------------------------------------------------------------- | ------------ | ------------------- |
+| Modules, module mocks, `--preload` scripts                           | new per file | new per file        |
+| The window of a [DOM environment](/test/dom)                         | new per file | new per file        |
+| Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed              |
+| `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone  |
+| `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored            |
+| Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared              |
+| JIT-compiled code                                                    | discarded    | kept                |
+
+Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
+
+What is undone between files is a change to a property of `globalThis`, of an object that is a property of `globalThis`, or of a function or prototype reachable from those. A change to the exports of a built-in module (`fs.readFileSync = ...`) stays for the next file, and so does state inside a built-in object.
+
 ## Concurrent tests within a file
 
 `--parallel` spreads _files_ across cores. Within one file tests still run one at a time unless you opt in to concurrency, which lets `async` tests overlap while one is waiting on I/O:

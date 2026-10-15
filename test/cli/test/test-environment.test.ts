@@ -304,6 +304,29 @@ describe.concurrent("test environment", () => {
     });
   });
 
+  test.each(["jsdom", "happy-dom"])("--isolate=modules loads %s once and opens a window for each file", async name => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "a.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
+      "b.test.js": logEnvironment,
+      "c.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
+    expect(stdout.map(line => line.replace(/ (?:\{|[a-z]+:).*/, "").trimEnd())).toEqual([
+      `open ${name}#1`,
+      `a.test.js ${name}#1`,
+      ...(name === "happy-dom" ? [`abort ${name}#1`] : []),
+      `close ${name}#1`,
+      "b.test.js node",
+      `open ${name}#2`,
+      `c.test.js ${name}#2`,
+      ...(name === "happy-dom" ? [`abort ${name}#2`] : []),
+      `close ${name}#2`,
+    ]);
+    expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("the package is resolved from the test file", async () => {
     using dir = tempDir("test-environment", {
       "packages/a/node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],
@@ -1289,6 +1312,67 @@ describe.concurrent("test environment with the real", () => {
     }
     return dir;
   }
+
+  test.each(["jsdom", "happy-dom"])(
+    "%s: with --isolate=modules a file sees nothing of the window before it",
+    async name => {
+      using dir = project({
+        "a.test.js": `
+        // ${VITEST} ${name}
+        test("a", () => {
+          document.body.innerHTML = "<p id='left'>left</p>";
+          document.title = "a";
+          localStorage.setItem("left", "1");
+          window.left = 1;
+          innerWidth = 123;
+          Object.defineProperty(window, "matchMedia", { value: () => "a", configurable: true });
+          HTMLElement.prototype.left = 1;
+          addEventListener("ping", () => console.log("a hears ping"));
+          document.addEventListener("ping", () => console.log("a hears ping"));
+          globalThis.documentOfA = document;
+          require("node:fs").documentOfA = document;
+        });
+      `,
+        "b.test.js": `
+        // ${VITEST} ${name}
+        test("b", () => {
+          dispatchEvent(new Event("ping"));
+          document.dispatchEvent(new Event("ping"));
+          expect({
+            body: document.body.innerHTML,
+            title: document.title,
+            stored: localStorage.getItem("left"),
+            left: "left" in window,
+            innerWidth,
+            matchMedia: typeof matchMedia === "function" && matchMedia("x") === "a",
+            prototype: "left" in HTMLElement.prototype,
+            documentOfA: "documentOfA" in globalThis,
+            sameDocument: require("node:fs").documentOfA === document,
+            window: window === globalThis && document.defaultView === globalThis,
+            element: document.createElement("div") instanceof HTMLElement,
+          }).toEqual({
+            body: "",
+            title: "",
+            stored: null,
+            left: false,
+            innerWidth: 1024,
+            matchMedia: false,
+            // happy-dom's classes belong to the package, which a process loads once. jsdom makes them for each window.
+            prototype: ${name === "happy-dom"},
+            documentOfA: false,
+            sameDocument: false,
+            window: true,
+            element: true,
+          });
+        });
+      `,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
+      expect(stdout).toEqual([]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   const dom = `
     import { test, expect, afterAll } from "bun:test";

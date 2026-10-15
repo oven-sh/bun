@@ -280,7 +280,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
-    argv.push(if opts.isolate {
+    argv.push(if opts.isolate_modules {
+        lit(b"--isolate=modules\0")
+    } else if opts.isolate {
         lit(b"--isolate\0")
     } else {
         lit(b"--no-isolate\0")
@@ -705,6 +707,7 @@ pub(crate) fn run_as_worker(
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
     vm_ref.test_isolation_enabled = ctx.test_options.isolate;
+    vm_ref.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
     vm_ref.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`

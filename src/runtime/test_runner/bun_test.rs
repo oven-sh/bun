@@ -1284,7 +1284,7 @@ impl BunTest {
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE,
+        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(vm.test_isolation_state.file_context,
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,

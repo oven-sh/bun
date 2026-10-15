@@ -379,9 +379,10 @@ function open(
   file: string,
   keep: boolean,
   beforeCreating: () => void,
+  sharesGlobal = false,
 ) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
-  const found = (keep ? find : lastingCopyOfThisModule().find)(name, file, !keep);
+  const found = (keep || sharesGlobal ? find : lastingCopyOfThisModule().find)(name, file, !keep);
   if (typeof found === "string") return found;
   const { packagePath, requireFromTest } = found;
 
@@ -480,6 +481,90 @@ function enter(name: string, environment: Environment, keep: boolean) {
   return teardown;
 }
 
+// With --isolate=modules every file has a new window and globalThis stays. Redefining several hundred accessors a few times
+// has the effect on JSC that deleting them has (see `left`). So each is defined once, and reads the window of the running file.
+let windowOfFile: Properties | undefined;
+const forwarders = new $Map<string, PropertyDescriptor>();
+const originalsOfForwarded = new $Map<string, PropertyDescriptor | undefined>();
+
+function forwarder(key: string) {
+  let descriptor = forwarders.$get(key);
+  if (!descriptor) {
+    descriptor = {
+      __proto__: null,
+      get() {
+        return windowOfFile?.$get(key)?.get?.$call(this);
+      },
+      set(value) {
+        windowOfFile?.$get(key)?.set?.$call(this, value);
+      },
+      enumerable: false,
+      configurable: true,
+    } as PropertyDescriptor;
+    forwarders.$set(key, descriptor);
+  }
+  return descriptor;
+}
+
+function leaveSharedGlobal() {
+  windowOfFile = undefined;
+  originalsOfForwarded.$forEach((original, key) => void putBack(key, original));
+  originalsOfForwarded.$clear();
+}
+
+function enterSharedGlobal(environment: Environment) {
+  const { properties, keys } = environment;
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const ofWindow = properties.$get(key);
+    if (!ofWindow) continue;
+    const descriptor = ofWindow.get ? forwarder(key) : ofWindow;
+    const current = ownProperty(key);
+    if (current?.configurable === false) continue;
+    if (current && current.get === descriptor.get && current.value === descriptor.value) continue;
+    if (!originalsOfForwarded.$has(key)) originalsOfForwarded.$set(key, current);
+    $Object.$defineProperty(globalThis, key, descriptor);
+  }
+  // A name only the last window had.
+  originalsOfForwarded.$forEach((original, key) => {
+    if (properties.$has(key)) return;
+    putBack(key, original);
+    originalsOfForwarded.$delete(key);
+  });
+  windowOfFile = properties;
+}
+
+function setupInSharedGlobal(
+  name: "node" | "jsdom" | "happy-dom",
+  optionsText: string | undefined,
+  file: string,
+  isFromComment: boolean,
+) {
+  if (name === "node") return leaveSharedGlobal();
+  let result;
+  try {
+    result = open(name, optionsText, file, false, () => {}, true);
+  } catch (error) {
+    if (!isFromComment) throw error;
+    result = String((error as Error)?.message ?? error);
+  }
+  if (typeof result === "string") {
+    leaveSharedGlobal();
+    const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;
+    if (isFromComment) return message;
+    const error = new Error(message);
+    captureStackTrace(error, setup);
+    throw error;
+  }
+  const environment = result;
+  enterSharedGlobal(environment);
+  return function teardown(isLoadingFileAgain: boolean) {
+    if (!isLoadingFileAgain) return environment.close();
+    environment.forgetLastFile?.();
+    return isClosed(environment.window);
+  };
+}
+
 // Returns a teardown function, or undefined if a preload already set up a DOM.
 // On failure it throws, or returns a warning string if `isFromComment`.
 function setup(
@@ -488,7 +573,9 @@ function setup(
   file: string,
   keep: boolean,
   isFromComment: boolean,
+  sharesGlobal: boolean,
 ) {
+  if (sharesGlobal) return setupInSharedGlobal(name, optionsText, file, isFromComment);
   let last = left;
   left = undefined;
   function leaveLast() {
@@ -527,5 +614,7 @@ function setup(
 }
 
 setup.find = find;
+// For internal/test/globals.ts.
+setup.isNameLeftOnGlobalThis = (key: PropertyKey) => originalsOfForwarded.$has(key as string);
 
 export default setup;

@@ -820,7 +820,7 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* loader = globalObject->moduleLoader();
+    auto* loader = Bun::moduleLoaderOfTestFile(globalObject);
 
     Vector<JSC::Identifier> unfinished;
     Vector<std::pair<int64_t, String>> awaiting;
@@ -4899,6 +4899,17 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     // Again, to catch realms that close handlers created since the first pass.
+    stopActiveDOMObjectsOfDerivedRealms(globalObject);
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (derived)
+            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    }
+}
+
+// `bun test --isolate=modules`: the global object stays, and the realms the finished file derived from it go.
+extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
         if (derived)

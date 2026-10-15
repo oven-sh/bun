@@ -395,6 +395,10 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
+    /// `--isolate=modules`: every file runs in the one global object, in a `Bun.ModuleGraph` of its own.
+    pub shares_global: bool,
+    /// The context of the running file's graph, which its callbacks are called in.
+    pub file_context: crate::ContextId,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -462,6 +466,9 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
+    safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
+    safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -5992,11 +5999,15 @@ impl VirtualMachine {
     /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
+        // Then it's the file's graph that goes, with its context. What belongs to the global object stays.
+        let shares_global = self.test_isolation_state.shares_global;
 
         // The finished file's workers, ports, channels and sockets are stopped
         // first (no events dispatched), before its socket groups and timers are
         // swept and before the new global exists.
-        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        if !shares_global {
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -6014,14 +6025,18 @@ impl VirtualMachine {
             // `BindingData::SetCallbacks`), so a holder left by the outgoing
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
-            rare.node_quic_callbacks.deinit();
+            if !shares_global {
+                rare.node_quic_callbacks.deinit();
+            }
         }
         // Cached macro functions belong to the outgoing global, which must not run again.
-        for callback in self.macros.values() {
-            callback.unprotect();
+        if !shares_global {
+            for callback in self.macros.values() {
+                callback.unprotect();
+            }
+            self.macros.clear_retaining_capacity();
+            self.transpiler.macro_context = None;
         }
-        self.macros.clear_retaining_capacity();
-        self.transpiler.macro_context = None;
         let _ = self.event_loop_mut().drain_microtasks();
 
         let _ = self.auto_killer.kill();
@@ -6029,7 +6044,13 @@ impl VirtualMachine {
 
         // The outgoing file's exit: work it left in flight (thread-pool jobs,
         // the children just killed) lands later and must not resume its script.
-        Zig__GlobalObject__retireForTestIsolation(self.global());
+        if shares_global {
+            Zig__GlobalObject__retireDerivedRealmsForTestIsolation(self.global());
+            Bun__TestFile__leaveModuleGraph(self.global());
+            self.test_isolation_state.file_context = crate::ContextId::NONE;
+        } else {
+            Zig__GlobalObject__retireForTestIsolation(self.global());
+        }
         // What the outgoing file's close handlers and last microtasks opened
         // since the caller's sweep.
         let _ = self.stop_context_handles(crate::StopReason::Disposed);
@@ -6071,6 +6092,12 @@ impl VirtualMachine {
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
 
+        if shares_global {
+            self.undo_process_env_side_effects();
+            self.undo_synthetic_allocation_limit();
+            return;
+        }
+
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.
@@ -6092,6 +6119,21 @@ impl VirtualMachine {
 
         self.undo_process_env_side_effects();
         self.undo_synthetic_allocation_limit();
+    }
+
+    /// `--isolate=modules`: what is loaded from now on is the test file's that is about to run.
+    pub fn enter_module_graph_for_test_isolation(&mut self) {
+        let state = &self.test_isolation_state;
+        if state.shares_global && state.file_context == crate::ContextId::NONE {
+            // The first call remembers the globals, each later one undoes what the last file did to them.
+            let global = self.global();
+            if let Ok(undo) = crate::cpp::Bun__TestGlobals__undoChangesFunction(global) {
+                let _ = undo.call(global, JSValue::UNDEFINED, &[]);
+            }
+            global.clear_exception();
+            self.test_isolation_state.file_context =
+                crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(global));
+        }
     }
 
     /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.

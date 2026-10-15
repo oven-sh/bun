@@ -65,7 +65,7 @@ public:
     // The linked wrapper function of a CommonJS module this graph evaluated (ModuleGraphState::commonJSWrappers).
     void keepCommonJSWrapper(JSC::VM&, JSC::CodeBlock*);
 
-    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier);
+    JSC::JSPromise* import(Zig::GlobalObject*, JSC::JSValue specifier, bool mayBecomeMain = true);
     void dispose(Zig::GlobalObject*);
 
 private:
@@ -111,6 +111,13 @@ public:
     // The async context native code entered from the top of the event loop
     // (VirtualMachine::enter_context): what a microtask checkpoint there goes back to.
     JSC::Strong<JSC::Unknown> enteredFromEventLoop;
+    // bun test --isolate=modules: the graph of the running test file.
+    JSC::Strong<JSModuleGraph> testFile;
+    // The compiled code of the modules the finished files loaded, which otherwise goes with the last graph that ran it:
+    // module executables with the symbol tables and module keys JSC finds them by, and CommonJS wrappers. Never seen by script.
+    JSC::Strong<JSC::JSArray> testFileCode;
+    WTF::UncheckedKeyHashSet<JSC::JSCell*> testFileCodeCells;
+    WTF::Vector<RefPtr<WTF::UniquedStringImpl>> testFileModuleKeys;
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -123,6 +130,8 @@ JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
 JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
 // The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
+// The graph of the module whose code made `function`; null for the host's.
+JSModuleGraph* moduleGraphOfFunction(JSC::JSObject* function);
 // The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
 JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
 
@@ -136,6 +145,12 @@ JSC::JSModuleLoader* moduleLoaderOf(JSC::JSGlobalObject*, JSC::ThrowScope&, JSMo
 // dispose() of the graph `context` was made for (its context is stopped with it); just the stop
 // if the graph has been collected.
 void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
+
+// ── bun test --isolate=modules ───────────────────────────────────────────────────────
+// What the runner loads a test file with, and what module mocks look in: those of the file's graph, or the global object's.
+JSModuleGraph* moduleGraphOfTestFile(Zig::GlobalObject*);
+JSC::JSModuleLoader* moduleLoaderOfTestFile(Zig::GlobalObject*);
+JSC::JSMap* requireMapOfTestFile(Zig::GlobalObject*);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

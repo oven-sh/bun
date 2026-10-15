@@ -68,6 +68,8 @@ expect(element.getAttributeNames()).toStrictEqual(["class"]); // passes
 element instanceof HTMLElement; // true
 ```
 
+With [`--isolate=modules`](/test/parallel#--isolate) there is one global object, the package is loaded into it, and these are ordinary arrays.
+
 `require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.
 
 For the same reason, the timers that jsdom sets for itself are real while [fake timers](/test/dates-times) are on. `input.select()`, `input.focus()`, `window.postMessage()` and a click on a `#fragment` link each set one. With `--isolate`, they don't count in `vi.getTimerCount()`, and `vi.runAllTimers()` doesn't run them.

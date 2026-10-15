@@ -15,6 +15,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestEnvironmen
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalTestEnvironment)));
 }
 
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__undoChangesFunction(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalTestGlobals)));
+}
+
 namespace Bun {
 
 // Not a derived realm of the test file's global, which would be retired with the file.

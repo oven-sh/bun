@@ -8,6 +8,7 @@
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "ScriptExecutionContext.h"
+#include "ModuleGraph.h"
 #include <JavaScriptCore/JSFinalizationRegistry.h>
 
 using Ticket = JSC::DeferredWorkTimer::Ticket;
@@ -178,6 +179,11 @@ static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskSchedul
         // file. doWork re-queues a Suspended realm's task; no Bun realm reports that.
         auto status = globalObject->globalObjectMethodTable()->scriptExecutionStatus(globalObject, job->ticket->scriptExecutionOwner());
         ASSERT(status != ScriptExecutionStatus::Suspended);
+        // The collector asks for this work, so `graphContext` is nobody's.
+        if (auto* registry = dynamicDowncast<JSFinalizationRegistry>(job->ticket->target())) {
+            if (auto* graph = Bun::moduleGraphOfFunction(registry->callback()); graph && graph->disposed())
+                status = ScriptExecutionStatus::Stopped;
+        }
         if (status == ScriptExecutionStatus::Running) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             job->task(job->ticket.get());

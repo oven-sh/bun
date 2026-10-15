@@ -4550,7 +4550,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::jsUndefined();
     }
-    auto* requireMap = globalObject->requireMap();
+    auto* requireMap = Bun::requireMapOfTestFile(globalObject);
     JSValue mainModule = requireMap->get(globalObject, mainValue);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();

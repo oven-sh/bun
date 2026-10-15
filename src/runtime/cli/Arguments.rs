@@ -639,7 +639,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
-        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+        "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
@@ -2066,7 +2066,19 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
-    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
+    let isolate = args.option(b"--isolate");
+    ctx.test_options.isolate = isolate.is_some() && !no_isolate;
+    ctx.test_options.isolate_modules = match isolate {
+        None | Some(b"" | b"global") => false,
+        Some(b"modules") => !no_isolate,
+        Some(other) => {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --isolate expects \"global\" or \"modules\", received \"{}\"",
+                BStr::new(other)
+            );
+            Global::exit(1);
+        }
+    };
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {

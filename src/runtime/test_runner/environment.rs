@@ -227,7 +227,7 @@ fn setup(
 ) -> JsResult<Option<Strong>> {
     let is_left =
         Jest::runner().is_some_and(|runner| core::mem::take(&mut runner.environment_is_left));
-    if kind == TestEnvironment::Node && !is_left {
+    if kind == TestEnvironment::Node && !is_left && !vm.test_isolation_state.shares_global {
         return Ok(None);
     }
     let global = vm.global();
@@ -243,6 +243,7 @@ fn setup(
             bun_string_jsc::create_utf8_for_js(global, path)?,
             JSValue::from(!vm.test_isolation_enabled),
             JSValue::from(is_from_comment),
+            JSValue::from(vm.test_isolation_state.shares_global),
         ],
     )?;
     if teardown.is_string() {

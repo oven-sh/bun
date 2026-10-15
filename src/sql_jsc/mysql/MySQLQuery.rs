@@ -13,7 +13,7 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::jsc::js_error_to_mysql;
 
-use super::js_mysql_connection::MySQLConnection;
+use super::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use super::my_sql_statement::MySQLStatement;
 use bun_ptr::RefPtr;
 

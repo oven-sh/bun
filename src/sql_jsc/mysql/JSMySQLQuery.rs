@@ -13,33 +13,19 @@ use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
-use super::js_mysql_connection::MySQLConnection;
+use super::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-// `my_sql_query` exports both the `MySQLQuery` *struct* and a
-// `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
-// the name once pulls in both namespaces, so the `debug!` macro below resolves
-// against the imported static — no second `declare_scope!` here.
+// The struct, and the `declare_scope!` static of the same name that `debug!` below logs to.
 use super::my_sql_query::MySQLQuery;
 use super::my_sql_statement::MySQLStatement;
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
-// The `#[bun_jsc::JsClass]` derive is intentionally not applied: this type's
-// JS wiring (`to_js`/`from_js`, the exported `MySQLQueryPrototype__*` /
-// `MySQLQueryClass__*` wrappers) is owned by the `.classes.ts` codegen
-// (`generated_classes.rs` calls the inherent methods below directly), so the
-// derive's placeholder shims would be redundant dead code.
-//
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
-// so the impls below compile against either.
+// JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
-    // unfortunately we cannot use #ref_count here
     ref_count: Cell<u32>,
-    // Process-lifetime backref (JSC_BORROW on m_ctx payload).
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
 }
@@ -84,17 +70,14 @@ impl JSMySQLQuery {
                 simple,
             )),
         }));
-        // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
-        // until handed to the JS wrapper. R-2: every field is interior-mutable,
-        // so a shared `ParentRef` deref is sufficient even for the writes below.
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
         let this_value = js::to_js(this_ptr, global_this);
         this_value.ensure_still_alive();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
-        this.set_binding(values);
-        this.set_pending_value(pending_value);
+        js::binding_set_cached(this_value, global_this, values);
+        js::pending_value_set_cached(this_value, global_this, pending_value);
 
         Ok(this_value)
     }
@@ -113,10 +96,6 @@ impl JSMySQLQuery {
                 "run must be called with 2 arguments connection and target"
             )));
         }
-        // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the backing
-        // JSC wrapper is rooted by `arguments[0]` for this frame, satisfying the
-        // `ParentRef` outlives-holder invariant. R-2: shared `&` only — every
-        // `MySQLConnection` method reached below is `&self` post-migration.
         let Some(connection) = js_mysql_connection::from_js_ref(arguments[0]) else {
             return Err(global_object.throw(format_args!("connection must be a MySQLConnection")));
         };
@@ -138,7 +117,7 @@ impl JSMySQLQuery {
         if this.is_completed() {
             return Ok(JSValue::UNDEFINED);
         }
-        this.set_target(target);
+        js::target_set_cached(callframe.this(), global_object, target);
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         this.this_value.with_mut(|v| v.upgrade(global_object));
         connection.enqueue_request(this.ref_guard());
@@ -170,8 +149,6 @@ impl JSMySQLQuery {
         }
 
         let mode_value = js_mode.coerce::<i32>(global_object)?;
-        // Manual range match (no `TryFrom<i32>`
-        // on `SQLQueryResultMode`; it's a plain `#[repr(u8)]` enum).
         let mode = match mode_value {
             0 => SQLQueryResultMode::Objects,
             1 => SQLQueryResultMode::Values,
@@ -243,13 +220,13 @@ impl JSMySQLQuery {
             return;
         }
 
-        let Some(target_value) = self.get_target() else {
-            return;
-        };
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
         this_value.ensure_still_alive();
+        let Some(target_value) = js::target_get_cached(this_value) else {
+            return;
+        };
         let vm = VirtualMachine::get_mut();
         let Some(function) = vm.sql_state().mysql_context.on_query_resolve_fn.get() else {
             return;
@@ -322,7 +299,10 @@ impl JSMySQLQuery {
         }
         let _downgrade = DowngradeOnDrop(self);
 
-        let Some(target_value) = self.get_target() else {
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = js::target_get_cached(this_value) else {
             return;
         };
 
@@ -341,9 +321,6 @@ impl JSMySQLQuery {
             return;
         };
         debug_assert!(function.is_callable(), "onQueryRejectFn is not callable");
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return;
-        };
         vm.event_loop_mut().run_callback(
             bun_event_loop::ContextId::NONE,
             function,
@@ -357,7 +334,10 @@ impl JSMySQLQuery {
         if self.query.with_mut(|q| q.start(connection))? {
             return Ok(());
         }
-        let binding_value = self.get_binding().unwrap_or(JSValue::UNDEFINED);
+        let this_value = self.this_value.get().try_get();
+        let binding_value = this_value
+            .and_then(js::binding_get_cached)
+            .unwrap_or(JSValue::UNDEFINED);
         // `params` is on the malloc heap: `roots` keeps the buffers in it alive.
         MarkedArgumentBuffer::new(|roots| {
             let params = MySQLQuery::bind(self.global_object(), binding_value, roots)?;
@@ -421,34 +401,6 @@ impl JSMySQLQuery {
     }
 
     #[inline]
-    fn set_target(&self, result: JSValue) {
-        if let Some(value) = self.this_value.get().try_get() {
-            js::target_set_cached(value, self.global_object(), result);
-        }
-    }
-    #[inline]
-    fn get_target(&self) -> Option<JSValue> {
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::target_get_cached(value);
-        }
-        None
-    }
-
-    #[inline]
-    fn set_binding(&self, result: JSValue) {
-        if let Some(value) = self.this_value.get().try_get() {
-            js::binding_set_cached(value, self.global_object(), result);
-        }
-    }
-    #[inline]
-    fn get_binding(&self) -> Option<JSValue> {
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::binding_get_cached(value);
-        }
-        None
-    }
-
-    #[inline]
     fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
@@ -463,6 +415,3 @@ impl Drop for DowngradeOnDrop<'_> {
         }
     }
 }
-
-// JS reaches `create_instance` through `put_host_functions!` in `mysql.rs`;
-// nothing on the C++ side references it, so no extern export exists.

@@ -176,9 +176,7 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType |
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, is_last, statement) {
     if (is_last) {
-      try {
-        query.resolve(query[_results]);
-      } catch {}
+      query.resolve(query[_results]);
       return;
     }
     $assert(result instanceof SQLResultArray, "Invalid result array");

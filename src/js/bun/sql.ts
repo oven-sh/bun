@@ -823,7 +823,7 @@ function reserve(this: Client, options?: { signal?: AbortSignal }) {
   if (pool.closed) {
     return Promise.$reject(pool.connectionClosedError());
   }
-  if (!pool.supportsReservedConnections()) {
+  if (!pool.supportsReservedConnections) {
     return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
   }
 

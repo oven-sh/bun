@@ -461,9 +461,7 @@ function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) 
 }
 
 function onRejectQuery(query: QueryType<any, any>, err: Error) {
-  try {
-    query.reject(err);
-  } catch {}
+  query.reject(err);
 }
 
 abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHandle>
@@ -471,6 +469,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
+  public readonly supportsReservedConnections = true;
 
   abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
   protected abstract readonly createNativeQuery: NativeCreateQuery<QueryHandle>;
@@ -567,10 +566,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
     );
-  }
-
-  supportsReservedConnections() {
-    return true;
   }
 
   cancelConnect(onConnected: OnConnected): boolean {

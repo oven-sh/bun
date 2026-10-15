@@ -24,14 +24,7 @@ bun_core::declare_scope!(Postgres, visible);
 
 pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 
-//
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut PostgresSQLQuery` —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
-// `UnsafeCell` (which both `Cell` and `JsCell` wrap) suppresses LLVM `noalias`
-// on `&T`, structurally eliminating the PROVEN_CACHED miscompiles that the
-// previous `from_mut(self)` raw-pointer dances papered over.
+// JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLQuery {
     /// Shared with the connection's named-statement map (each holder owns one ref).
@@ -44,9 +37,6 @@ pub struct PostgresSQLQuery {
 
     pub(crate) status: Cell<Status>,
 
-    // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
-    // `#[derive(CellRefCounted)]` provides `ref_()`/`deref()` and the `AnyRefCounted`
-    // bridge so `RefPtr<PostgresSQLQuery>` brackets re-entrant callback paths.
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
@@ -66,10 +56,6 @@ impl Default for PostgresSQLQuery {
     }
 }
 
-// Note: a plain struct with public
-// fields because `PostgresSQLConnection.rs` reads/writes these directly
-// (`req.flags.simple`, `req.flags.binary = ...`, `req.flags.result_mode`).
-// Bit-packing is not load-bearing here.
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub(crate) binary: bool,
@@ -151,10 +137,6 @@ impl Default for Flags {
 pub use bun_sql::shared::query_status::Status;
 
 impl PostgresSQLQuery {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    // ─── R-2 interior-mutability helpers ─────────────────────────────────────
-
     /// Read-modify-write the `Cell<Flags>` through `&self`.
     #[inline]
     pub(crate) fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
@@ -170,11 +152,6 @@ impl PostgresSQLQuery {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
-    /// [`MySQLQuery::get_statement`]: one unchecked deref here replaces N inline
-    /// raw-pointer derefs at every protocol dispatch site in
-    /// `PostgresSQLConnection::on`.
-    ///
     /// Kept alive by the ref this query holds. All mutation is
     /// single-JS-thread so the `&mut` is exclusive for the borrow's lifetime;
     /// callers must not hold two results live simultaneously (the request
@@ -215,8 +192,6 @@ impl PostgresSQLQuery {
         self.connection.set(None);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-
     pub(crate) fn get_target(
         &self,
         global_object: &JSGlobalObject,
@@ -252,10 +227,6 @@ impl PostgresSQLQuery {
     }
 
     fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
-        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
-        // is sufficient and `noalias` is suppressed. `RefPtr` brackets the
-        // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
-        // `*self` mid-body.
         let _guard = self.ref_guard();
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -265,7 +236,6 @@ impl PostgresSQLQuery {
             return;
         };
 
-        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm
             .sql_state()
@@ -300,7 +270,6 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         is_last: bool,
     ) {
-        // R-2: see `reject` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
         self.status.set(if is_last {
             Status::Success
@@ -352,7 +321,6 @@ impl PostgresSQLQuery {
             return;
         };
 
-        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
         let vm = crate::jsc::VirtualMachine::get().as_mut();
         let function = vm
             .sql_state()
@@ -396,7 +364,6 @@ impl PostgresSQLQuery {
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
-        // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps it in the JSCell.
         let this_value = js::to_js(ptr, global_this);
         this_value.ensure_still_alive();
 
@@ -458,14 +425,6 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
-        // wrapper is on-stack so GC cannot finalize it. Every mutated field is
-        // `Cell`/`JsCell`-backed, so `&Self` suffices.
-        // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
-        // is on-stack (rooted by the call frame) so GC cannot finalize it for the
-        // duration of this call, satisfying the `ParentRef` outlives-holder
-        // invariant. R-2: shared borrow — every connection field accessed below is
-        // `Cell`/`JsCell`.
         let Some(connection) = postgres_sql_connection::js::from_js_ref(callframe.argument(0))
         else {
             return Err(

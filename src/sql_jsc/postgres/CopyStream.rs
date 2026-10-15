@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_jsc::JSUint8Array;
 use bun_ptr::{ParentRef, RefPtr};
 use bun_sql::postgres::AnyPostgresError;
-use bun_sql::postgres::PostgresProtocol as protocol;
+use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::shared::ConnectionFlags;
 
 const COPY_DONE: [u8; 5] = [b'c', 0, 0, 0, 4];

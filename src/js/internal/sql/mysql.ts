@@ -35,9 +35,7 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
     return;
   }
 
-  try {
-    query.resolve(query[_results]);
-  } catch {}
+  query.resolve(query[_results]);
 }, onRejectQuery);
 
 interface MySQLDotZig {

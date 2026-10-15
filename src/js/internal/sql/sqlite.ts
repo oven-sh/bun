@@ -48,13 +48,6 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   }
 
   run(db: BunSQLiteModule.Database, query: Query<any, any>) {
-    if (!db) {
-      throw new SQLiteError("SQLite database not initialized", {
-        code: "SQLITE_CONNECTION_CLOSED",
-        errno: 0,
-      });
-    }
-
     const { sql, values, mode, adapter } = this;
     const command = firstKeyword(sql);
     let result: SQLResultArray<unknown>;
@@ -121,6 +114,8 @@ class SQLiteAdapter
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
   public closed: boolean = false;
+  /// There is one connection and plain queries always run on it, so reserve() has nothing to give.
+  public readonly supportsReservedConnections = false;
   /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
   private inBegin: boolean = false;
   private waitingBegins: OnConnected<BunSQLiteModule.Database>[] = [];
@@ -159,11 +154,9 @@ class SQLiteAdapter
 
     // Since SQLite connection is synchronous, we immediately know the result
     const storedError = this.storedError;
-    const db = this.db;
+    const db = this.db!;
     if (storedError) {
       onConnected(storedError, null);
-    } else if (!db) {
-      onConnected(this.connectionClosedError(), null);
     } else if (!reserved) {
       onConnected(null, db);
     } else if (this.inBegin) {
@@ -233,11 +226,6 @@ class SQLiteAdapter
 
   isConnected() {
     return this.db !== null;
-  }
-
-  supportsReservedConnections(): boolean {
-    // There is one connection and plain queries always run on it, so reserve() has nothing to give.
-    return false;
   }
 
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {

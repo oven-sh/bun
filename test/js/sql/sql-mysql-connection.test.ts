@@ -506,9 +506,11 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
           const upstream = net.connect(container.port, container.host);
           client.on("data", chunk => void (sent.push(chunk), upstream.write(chunk)));
           upstream.on("data", chunk => void client.write(chunk));
-          client.on("end", () => (upstream.end(), clientLeft.resolve()));
+          client.on("end", () => upstream.end());
           upstream.on("end", () => client.end());
-          client.on("error", clientLeft.reject);
+          // A client that hangs up before it has read the server's last bytes leaves with a reset.
+          client.on("error", () => {});
+          client.on("close", () => clientLeft.resolve());
           upstream.on("error", () => {});
         });
         return {

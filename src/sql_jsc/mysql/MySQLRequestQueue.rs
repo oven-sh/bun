@@ -5,8 +5,8 @@ use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use std::collections::VecDeque;
 
-use crate::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
-use crate::mysql::js_mysql_query::JSMySQLQuery;
+use crate::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
+use crate::mysql::js_my_sql_query::JSMySQLQuery;
 
 type Queue = VecDeque<RefPtr<JSMySQLQuery>>;
 

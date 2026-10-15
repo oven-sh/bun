@@ -565,7 +565,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   isConnected(): boolean;
   get closed(): boolean;
 
-  supportsReservedConnections(): boolean;
+  readonly supportsReservedConnections: boolean;
   /** `true`: `onConnected` was still queued and will never run. */
   cancelConnect(onConnected: OnConnected<Connection>): boolean;
   /** Throws `connectionClosedError()` unless the connection is open. */

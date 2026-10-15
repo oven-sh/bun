@@ -21,12 +21,6 @@ use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Core handles — re-exported from `bun_jsc` so proc-macro generated wrappers
-// (which hard-code `bun_jsc::JSGlobalObject` / `bun_jsc::CallFrame` / …) see
-// the same types as user code importing `crate::jsc::*`.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use bun_jsc::{
     CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
     JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
@@ -35,14 +29,7 @@ pub use bun_jsc::{
 
 pub use bun_jsc::IntegerRange;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Error bridging.
-//
-// `impl From<bun_jsc::JsError> for bun_sql::*` would be an orphan (both types
-// foreign to this crate), so the conversions are exposed as free fns instead.
-// Callers use `.map_err(jsc::js_error_to_postgres)?` / `..._to_mysql)?`.
-// ──────────────────────────────────────────────────────────────────────────
-
+// `impl From<bun_jsc::JsError> for bun_sql::*` would be an orphan impl, hence free functions.
 #[inline]
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
@@ -88,20 +75,10 @@ pub(crate) fn create_sql_error(
     })
 }
 
-// `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
-// `bun_runtime` and this crate import the single canonical body (was
-// triplicated across runtime/socket/uws_jsc, here, and PostgresSQLConnection).
 pub use bun_jsc::system_error::verify_error_to_js;
 
-// ──────────────────────────────────────────────────────────────────────────
-// uws.create_bun_socket_error_t::toJS
-//
-// Same layering note as `verify_error_to_js` above: canonical impl lives in
-// `bun_runtime::socket::uws_jsc::create_bun_socket_error_to_js`, but importing
-// it would cycle (`bun_runtime` depends on this crate). The body only needs
-// `bun_uws` + `bun_boringssl_sys` + `bun_jsc` (all lower-tier), so it is hosted
-// here for the SQL connection `createInstance` paths.
-// ──────────────────────────────────────────────────────────────────────────
+// The same as `bun_runtime::socket::uws_jsc::create_bun_socket_error_to_js`: importing that one
+// would be a cycle (`bun_runtime` depends on this crate).
 
 /// `BoringSSL.ERR_toJS` — formats the packed error code into a JS Error with
 /// code `BORINGSSL`. Body mirrors `bun_runtime::crypto::boringssl_jsc::err_to_js`
@@ -174,10 +151,6 @@ pub(crate) fn create_bun_socket_error_to_js(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// JSGlobalObject — SQL-specific extension surface.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// SQL-side helpers on `JSGlobalObject` not provided by `bun_jsc` (or where
 /// the SQL bindings need a slightly different signature).
 pub(crate) trait JSGlobalObjectSqlExt {
@@ -191,34 +164,13 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// VirtualMachine / EventLoop — direct re-exports from bun_jsc.
-//
-// bun_sql_jsc already depends on bun_jsc, so the previous opaque-ZST view
-// structs that round-tripped through Rust→Rust extern "C" shims
-// (Bun__VM__global / Bun__VM__eventLoop / Bun__EventLoop__enterLoop / …)
-// were a layering workaround. SQL-specific accessors that bun_jsc doesn't
-// expose at this tier (sql_state(), timer(), ssl_ctx_cache()) are provided
-// as the [VirtualMachineSqlExt] extension trait.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use bun_io::KeepAlive;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
-// ──────────────────────────────────────────────────────────────────────────
-// SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
-//
-// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache,
-// SSLConfig parser) and *depends on* this crate, so direct
-// imports would cycle. Instead of Rust→Rust `extern "C"` shims (which let the
-// two sides disagree on pointee types — the previous local `EventLoopTimer` /
-// `SSLConfig` stubs were layout-incompatible with what `hw_exports.rs` wrote),
-// the low tier defines the fn-pointer table and `bun_runtime::jsc_hooks::
-// `__BUN_SQL_RUNTIME_HOOKS` defines a `#[no_mangle]` instance. Every signature here
-// is checked by the compiler at the registration site.
-// ──────────────────────────────────────────────────────────────────────────
-
+// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache, SSLConfig parser) and
+// depends on this crate, so importing it would be a cycle. This crate defines the table of
+// function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
     /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
@@ -300,10 +252,6 @@ pub(crate) trait VirtualMachineSqlExt {
         &mut self,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> &mut bun_uws::SocketGroup;
-    // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
-    // accessor (single audited deref under the JS-thread-singleton invariant);
-    // the former unsafe trait shim here was dead — inherent methods always win
-    // method resolution over this extension trait.
 }
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
@@ -374,21 +322,6 @@ pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments
     );
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Timer heap / EventLoopTimer.
-//
-// The intrusive `EventLoopTimer` node + `Tag`/`State` enums are the canonical
-// `bun_event_loop` types (lower tier — also what `bun_runtime::dispatch::
-// fire_timer` reads via `from_field_ptr!`). The previous local `#[repr(C)]`
-// stub diverged on layout (`[usize;3]` heap, no `in_heap`) *and* discriminants
-// (Tag::PostgresSQLConnectionTimeout=1 vs canonical 8, State::FIRED/CANCELLED
-// swapped), so insertion into the real pairing-heap was UB and tag dispatch
-// mis-routed.
-//
-// `Timer::All` (the heap container) lives in `bun_runtime::RuntimeState`;
-// reached via [`SqlRuntimeHooks::timer_heap`] / `timer_insert` / `timer_remove`.
-// ──────────────────────────────────────────────────────────────────────────
-
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
@@ -439,19 +372,8 @@ pub(crate) trait AutoFlush: Sized {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// api::ServerConfig::SSLConfig — opaque handle to a boxed
-// `bun_runtime::socket::SSLConfig`.
-//
-// The full `SSLConfig` (~18 fields incl. `Vec`/`CString`) is high-tier (it
-// pulls in `node::fs`/`webcore::Blob`). The previous 3-field local mirror was
-// passed as `*mut c_void` storage to `Bun__SSLConfig__fromJS`, which `.write()`
-// the full struct into the 16-byte stack slot — stack overflow / UB. Storage
-// now lives in `bun_runtime`; this side holds only an owning pointer and
-// reaches the two fields SQL actually reads (`server_name`,
-// `reject_unauthorized`) via [`SqlRuntimeHooks`].
-// ──────────────────────────────────────────────────────────────────────────
-
+// The full `SSLConfig` is high-tier (it pulls in `node::fs` / `webcore::Blob`), so it lives in
+// `bun_runtime`. This side owns a pointer to it and reads what SQL needs through the hooks.
 pub mod api {
     use super::*;
     pub mod server_config {
@@ -558,54 +480,22 @@ pub mod api {
             }
         }
     }
-    /// PascalCase namespace alias.
-    #[allow(non_snake_case)]
-    pub mod ServerConfig {
-        pub use super::server_config::SSLConfig;
-    }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// codegen::JS{Type} — per-JsClass cached-value getters/setters generated from
-// `.classes.ts`.
-// ──────────────────────────────────────────────────────────────────────────
-
+// The getters and setters of the cached slots that `.classes.ts` declares.
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
         as crate::postgres::PostgresSQLConnection { onconnect, onclose, onretire, checkServerIdentity, onnotification, columnTransform });
-    ::bun_jsc::js_class_module!(
-        JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
-        impl_js_class {
-            binding,
-            copy,
-            pendingValue,
-            target
-        }
-    );
+    ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
+        as crate::postgres::PostgresSQLQuery { binding, copy, pendingValue, target });
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
         as crate::mysql::js_my_sql_connection::JSMySQLConnection { onconnect, onclose, onretire, checkServerIdentity, columnTransform });
-    pub use js_mysql_connection as JSMySQLConnection;
-
-    ::bun_jsc::js_class_module!(
-        js_mysql_query = "MySQLQuery" as crate::mysql::js_mysql_query::JSMySQLQuery,
-        impl_js_class {
-            binding,
-            pendingValue,
-            target
-        }
-    );
-    pub use js_mysql_query as JSMySQLQuery;
+    ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
+        as crate::mysql::js_my_sql_query::JSMySQLQuery { binding, pendingValue, target });
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// JSFunction — host-function constructor.
-//
-// `bun_jsc::JSFunction` exists, but its `create` signature differs; the SQL
-// callsites only need the `JSHostFn` thunk plumbing, kept local so callers
-// don't churn.
-// ──────────────────────────────────────────────────────────────────────────
-
+// `bun_jsc::JSFunction::create` has another signature. SQL only needs the `JSHostFn` thunk.
 #[repr(C)]
 pub(crate) struct JSFunction {
     _opaque: [u8; 0],

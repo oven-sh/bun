@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_sql::postgres::PostgresProtocol::{NewWriter, WriterContext};
-use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Tag};
+use bun_sql::postgres::postgres_protocol::{NewWriter, WriterContext};
+use bun_sql::postgres::postgres_types::{AnyPostgresError, Tag};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.

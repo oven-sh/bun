@@ -201,10 +201,4 @@ pub mod postgres {
     pub use command_tag::CommandTag;
     pub use status::Status;
     pub use tls_status::TLSStatus;
-
-    // PascalCase module aliases — sql_jsc names these as `PostgresProtocol.Foo` /
-    // `PostgresTypes.Int4` / `SocketMonitor.write`.
-    pub use postgres_protocol as PostgresProtocol;
-    pub use postgres_types as PostgresTypes;
-    pub use socket_monitor as SocketMonitor;
 }

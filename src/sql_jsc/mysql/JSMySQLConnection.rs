@@ -20,13 +20,10 @@ use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::protocol::stack_reader::PacketReader;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
-use super::js_mysql_query::JSMySQLQuery;
+use super::js_my_sql_query::JSMySQLQuery;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
-// `my_sql_connection::MySQLConnection` (the protocol-layer struct)
-// is intentionally NOT imported by name — that ident is taken in this module's
-// value namespace by the `declare_scope!` static and in the type namespace by
-// the `pub use JSMySQLConnection as MySQLConnection` re-export below.
+// Not `MySQLConnection` by name: `declare_scope!` below takes that name.
 use super::my_sql_connection::{self as my_sql_connection};
 use super::my_sql_request_queue::MySQLRequestQueue;
 use super::my_sql_statement::MySQLStatement;
@@ -35,26 +32,15 @@ use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
-// to `&T` so the impls below compile against either.
-// `JsCell` is `#[repr(transparent)]`, so `from_field_ptr!` recovery
-// (`from_timer_ptr` / `MySQLConnection::get_js_connection`) sees identical
-// offsets.
+// JS can re-enter any method, so they all take `&self` and the fields are cells.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLConnection {
     ref_count: Cell<u32>,
     js_value: JsCell<JsRef>,
-    // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
-    // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
-    // via a shared borrow; the inner protocol
-    // struct's `get_js_connection()` recovers the embedding via
-    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
     auto_flush_registered: Cell<bool>,
@@ -110,7 +96,7 @@ impl TimedConnection for JSMySQLConnection {
         use my_sql_connection::Status as S;
         match self.connection.get().status {
             S::Connected => Phase::Connected,
-            S::Disconnected | S::Failed => Phase::Failed,
+            S::Failed => Phase::Failed,
             S::Connecting => Phase::Connecting(""),
             S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
                 Phase::Connecting(" (during authentication)")
@@ -171,15 +157,8 @@ impl AutoFlush for JSMySQLConnection {
 }
 
 impl JSMySQLConnection {
-    // ─── R-2 interior-mutability helpers ────────────────────────────────────
-
-    /// Mutable projection of the inner protocol connection through `&self`.
-    ///
-    /// `my_sql_connection::MySQLConnection` is the protocol state machine (not
-    /// itself JS-exposed); every method on it still takes `&mut self`. This is
-    /// the single audited escape hatch — callers must keep the returned borrow
-    /// short and not hold it across a call that re-enters JS and re-derives
-    /// the same connection.
+    /// The inner connection's methods take `&mut self`. Keep the borrow short: not across a call
+    /// that re-enters JS and comes back to this connection.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
@@ -189,8 +168,6 @@ impl JSMySQLConnection {
         // `&JSMySQLConnection` only.
         unsafe { self.connection.get_mut() }
     }
-
-    // ────────────────────────────────────────────────────────────────────────
 
     pub(crate) fn enqueue_request(&self, item: RefPtr<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
@@ -274,8 +251,6 @@ impl JSMySQLConnection {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-        // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         // The connection is the calling script's.
         let context = global_object.bun_vm().context_of_caller(callframe);
@@ -338,10 +313,6 @@ impl JSMySQLConnection {
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
             ),
         }));
-        // `heap::into_raw` is `Box::into_raw` — never null. `ParentRef` wraps
-        // the freshly-boxed allocation as a lifetime-erased `&Self` (R-2: every
-        // field is interior-mutable, so shared access suffices for the writes
-        // below); we hold the only reference.
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
@@ -392,7 +363,6 @@ impl JSMySQLConnection {
             this.connection_mut()
                 .set_socket(AnySocket::SocketTcp(socket));
         }
-        this.connection_mut().status = my_sql_connection::Status::Connecting;
         this.reset_connection_timeout();
         this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
         let js_value = js::to_js(ptr, global_object);
@@ -642,13 +612,9 @@ impl JSMySQLConnection {
         }
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
-        // `MySQLStatement::structure(&mut self) -> &CachedStructure`
-        // would keep `*statement` exclusively borrowed for the lifetime of the
-        // returned ref, blocking the `&statement.columns` / `fields_flags` reads
-        // below. Stash a `ParentRef` (lifetime-erased `&T`)
-        // and `as_deref` at the `to_js` call site — `*statement`
-        // outlives this fn (held via `request`'s intrusive ref), satisfying
-        // the `ParentRef` liveness invariant.
+        // `structure()` borrows `*statement` mutably for as long as its result lives, and the
+        // columns are read below: hence the lifetime-erased `ParentRef`. `request` keeps the
+        // statement alive.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has
@@ -674,10 +640,7 @@ impl JSMySQLConnection {
             return self.on_undecodable_row(request, e);
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
-        // `ParentRef::Deref` recovers `&CachedStructure`; `*statement` is live
-        // and not mutably borrowed for the duration of this `to_js` call.
         let cached_structure = cached_structure.as_deref();
-        // Process row data
         let Ok(row_value) = row.to_js(
             &self.global_object,
             pending_value,
@@ -735,9 +698,6 @@ impl JSMySQLConnection {
 /// uSockets event handlers for the MySQL connection (plain and TLS).
 pub struct SocketHandler<const SSL: bool>;
 
-// Inherent associated types are unstable in Rust
-// (`feature(inherent_associated_types)`), so spell out
-// `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
     fn socket(s: NewSocketHandler<SSL>) -> AnySocket {
         if SSL {
@@ -836,9 +796,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 b"Connection closed before the connection was established",
                 AnyMySQLErrorT::ConnectionFailed,
             ),
-            S::Connected | S::Disconnected | S::Failed => {
-                (b"Connection closed", AnyMySQLErrorT::ConnectionClosed)
-            }
+            S::Connected | S::Failed => (b"Connection closed", AnyMySQLErrorT::ConnectionClosed),
         };
         this.fail(message, err);
     }
@@ -855,9 +813,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 
-    pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
-        this.fail(b"Connection timeout", AnyMySQLErrorT::ConnectionTimedOut);
-    }
+    pub fn on_timeout(_: &JSMySQLConnection, _: NewSocketHandler<SSL>) {}
 
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         let _guard = this.ref_guard();
@@ -880,12 +836,4 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 }
 
-// Result-mode enum lives in `bun_sql::shared` (`SQLQueryResultMode`); aliased
-// here as `ResultMode` to keep the call sites readable.
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
-
-/// Sibling modules import the JS-wrapper type under the bare
-/// `MySQLConnection` name (the connection state-machine struct lives in
-/// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
-/// MySQLConnection` resolves to this type, not the protocol-layer struct.
-pub use JSMySQLConnection as MySQLConnection;

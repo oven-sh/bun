@@ -5,11 +5,13 @@ use crate::jsc::{
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
 
-use bun_sql::postgres::PostgresProtocol as protocol;
-use bun_sql::postgres::PostgresTypes as types;
-use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4};
+use bun_sql::postgres::TLSStatus;
+use bun_sql::postgres::postgres_protocol as protocol;
+use bun_sql::postgres::postgres_types as types;
+use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 use bun_sql::shared::SQLQueryResultMode;
+use bun_sql::shared::SSLMode;
 
 use crate::jsc::js_error_to_postgres;
 use crate::postgres::PostgresSQLConnection;
@@ -383,16 +385,16 @@ fn on_ssl_request_reply(
     match c {
         b'S' => {
             debug_assert!(sent == 8);
-            connection.tls_status.set(TlsStatus::SslOk);
+            connection.tls_status.set(TLSStatus::SslOk);
             connection.setup_tls();
             Ok(())
         }
         b'N' => {
-            connection.tls_status.set(TlsStatus::SslNotAvailable);
+            connection.tls_status.set(TLSStatus::None);
             bun_core::scoped_log!(Postgres, "Server does not support SSL");
             if matches!(
                 connection.ssl_mode,
-                SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull
             ) {
                 connection.fail(
                     b"Server does not support SSL",
@@ -425,7 +427,7 @@ pub(crate) fn on_data<Context: ReaderContext>(
         // The SSLRequest reply is a bare Byte1('S'|'N') with no Int32 length;
         // it is the only unframed backend byte and must be handled before the
         // frame peek below.
-        if let TlsStatus::MessageSent(n) = connection.tls_status.get() {
+        if let TLSStatus::MessageSent(n) = connection.tls_status.get() {
             return on_ssl_request_reply(connection, c, n);
         }
 
@@ -488,5 +490,3 @@ pub(crate) fn on_data<Context: ReaderContext>(
 
 /// Each entry holds a ref on its query.
 pub(crate) type Queue = std::collections::VecDeque<bun_ptr::RefPtr<PostgresSQLQuery>>;
-
-use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};

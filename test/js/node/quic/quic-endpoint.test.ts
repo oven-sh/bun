@@ -8,7 +8,7 @@ import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { BlockList, type SocketAddress } from "node:net";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -399,6 +399,8 @@ function readClientInitials(datagram: Buffer): ClientInitials {
   return initials;
 }
 
+const clientOpt = { servername: "localhost", verifyPeer: "manual", onerror() {} };
+
 /**
  * A UDP socket in the place of the server, and a client endpoint that dials
  * it. The socket sends only what `reply` returns, so a session never gets
@@ -417,10 +419,11 @@ async function udpPeer(reply?: (datagram: Buffer) => Buffer | undefined) {
   await new Promise<void>(resolve => socket.bind(0, "127.0.0.1", resolve));
   const endpoint = new QuicEndpoint();
   const dial = (servername = "localhost") =>
-    connect(
-      { address: "127.0.0.1", port: socket.address().port } as SocketAddress,
-      { endpoint, servername, verifyPeer: "manual", onerror() {} } as SessionOptions,
-    );
+    connect({ address: "127.0.0.1", port: socket.address().port } as SocketAddress, {
+      endpoint,
+      ...clientOpt,
+      servername,
+    });
   /** Waits for a datagram that is `wanted`. Returns what every datagram so far carries. */
   async function until(wanted: (initials: ClientInitials) => boolean) {
     for (;;) {
@@ -587,7 +590,6 @@ describe("session close options before the server's first packet", () => {
 
 describe("session close options against a server", () => {
   const sniOpt = { "*": { keys: [key], certs: [cert] } };
-  const clientOpt = { servername: "localhost", verifyPeer: "manual", onerror() {} };
   const outcome = (closed: Promise<unknown>) =>
     closed.then(
       () => "fulfilled",

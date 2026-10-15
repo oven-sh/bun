@@ -440,6 +440,26 @@ impl QuicStream {
         }
     }
 
+    /// `pull()` took a chunk: turns read interest back on once the queue of a
+    /// paused stream is down to half of its mark. Call it outside the
+    /// `inbound` borrow and after the stats of the taken chunk are written:
+    /// `schedule_process` can run `on_stream_read` for this stream before it
+    /// returns.
+    fn resume_reads(&self) {
+        if self.read_gate.get() != ReadGate::Paused
+            || self.inbound.get().queued > self.read_mark.get() / 2
+        {
+            return;
+        }
+        self.read_gate.set(ReadGate::Resuming);
+        if let Some(s) = self.ls() {
+            s.want_read(true);
+        }
+        if let Some(session) = self.session_ref() {
+            session.schedule_process();
+        }
+    }
+
     /// Queues what lsquic holds for a paused stream. Call it before an lsquic
     /// call that ends the read side or the connection, which drops those bytes.
     ///
@@ -721,19 +741,6 @@ impl QuicStream {
                 (PULL_STATUS_BLOCKED, None)
             }
         });
-        // Outside the `inbound` borrow: `schedule_process` can run
-        // `on_stream_read` for this stream before it returns.
-        if self.read_gate.get() == ReadGate::Paused
-            && self.inbound.get().queued <= self.read_mark.get() / 2
-        {
-            self.read_gate.set(ReadGate::Resuming);
-            if let Some(s) = self.ls() {
-                s.want_read(true);
-            }
-            if let Some(session) = self.session_ref() {
-                session.schedule_process();
-            }
-        }
         let buffer_js = match buffer {
             Some(bytes) => {
                 self.write_stat(
@@ -741,6 +748,7 @@ impl QuicStream {
                     self.read_stat(IDX_STATS_BYTES_ACCUMULATED)
                         .saturating_sub(bytes.len() as u64),
                 );
+                self.resume_reads();
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, &bytes)?
             }
             None => JSValue::UNDEFINED,

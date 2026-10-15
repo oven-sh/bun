@@ -55,11 +55,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
-// The functions below are node's NodeEventTarget (lib/internal/event_target.js) over the one
-// EventTarget listener list. Only the MessagePort shim in node:worker_threads calls them.
+// node's NodeEventTarget (lib/internal/event_target.js), for the MessagePort shim in node:worker_threads.
 
-// The receiver of a NodeEventTarget method: a MessagePort. `standIn` is the shim's word that the
-// receiver was the parentPort it gives a web Worker, whose listeners live on the global scope.
+// `standIn`: the receiver was the parentPort of a web Worker, whose listeners live on the global scope.
 static JSEventTargetWrapper nodeEventTarget(VM& vm, JSValue value, bool standIn)
 {
     if (standIn)
@@ -69,8 +67,7 @@ static JSEventTargetWrapper nodeEventTarget(VM& vm, JSValue value, bool standIn)
     return {};
 }
 
-// On the stand-in these methods see only what its own on()/once() registered, never the other
-// listeners of the global scope.
+// The stand-in sees only the listeners of its own on()/once(), not the others of the global scope.
 static bool matches(const RegisteredEventListener& registered, bool nodeStyleOnly)
 {
     if (!nodeStyleOnly)
@@ -87,8 +84,7 @@ static AtomString toEventTypeString(JSGlobalObject* globalObject, JSValue type)
     return makeAtomString(type.toWTFString(globalObject));
 }
 
-// (receiver, type, listener, once, standIn). Returns false for a null or undefined listener: it adds
-// nothing, and the shim lets addEventListener() give the warning for it.
+// (receiver, type, listener, once, standIn). False for a null or undefined listener: nothing is added.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetAddListener, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -195,9 +191,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetRemoveAllListeners, (JSGlobalO
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    // One removeEventListener() per listener, so the target's own bookkeeping (the loop ref of a
-    // MessagePort) runs as it does for off(), and a dispatch in progress skips them. node drops
-    // its list without either: the port keeps its ref, and that dispatch still calls them.
+    // One removeEventListener() per listener: a MessagePort then releases its loop ref as it does for off().
     for (auto& type : types) {
         EventListenerVector listeners = impl.eventListeners(type);
         for (auto& registered : listeners) {
@@ -228,8 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetEmit, (JSGlobalObject * global
     if (!impl.hasEventListeners(type))
         return JSValue::encode(jsBoolean(false));
 
-    // on() listeners get `value` itself. addEventListener() listeners get the event that
-    // `new MessageEvent(type, { data: value })` or `new CustomEvent(type, { detail: value })` makes.
+    // on() listeners get `value`. addEventListener() listeners get a MessageEvent (data) or a CustomEvent (detail).
     JSValue value = callFrame->argument(2);
     JSValue inEvent = value.isUndefined() ? jsNull() : value;
     RefPtr<Event> event;

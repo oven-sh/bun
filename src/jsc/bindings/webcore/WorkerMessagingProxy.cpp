@@ -349,8 +349,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
-        // For the on() listeners of the parentPort that node:worker_threads gives a web Worker: the message,
-        // or undefined for 'messageerror'.
+        // The on() listeners of a web Worker's parentPort stand-in get the message, or undefined for 'messageerror'.
         NodeStyleEventValue::dispatch(globalObject.vm(), globalObject.globalEventScope.get(), event, static_cast<MessageEvent&>(event).cachedData().getValue());
     });
     if (more) {

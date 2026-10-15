@@ -98,9 +98,7 @@ private:
     RefPtr<DOMWrapperWorld> m_isolatedWorld;
 };
 
-// node's kHybridDispatch(nodeValue, type, event). One is on the stack for as long as dispatch() runs, and
-// the node-style listeners of that `event` are called with `value`. Any other dispatch calls them with the
-// Event.
+// node's kHybridDispatch(nodeValue, type, event): dispatch() calls the node-style listeners of `event` with `value`.
 class NodeStyleEventValue {
     WTF_MAKE_NONCOPYABLE(NodeStyleEventValue);
     WTF_FORBID_HEAP_ALLOCATION;
@@ -118,8 +116,7 @@ private:
     JSVMClientData& m_clientData;
     const Event& m_event;
     JSC::JSValue m_value;
-    // The wrapper `event` had when a listener got `m_value` in its place. That listener does not hold the
-    // wrapper, and the listeners after it must get the same one, so the dispatch holds it here, on the stack.
+    // The Event wrapper, held for the dispatch: a listener that got m_value in its place does not hold it.
     JSC::JSObject* m_eventWrapper { nullptr };
     NodeStyleEventValue* m_outer;
 };

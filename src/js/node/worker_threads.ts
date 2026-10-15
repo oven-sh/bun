@@ -113,18 +113,11 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-// fakeParentPort(), once a web Worker loads this module. It is not an EventTarget: its
-// listeners live on the worker's global scope.
+// fakeParentPort(): the parentPort of a web Worker. Its listeners live on the worker's global scope.
 let fakePort: object | null = null;
 
 function injectFakeEmitter(Class) {
-  // node's NodeEventTarget: on()/once() put the listener itself in the EventTarget listener
-  // list, marked to receive the value its dispatcher supplies and not the Event. Every method
-  // below reads or edits that one list, so it agrees with addEventListener() and
-  // removeEventListener(). Each native function checks its receiver: a MessagePort, or the
-  // worker's global scope when the shim passes `standIn`. on() and once() add natively, where
-  // node's call addEventListener(): the mark does not travel through a replaced method. Only a
-  // null or undefined listener, which adds nothing, goes to addEventListener() for its warning.
+  // node's NodeEventTarget: on()/once() put the listener itself, marked node-style, in the native listener list.
   const addNodeStyleListener = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAddListener", 5);
   const assertMessagePort = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAssert", 1);
   const countListeners = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetListenerCount", 3);
@@ -145,6 +138,7 @@ function injectFakeEmitter(Class) {
 
   function on(type, listener) {
     const standIn = isStandIn(this);
+    // False for a null or undefined listener, which adds nothing: addEventListener() gives the warning.
     if (!addNodeStyleListener(standIn ? globalThis : this, type, listener, false, standIn))
       this.addEventListener(type, listener);
     return this;

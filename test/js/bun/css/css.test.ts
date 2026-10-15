@@ -188,6 +188,44 @@ describe("css tests", () => {
     minify_test(`a { opacity: calc(NaN) }`, `a{opacity:0}`);
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
+
+    // A <number> and a <percentage> cannot be added. The declaration is left
+    // as written: the sum was evaluated to NaN and printed as 0.
+    minify_test(`a { opacity: calc(50% + 1) }`, `a{opacity:calc(50% + 1)}`);
+    minify_test(`a { opacity: calc(1 - 50%) }`, `a{opacity:calc(1 - 50%)}`);
+    minify_test(`a { color: rgb(calc(10 + 10%) 0 0) }`, `a{color:rgb(calc(10 + 10%)0 0)}`);
+    minify_test(`a { color: color(srgb calc(1 + 50%) 0 0) }`, `a{color:color(srgb calc(1 + 50%)0 0)}`);
+    minify_test(`a { color: rgb(from #336699 calc(10 + 10%) g b) }`, `a{color:rgb(from #369 calc(10 + 10%)g b)}`);
+    // max() of a number and a percentage is not reduced. The sum around it does not become a `none` channel.
+    minify_test(
+      `a { color: rgb(from #336699 r g calc(b + max(10, 20%))) }`,
+      `a{color:rgb(from #369 r g calc(b + max(10,20%)))}`,
+    );
+    minify_test(`a { opacity: calc(50% + 25%) }`, `a{opacity:.75}`);
+    minify_test(`a { opacity: calc(50% * 1.5) }`, `a{opacity:.75}`);
+    // Every other reader of a <percentage> keeps the declaration as written too. They printed `0%`.
+    minify_test(`a { font-stretch: calc(50% + 1) }`, `a{font-stretch:calc(50% + 1)}`);
+    minify_test(`a { scale: 1 calc(50% + 1) }`, `a{scale:1 calc(50% + 1)}`);
+    minify_test(`a { transform: scale(calc(50% + 1)) }`, `a{transform:scale(calc(50% + 1))}`);
+    minify_test(`a { border-image-slice: calc(50% + 1) }`, `a{border-image-slice:calc(50% + 1)}`);
+    minify_test(`a { mask-border-slice: calc(50% + 1) }`, `a{mask-border-slice:calc(50% + 1)}`);
+    minify_test(
+      `@font-face { font-family: x; src: url(a.woff); font-stretch: calc(50% + 1); }`,
+      `@font-face{font-family:x;src:url(a.woff);font-stretch:calc(50% + 1)}`,
+    );
+    // A keyframe with such a selector is dropped, as a browser drops it. It was printed as `0%`.
+    minify_test(`@keyframes k { calc(50% + 1) { color: red } to { color: blue } }`, `@keyframes k{to{color:#00f}}`);
+    minify_test(`@keyframes k { calc(50% + 25%) { color: red } }`, `@keyframes k{75%{color:red}}`);
+    // A typed `initial-value` has no unparsed form: the rule is an error. It was built with `0%`.
+    test("@property with an initial-value that adds a <number> to a <percentage>", () => {
+      const property = (syntax: string, value: string) =>
+        cssInternals.minifyTest(`@property --p { syntax: '${syntax}'; inherits: false; initial-value: ${value}; }`, "");
+      expect(() => property("<percentage>", "calc(50% + 1)")).toThrow("Unexpected token: calc(");
+      expect(() => property("<color>", "rgb(calc(10 + 10%) 0 0)")).toThrow("Unexpected token: rgb(");
+      expect(property("<percentage>", "calc(50% + 25%)")).toBe(
+        '@property --p{syntax:"<percentage>";inherits:false;initial-value:75%}',
+      );
+    });
   });
   describe("clamp() simplification", () => {
     // The cases lightningcss asserts in its calc tests.

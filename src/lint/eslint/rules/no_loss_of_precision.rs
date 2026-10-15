@@ -33,6 +33,36 @@ fn not_base_ten_loses_precision(digits: &[u8], bits_per_digit: u32) -> bool {
     })
 }
 
+/// oxlint writes `value as u64`, which is `u64::MAX` from 2^64, in the base of the literal, and reports a literal that
+/// does not end with these digits: `0x10000000000000000` is reported, `0xFFFFFFFFFFFFFFFFFFFF` is not.
+fn not_base_ten_loses_precision_in_oxlint(digits: &[u8], bits_per_digit: u32) -> bool {
+    // The integers from here are 2^64 or more as a double.
+    const ROUNDS_TO_TWO_POW_64: u128 = 0xFFFF_FFFF_FFFF_FC00;
+    let integer = digits
+        .iter()
+        .filter_map(|digit| char::from(*digit).to_digit(16))
+        .fold(0u128, |all, digit| {
+            all.saturating_mul(1 << bits_per_digit)
+                .saturating_add(u128::from(digit))
+        });
+    if integer < ROUNDS_TO_TWO_POW_64 {
+        let integer = integer as u64;
+        return (integer as f64) as u64 != integer;
+    }
+    let max: &[u8] = match bits_per_digit {
+        4 => b"FFFFFFFFFFFFFFFF",
+        3 => b"1777777777777777777777",
+        _ => &[b'1'; 64],
+    };
+    !digits
+        .iter()
+        .rev()
+        .filter(|digit| **digit != b'_')
+        .map(u8::to_ascii_uppercase)
+        .take(max.len())
+        .eq(max.iter().rev().copied())
+}
+
 /// `value.toPrecision(precision)` of a finite `value > 0`, for a precision from 1 to 100: the digits, and the exponent
 /// of the first.
 fn to_precision(value: f64, precision: usize) -> (Vec<u8>, i64) {
@@ -105,7 +135,7 @@ fn base_ten_loses_precision(raw: &[u8]) -> bool {
 }
 
 /// Whether the number literal `raw` is not the number that it is at run time.
-fn loses_precision(raw: &[u8]) -> bool {
+fn loses_precision(raw: &[u8], is_oxlint: bool) -> bool {
     // At most 15 decimal digits, or 13 digits of 4 bits, and no exponent.
     let has_radix = matches!(raw, [b'0', b'x' | b'X' | b'o' | b'O' | b'b' | b'B', ..]);
     if raw.len() <= f64::DIGITS as usize
@@ -113,14 +143,18 @@ fn loses_precision(raw: &[u8]) -> bool {
     {
         return false;
     }
+    let not_base_ten: fn(&[u8], u32) -> bool = match is_oxlint {
+        true => not_base_ten_loses_precision_in_oxlint,
+        false => not_base_ten_loses_precision,
+    };
     match raw {
-        [b'0', b'x' | b'X', digits @ ..] => not_base_ten_loses_precision(digits, 4),
-        [b'0', b'o' | b'O', digits @ ..] => not_base_ten_loses_precision(digits, 3),
-        [b'0', b'b' | b'B', digits @ ..] => not_base_ten_loses_precision(digits, 1),
+        [b'0', b'x' | b'X', digits @ ..] => not_base_ten(digits, 4),
+        [b'0', b'o' | b'O', digits @ ..] => not_base_ten(digits, 3),
+        [b'0', b'b' | b'B', digits @ ..] => not_base_ten(digits, 1),
         [b'0', digits @ ..]
             if !digits.is_empty() && digits.iter().all(|digit| matches!(digit, b'0'..=b'7')) =>
         {
-            not_base_ten_loses_precision(digits, 3)
+            not_base_ten(digits, 3)
         }
         _ => base_ten_loses_precision(raw),
     }
@@ -145,7 +179,7 @@ pub fn ignores_decimals(options: &Options) -> bool {
 pub fn check<'a, R: Rule>(literal: Literal<'a>, ignore_decimals: bool, cx: &Cx<'a, R>) {
     let raw = literal.text();
     // An exponent takes three characters.
-    if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw) {
+    if raw.len() > 2 && !raw.ends_with(b"n") && loses_precision(raw, cx.language().is_oxlint) {
         report(literal, ignore_decimals, cx);
     }
 }

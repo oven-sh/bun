@@ -23,7 +23,7 @@ fn text_between(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     src.get(start as usize..end as usize).unwrap_or_default()
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// What `parseUpdateExpression` does at a `<`.
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
         if self.recovers() && !self.is_at_jsx_element() {
@@ -153,7 +153,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let from = self.full_start();
         let before = self.token();
         // What was read as a comment is text.
-        let kept = self.lx.comments.partition_point(|it| it.0 < from);
+        let kept = self.lx.comments.partition_point(|it| it.pos < from);
         self.lx.comments.truncate(kept);
         self.lx.end = from;
         self.lx.next_jsx_child();
@@ -550,6 +550,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// namespace, its start and whether it is anything but an identifier.
     #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
+        let name = self.jsx_name_without_comments();
+        // The two names of `a:b` are finished one by one, so that a comment next to the `:` is between two names and not in one.
+        if !self.has_finished_name_that_ends_at(self.prev_end()) {
+            self.finish_name(name.1, self.prev_end());
+        }
+        name
+    }
+
+    #[inline(always)]
+    fn jsx_name_without_comments(&mut self) -> (Atom, u32, bool) {
         let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
@@ -583,13 +593,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     fn rest_of_jsx_name(&mut self, mut name: Atom, start: u32) -> (Atom, u32, bool) {
         if self.token() == T::Colon {
+            self.finish_name(start, self.prev_end());
             self.next();
             self.scan_jsx_identifier();
             if self.token() != T::Identifier {
                 return self.jsx_name_without_local_name(name, start);
             }
             name = self.jsx_namespaced_name(name, self.lx.atom);
+            let local_start = self.pos();
             self.next();
+            self.finish_name(local_start, self.prev_end());
         }
         let is_plain = bun_core::strings::index_of_any(self.lx.text_of(name), b"-:").is_none();
         (name, start, !is_plain)
@@ -757,6 +770,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             let end = self.prev_end();
             if let Some(open) = braces {
+                self.finish_jsx_expression_container(value, open, end);
                 self.f.jsx_expressions.push((value, open, end));
             }
             self.s.props.push(Prop {
@@ -818,6 +832,36 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_expr(ExprKind::Missing, open, open)
     }
 
+    /// Call at the `}` of `{expression}`, which starts at `open` and ends at `end`.
+    #[inline(always)]
+    fn finish_jsx_expression_container(&mut self, expression: ExprId, open: u32, end: u32) {
+        if COMMENTS && open <= self.lx.max_relevant_node_start {
+            self.finish_jsx_expression_container_near_comment(expression, open, end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_jsx_expression_container_near_comment(
+        &mut self,
+        expression: ExprId,
+        open: u32,
+        end: u32,
+    ) {
+        let node = NodeData::Expr(expression);
+        match self.f.exprs.get(expression.idx()).map(|e| e.kind) {
+            // `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing
+            // expression without a width, so a comment would not be inside it.
+            Some(ExprKind::Missing) => self.finish_node(node, open + 1, end.saturating_sub(1)),
+            // `{...a /* comment */}`: the `JSXSpreadChild` of ESTree includes the braces.
+            Some(ExprKind::Spread(_)) => {
+                self.unfinish_node(node);
+                self.finish_node(node, open, end);
+            }
+            _ => {}
+        }
+    }
+
     /// The expression between braces. `parseJsxExpression` stays in the context of the element.
     fn jsx_expression(&mut self) -> ExprId {
         match self.is_ecmascript {
@@ -843,6 +887,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.unclosed_jsx_expression_child(expression, open);
             return expression;
         }
+        self.finish_jsx_expression_container(expression, open, self.lx.end);
         self.f.jsx_expressions.push((expression, open, self.lx.end));
         self.lx.next_jsx_child();
         expression

@@ -248,13 +248,21 @@ pub struct RedactedNpmUrlFormatter<'a> {
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
-        let password = strings::find_url_password(self.url);
+        let mut password = if strings::contains(self.url, b"://") {
+            strings::next_url_password(self.url, 0)
+        } else {
+            // A registry configured without a scheme: refused, and echoed in the refusal.
+            let authority = if self.url.starts_with(b"//") { 2 } else { 0 };
+            strings::find_authority_password(&self.url[authority..])
+                .map(|(offset, len)| (authority + offset, len))
+        };
         while i < self.url.len() {
             if let Some((offset, len)) = password
                 && i == offset
             {
                 splat_byte_all(f, b'*', len)?;
                 i += len;
+                password = strings::next_url_password(self.url, i);
                 continue;
             }
 
@@ -273,7 +281,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 
             // Emit the run of bytes up to the next position where a uuid/npm
             // secret could possibly start, so multi-byte UTF-8 sequences are
-            // written intact (raw bytes, not Latin-1→UTF-8 chars).
+            // written intact (`BStr`: invalid UTF-8 becomes U+FFFD, not a bogus `&str`).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
@@ -286,7 +294,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 }
                 next += 1;
             }
-            write_bytes(f, &self.url[i..next])?;
+            write!(f, "{}", bstr::BStr::new(&self.url[i..next]))?;
             i = next;
         }
         Ok(())
@@ -295,6 +303,29 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 
 pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
+}
+
+/// [`redacted_npm_url`] over a `Display`; a value without `://` (a version) passes unchanged.
+pub struct Redacted<T>(T);
+
+impl<T: Display> Display for Redacted<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // Rendered in full first: the inner impl may write a URL in pieces.
+        let text = self.0.to_string();
+        if !strings::contains(text.as_bytes(), b"://") {
+            return f.write_str(&text);
+        }
+        redacted_npm_url(text.as_bytes()).fmt(f)
+    }
+}
+
+pub fn redacted<T: Display>(value: T) -> Redacted<T> {
+    Redacted(value)
+}
+
+/// [`redacted`] + [`EscapeControlChars`]: how untrusted specifiers/resolutions go to a terminal.
+pub fn for_terminal<T: Display>(value: T) -> EscapeControlChars<Redacted<T>> {
+    EscapeControlChars(Redacted(value))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1060,23 +1091,59 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     None // partial match → trailing garbage
 }
 
+/// The whole of `s` as a finite number of seconds that is not negative: a number, or digits with a unit (`90m`, `3d`, `1.5 hours`, `2 weeks`).
+pub fn parse_seconds(s: &[u8]) -> Option<f64> {
+    let seconds = parse_f64(s).or_else(|| {
+        let digits = (s.iter().take_while(|c| matches!(c, b'0'..=b'9' | b'.'))).count();
+        let seconds_per_unit = match s[digits..].trim_ascii_start() {
+            b"s" | b"sec" | b"secs" | b"second" | b"seconds" => 1.0,
+            b"m" | b"min" | b"mins" | b"minute" | b"minutes" => 60.0,
+            b"h" | b"hr" | b"hrs" | b"hour" | b"hours" => 3_600.0,
+            b"d" | b"day" | b"days" => 86_400.0,
+            b"w" | b"week" | b"weeks" => 604_800.0,
+            _ => return None,
+        };
+        Some(parse_f64(&s[..digits])? * seconds_per_unit)
+    })?;
+    (seconds >= 0.0 && seconds.is_finite()).then_some(seconds)
+}
+
+/// The digits of a binary, octal or hexadecimal integer, rounded to the nearest `f64` once, in [`Self::to_f64`].
+#[derive(Default, Clone, Copy)]
+pub struct RadixInteger {
+    /// As many of the leading digits as fit.
+    leading: u64,
+    dropped_bits: u32,
+    is_inexact: bool,
+}
+
+impl RadixInteger {
+    /// `bits_per_digit` is 1, 3 or 4.
+    #[inline]
+    pub fn push_digit(&mut self, bits_per_digit: u32, digit: u32) {
+        if self.leading >> (64 - bits_per_digit) == 0 {
+            self.leading = self.leading << bits_per_digit | u64::from(digit);
+        } else {
+            self.dropped_bits = self.dropped_bits.saturating_add(bits_per_digit);
+            self.is_inexact |= digit != 0;
+        }
+    }
+
+    pub fn to_f64(self) -> f64 {
+        // The dropped digits only give a power of two and decide a tie: nothing else of them can be seen in 53 bits.
+        let scale = 2f64.powi(i32::try_from(self.dropped_bits).unwrap_or(i32::MAX));
+        (self.leading | u64::from(self.is_inexact)) as f64 * scale
+    }
+}
+
 /// The integer whose digits, of `bits` bits each, are `digits`, as the nearest `f64`. `None` if there
 /// is no digit, or a byte that is none in that radix.
 fn parse_digits_of_bits(digits: &[u8], bits: u32) -> Option<f64> {
-    // The first 123 bits or more, then how many bits follow and whether one of them is set: that
-    // decides a tie, and nothing else of them can be seen in 53 bits.
-    let (mut value, mut dropped, mut is_inexact) = (0u128, 0u32, false);
+    let mut integer = RadixInteger::default();
     for &c in digits {
-        let digit = char::from(c).to_digit(1 << bits)?;
-        if value >> 123 == 0 {
-            value = value << bits | u128::from(digit);
-        } else {
-            dropped = dropped.saturating_add(bits);
-            is_inexact |= digit != 0;
-        }
+        integer.push_digit(bits, char::from(c).to_digit(1 << bits)?);
     }
-    let scale = 2f64.powi(i32::try_from(dropped).unwrap_or(i32::MAX));
-    (!digits.is_empty()).then(|| (value | u128::from(is_inexact)) as f64 * scale)
+    (!digits.is_empty()).then(|| integer.to_f64())
 }
 
 /// `Number(text)` of JavaScript, for UTF-8: ECMAScript's `StringToNumber`. NaN if `text` is no number.
@@ -3543,6 +3610,72 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
         remain = &remain[i + 1..];
     }
     write_bytes(writer, remain)
+}
+
+/// Spells out C0/C1 controls and DEL so text somebody else authored cannot repaint our output.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
+pub struct EscapeControlCharsMultiline<T>(pub T);
+
+/// Invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+pub fn escape_control_chars_multiline(text: &[u8]) -> EscapeControlCharsMultiline<&bstr::BStr> {
+    EscapeControlCharsMultiline(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(EscapeControlCharsWriter(f, false), "{}", self.0)
+    }
+}
+
+impl<T: Display> Display for EscapeControlCharsMultiline<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(EscapeControlCharsWriter(f, true), "{}", self.0)
+    }
+}
+
+/// `.1`: keep `\t`, `\n`, `\r\n`.
+struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let Self(f, keep_line_breaks) = self;
+        let mut start = 0;
+        let mut next = 0;
+        // Stops at C0, DEL and the first byte of a non-ASCII character; also at `\` and `"`, which pass.
+        while let Some(clean) =
+            strings::index_of_needs_escape_for_java_script_string(&s.as_bytes()[next..], b'"')
+        {
+            let i = next + clean as usize;
+            let mut chars = s[i..].chars();
+            let Some(c) = chars.next() else { break };
+            next = i + c.len_utf8();
+            let pass_through = match c {
+                '\t' | '\n' => *keep_line_breaks,
+                '\r' => *keep_line_breaks && chars.next() == Some('\n'),
+                '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
+                _ => true,
+            };
+            if pass_through {
+                continue;
+            }
+            f.write_str(&s[start..i])?;
+            match c {
+                '\n' => f.write_str("\\n")?,
+                '\r' => f.write_str("\\r")?,
+                '\t' => f.write_str("\\t")?,
+                c if c.is_ascii() => write!(f, "\\x{:02x}", c as u32)?,
+                c => write!(f, "\\u{:04x}", c as u32)?,
+            }
+            start = next;
+        }
+        f.write_str(&s[start..])
+    }
 }
 
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs

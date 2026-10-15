@@ -7,7 +7,7 @@ use crate::unicorn::TYPED_ARRAYS;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashSet;
+use bun_lint::types::IdSet;
 use smallvec::{SmallVec, smallvec};
 
 /// Disallow unnecessary spread.
@@ -23,14 +23,14 @@ impl Rule for NoUselessSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-spread", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Spread]).props();
     /// The array literals of which it is known that not all elements are `...[..]`.
-    type State<'a> = FxHashSet<Expr<'a>>;
+    type State<'a> = IdSet<Expr<'a>>;
 
     fn new(_: &Options) -> Self {
         NoUselessSpread
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashSet<Expr<'a>>> {
-        Some(FxHashSet::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<IdSet<Expr<'a>>> {
+        Some(IdSet::new())
     }
 
     fn expr<'a>(&self, spread: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -140,7 +140,7 @@ fn check_useless_spread_in_list<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUseles
             report.fix(|fixer| fixer.replace(list, argument.text()))
         }
         (ExprKind::Array(_), ExprKind::Array(outer)) => report.fix(|fixer| {
-            if cx.state.contains(&list) {
+            if cx.state.contains(list) {
                 return None;
             }
             let Some(elements) = elements_of_spread_arrays(outer) else {

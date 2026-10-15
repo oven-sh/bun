@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "3d3257150c40a1aabdc5f8b48d5b33d0413674cb";
+export const WEBKIT_VERSION = "930bcf4ea6d1e67dc8c866ff46f075fd9fff5a01";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -11,7 +11,8 @@ export const WEBKIT_VERSION = "3d3257150c40a1aabdc5f8b48d5b33d0413674cb";
  * Two modes via `cfg.webkit`:
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
- *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
+ *   encodes {os, arch, musl, debug|lto, asan, assertions} — each is a separate
+ *   ABI — and coverage.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
@@ -62,6 +63,13 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
+  // Built for fuzzing, for this target only (`FUZZING` in oven-sh/WebKit's
+  // .github/scripts/lanes.mjs). Every other combination gets a JSC without
+  // assertions (unless debug or asan) and without coverage.
+  if (cfg.linux && cfg.x64 && cfg.abi === "gnu" && cfg.release && !cfg.lto && !cfg.asan) {
+    if (cfg.assertions) s += "-assertions";
+    if (cfg.fuzzilli) s += "-coverage";
+  }
   return s;
 }
 
@@ -343,6 +351,8 @@ export const webkit: Dependency = {
       // Bun's C++ is compiled with ASSERT_ENABLED=1 when cfg.assertions (release-asan,
       // release-assertions); WebKit must match or ASSERT-only symbols fail to link.
       ...(cfg.assertions && cfg.release ? { ENABLE_ASSERTS: "ON" } : {}),
+      // JSC compiled with the coverage flag bun's own C++ gets (flags.ts); FuzzilliREPRL.cpp has the callbacks.
+      ...(cfg.fuzzilli ? { ENABLE_FUZZILLI: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

@@ -132,7 +132,7 @@ Not checked:    other tools' configs, CI files, Git hooks
     async () => {
       const { stdout, exitCode } = await doctor(flat, ["-f", "json"]);
       expect(JSON.parse(stdout)).toEqual({
-        config: { path: "eslint.config.js", kind: "eslint", nested: [], ignored: null },
+        config: { path: "eslint.config.js", kind: "eslint", nested: [], ignored: null, bunfig: null },
         files: { linted: 3, by_eslint: {}, not_linted: {} },
         rules: {
           native: ["eqeqeq", "no-undef", "no-var", "react-hooks/rules-of-hooks"],
@@ -290,7 +290,7 @@ Not checked:    other tools' configs, CI files, Git hooks
         ["-f", "json"],
       );
       const { config, rules, packages } = JSON.parse(stdout);
-      expect(config).toEqual({ path: ".eslintrc.json", kind: "eslintrc", nested: [], ignored: null });
+      expect(config).toEqual({ path: ".eslintrc.json", kind: "eslintrc", nested: [], ignored: null, bunfig: null });
       expect(rules).toEqual({
         native: ["no-var"],
         javascript: { "eslint-plugin-first": ["first/a"] },
@@ -377,6 +377,7 @@ eslint.config.js is ignored because the project also has an oxlint config. Use -
       kind: "oxlint",
       nested: [],
       ignored: "eslint.config.js",
+      bunfig: null,
     });
     expect(picked.stdout).toStartWith(`Using eslint.config.js (ESLint flat config)
 
@@ -585,6 +586,32 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    [{}, "Using ../bunfig.toml ([lint], on top of Bun's defaults)\n\n"],
+    [
+      { "eslint.config.js": "export default [{ rules: {} }];\n" },
+      "Using ../eslint.config.js (ESLint flat config)\nUsing ../bunfig.toml ([lint])\n\n",
+    ],
+  ])("says which bunfig.toml it reads, and not to add a section: %j", async (config, start) => {
+    using dir = tempDir("bun-lint-doctor", {
+      ...config,
+      "package.json": `{ "type": "module" }`,
+      "bunfig.toml": `[lint.rules]\n"no-console" = "warn"\n`,
+      "src/a.js": "",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "--doctor"],
+      env,
+      cwd: join(String(dir), "src"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toStartWith(start);
+    expect(stdout).not.toContain("--init");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
   test("without a config file, [lint.rules] in bunfig.toml still counts", async () => {
     const files = { "a.js": "" };
     const [plain, configured] = await Promise.all([
@@ -595,8 +622,8 @@ Also packages/a/eslint.config.js
       ]),
     ]);
     const [before, after] = [JSON.parse(plain.stdout), JSON.parse(configured.stdout)];
-    expect(before.config).toEqual({ path: null, kind: "none", nested: [], ignored: null });
-    expect(after.config).toEqual(before.config);
+    expect(before.config).toEqual({ path: null, kind: "none", nested: [], ignored: null, bunfig: null });
+    expect(after.config).toEqual({ ...before.config, bunfig: "bunfig.toml" });
     expect(before.rules.native).toContain("no-debugger");
     expect(before.rules.native).not.toContain("no-console");
     expect(after.rules.native).toEqual(

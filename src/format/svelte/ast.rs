@@ -32,6 +32,8 @@ pub(crate) enum ExpressionKind {
     Identifier,
     /// A string.
     StringLiteral,
+    /// The text of `this="a"`, for which Svelte has a string.
+    Text,
     /// `null`, a number, `true`, a regular expression ..
     OtherLiteral,
     Sequence,
@@ -68,8 +70,20 @@ impl Expression {
 pub(crate) struct Pattern {
     /// Up to the end of the annotation, unless it is a name.
     pub(crate) span: Span,
-    /// `typeAnnotation.typeAnnotation`
+    /// `typeAnnotation.typeAnnotation`, from the first comment behind the `:` on.
     pub(crate) annotation: Option<Span>,
+    /// In the pattern or in the annotation.
+    pub(crate) has_comments: bool,
+}
+
+impl Pattern {
+    /// With the annotation, which the span of a name does not have.
+    pub(crate) fn with_annotation(self) -> Span {
+        Span {
+            start: self.span.start,
+            end: (self.annotation).map_or(self.span.end, |it| it.end.max(self.span.end)),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -215,8 +229,8 @@ pub(crate) enum Kind<'a> {
     SnippetBlock {
         /// The name.
         expression: Span,
-        /// Where the last parameter ends, with its type.
-        last_parameter_end: Option<u32>,
+        /// Behind the `)` of the parameters.
+        end_of_parameters: u32,
         body: FragmentId,
     },
     Script {

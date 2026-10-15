@@ -114,7 +114,8 @@ impl Dir {
         }
         let mut result = Ok(());
         for name in &names {
-            result = result.and(self.delete_tree(name));
+            let deleted = self.delete_tree(name);
+            result = result.and(deleted);
         }
         result
     }
@@ -386,14 +387,6 @@ impl Dir {
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {
         unlinkat(self.fd, sub_path)
-    }
-
-    /// Open `sub_path` (NUL-terminated) relative to
-    /// this dir as a `Dir` handle: `O_DIRECTORY |
-    /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
-    #[inline]
-    pub fn open_dir_z(&self, sub_path: &ZStr) -> Maybe<Dir> {
-        open_dir_at(self.fd, sub_path.as_bytes()).map(Dir::from_fd)
     }
 
     /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path

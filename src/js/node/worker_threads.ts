@@ -1234,10 +1234,16 @@ class Worker extends EventEmitter {
           this.emit("message", entry.message);
         }
       } finally {
+        this.removeAllListeners("message");
+        // Node 24 intentionally uses the plural spelling before 'exit':
+        // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/worker.js#L385-L402
+        this.removeAllListeners("messageerrors");
+        this.#publicPort.unref();
         this.#publicPort.close();
         this.#onExitPromise = e.code;
         try {
           this.emit("exit", e.code);
+          this.removeAllListeners();
         } finally {
           this.#resolveOnExit?.(e.code);
         }

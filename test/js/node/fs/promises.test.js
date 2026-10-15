@@ -498,26 +498,75 @@ describe("a stream constructor that throws gives the FileHandle back", () => {
 
   it("leaves a live stream of the same handle as it is", async () => {
     await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
-    await using handle = await open(join(dir, "x.txt"), "r+");
+    const handle = await open(join(dir, "x.txt"), "r+");
     const live = handle.createReadStream();
-    expect(() => handle.createReadStream({ highWaterMark: -1 })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
-    expect(handle.listenerCount("close")).toBe(1);
-    // The handle closes the live stream through that listener, and then waits for it.
-    await handle.close();
-    expect({ destroyed: live.destroyed, fd: handle.fd }).toEqual({ destroyed: true, fd: -1 });
+    // The close in `afterThrow` closes the live stream through its listener, and waits for it.
+    const result = await afterThrow(handle, () => handle.createReadStream({ highWaterMark: -1 }));
+    expect({ ...result, liveDestroyed: live.destroyed }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      ...givenBack,
+      listeners: 2,
+      liveDestroyed: true,
+    });
   });
 
   it("lets the next stream of the same handle read the file and close the handle", async () => {
     await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
-    await using handle = await open(join(dir, "x.txt"), "r+");
-    expect(() => handle.createReadStream({ highWaterMark: -1 })).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    const handle = await open(join(dir, "x.txt"), "r+");
+    let thrown;
+    try {
+      handle.createReadStream({ highWaterMark: -1 });
+    } catch (err) {
+      thrown = err;
+    }
+    const text = await handle
+      .createReadStream({ encoding: "utf8" })
+      .toArray()
+      .then(
+        chunks => chunks.join(""),
+        err => err,
+      );
+    const closed = await handle.close().then(
+      () => "fulfilled",
+      err => err,
     );
-    const chunks = await handle.createReadStream({ encoding: "utf8" }).toArray();
-    await handle.close();
-    expect({ text: chunks.join(""), fd: handle.fd }).toEqual({ text: "hello world", fd: -1 });
+    expect({ thrown, text, closed, fd: handle.fd }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      text: "hello world",
+      closed: "fulfilled",
+      fd: -1,
+    });
+  });
+
+  // Plain inheritance lets the caller keep a stream whose constructor threw. The handle can then close the
+  // descriptor, and another file can get its number.
+  it("leaves no descriptor number in a stream that the caller kept", async () => {
+    await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world", "other.txt": "other" });
+    const handle = await open(join(dir, "x.txt"), "r+");
+    const stream = Object.create(fs.WriteStream.prototype);
+    const result = await afterThrow(handle, fd => fs.WriteStream.call(stream, null, { fd, encoding: "buffer" }));
+    // The lowest free number is the number that the handle had.
+    const other = fs.openSync(join(dir, "other.txt"), "r+");
+    const { promise: written, resolve } = Promise.withResolvers();
+    try {
+      stream.write("zombie", resolve);
+    } catch (err) {
+      resolve(err);
+    }
+    const writeError = await written;
+    fs.closeSync(other);
+    expect({
+      ...result,
+      streamFd: stream.fd,
+      writeError,
+      other: fs.readFileSync(join(dir, "other.txt"), "utf8"),
+    }).toEqual({
+      thrown: expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+      ...givenBack,
+      streamFd: -1,
+      writeError: expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      other: "other",
+    });
   });
 
   it.each(["createReadStream", "createWriteStream"])("handle.%s() keeps `fd` as its first property", async method => {
@@ -529,20 +578,27 @@ describe("a stream constructor that throws gives the FileHandle back", () => {
   // The listener runs while the stream adds its own 'close' listener. The stream holds its ref by then.
   it("takes the ref before code of the caller can close the handle", async () => {
     await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
-    await using handle = await open(join(dir, "x.txt"), "r+");
+    const handle = await open(join(dir, "x.txt"), "r+");
     let closed;
     handle.once("newListener", () => {
       closed = handle.close();
     });
-    const chunks = await handle.createReadStream({ encoding: "utf8" }).toArray();
-    await closed;
-    expect({ text: chunks.join(""), fd: handle.fd }).toEqual({ text: "hello world", fd: -1 });
+    const text = await handle
+      .createReadStream({ encoding: "utf8" })
+      .toArray()
+      .then(
+        chunks => chunks.join(""),
+        err => err,
+      );
+    const listenerRan = closed !== undefined;
+    await (closed ?? handle.close());
+    expect({ listenerRan, text, fd: handle.fd }).toEqual({ listenerRan: true, text: "hello world", fd: -1 });
   });
 
   // The `aborted` getter runs in Readable and closes the handle: the stream gives its ref back there.
   it("does not give the ref back a second time", async () => {
     await using dir = tempDir("filehandle-stream-throws", { "x.txt": "hello world" });
-    await using handle = await open(join(dir, "x.txt"), "r+");
+    const handle = await open(join(dir, "x.txt"), "r+");
     const read = handle.read(Buffer.alloc(5), 0, 5, 0);
     let closed;
     const signal = {
@@ -551,12 +607,25 @@ describe("a stream constructor that throws gives the FileHandle back", () => {
         return boom();
       },
     };
-    expect(() => handle.createReadStream({ signal })).toThrow(expect.objectContaining({ message: "boom" }));
+    let thrown;
+    try {
+      handle.createReadStream({ signal });
+    } catch (err) {
+      thrown = err;
+    }
     // The read still holds its ref, so the descriptor stays open until the read ends.
-    expect(handle.fd).not.toBe(-1);
-    expect((await read).bytesRead).toBe(5);
-    await closed;
-    expect(handle.fd).toBe(-1);
+    const openDuringRead = handle.fd !== -1;
+    const bytesRead = await read.then(
+      result => result.bytesRead,
+      err => err,
+    );
+    await (closed ?? handle.close());
+    expect({ thrown, openDuringRead, bytesRead, fd: handle.fd }).toEqual({
+      thrown: expect.objectContaining({ message: "boom" }),
+      openDuringRead: true,
+      bytesRead: 5,
+      fd: -1,
+    });
   });
 
   // Readable adds an abort listener before it checks `captureRejections`, so the signal can destroy the stream later.

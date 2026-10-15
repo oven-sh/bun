@@ -108,13 +108,15 @@ function attachFileHandle(stream: FSStream, lease: FileHandleLease) {
 }
 
 // Node keeps the ref and the listener when its constructor throws, so the handle can never be closed: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L154-L155
-function releaseFileHandle(lease: FileHandleLease) {
+function releaseFileHandle(stream: FSStream, lease: FileHandleLease) {
   const { handle, onClose } = lease;
   if (lease.held) {
     lease.held = false;
     handle[kUnref]();
   }
   if (onClose !== undefined) handle.removeListener("close", onClose);
+  // A caller can keep the stream (`fs.ReadStream.call(object, ...)`). Its number can go to another file once the handle closes.
+  stream.fd = -1;
 }
 
 function getValidatedPath(p: any) {
@@ -237,7 +239,7 @@ function ReadStream(this: FSStream, path, options): void {
     Readable.$call(this, options);
     return this as unknown as void;
   } catch (err) {
-    if (lease !== undefined) releaseFileHandle(lease);
+    if (lease !== undefined) releaseFileHandle(this, lease);
     throw err;
   }
 }
@@ -529,7 +531,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
     }
     return this as unknown as void;
   } catch (err) {
-    if (lease !== undefined) releaseFileHandle(lease);
+    if (lease !== undefined) releaseFileHandle(this, lease);
     throw err;
   }
 }

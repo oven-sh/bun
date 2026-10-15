@@ -2273,11 +2273,12 @@ impl Lockfile {
     /// workspaces this lockfile records, links it. Ranges bound to a workspace any other way (a peer
     /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
     pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
+        const ROOT: PackageID = 0;
         let pkg_resolutions = self.packages.items_resolution();
         // Most projects have no member, and no row on the project itself.
         if !(pkg_resolutions.iter().skip(1))
             .any(|res| matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace))
-            && !self.buffers.resolutions.contains(&0)
+            && !self.buffers.resolutions.contains(&ROOT)
         {
             return;
         }

@@ -1,6 +1,6 @@
 // Tests for `--staged` and `--changed` in `bun lint` and `bun fmt`.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -698,24 +698,75 @@ describe.concurrent("bun lint --staged reads a partly staged file as it's staged
   });
 });
 
-test.concurrent(
-  "bun fmt --staged doesn't judge the line endings that git stores for a partly staged file",
-  async () => {
+describe.concurrent("bun fmt --staged reads a partly staged file with the line endings of a checkout", () => {
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+  const two = tidy + tidy.replace("a", "b");
+
+  test("git stores LF and checks out CRLF", async () => {
     using repo = await repository({ ".gitattributes": "*.js text eol=crlf\n", "partly.js": tidy, "whole.js": tidy });
     const { root } = repo;
-    const crlf = (text: string) => text.replaceAll("\n", "\r\n");
-    for (const name of ["partly.js", "whole.js"]) write(root, name, crlf(tidy + tidy.replace("a", "b")));
+    for (const name of ["partly.js", "whole.js"]) write(root, name, crlf(two));
     await git(root, "add", "-A");
     write(root, "partly.js", crlf(tidy));
-    // The index has them with LF.
-    expect(await git(root, "show", ":partly.js")).not.toContain("\r");
+    expect(await git(root, "show", ":partly.js")).toBe(two);
     for (const flags of [["--check"], []]) {
       const { stderr, exitCode } = await bun(root, ["fmt", "--staged", "--end-of-line", "crlf", ...flags]);
       expect(stderr).not.toContain("partly.js");
       expect(exitCode).toBe(0);
     }
-  },
-);
+    // Like whole.js, which is read from the disk.
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check", "--end-of-line", "lf"]);
+    expect(stdout + stderr).toMatch(/\b2 files\b/);
+    expect(exitCode).toBe(1);
+  });
+
+  test(
+    "in a language that only a plugin of Prettier reads",
+    async () => {
+      // Stand-ins. This Prettier takes blanks away, and ends lines as it is told.
+      using repo = await repository({
+        ".gitattributes": "*.astro text eol=crlf\n",
+        ".gitignore": "node_modules\n",
+        ".prettierrc": '{ "plugins": ["prettier-plugin-astro"], "endOfLine": "crlf" }\n',
+        "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
+        "node_modules/prettier/index.cjs": `const fs = require("node:fs");
+exports.resolveConfig = async (file, { config }) => JSON.parse(fs.readFileSync(config, "utf8"));
+exports.format = async (text, { endOfLine }) =>
+  text.replace(/ +/g, " ").replace(/\\r?\\n/g, endOfLine === "crlf" ? "\\r\\n" : "\\n");
+`,
+        "node_modules/prettier-plugin-astro/package.json": '{ "name": "prettier-plugin-astro", "version": "4.0.0" }',
+        "tidy.astro": "<p>a</p>\r\n",
+        "messy.astro": "<p>a</p>\r\n",
+      });
+      const { root } = repo;
+      write(root, "tidy.astro", "<p >b</p>\r\n");
+      write(root, "messy.astro", "<p   >b</p>\r\n");
+      await git(root, "add", "-A");
+      // On disk it's the other way round.
+      write(root, "tidy.astro", "<p   >c</p>\r\n");
+      write(root, "messy.astro", "<p >c</p>\r\n");
+      expect(await git(root, "show", ":tidy.astro")).toBe("<p >b</p>\n");
+      const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check"]);
+      expect(stdout + stderr).toContain("messy.astro");
+      expect(stdout + stderr).not.toContain("tidy.astro");
+      expect(exitCode).toBe(1);
+    },
+    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one.
+    isDebug || isASAN ? 120_000 : 5_000,
+  );
+
+  test("git converts nothing", async () => {
+    using repo = await repository({ "partly.js": tidy });
+    const { root } = repo;
+    write(root, "partly.js", crlf(two));
+    await git(root, "add", "-A");
+    write(root, "partly.js", crlf(tidy));
+    expect(await git(root, "show", ":partly.js")).toBe(crlf(two));
+    const { stdout, stderr, exitCode } = await bun(root, ["fmt", "--staged", "--check", "--end-of-line", "lf"]);
+    expect(stdout + stderr).toContain("partly.js");
+    expect(exitCode).toBe(1);
+  });
+});
 
 test.concurrent.each(commands)("bun %s --staged only reads from the index what it has a use for", async command => {
   using repo = await repository({ "asset.bin": "1", "other.js": tidy, "whole.js": tidy });

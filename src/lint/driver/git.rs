@@ -123,6 +123,20 @@ fn in_the_words_of_git(first: &str, finished: &Finished) -> Fatal {
     Fatal(text)
 }
 
+/// `stored`, a blob, with the line endings that a checkout gives it. Git can store LF for a file that it checks out with
+/// CRLF (`eol=crlf`, `core.autocrlf`). Every other file of the run is read as it's checked out, so this one has to match.
+/// Git only says what it converts in one more call, and the file at `path` on disk shows it too.
+fn with_line_endings_of(path: &[u8], stored: &[u8]) -> Vec<u8> {
+    let is_converted = !strings::contains_char(stored, b'\r')
+        && fs::read(path).is_ok_and(|on_disk| strings::contains(&on_disk, b"\r\n"));
+    match is_converted {
+        true => strings::split(stored, b"\n")
+            .collect::<Vec<_>>()
+            .join(&b"\r\n"[..]),
+        false => stored.to_vec(),
+    }
+}
+
 /// The object ID git printed. `None` if git failed or printed anything else.
 fn object_id(finished: &Finished) -> Option<&[u8]> {
     let id = finished.stdout.trim_ascii();
@@ -138,7 +152,7 @@ pub(crate) struct Files<'e> {
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
     /// For `--staged`: what the index has of a file that is different on disk, or gone from it. It has the files in `named`,
-    /// and those that one of them can import. The text is as git stores it: a checkout can give it other line endings.
+    /// and those that one of them can import.
     in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
 }
 
@@ -285,7 +299,8 @@ impl<'e> Files<'e> {
                 let first = format!("--staged cannot read what is staged of {shown} (blob {id})");
                 return Err(in_the_words_of_git(&first, &read));
             };
-            self.in_the_index.insert(path, content.to_vec());
+            let content = with_line_endings_of(&path, content);
+            self.in_the_index.insert(path, content);
             rest = after.get(1..).unwrap_or_default();
         }
         Ok(())

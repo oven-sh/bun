@@ -254,23 +254,42 @@ static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGloba
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
-    JSArray* matching = nullptr;
+    auto* matching = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, length);
+    if (!matching) [[unlikely]] {
+        throwOutOfMemoryError(&lexicalGlobalObject, scope);
+        return nullptr;
+    }
     // No PerformanceEntry has the type 0: an entryType that is not a type matches no mark or measure.
     bool filtersByName = !name.isNull();
     bool filtersByType = !entryType.isNull();
     auto type = filtersByType ? PerformanceEntry::parseEntryTypeString(entryType).value_or(static_cast<PerformanceEntry::Type>(0)) : static_cast<PerformanceEntry::Type>(0);
-    bool hasOnlyPerformanceEntries = list.hasOnlyPerformanceEntries();
-    // With marks and measures only, nothing in the loop runs script, so the elements stay where they are.
-    auto* contiguous = hasOnlyPerformanceEntries && entries->indexingMode() == ArrayWithContiguous ? entries->butterfly()->contiguous().data() : nullptr;
+    auto matches = [&](PerformanceEntry& performanceEntry) {
+        return (!filtersByName || performanceEntry.name() == name) && (!filtersByType || performanceEntry.performanceEntryType() == type);
+    };
+    auto append = [&](JSValue entry) {
+        if (tryAppendToArrayQuickly(vm, matching, entry)) [[likely]]
+            return true;
+        matching->putDirectIndex(&lexicalGlobalObject, matching->length(), entry);
+        return !scope.exception();
+    };
+
+    // Marks and measures only: nothing in this loop runs script, so the elements stay where they are.
+    if (list.hasOnlyPerformanceEntries() && entries->indexingMode() == ArrayWithContiguous) {
+        auto* contiguous = entries->butterfly()->contiguous().data();
+        for (unsigned index = 0; index < length; ++index) {
+            JSValue entry = contiguous[index].get();
+            if (matches(uncheckedDowncast<JSPerformanceEntry>(entry)->wrapped()) && !append(entry)) [[unlikely]]
+                return nullptr;
+        }
+        return matching;
+    }
+
     Identifier entryTypeName;
     for (unsigned index = 0; index < length; ++index) {
         ASSERT(entries->canGetIndexQuickly(index));
-        JSValue entry = contiguous ? contiguous[index].get() : entries->getIndexQuickly(index);
-        if (auto* wrapper = hasOnlyPerformanceEntries ? uncheckedDowncast<JSPerformanceEntry>(entry) : dynamicDowncast<JSPerformanceEntry>(entry)) {
-            auto& performanceEntry = wrapper->wrapped();
-            if (filtersByName && performanceEntry.name() != name)
-                continue;
-            if (filtersByType && performanceEntry.performanceEntryType() != type)
+        JSValue entry = entries->getIndexQuickly(index);
+        if (auto* wrapper = dynamicDowncast<JSPerformanceEntry>(entry)) {
+            if (!matches(wrapper->wrapped()))
                 continue;
         } else {
             if (filtersByName) {
@@ -288,21 +307,9 @@ static JSArray* performanceObserverEntryListEntries(JSGlobalObject& lexicalGloba
                     continue;
             }
         }
-        // Made at the first match, with room for the entries that remain: a filter that matches nothing allocates no storage.
-        if (!matching) {
-            matching = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, length - index);
-            if (!matching) [[unlikely]] {
-                throwOutOfMemoryError(&lexicalGlobalObject, scope);
-                return nullptr;
-            }
-        }
-        if (tryAppendToArrayQuickly(vm, matching, entry)) [[likely]]
-            continue;
-        matching->putDirectIndex(&lexicalGlobalObject, matching->length(), entry);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!append(entry)) [[unlikely]]
+            return nullptr;
     }
-    if (!matching)
-        RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     return matching;
 }
 

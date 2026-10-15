@@ -1633,6 +1633,31 @@ impl Template {
         }
     }
 
+    /// Writes `contents` into a package.json that exists as a regular file with no
+    /// content. Any other package.json is not opened, and the result is `false`.
+    fn fill_empty_package_json(contents: &[u8]) -> Result<bool, Error> {
+        let is_empty_file = |stat: &bun_sys::Stat| {
+            bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) && stat.st_size == 0
+        };
+        if !bun_sys::fstatat(Fd::cwd(), bun_core::zstr!("package.json"))
+            .is_ok_and(|stat| is_empty_file(&stat))
+        {
+            return Ok(false);
+        }
+        let file = bun_sys::File::openat(Fd::cwd(), b"package.json", bun_sys::O::RDWR, 0)?;
+        if !is_empty_file(&file.stat()?) {
+            return Ok(false);
+        }
+        if let Err(err) = file.write_all(contents) {
+            // A rerun fills in an empty package.json and skips one with a partial write in it.
+            let _ = bun_sys::ftruncate(file.handle(), 0);
+            return Err(err.into());
+        }
+        bun_core::prettyln!(" + <r><d>package.json<r>");
+        Output::flush();
+        Ok(true)
+    }
+
     fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
         Self::create_agent_rule();
 
@@ -1658,7 +1683,16 @@ impl Template {
                     contents,
                 )
             };
-            if let Err(err) = result {
+            if let Err(mut err) = result {
+                if path == b"package.json"
+                    && matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST))
+                {
+                    match Self::fill_empty_package_json(contents) {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(fill_err) => err = fill_err,
+                    }
+                }
                 if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
                     bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",

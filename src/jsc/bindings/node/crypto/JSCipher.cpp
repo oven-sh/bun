@@ -75,11 +75,16 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue optionsValue = callFrame->argument(0);
     JSValue bufferValue = callFrame->argument(1);
 
-    // Like Node, validate the cipher options (padding, oaepHash, oaepLabel) before any key
-    // parsing so an invalid digest is reported even when the key material itself is invalid.
+    // node validates the key argument, then the cipher options and the buffer, and reads the key last.
+    auto preparedKey = keyType == KeyType::Private
+        ? KeyObject::prepareAsymmetricKey(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s)
+        : KeyObject::prepareAsymmetricKey(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
     ncrypto::Digest digest;
     int32_t padding = defaultPadding;
     std::optional<WTF::Vector<uint8_t>> oaepLabel;
+    JSValue oaepHashValue = jsUndefined();
     JSValue encodingValue = jsUndefined();
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
@@ -89,20 +94,11 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        JSValue oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
+        oaepHashValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepHash"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepHashValue.isUndefined()) {
             V::validateString(scope, lexicalGlobalObject, oaepHashValue, "options.oaepHash"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            JSString* oaepHashString = oaepHashValue.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            GCOwnedDataScope<WTF::StringView> oaepHashView = oaepHashString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            digest = ncrypto::Digest::FromName(oaepHashView);
-            if (!digest) {
-                ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
-                return {};
-            }
         }
 
         encodingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
@@ -111,27 +107,40 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepLabelValue.isUndefined()) {
-            // Key parsing below runs user JS (option getters, warning events) that could
-            // detach a borrowed label buffer, so copy the bytes instead of holding a view.
+            // The key import below runs the getters of a JWK, which can detach the label
+            // buffer, so copy the bytes instead of holding a view.
             auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
             oaepLabel = WTF::Vector<uint8_t>(std::span<const uint8_t> { view->data(), view->size() });
         }
     }
 
+    auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // node reads a public key for the private functions too, and then reports an invalid digest.
+    // The import below refuses that key, so look the digest up first.
+    if (oaepHashValue.isString()) {
+        GCOwnedDataScope<WTF::StringView> oaepHashView = asString(oaepHashValue)->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        digest = ncrypto::Digest::FromName(oaepHashView);
+        if (!digest) {
+            ERR::OSSL_EVP_INVALID_DIGEST(scope, lexicalGlobalObject);
+            return {};
+        }
+    }
+
     KeyObject keyObject;
     {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
-        keyObject = keyType == KeyType::Private
-            ? KeyObject::getAsymmetricKeyFromJS(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s)
-            : KeyObject::getAsymmetricKeyFromJS(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
+        keyObject = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedKey));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto& pkey = keyObject.asymmetricKey();
 
-    auto buffer = getArrayBufferOrView2(lexicalGlobalObject, scope, bufferValue, "buffer"_s, encodingValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    // The getters of a JWK ran during the import and can have detached the buffer.
+    std::span<const uint8_t> bufferBytes = getBuffer(buffer.owner).value_or(std::span<const uint8_t> {});
 
     if (operation == CipherOperation::decrypt && keyType == KeyType::Private && padding == RSA_PKCS1_PADDING) {
         ncrypto::EVPKeyCtxPointer ctx = pkey.newCtx();
@@ -160,8 +169,8 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     };
 
     ncrypto::Buffer<const void> bufferBuf {
-        .data = buffer->data(),
-        .len = buffer->size(),
+        .data = bufferBytes.data(),
+        .len = bufferBytes.size(),
     };
 
     ncrypto::DataPointer result;

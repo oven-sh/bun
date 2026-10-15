@@ -327,16 +327,12 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue signatureValue = callFrame->argument(1);
     JSValue sigEncodingValue = callFrame->argument(2);
 
-    JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    // node validates the key argument, then the options and the signature, and reads the key last.
+    auto preparedKey = KeyObject::prepareAsymmetricKey(globalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
-
-    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(globalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    const auto& keyPtr = keyObject.asymmetricKey();
 
     // Get RSA padding mode and salt length if applicable
-    int32_t padding = getPadding(globalObject, scope, options, keyPtr);
+    std::optional<int32_t> paddingOption = getIntOption(globalObject, scope, options, "padding"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     std::optional<int> saltLen = getSaltLength(globalObject, scope, options);
@@ -345,6 +341,15 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     // Get DSA signature encoding format
     DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    KeyObject keyObject = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedKey));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    const auto& keyPtr = keyObject.asymmetricKey();
+    int32_t padding = paddingOption.value_or(keyPtr.getDefaultSignPadding());
 
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);

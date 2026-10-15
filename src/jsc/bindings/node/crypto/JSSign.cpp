@@ -425,9 +425,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
         return Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, lexicalGlobalObject);
     }
 
-    if (!options.isCell()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "privateKey"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
-    }
+    // node validates the key argument, then the options, and reads the key last.
+    auto preparedKey = KeyObject::prepareAsymmetricKey(lexicalGlobalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue outputEncodingValue = callFrame->argument(1);
     auto outputEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, outputEncodingValue).value_or(BufferEncodingType::buffer);
@@ -444,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
-    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(lexicalGlobalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s);
+    KeyObject keyObject = KeyObject::importPreparedKey(lexicalGlobalObject, scope, WTF::move(preparedKey));
     RETURN_IF_EXCEPTION(scope, {});
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, symlinkSync } from "fs";
+import { mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, isLinux, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -203,14 +203,52 @@ describe("fake node cli", () => {
       });
     });
 
-    test("NODE_PRESERVE_SYMLINKS=1 keeps the path through a symlinked directory", async () => {
+    // Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main`.
+    test("NODE_PRESERVE_SYMLINKS=1: the main module is the real path through a symlinked directory", async () => {
       using temp = tempDir("fake-node-main", {
-        "real/package.json": JSON.stringify({ type: "module" }),
-        "real/entry.js": "console.log(import.meta.filename);",
+        "real/package.json": "{}",
+        "real/entry.js": "console.log(JSON.stringify({ filename: __filename, requireMain: require.main === module }));",
       });
       symlinkSync(join(temp, "real"), join(temp, "link"), "dir");
       const result = await runAsNode(String(temp), ["./link/entry.js"], { NODE_PRESERVE_SYMLINKS: "1" });
+      expect({ ...result, stdout: parse(result.stdout) }).toEqual({
+        stdout: { filename: join(temp, "real", "entry.js"), requireMain: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("NODE_PRESERVE_SYMLINKS=1 and --preserve-symlinks-main: the main module keeps the path through the symlink", async () => {
+      using temp = tempDir("fake-node-main", {
+        "real/package.json": "{}",
+        "real/entry.js": "console.log(__filename);",
+      });
+      symlinkSync(join(temp, "real"), join(temp, "link"), "dir");
+      const args = ["--preserve-symlinks-main", "./link/entry.js"];
+      const result = await runAsNode(String(temp), args, { NODE_PRESERVE_SYMLINKS: "1" });
       expect(result).toEqual({ stdout: join(temp, "link", "entry.js") + "\n", stderr: "", exitCode: 0 });
+    });
+
+    test("a preload can create the entry point", async () => {
+      using temp = tempDir("fake-node-main", {
+        "pkg/package.json": "{}",
+        "pre.js": `require("fs").writeFileSync(__dirname + "/pkg/index.js", "console.log('entry ran');");`,
+      });
+      const result = await runAsNode(String(temp), ["-r", "./pre.js", "./pkg"]);
+      expect(result).toEqual({ stdout: "entry ran\n", stderr: "", exitCode: 0 });
+    });
+
+    test.each([
+      { name: "a trailing separator", arg: (_: string) => "./missing/" },
+      { name: "a doubled separator", arg: (temp: string) => temp + "//missing" },
+    ])("an entry point that does not exist, with $name, fails as before", async ({ arg }) => {
+      using temp = tempDir("fake-node-main", {});
+      const { stdout, stderr, exitCode } = await runAsNode(String(temp), [arg(String(temp))]);
+      expect({ stdout, error: stderr.split("\n")[0].slice(0, 24), exitCode }).toEqual({
+        stdout: "",
+        error: "error: Module not found ",
+        exitCode: 1,
+      });
     });
 
     test("a package.json that does not parse adds no output", async () => {
@@ -281,7 +319,85 @@ describe("fake node cli", () => {
       expect({ ...result, stdout: parse(result.stdout) }).toEqual(loaded(temp));
     });
   });
+
+  // The watcher finds a replaced entry point again by the path of the file that runs (`MainFile` in hot_reloader.rs).
+  // Not for Windows: its watcher does not read `MainFile`, and a rename over a file that is open can fail there.
+  describe.concurrent.skipIf(isWindows)("a watcher reloads an entry point that is replaced", () => {
+    const source = (n: number) => `console.log("ready ${n}"); globalThis.timer ??= setInterval(() => {}, 1000);`;
+    const entryPoints = [
+      { name: "a directory", cwd: ".", arg: "./pkg", file: "pkg/index.js" },
+      { name: "`.`", cwd: "pkg", arg: ".", file: "pkg/index.js" },
+      { name: "a file without its extension", cwd: ".", arg: "./pkg/entry", file: "pkg/entry.js" },
+      { name: "a symlink", cwd: ".", arg: "./bin/link", file: "pkg/cli.js" },
+    ];
+    type EntryPoint = (typeof entryPoints)[number];
+
+    function project({ file }: EntryPoint) {
+      const temp = tempDir("fake-node-hot", { "pkg/package.json": "{}", [file]: source(1) });
+      mkdirSync(join(temp, "bin"));
+      symlinkSync(join("..", "pkg", "cli.js"), join(temp, "bin", "link"));
+      return temp;
+    }
+
+    function node(temp: string, flag: string, { cwd, arg }: EntryPoint) {
+      return Bun.spawn({
+        cmd: [bunExe(), flag, arg],
+        argv0: "node",
+        cwd: join(temp, cwd),
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    }
+
+    function replaceByRename(temp: string, { file }: EntryPoint) {
+      writeFileSync(join(temp, file + ".tmp"), source(2));
+      renameSync(join(temp, file + ".tmp"), join(temp, file));
+    }
+
+    // Only inotify finds a file again that is deleted first.
+    test.skipIf(!isLinux).each(entryPoints)("--hot, $name, deleted and then created", async entryPoint => {
+      using temp = project(entryPoint);
+      await using proc = node(temp, "--hot", entryPoint);
+      const stdout = proc.stdout.getReader();
+      await until(stdout, "ready 1");
+      rmSync(join(temp, entryPoint.file));
+      // The delete starts a reload, which fails. Without this wait that reload can find the new file.
+      await until(proc.stderr.getReader(), "Module not found");
+      writeFileSync(join(temp, entryPoint.file), source(2));
+      await until(stdout, "ready 2");
+    });
+
+    test.each(entryPoints)("--hot, $name, replaced by a rename", async entryPoint => {
+      using temp = project(entryPoint);
+      await using proc = node(temp, "--hot", entryPoint);
+      const stdout = proc.stdout.getReader();
+      await until(stdout, "ready 1");
+      replaceByRename(temp, entryPoint);
+      await until(stdout, "ready 2");
+    });
+
+    test.each(entryPoints)("--watch, $name, replaced by a rename", async entryPoint => {
+      using temp = project(entryPoint);
+      await using proc = node(temp, "--watch", entryPoint);
+      const stdout = proc.stdout.getReader();
+      await until(stdout, "ready 1");
+      replaceByRename(temp, entryPoint);
+      await until(stdout, "ready 2");
+    });
+  });
 });
+
+// Reads until `text` arrives. It throws when the stream ends first, so a child that exits fails the test.
+async function until(reader: { read(): Promise<{ done: boolean; value?: Uint8Array }> }, text: string) {
+  const decoder = new TextDecoder();
+  let seen = "";
+  while (!seen.includes(text)) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`the stream ended before ${JSON.stringify(text)}, after ${JSON.stringify(seen)}`);
+    seen += decoder.decode(value, { stream: true });
+  }
+}
 
 async function runAsNode(cwd: string, args: string[], env?: Record<string, string>) {
   await using proc = Bun.spawn({

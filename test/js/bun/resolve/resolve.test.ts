@@ -2121,3 +2121,42 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// The module loader reads a directory again when a specifier that names it did not resolve.
+const directoriesThatDoNotResolve: { name: string; files: Record<string, string> }[] = [
+  { name: "gets an index file", files: { "lib/notes.txt": "" } },
+  { name: "is created", files: {} },
+];
+test.concurrent.each(directoriesThatDoNotResolve)(
+  "require() of a directory that did not resolve works after the directory $name",
+  async ({ files }) => {
+    using dir = tempDir("resolve-directory-again", {
+      ...files,
+      "main.js": `
+        const { mkdirSync, writeFileSync } = require("fs");
+        let first;
+        try {
+          first = require("./lib");
+        } catch (error) {
+          first = error.code;
+        }
+        mkdirSync(__dirname + "/lib", { recursive: true });
+        writeFileSync(__dirname + "/lib/index.js", "module.exports = 'lib/index.js';");
+        console.log(JSON.stringify([first, require("./lib")]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["MODULE_NOT_FOUND", "lib/index.js"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

@@ -13,6 +13,7 @@
 // SharedArrayBuffer at any time. Each mode changes the source in one of these
 // ways, or shows when the bytes are taken. It prints one line of JSON.
 import { plugin } from "bun";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { bytesOf, mutated } from "./plugin-buffer-contents-macro.ts";
 
@@ -78,13 +79,12 @@ function writeForEver(write: (bytes: Uint8Array, pass: number) => void) {
 // Calls `load(n)` until `count` of the loads had the worker make a pass while
 // they ran, or until one returns false. A debug build is slow enough that
 // every load counts. A release build can finish many loads before the
-// worker's thread gets a core of its own. Returns the number of loads.
+// worker's thread gets a core of its own.
 async function loadWhileWritten(passes: Int32Array, count: number, load: (n: number) => Promise<boolean>) {
   let seen = Atomics.load(passes, 0);
   let progressAt = performance.now();
   let overlapped = 0;
-  let loads = 0;
-  while (overlapped < count && (await load(loads++))) {
+  for (let n = 0; overlapped < count && (await load(n)); n++) {
     const now = Atomics.load(passes, 0);
     if (now !== seen) {
       seen = now;
@@ -95,7 +95,6 @@ async function loadWhileWritten(passes: Int32Array, count: number, load: (n: num
     }
   }
   results.overlapped = overlapped;
-  return loads;
 }
 
 if (mode === "mutate") {
@@ -218,11 +217,13 @@ if (mode === "mutate") {
   // transpiler that reads the shared bytes in place hashes the source, and
   // prints the literal from the source when it has parsed the rest, so it can
   // hash one character and print the other. This mode needs
-  // BUN_RUNTIME_TRANSPILER_CACHE_PATH, and a source that is large enough for
-  // the cache.
+  // BUN_RUNTIME_TRANSPILER_CACHE_PATH, and a source of 4 KiB or more, which
+  // is the least that the cache stores.
   const roundOf = (round: number) => String(round).padStart(6, "0");
-  const numbers = Array.from({ length: 2048 }, (_, i) => i).join(",");
-  const head = (round: number) => `// ${roundOf(round)}\nexport const numbers = [${numbers}];\nexport const value = "`;
+  const padding = Buffer.alloc(4096, "padding ").toString();
+  const numbers = Array.from({ length: 512 }, (_, i) => i).join(",");
+  const head = (round: number) =>
+    `// ${roundOf(round)} ${padding}\nexport const numbers = [${numbers}];\nexport const value = "`;
   const sourceOf = (round: number, digit: number) => `${head(round)}${digit}";\n`;
   const roundAt = "// ".length;
   const digitAt = head(0).length;
@@ -250,20 +251,18 @@ if (mode === "mutate") {
     });
 
     const wrong: string[] = [];
-    // On an unfixed build about half of the loads leave a wrong entry.
-    const loads = await loadWhileWritten(passes, 16, async n => {
+    // On an unfixed build about a third of the loads leave a wrong entry.
+    await loadWhileWritten(passes, 16, async n => {
       const { value } = await import("written:" + roundOf(n));
-      if (value !== "1" && value !== "2") wrong.push(`load ${n} gave ${value}`);
+      // The load printed `value`. If it hashed the other digit, the source
+      // with the other digit now has the output of this one in the cache.
+      const other = value === "1" ? 2 : 1;
+      const { value: cached } = await import(`still:${n}/${other}`);
+      if (cached !== String(other)) wrong.push(`the source of load ${n} with ${other} gave ${cached}`);
       return true;
     });
-    // Each source that the loads above can have hashed, now as a string that nothing writes.
-    for (let n = 0; n < loads; n++) {
-      for (const digit of [1, 2]) {
-        const { value } = await import(`still:${n}/${digit}`);
-        if (value !== String(digit)) wrong.push(`the source of load ${n} with ${digit} gave ${value}`);
-      }
-    }
     results.wrong = wrong;
+    results.entries = readdirSync(process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH!).length > 0;
   } else {
     writeForEver((bytes, pass) => Atomics.store(bytes, digitAt, 0x31 + (pass & 1)));
   }

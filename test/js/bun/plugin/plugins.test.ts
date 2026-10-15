@@ -540,7 +540,7 @@ describe("onLoad contents while a worker writes it", () => {
       BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
     };
     expect(await contentsFixture(["cache", "Uint8Array"], env)).toEqual({
-      result: { overlapped: 16, wrong: [] },
+      result: { overlapped: 16, wrong: [], entries: true },
       stderr: "",
       exitCode: 0,
     });

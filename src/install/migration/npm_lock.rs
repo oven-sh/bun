@@ -155,27 +155,31 @@ struct Migrator<'a> {
     probe: Vec<u8>,
     url: Vec<u8>,
     patched: String,
-    /// Entries without an integrity whose tarball is on a host bun is not configured with, for messages.
+    /// Entries without an integrity whose tarball is on a host bun is not configured with.
     unverifiable: Vec<u32>,
     silent: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
 }
 
-/// Registry rows that lost their URL and that no other entry gave an integrity. A bundled copy,
-/// which is never downloaded, has the URL that `synthesize_registry_url` made.
-fn unverified_rows(this: &Lockfile) -> Vec<PackageID> {
-    let packages = this.packages.slice();
-    (packages.items_resolution().iter())
-        .zip(packages.items_meta())
-        .enumerate()
-        .filter(|(_, (res, meta))| {
-            res.tag == resolution::Tag::Npm
-                && res.npm().url.is_empty()
-                && !meta.integrity.tag.is_supported()
-        })
-        .map(|(id, _)| id as PackageID)
-        .collect()
+/// The packages that no entry gave an integrity, out of those that the `unverifiable` entries became
+/// (one that joined a bundled copy's row has that copy's URL) and every registry row without a URL.
+fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
+    let packages = migrator.this.packages.slice();
+    let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
+    let without_url = (0..resolutions.len() as PackageID).filter(|&id| {
+        let res = &resolutions[id as usize];
+        res.tag == resolution::Tag::Npm && res.npm().url.is_empty()
+    });
+    let mut ids: Vec<PackageID> = (migrator.unverifiable.iter())
+        .map(|&j| migrator.entry_package_ids[j as usize])
+        .filter(|&id| id != INVALID_PACKAGE_ID)
+        .chain(without_url)
+        .filter(|&id| !metas[id as usize].integrity.tag.is_supported())
+        .collect();
+    bun_collections::index_sort::sort_slice_unstable_by(&mut ids, |a, b| a.cmp(b));
+    ids.dedup();
+    ids
 }
 
 pub(super) fn migrate_packages(
@@ -236,7 +240,7 @@ pub(super) fn migrate_packages(
     migrator.warn_unreachable();
 
     // The registry that these rows now come from says what its tarballs have to be.
-    let unverified = unverified_rows(migrator.this);
+    let unverified = unverified_packages(&migrator);
     if !unverified.is_empty() {
         (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
             migrator.manager,
@@ -244,7 +248,7 @@ pub(super) fn migrate_packages(
             true,  // fill_integrity
             Some(&unverified),
         )?;
-        if let Some(&refused) = unverified_rows(migrator.this).first() {
+        if let Some(&refused) = unverified_packages(&migrator).first() {
             let entry = (migrator.unverifiable.iter())
                 .find(|&&j| migrator.entry_package_ids[j as usize] == refused);
             log.add_error_fmt(

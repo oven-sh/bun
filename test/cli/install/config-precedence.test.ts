@@ -970,21 +970,24 @@ describe.concurrent("bun install config precedence", () => {
   );
 
   test.each(lastLayers)(
-    "a scope with a token and no URL is at the default registry from %s, which does not get the token",
+    "a scope with a token and no URL stays at the configured registry when %s names another host",
     async (_, args, env, files) => {
-      using dead = deadRegistry();
-      using capture = capturingRegistry();
+      using configured = capturingRegistry();
+      using other = capturingRegistry();
       using dir = tempDir("config-precedence", {
-        "project/bunfig.toml": bunfig({ registry: dead.url, scopes: { "needs-auth": { token: authToken } } }),
-        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
-        ...files(capture.url),
+        "project/bunfig.toml": bunfig({ registry: configured.url, scopes: { "needs-auth": { token: authToken } } }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0", "no-deps": "1.0.0" }),
+        ...files(other.url),
       });
-      const { exitCode } = await install(String(dir), args(capture.url), env(capture.url));
-      expect(dead.hits).toBe(0);
-      expect(capture.authorizations).not.toBeEmpty();
-      expect(new Set(capture.authorizations)).toStrictEqual(new Set([null]));
-      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(false);
-      expect(exitCode).toBe(1);
+      const { stderr, exitCode } = await install(String(dir), args(other.url), env(other.url));
+      expect(stderr).not.toContain("error:");
+      // The scope's package, with its token. The other host sees neither.
+      expect(new Set(configured.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
+      expect(other.authorizations).not.toBeEmpty();
+      expect(new Set(other.authorizations)).toStrictEqual(new Set([null]));
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(installed(String(dir), "no-deps")).toBe(true);
+      expect(exitCode).toBe(0);
     },
   );
 

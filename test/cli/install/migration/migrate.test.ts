@@ -726,6 +726,47 @@ describe.concurrent("a package-lock.json entry of another host without an integr
     expect(exitCode).toBe(0);
   });
 
+  // A bundled copy has neither `resolved` nor `integrity`, and is one package with the entry of its version.
+  test.each(["before", "after"])("gets the registry's integrity with a bundled copy %s it", async order => {
+    using registry = localRegistry();
+    using other = otherHost();
+    const published = (name: string, rest: object) => ({
+      version: "1.0.0",
+      resolved: registry.tarball(name, "1.0.0"),
+      integrity: "sha512-" + Buffer.alloc(64, 1).toString("base64"),
+      dependencies: { "no-deps": "1.0.0" },
+      ...rest,
+    });
+    // The dependencies of the first are reached first.
+    const names = order === "before" ? ["bundler", "user"] : ["user", "bundler"];
+    const dependencies = Object.fromEntries(names.map(name => [name, "1.0.0"]));
+    using dir = synthetic(
+      "migrate-off-registry-entry-and-bundled-copy",
+      {
+        "package.json": JSON.stringify({ name: "bundled", dependencies }),
+        "package-lock.json": npmLock("bundled", {
+          "": { name: "bundled", dependencies },
+          "node_modules/bundler": published("bundler", { bundleDependencies: ["no-deps"] }),
+          "node_modules/bundler/node_modules/no-deps": { version: "1.0.0", inBundle: true },
+          "node_modules/no-deps": { version: "1.0.0", resolved: `${other.url}no-deps-1.0.0.tgz` },
+          "node_modules/user": published("user", {}),
+        }),
+      },
+      registry.url,
+    );
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    const rows = Object.values((await readLock(dir)).lock.packages) as string[][];
+    // Printed once for `user` and once inside `bundler`.
+    expect(rows.filter(row => row[0] === "no-deps@1.0.0").map(row => row[3])).toEqual([
+      registry.integrity("no-deps", "1.0.0"),
+      registry.integrity("no-deps", "1.0.0"),
+    ]);
+    expect({ registry: registry.requests, other: other.requests }).toEqual({ registry: ["/no-deps"], other: [] });
+    expect(exitCode).toBe(0);
+  });
+
   test("is not migrated when the registry does not have that version", async () => {
     using registry = localRegistry();
     using other = otherHost();

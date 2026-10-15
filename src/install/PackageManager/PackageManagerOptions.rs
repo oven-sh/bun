@@ -950,15 +950,14 @@ impl Options {
             self.registry_from_command_line = true;
         }
 
-        // Their credentials follow the default registry as its own do. Without them such a scope is like one with no entry.
-        if self.scope.url_hash != configured.url_hash
-            && !self.inherits_credentials(&configured, &self.scope.url.url())
-        {
-            at_default_registry.clear();
-        }
+        // Their credentials follow the default registry as its own do. Elsewhere they stay where the config files have them.
+        let follows = self.scope.url_hash == configured.url_hash
+            || self.inherits_credentials(&configured, &self.scope.url.url());
+        let home = if follows { &self.scope } else { &configured };
+        let home: Box<[u8]> = home.url.href().into();
         for (name, registry) in at_default_registry {
             let registry = Api::NpmRegistry {
-                url: self.scope.url.href().into(),
+                url: home.clone(),
                 ..registry.clone()
             };
             self.registries.put(

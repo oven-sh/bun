@@ -1808,7 +1808,7 @@ describe("Bun.serve HTTP/3 production", () => {
     };
     test.each(Object.entries(cases))("%s", async (_, { serve, expected }) => {
       using server = Bun.serve({ port: 0, tls, http3: true, http1: false, ...serve } as Bun.Serve.Options<undefined>);
-      const res = await fetchH3(server.port, "/", {
+      const res = await fetchH3(server.port!, "/", {
         method: "POST",
         body: "request-content",
         headers: { expect: "100-continue" },
@@ -1831,14 +1831,18 @@ describe("Bun.serve HTTP/3 production", () => {
         verifyPeer: "manual",
         transportParams: { maxIdleTimeout: 5 },
         onerror() {},
-      });
+      } as SessionOptions);
       client.closed.catch(() => {});
       const seen: string[] = [];
       // No `await client.opened`: the request has to leave with the handshake.
       const stream = await client.createBidirectionalStream({
         headers: requestHeaders("/", { ":method": "POST", expect: "100-continue" }),
-        oninfo: (received: Record<string, string>) => seen.push("info " + received[":status"]),
-        onheaders: (received: Record<string, string>) => seen.push("headers " + received[":status"]),
+        oninfo(received) {
+          seen.push("info " + received[":status"]);
+        },
+        onheaders(received) {
+          seen.push("headers " + received[":status"]);
+        },
       });
       stream.closed.catch(() => {});
       let body = "";

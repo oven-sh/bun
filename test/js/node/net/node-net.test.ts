@@ -1,4 +1,5 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
+import { createSocketPair } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
@@ -1354,6 +1355,74 @@ it("a client dialed with readable: false never reads and keeps writing", async (
     await once(client, "close");
   } finally {
     server.close();
+  }
+});
+
+// A reset is reported to a stopped handle too. For a flow-control pause the native layer first
+// reads what the kernel still holds, so that the tail of a stream is not lost (#39846). A
+// `readable: false` socket never reads, so its bytes stay in the kernel, as in node. Reading and
+// pushing them into the ended Readable replaced the reset with ERR_STREAM_PUSH_AFTER_EOF. (node
+// does not poll such a handle at all, so it finds the reset at the next write, also as ECONNRESET.)
+it.each([false, true])(
+  "a client dialed with readable: false reports a reset that follows unread data as ECONNRESET (pauseOnConnect: %p)",
+  async pauseOnConnect => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      accepted.resolve(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect({
+        port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
+        readable: false,
+        pauseOnConnect,
+      });
+      const events: string[] = [];
+      client.on("data", chunk => events.push(`data:${chunk.length}`));
+      client.on("end", () => events.push("end"));
+      client.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = Promise.withResolvers<boolean>();
+      client.on("close", closed.resolve);
+      const [peer] = await Promise.all([accepted.promise, once(client, "connect")]);
+      // The banner sits unread in the client's kernel buffer when the reset arrives.
+      peer.write("banner", () => peer.resetAndDestroy());
+      expect({ hadError: await closed.promise, events, bytesRead: client.bytesRead }).toEqual({
+        hadError: true,
+        events: ["error:ECONNRESET"],
+        bytesRead: 0,
+      });
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// The same rule for a connected fd the socket adopts: every byte the peer sent was pushed after EOF.
+it.skipIf(isWindows)("a readable: false socket over an adopted fd never reads and keeps writing", async () => {
+  const [fd, peerFd] = createSocketPair();
+  const client = new Socket({ readable: false });
+  try {
+    const events: string[] = [];
+    client.on("data", chunk => events.push(`data:${chunk.length}`));
+    client.on("end", () => events.push("end"));
+    client.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    client.on("close", () => events.push("close"));
+    client.connect({ fd } as never);
+    fs.writeSync(peerFd, "banner");
+    // The banner is readable the whole time; give the loop several turns to (wrongly) read it.
+    for (let i = 0; i < 5 && events.length === 0; i++) await new Promise<void>(resolve => setImmediate(resolve));
+    let late = "";
+    if (!client.destroyed) {
+      await new Promise<void>((resolve, reject) => client.write("late", err => (err ? reject(err) : resolve())));
+      const chunk = Buffer.alloc(16);
+      late = chunk.toString("latin1", 0, fs.readSync(peerFd, chunk));
+    }
+    expect({ events, bytesRead: client.bytesRead, late }).toEqual({ events: [], bytesRead: 0, late: "late" });
+  } finally {
+    client.destroy();
+    fs.closeSync(peerFd);
   }
 });
 

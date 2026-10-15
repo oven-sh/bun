@@ -556,6 +556,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
+                        s->no_reader = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -643,8 +644,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * control, and there is no later for a dead connection to flow into. recv()
              * then returns the data and after it the error, which is what libuv reports
              * to node as well. A socket parked in the low-priority queue is not linked
-             * where on_data expects it and takes the plain error close. */
-            const int drain_for_error = error && !s->read_eof && s->flags.low_prio_state != 1;
+             * where on_data expects it and takes the plain error close. So does a
+             * no_reader socket: nothing takes its bytes, and libuv reads only while
+             * UV_HANDLE_READING is set (nodejs/node v26.3.0 deps/uv/src/unix/stream.c#L1043-L1045). */
+            const int drain_for_error = error && !s->read_eof && !s->no_reader && s->flags.low_prio_state != 1;
             if ((events & LIBUS_SOCKET_READABLE) || drain_for_error) {
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest

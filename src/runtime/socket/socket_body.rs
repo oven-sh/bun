@@ -780,6 +780,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// Not gated on `IS_PAUSED`: a socket that `pauseOnConnect` paused still has to be marked.
+    fn pause_reads_no_reader(&self) {
+        if self.socket.get().pause_stream_no_reader() {
+            self.update_flags(|f| f.insert(Flags::IS_PAUSED));
+        }
+    }
+
     /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
     fn pause_on_connect_once(&self) {
         if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
@@ -5056,6 +5063,20 @@ pub(crate) fn js_get_buffered_amount(
         ));
     }
     Ok(JSValue::js_number(0.0))
+}
+
+/// node:net stops a socket that never reads (`readable: false`). A TLS socket always reads.
+#[bun_jsc::host_fn]
+pub(crate) fn js_pause_no_reader(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    jsc::mark_binding!();
+    let [socket] = callframe.arguments_as_array::<1>();
+    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+        this.pause_reads_no_reader();
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]

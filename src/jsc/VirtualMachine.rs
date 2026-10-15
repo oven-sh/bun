@@ -4874,8 +4874,8 @@ impl VirtualMachine {
 
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
     /// stored in itself, so to it a file on disk is not part of the program.
-    pub fn is_file_on_disk_static(&self, path: &[u8]) -> bool {
-        self.standalone_module_graph.is_none() && !path.starts_with(b"data:")
+    pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
+        !in_standalone_executable && !path.starts_with(b"data:")
     }
 
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.

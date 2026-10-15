@@ -2162,7 +2162,9 @@ fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> boo
             .eval_source
             .as_deref()
             .is_some_and(|eval_source| core::ptr::eq(eval_source, source)),
-        None => vm.is_file_on_disk_static(path.text),
+        None => {
+            VirtualMachine::is_file_on_disk_static(vm.standalone_module_graph.is_some(), path.text)
+        }
     }
 }
 

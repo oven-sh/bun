@@ -193,6 +193,9 @@ impl PmVersionCommand {
 
         let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
 
+        // Bun's shell gives the scripts this loop's environment. Only the first call sets it: on Windows, a git spawn.
+        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()), Some(&package_json_dir));
+
         Self::verify_git(&package_json_dir, pm);
 
         let mut path_buf = bun_paths::path_buffer_pool::get();

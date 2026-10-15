@@ -1191,7 +1191,7 @@ impl GitSubprocess {
         // No git of the install runs a hook, or goes on into a submodule.
         for arg in [
             b"-c".as_slice(),
-            b"core.hooksPath=/dev/null",
+            concat!("core.hooksPath=", bun_core::null_device!()).as_bytes(),
             b"-c",
             b"submodule.recurse=false",
         ]

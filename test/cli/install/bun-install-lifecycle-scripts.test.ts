@@ -2127,6 +2127,20 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
+    // As a shell or a tool writes it from `$PWD`.
+    test.concurrent("that directory in front of PATH, spelled through a link", async () => {
+      using ctx = await project("hoisted", files("postinstall", true));
+      expect((await bun(ctx, ["install", "--ignore-scripts"])).exitCode).toBe(0);
+      await rm(join(ctx.packageDir, "node_modules", "native"), { recursive: true, force: true });
+      await symlink(ctx.packageDir, join(ctx.packageDir, "link"));
+      const { err, exitCode } = await bun(ctx, ["install"], {
+        PATH: `${join(ctx.packageDir, "link", "node_modules", ".bin")}:${ctx.env.PATH}`,
+      });
+      expect(err).not.toContain("error:");
+      expect(await built(ctx)).toBe(`${osType()}\n`);
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("bun pm trust", async () => {
       using ctx = await project("hoisted", files("postinstall", false));
       expect((await bun(ctx, ["install"])).out).toContain("Blocked 1 postinstall");
@@ -2147,6 +2161,33 @@ describe("the trusted set", () => {
       expect(await textOf(ctx.packageDir, "built.txt")).toBe("planted\n");
     });
   });
+
+  // A working directory keeps the case it was typed in, and `bun run` writes PATH from it.
+  test.concurrent.skipIf(!isWindows)(
+    "the project's node_modules/.bin comes last for a dependency's script, however the working directory is spelled",
+    async () => {
+      const printPath = `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`;
+      using ctx = await project("hoisted", {
+        "package.json": {
+          name: "foo",
+          scripts: { setup: `${bunExe()} install` },
+          dependencies: { native: "file:./native" },
+          trustedDependencies: ["native"],
+        },
+        "native/package.json": { name: "native", version: "1.0.0", scripts: { postinstall: printPath } },
+      });
+      const { err, exitCode } = await bun(ctx, ["run", "setup"], {}, ctx.packageDir.toUpperCase());
+      expect(err).not.toContain("error:");
+
+      const path = (await textOf(ctx.packageDir, "node_modules", "native", "path.txt"))!.toLowerCase().split(";");
+      const inherited = process.env.PATH!.toLowerCase().split(";")[0];
+      expect(path).toContain(inherited);
+      expect(path.indexOf(join(ctx.packageDir, "node_modules", ".bin").toLowerCase())).toBeGreaterThan(
+        path.indexOf(inherited),
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Every subcommand below prints the flag table shared by the install family. The behavior the

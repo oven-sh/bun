@@ -122,11 +122,13 @@ impl Error {
 
     /// Reading `path` failed on a file that is there, as opposed to finding none.
     pub fn is_unreadable_file(&self, path: &[u8]) -> bool {
+        let is_there = || crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok();
         match self.get_errno() {
             E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG => false,
             // Also what a directory on the way gives when it cannot be searched, which says nothing about the file.
-            E::EACCES | E::EPERM => crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok(),
-            _ => true,
+            E::EACCES | E::EPERM => is_there(),
+            // Windows has many more codes for a place where no file can be, so there the file has to be seen.
+            _ => cfg!(unix) || is_there(),
         }
     }
 

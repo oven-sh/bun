@@ -5463,6 +5463,66 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   });
 });
 
+// Env files and CI matrices shared between platforms hand such values to every one of them.
+describe.concurrent("a config folder where no file can be is a missing file", () => {
+  /** `bun install` in `<dir>/project`, with `<dir>/home` as the home directory unless `extra` says otherwise. */
+  async function install(extra: Record<string, string>, files: Record<string, string> = {}) {
+    using dir = tempDir("config-folder", {
+      "project/package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "project/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "home/.keep": "",
+      ...files,
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        ...extra,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      complaints: stderr.split("\n").filter(line => /^(warn|error):/.test(line)),
+      lockfile: readdirSync(join(String(dir), "project")).filter(name => name.startsWith("bun.lock")),
+      exitCode,
+    };
+  }
+
+  const binaryLockfile = { "home/.bunfig.toml": "[install]\nsaveTextLockfile = false\n" };
+
+  test.each(["", "relative/folder"])(
+    "XDG_CONFIG_HOME=%j: the home directory's .bunfig.toml is read",
+    async XDG_CONFIG_HOME => {
+      expect(await install({ XDG_CONFIG_HOME }, binaryLockfile)).toEqual({
+        complaints: [],
+        lockfile: ["bun.lockb"],
+        exitCode: 0,
+      });
+    },
+  );
+
+  const share = "\\\\127.0.0.1\\nope\\x";
+  test
+    .skipIf(!isWindows)
+    .each([
+      { XDG_CONFIG_HOME: "/home/u/.config" },
+      { USERPROFILE: "/home/u" },
+      { XDG_CONFIG_HOME: share },
+      { USERPROFILE: share },
+      { NPM_CONFIG_USERCONFIG: share },
+    ])("%j", async extra => {
+    expect(await install(extra)).toEqual({ complaints: [], lockfile: ["bun.lock"], exitCode: 0 });
+  });
+});
+
 // A WHATWG parse reads such bytes as U+FFFD and serialises that as %EF%BF%BD: a request for something else than was named.
 describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () => {
   // Latin-1 text: a stray continuation byte and a lone 0x9B.

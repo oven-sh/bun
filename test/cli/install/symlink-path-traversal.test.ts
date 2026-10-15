@@ -1419,13 +1419,13 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
   // The root `node_modules` is absent, so the installer takes its fresh-install
   // path and skips the rename-aside that clears an existing destination. The
   // member's nested destination is still a pre-existing symlink.
-  it.skipIf(isWindows)("does not install through the package's own directory on a fresh install", async () => {
+  it("does not install through the package's own directory on a fresh install", async () => {
     using root = tempDir("nm-fresh", {});
     const victim = await plantVictim(String(root));
     await writeFile(join(victim, "package.json"), JSON.stringify({ name: "victim-project", version: "7.7.7" }));
     const repo = await workspaceWithNestedDep(String(root));
     await mkdir(join(repo, "packages", "evil", "node_modules"), { recursive: true });
-    await symlink("../../../../victim", join(repo, "packages", "evil", "node_modules", "lodash"));
+    await linkDir("../../../../victim", join(repo, "packages", "evil", "node_modules", "lodash"));
 
     const { exitCode } = await install(repo);
 

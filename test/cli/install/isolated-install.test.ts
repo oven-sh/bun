@@ -1057,7 +1057,51 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
     });
     expect(await Promise.all([silent.stdout.text(), silent.stderr.text(), silent.exited])).toEqual(["", "", 0]);
   });
+
+  // From a member that is a link, the root is found by $PWD: by the path as typed, with its links.
+  test.concurrent("a file of the project is one by whichever path the project is reached", async () => {
+    using dir = tempDir("folder-links-typed", {
+      "real/proj": {
+        ...files,
+        "package.json": JSON.stringify({
+          name: "folder-links",
+          workspaces: ["packages/*"],
+          dependencies: { lib: "file:./vendor/lib" },
+        }),
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        "packages": {},
+      },
+      "elsewhere/app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+    });
+    const project = join(String(dir), "real", "proj");
+    symlinkSync(join(String(dir), "elsewhere", "app"), join(project, "packages", "app"));
+    symlinkSync(join("..", "..", "shared", "tsconfig.base.json"), join(project, "vendor", "lib", "tsconfig.json"));
+    symlinkSync("real", join(String(dir), "typed"));
+
+    const cwd = join(String(dir), "typed", "proj", "packages", "app");
+    await runBunInstall({ ...installEnv(project), PWD: cwd }, cwd);
+    expect(await file(join(project, "node_modules", "lib", "tsconfig.json")).json()).toEqual({ shared: true });
+  });
 });
+
+// The cwd of a process on Windows is as its parent spelled it.
+test.concurrent.skipIf(!isWindows).each(["isolated", "hoisted"] as const)(
+  "a link in a file: folder to a file of the project is installed from a cwd with a lowercase drive letter (%s)",
+  async linker => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": JSON.stringify({ name: "folder-links", dependencies: { lib: "file:./vendor/lib" } }),
+        "shared/elsewhere.js": "module.exports = 1;",
+        "vendor/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+      },
+    });
+    symlinkSync(join("..", "..", "shared", "elsewhere.js"), join(packageDir, "vendor", "lib", "project.js"), "file");
+
+    await runBunInstall(installEnv(packageDir), packageDir[0].toLowerCase() + packageDir.slice(1));
+    expect(await file(join(packageDir, "node_modules", "lib", "project.js")).text()).toBe("module.exports = 1;");
+  },
+);
 
 // It holds its name there, so that no registry package of that name is found before it, and has no link of its own.
 test.concurrent(
@@ -3727,6 +3771,72 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
     } finally {
       rmSync(volume, { recursive: true, force: true });
     }
+  });
+
+  // Windows moves and deletes no folder while a program has a file in it open without sharing that.
+  test.skipIf(!isWindows).concurrent.each([
+    ["hoisted", "isolated"],
+    ["isolated", "hoisted"],
+  ] as const)("a file that a program has open does not stop the change from %s to %s", async (from, to) => {
+    const names = ["a-dep", "no-deps", "what-bin"];
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: from },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0", "what-bin": "1.0.0" },
+        }),
+      },
+    });
+    await runBunInstall(installEnv(packageDir), packageDir);
+    const manifest = (name: string) => join(packageDir, "node_modules", name, "package.json");
+
+    await using holder = spawn({
+      cmd: [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        "$f = [IO.File]::Open($env:HELD, 'Open', 'Read', 'Read'); [Console]::Out.WriteLine('open'); [Console]::In.ReadLine() | Out-Null; $f.Close()",
+      ],
+      env: { ...bunEnv, HELD: manifest("no-deps") },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = holder.stdout.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("open");
+    reader.releaseLock();
+
+    const { err } = await runBunInstall(installEnv(packageDir), packageDir, {
+      packages: ["--linker", to],
+      savesLockfile: false,
+      allowWarnings: true,
+    });
+    holder.stdin.end();
+    await holder.exited;
+
+    expect(err).toContain("which another linker installed");
+    expect(await Promise.all(names.map(async name => (await file(manifest(name)).json()).name))).toEqual(names);
+  });
+
+  // Without LongPathsEnabled a path of 260 characters is only found in its long form.
+  test.skipIf(!isWindows).concurrent("a second install finds the links whose path has 260 characters", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    let project = packageDir;
+    while (project.length < 215) {
+      project = join(project, Buffer.alloc(Math.max(1, Math.min(40, 214 - project.length)), "p").toString());
+    }
+    mkdirSync(project, { recursive: true });
+    await registry.writeBunfig(project, { linker: "isolated" });
+    await write(join(project, "package.json"), JSON.stringify({ name: "root", dependencies: { "one-dep": "1.0.0" } }));
+    const link = join(project, "node_modules", ".bun", "one-dep@1.0.0", "node_modules", "no-deps");
+    expect(link.length).toBeGreaterThanOrEqual(260);
+
+    await runBunInstall(installEnv(packageDir), project);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const { out } = await runBunInstall(installEnv(packageDir), project, { savesLockfile: false });
+
+    expect(out).toContain("(no changes)");
   });
 
   // Mounting needs a private user and mount namespace. Skipped where those are turned off, as in most containers.

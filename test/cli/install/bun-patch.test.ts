@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -12,8 +14,18 @@ import {
   statSync,
   symlinkSync,
 } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isWindows, normalizeBunSnapshot, readdirSorted, tempDir } from "harness";
-import { isAbsolute, join, relative, sep } from "path";
+import {
+  bunEnv,
+  bunExe,
+  DirectoryTree,
+  isLinux,
+  isMusl,
+  isWindows,
+  normalizeBunSnapshot,
+  readdirSorted,
+  tempDir,
+} from "harness";
+import { isAbsolute, join, relative, resolve, sep } from "path";
 import { TestRegistry } from "registry";
 import { wyhash11 } from "./wyhash11.js";
 
@@ -1262,6 +1274,145 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
     using fakeGit = tempDir("bun-patch-fake-git", { "git": `#!/bin/sh\n${script}` });
     chmodSync(join(String(fakeGit), "git"), 0o755);
     expect(await commitWithPath(String(fakeGit))).toContain(`error: failed to make diff ${message}`);
+  });
+});
+
+// `bun patch` moves the package folder aside and the copy into its place. Windows does not rename a
+// folder while a file below it is open (an editor, a dev server), and overlayfs (Docker) does not
+// rename one from a lower layer. The entries of the folder move one by one then.
+describe.concurrent("a package folder that the system does not rename", () => {
+  /** Every path in node_modules, with what it holds. */
+  const state = (dir: string) =>
+    tree(join(dir, "node_modules")).map(path => {
+      const what = kind(dir, "node_modules", path);
+      return [path, what === "file" ? readFileSync(join(dir, "node_modules", path), "utf8") : what];
+    });
+
+  /** What `bun patch bundled-transitive` leaves, and then edits at the top of the package and below. */
+  async function preparedAndEdited(dir: string, env: Env) {
+    const folder = join(dir, "node_modules", "bundled-transitive");
+    await bunOk(dir, env, "patch", "bundled-transitive");
+    const prepared = state(dir);
+    await Bun.write(join(folder, "index.js"), patched);
+    await Bun.write(join(folder, "node_modules", "no-deps", "mine.js"), "// not in the package\n");
+    return prepared;
+  }
+
+  test.skipIf(!isWindows).each(["hoisted", "isolated"] as const)(
+    "Windows, while files of the package are open (%s linker)",
+    async linker => {
+      await using project = await installedProject(bundledAndNested, { linker });
+      const { dir, env } = project;
+      const folder = join(dir, "node_modules", "bundled-transitive");
+      const prepared = await preparedAndEdited(dir, env);
+
+      const open = [join(folder, "index.js"), join(folder, "node_modules", "no-deps", "mine.js")].map(path =>
+        openSync(path, "r"),
+      );
+      try {
+        await bunOk(dir, env, "patch", "bundled-transitive");
+      } finally {
+        open.forEach(fd => closeSync(fd));
+      }
+      expect(state(dir)).toEqual(prepared);
+    },
+  );
+
+  // Folders are not renamed, but for what is in a temporary folder of bun, which is new as in the
+  // upper layer of overlayfs. locked.js is neither renamed nor deleted, as a file that a Windows
+  // process opened for itself alone.
+  const shimC = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static int is_locked(const char *path) {
+  const char *slash = strrchr(path, '/');
+  return strcmp(slash ? slash + 1 : path, "locked.js") == 0;
+}
+
+static int is_new(int dirfd, const char *path) {
+  char link[64], dir[4096] = "";
+  if (path[0] != '/' && dirfd != AT_FDCWD) {
+    snprintf(link, sizeof link, "/proc/self/fd/%d", dirfd);
+    ssize_t len = readlink(link, dir, sizeof dir - 1);
+    dir[len < 0 ? 0 : len] = 0;
+  }
+  return strstr(dir, "/.bun-tmp-") || strstr(path, ".bun-tmp-");
+}
+
+int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
+  struct stat st;
+  if (is_locked(oldpath)) {
+    errno = EBUSY;
+    return -1;
+  }
+  if (!is_new(olddirfd, oldpath) && fstatat(olddirfd, oldpath, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(st.st_mode)) {
+    errno = EXDEV;
+    return -1;
+  }
+  int (*real)(int, const char *, int, const char *) = dlsym(RTLD_NEXT, "renameat");
+  return real(olddirfd, oldpath, newdirfd, newpath);
+}
+
+int unlinkat(int dirfd, const char *path, int flags) {
+  if (is_locked(path)) {
+    errno = EBUSY;
+    return -1;
+  }
+  int (*real)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
+  return real(dirfd, path, flags);
+}
+`;
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+  /** `env` for a bun that runs with the shim, which is compiled into `shimDir`. */
+  async function withShim(env: Env, shimDir: string): Promise<Env> {
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+      cwd: shimDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    expect(exitCode, stderr).toBe(0);
+    return { ...env, LD_PRELOAD: [join(shimDir, "shim.so"), env.LD_PRELOAD].filter(Boolean).join(":") };
+  }
+
+  // bun-musl is statically linked, so LD_PRELOAD cannot intercept renameat.
+  describe.skipIf(!isLinux || isMusl || !cc).each(["hoisted", "isolated"] as const)("%s linker", linker => {
+    test("the copy takes the place of the folder", async () => {
+      await using project = await installedProject(bundledAndNested, { linker });
+      using shimDir = tempDir("bun-patch-shim", { "shim.c": shimC });
+      const { dir, env } = project;
+      const prepared = await preparedAndEdited(dir, env);
+
+      await bunOk(dir, await withShim(env, String(shimDir)), "patch", "bundled-transitive");
+      expect(state(dir)).toEqual(prepared);
+    });
+
+    test("a file that cannot move: the folder is whole again", async () => {
+      await using project = await installedProject(bundledAndNested, { linker });
+      using shimDir = tempDir("bun-patch-shim", { "shim.c": shimC });
+      const { dir, env } = project;
+      await preparedAndEdited(dir, env);
+      const nested = join(dir, "node_modules", "bundled-transitive", "node_modules", "no-deps");
+      await Bun.write(join(nested, "locked.js"), "// open elsewhere\n");
+      const before = state(dir);
+
+      const shimmed = await withShim(env, String(shimDir));
+      const { stdout, stderr, exitCode } = await runBun(dir, shimmed, "patch", "bundled-transitive");
+      expect(stderr).toContain("error overwriting folder in node_modules: EBUSY");
+      expect(stdout).not.toContain("To patch");
+      expect(state(dir)).toEqual(before);
+      expect(exitCode).toBe(1);
+    });
   });
 });
 
@@ -3418,7 +3569,7 @@ describe.concurrent("--patches-dir with an absolute path", () => {
     await bunOk(dir, env, "patch", "basic-1");
     await Bun.write(join(dir, "node_modules", "basic-1", "index.js"), patched);
     await bunOk(dir, env, "patch", "--commit", "basic-1", `--patches-dir=${patchesDir}`);
-    expect(existsSync(join(patchesDir, "basic-1@1.0.0.patch"))).toBe(true);
+    expect(existsSync(resolve(dir, patchesDir, "basic-1@1.0.0.patch"))).toBe(true);
 
     // The path in package.json is all that a later install has.
     rmSync(join(dir, "node_modules"), { recursive: true, force: true });
@@ -3439,7 +3590,22 @@ describe.concurrent("--patches-dir with an absolute path", () => {
     await using project = await installedProject({ dependencies: { "basic-1": "1.0.0" } });
     using outside = tempDir("bun-patch-outside", {});
     expect(await commitTo(project.dir, project.env, String(outside))).toEqual({
-      "basic-1@1.0.0": `${outside}/basic-1@1.0.0.patch`,
+      "basic-1@1.0.0": `${String(outside).replaceAll("\\", "/")}/basic-1@1.0.0.patch`,
     });
+  });
+
+  // Git Bash gives "$PWD/my/patches" with `/`, and PowerShell completes a folder to `.\patches`.
+  // package.json got the absolute path, a key with a `\` that no other system reads, or nothing.
+  test.skipIf(!isWindows).each([
+    ["PROJECT/my/patches", "my/patches"],
+    ["my\\patches", "my/patches"],
+    [".\\patches", "patches"],
+  ])("on Windows %s is written with / from the project", async (spelling, written) => {
+    await using project = await installedProject({ dependencies: { "basic-1": "1.0.0" } });
+    const patchesDir = spelling.replace("PROJECT", project.dir.replaceAll("\\", "/"));
+    expect(await commitTo(project.dir, project.env, patchesDir)).toEqual({
+      "basic-1@1.0.0": `${written}/basic-1@1.0.0.patch`,
+    });
+    expect(await Bun.file(join(project.dir, "bun.lock")).text()).toContain(`"${written}/basic-1@1.0.0.patch"`);
   });
 });

@@ -20,9 +20,7 @@ describe.concurrent("bun pm version", () => {
     return testDir;
   }
 
-  async function setupGitTest() {
-    const testDir = setupTest();
-
+  async function setupGitTest(testDir = setupTest()) {
     await Bun.spawn({
       cmd: ["git", "init"],
       cwd: testDir,
@@ -1055,6 +1053,47 @@ describe.concurrent("bun pm version", () => {
       ]);
       expect(output).toBe("v1.0.1\n");
       expect(code).toBe(0);
+    });
+
+    // The default case: git runs before the first script and between the scripts.
+    it.each([
+      ["default", ""],
+      ["bun", '[run]\nshell = "bun"\n'],
+    ])("have their whole environment in a clean git repository, with the %s shell", async (_, bunfig) => {
+      const script =
+        'echo "$npm_lifecycle_event: $npm_command $npm_package_name@$npm_package_version, $npm_old_version to $npm_new_version, $MARK" && tool';
+      using dir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({
+          name: "test",
+          version: "1.0.0",
+          scripts: { preversion: script, version: script, postversion: script },
+        }),
+        "bunfig.toml": bunfig,
+      });
+      await setupGitTest(String(dir));
+      await Bun.write(join(String(dir), ".git", "info", "exclude"), "node_modules\nbunfig.toml\n");
+      writeBinCommand(String(dir), "tool", "tool of the package");
+
+      await using proc = Bun.spawn([bunExe(), "pm", "version", "patch"], {
+        cwd: String(dir),
+        env: { ...bunEnv, MARK: "from-parent" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(out.split(/\r?\n/)).toEqual([
+        "preversion: version test@1.0.0, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "version: version test@1.0.1, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "postversion: version test@1.0.1, 1.0.0 to 1.0.1, from-parent",
+        "tool of the package",
+        "v1.0.1",
+        "",
+      ]);
+      expect((await runCommand(["git", "tag", "-l"], String(dir))).output).toBe("v1.0.1\n");
+      expect(exitCode).toBe(0);
     });
 
     it("runs lifecycle scripts in correct order and handles failures", async () => {

@@ -1953,7 +1953,9 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         // A relative link counts from where it really is: `node_modules` or a member can be a link.
         let is_linked = self.linked.resolve(&mut dest);
-        if !is_linked
+        // Not on Windows: the real path may spell the root another way (drive, short names).
+        if cfg!(not(windows))
+            && !is_linked
             && pkg_res.tag == ResolutionTag::Workspace
             && let Some(member) = lockfile
                 .linked_members

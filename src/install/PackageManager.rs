@@ -1243,6 +1243,8 @@ fn configure_env_for_scripts_run(
         }
     }
 
+    package_manager_lifecycle::resolve_bin_dirs_in_path(this.env_mut())?;
+
     Ok(this_transpiler)
 }
 
@@ -1789,15 +1791,17 @@ fn load_npmrc_files<'a>(
 
     // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
     let mut global_len: usize = 0;
+    // As for `.bunfig.toml`: a value that is empty or relative names no directory.
+    let usable = |dir: &&[u8]| bun_paths::is_fully_qualified(dir);
     if let Some(userconfig) = userconfig {
         let userconfig = Api::BunInstall::resolve_path(start_dir, userconfig);
         global_len = join(start_dir, &mut buf, &[&userconfig[..]]).map_or(0, ZStr::len);
-    } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+    } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get().filter(usable) {
         global_len =
             (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p))).map_or(0, ZStr::len);
     }
     if global_len == 0 && userconfig.is_none() {
-        if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+        if let Some(home_dir) = bun_core::env_var::HOME.get().filter(usable) {
             global_len = join(home_dir, &mut buf, &parts).map_or(0, ZStr::len);
         }
     }

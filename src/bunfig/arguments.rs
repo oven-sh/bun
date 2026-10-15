@@ -48,10 +48,12 @@ fn join_config_path<'buf>(
     Some(ZStr::from_buf(&buf[..], len))
 }
 
+/// An `$XDG_CONFIG_HOME` that is empty or relative is ignored, as its specification says.
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let dir = env_var::XDG_CONFIG_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())?;
+    let dir = [env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()]
+        .into_iter()
+        .flatten()
+        .find(|dir| bun_paths::is_fully_qualified(dir))?;
     join_config_path(dir, b".bunfig.toml", buf)
 }
 

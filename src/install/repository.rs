@@ -33,7 +33,7 @@ impl GitEnv {
     /// Prints `core.askpass` and `core.sshcommand`, each if it has a value in any file, include or
     /// variable that git reads. Not in the project's own repository: no clone reads its config.
     pub(crate) const CONFIG_QUERY: &'static [&'static [u8]] = &[
-        b"--git-dir=/dev/null",
+        concat!("--git-dir=", bun_core::null_device!()).as_bytes(),
         b"config",
         b"--name-only",
         b"--get-regexp",

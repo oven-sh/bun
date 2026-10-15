@@ -200,7 +200,8 @@ pub(crate) struct LinkedMember {
     is_outside: bool,
 }
 
-/// Not on Windows: the real path may spell the root another way (drive, short names).
+/// A junction counts as a link. Real paths are only compared with each other: on Windows one may
+/// spell the project another way than `top_level_dir` (drive, short names).
 #[derive(Clone, Default)]
 pub(crate) struct LinkedMembers {
     /// By the path from the project, as in bun.lock.
@@ -221,7 +222,7 @@ impl LinkedMembers {
     /// For a workspace that no directory listing told the kind of: one `lstat` for each new folder.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
-        if cfg!(windows) || crate::bin::path_climbs_out(path) || self.get(path).is_some() {
+        if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -251,7 +252,7 @@ impl LinkedMembers {
     /// For a workspace that is known to be behind a link.
     pub(crate) fn add(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
-        if cfg!(windows) || crate::bin::path_climbs_out(path) || self.get(path).is_some() {
+        if crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
         if self.real_root.is_empty() {

@@ -53,6 +53,8 @@ function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
 
+const nullDevice = isWindows ? "NUL" : "/dev/null";
+
 // `path` as one word of a `sh` script.
 const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
 
@@ -2702,7 +2704,7 @@ test.concurrent.skipIf(isWindows).each([
   // `--`: whatever follows is not an option of git
   const clone = [
     "-c",
-    "core.hooksPath=/dev/null",
+    `core.hooksPath=${nullDevice}`,
     "-c",
     "submodule.recurse=false",
     "clone",
@@ -4377,6 +4379,41 @@ test.concurrent.skipIf(isWindows).each([
   },
 );
 
+// git itself notes the arguments that it was started with.
+test.concurrent("every git starts with the same settings, spelled for the platform", async () => {
+  using dir = tempDir("git-dep-first-arguments", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+  const trace = join(root, "trace");
+
+  for (const command of ["install", "update"]) {
+    const { stderr, exitCode } = await runBun(project, join(root, "cache"), { GIT_TRACE2_EVENT: trace }, command);
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(exitCode).toBe(0);
+  }
+  const started: string[][] = readFileSync(trace, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map(line => JSON.parse(line))
+    // the id of a git that another git started holds the id of that one
+    .filter(({ event, sid }) => event === "start" && !sid.includes("/"))
+    .map(({ argv }) => argv.slice(1));
+  const commandOf = (argv: string[]) => argv.find(arg => /^[a-z][a-z-]+$/.test(arg));
+  expect([...new Set(started.map(commandOf))].sort()).toEqual([
+    "clone",
+    "config",
+    "fetch",
+    "log",
+    "ls-tree",
+    "restore",
+  ]);
+  expect([...new Set(started.map(argv => argv.slice(0, 4).join(" ")))]).toEqual([
+    `-c core.hooksPath=${nullDevice} -c submodule.recurse=false`,
+  ]);
+  expect(started[0][4]).toBe(`--git-dir=${nullDevice}`);
+});
+
 test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, before the first clone", async () => {
   using dir = tempDir("git-dep-config-once", { "bin/git": `#!/bin/sh\necho "$5 $6 $7" >> "$GIT_CALLS"\nexit 1\n` });
   const root = String(dir);
@@ -4392,7 +4429,7 @@ test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, be
   const project = writeProject(root, Object.fromEntries(names.map(name => [name, `git+http://localhost/${name}.git`])));
   const { exitCode } = await runInstall(project, join(root, "cache"), env);
   expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
-    "--git-dir=/dev/null config --name-only",
+    `--git-dir=${nullDevice} config --name-only`,
     ...names.map(() => "clone -c core.longpaths=true"),
   ]);
   expect(exitCode).toBe(1);

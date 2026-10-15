@@ -46,6 +46,7 @@ use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
+use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
@@ -1473,7 +1474,7 @@ pub(crate) fn move_node_modules_aside(
     lockfile: &Lockfile,
     keep_links: bool,
     linked: &LinkedNodeModules,
-    log_level: package_manager::Options::LogLevel,
+    log_level: LogLevel,
 ) -> Option<OldModules> {
     let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
     let rand = fast_random();
@@ -1492,7 +1493,7 @@ pub(crate) fn move_node_modules_aside(
 
     let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
     if !linked.contains(node_modules.slice()) {
-        move_entries_aside(&mut node_modules, &mut old_modules, keep_links);
+        move_entries_aside(&mut node_modules, &mut old_modules, keep_links, log_level);
     }
 
     for (i, workspace_path) in lockfile.workspace_paths.values().iter().enumerate() {
@@ -1512,7 +1513,12 @@ pub(crate) fn move_node_modules_aside(
             .append_fmt(format_args!(".old_{i}_modules"))
             .assume_ok();
 
-        move_entries_aside(&mut workspace_node_modules, &mut old_modules, false);
+        move_entries_aside(
+            &mut workspace_node_modules,
+            &mut old_modules,
+            false,
+            log_level,
+        );
         let _ = sys::rmdir(workspace_node_modules.slice_z());
 
         old_modules.set_length(old_modules_len);
@@ -1562,7 +1568,12 @@ fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
 }
 
 /// Makes `to`, a directory in `from` or of its name.
-fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: bool) {
+fn move_entries_aside(
+    from: &mut AutoRelPath,
+    to: &mut AutoRelPath,
+    keep_links: bool,
+    log_level: LogLevel,
+) {
     use bun_sys::FdExt as _;
 
     let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
@@ -1584,10 +1595,16 @@ fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: 
         to.append(name).assume_ok();
 
         if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
-            move_entries_aside(from, to, keep_links);
+            move_entries_aside(from, to, keep_links, log_level);
             let _ = sys::rmdir(from.slice_z());
-        } else {
-            move_or_delete(from.slice_z(), to.slice_z());
+        } else if let Err(err) = move_or_delete(from.slice_z(), to.slice_z())
+            && log_level != LogLevel::Silent
+        {
+            bun_core::warn!(
+                "{}: failed to remove {}, which another linker installed",
+                BStr::new(err.name()),
+                BStr::new(from.slice()),
+            );
         }
 
         from.set_length(from_len);
@@ -1597,26 +1614,26 @@ fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: 
 }
 
 /// What stays of the other linker's tree shadows the new one. A mount point is left as is.
-fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) {
+fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> sys::Result<()> {
     use bun_sys::FdExt as _;
 
-    // Refused for a directory of a lower overlayfs layer (Docker), a mount point, an open handle.
-    if sys::renameat(Fd::cwd(), from, Fd::cwd(), to)
-        .is_err_and(|err| err.get_errno() != sys::E::ENOENT)
-    {
-        // Not the rename's error: that is EXDEV when `to` is in a volume as well.
-        if sys::rmdir(from).is_err_and(|err| err.get_errno() == sys::E::EBUSY) {
-            return;
-        }
-        if let Err(err) = Fd::cwd().delete_tree(from) {
-            Output::err(
-                err,
-                "failed to remove <b>{}<r>, which another linker installed",
-                (BStr::new(from.as_bytes()),),
-            );
-            Global::exit(1);
-        }
+    let Err(err) = sys::renameat(Fd::cwd(), from, Fd::cwd(), to) else {
+        return Ok(());
+    };
+    if err.get_errno() == sys::E::ENOENT {
+        return Ok(());
     }
+    match sys::rmdir(from) {
+        Err(err) if err.get_errno() != sys::E::EBUSY => {}
+        // A mount point. The rename's error does not tell: EXDEV when `to` is in a volume as well.
+        _ => return Ok(()),
+    }
+    // Another file system, or a directory of a lower overlayfs layer (Docker).
+    if err.get_errno() == sys::E::EXDEV {
+        return Fd::cwd().delete_tree(from);
+    }
+    // A program has a file in it open (Windows). A delete would stop midway, so it stays whole.
+    Err(err)
 }
 
 /// Fails unless `path`, links followed, is a directory.

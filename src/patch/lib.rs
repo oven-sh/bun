@@ -1417,7 +1417,7 @@ pub fn spawn_opts(
         b"XDG_CONFIG_HOME=\0",
         b"USERPROFILE=\0",
         // In a repository git also reads its config and every .gitattributes above both folders.
-        b"GIT_DIR=/dev/null\0",
+        concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
     let mut envp_buf: Vec<*const core::ffi::c_char> =
         Vec::with_capacity(ENV_STATIC.len() + usize::from(path_var.is_some()) + 1);

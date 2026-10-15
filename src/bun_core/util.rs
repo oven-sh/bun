@@ -567,6 +567,23 @@ macro_rules! zstr {
     }};
 }
 
+/// The name of the null device, as a literal for `concat!`. For what a child process reads as a
+/// path: on Windows `/dev/null` is a path like any other to most of them.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
+}
+
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
 /// struct whose address is the only thing Rust ever observes.
 ///

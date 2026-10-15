@@ -558,18 +558,29 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
         && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
 }
 
-/// The real path of a `file:` folder, looked up for its first link: most folders have none.
-struct FolderRoot<'a>(&'a Dir, Option<Box<[u8]>>);
+/// To compare the real path of a link's target with: `top_level_dir` is the cwd as typed.
+struct RealPaths {
+    folder: Box<[u8]>,
+    project: Box<[u8]>,
+}
+
+/// Those of a `file:` folder, looked up for its first link: most folders have none.
+struct FolderRoot<'a>(&'a Dir, Option<RealPaths>);
 
 impl FolderRoot<'_> {
-    fn get(&mut self) -> Option<&[u8]> {
+    fn get(&mut self) -> Option<&RealPaths> {
         if self.1.is_none() {
             let mut fd_path = path::path_buffer_pool::get();
             let mut real = path::path_buffer_pool::get();
             let fd_path = sys::get_fd_path_z(self.0.fd(), &mut fd_path).ok()?;
-            self.1 = Some(sys::realpath(fd_path, &mut real).ok()?.into());
+            let folder = sys::realpath(fd_path, &mut real).ok()?.into();
+            let project = crate::lockfile_real::LinkedMembers::real_path_of(b".");
+            if project.is_empty() {
+                return None;
+            }
+            self.1 = Some(RealPaths { folder, project });
         }
-        self.1.as_deref()
+        self.1.as_ref()
     }
 }
 
@@ -654,10 +665,11 @@ enum FolderLink {
 }
 
 impl FolderLink {
-    /// Of the link `rel` in the folder `root`. It is `rel[dir_len..]` in `src`.
-    fn of(root: &[u8], rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
+    /// Of the link `rel` in the folder. It is `rel[dir_len..]` in `src`.
+    fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
         use path::resolve_path::{join_abs_string_buf_z_checked, platform};
         const NOWHERE: FolderLink = FolderLink::LeftOut("it leads nowhere");
+        let root: &[u8] = &paths.folder;
 
         let mut link_buf = path::path_buffer_pool::get();
         let mut real_buf = path::path_buffer_pool::get();
@@ -693,8 +705,7 @@ impl FolderLink {
                 "a link to a directory has to be relative and stay in the folder"
             });
         }
-        let project = bun_fs::FileSystem::instance().top_level_dir();
-        if !in_folder && path_below(project, real).is_none() {
+        if !in_folder && path_below(&paths.project, real).is_none() {
             return FolderLink::LeftOut("it leads out of the project");
         }
         FolderLink::File(real_z, Box::new(target))
@@ -702,7 +713,7 @@ impl FolderLink {
 }
 
 fn lay_link(
-    root: &[u8],
+    root: &RealPaths,
     rel: &[u8],
     dir_len: usize,
     src: &Dir,
@@ -1634,7 +1645,17 @@ impl PackageFiles<'_> {
             buf[i] = 0;
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
-            let _ = mkdir_recursive_os_path(fullpath);
+            if let Err(err) = sys::mkdir_w(fullpath) {
+                // As `make_open_real_dir`: a link at the last component is not followed.
+                if err.get_errno() == sys::E::EEXIST {
+                    let mut narrow = bun_paths::path_buffer_pool::get();
+                    let dest = strings::from_wpath(&mut narrow[..], &buf[..i - 1]);
+                    if let Err(err) = crate::prune::remove_planted_link(destbase, dest) {
+                        return Err(Failure::boxed(err.into(), Step::OpeningDestDir));
+                    }
+                }
+                let _ = mkdir_recursive_os_path(fullpath);
+            }
             let to_copy_buf_off = fullpath.len();
 
             // SAFETY: FFI — the walker's root is the open cache directory; buf2 is a

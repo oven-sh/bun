@@ -28,7 +28,7 @@ import {
   tempDir,
   toMatchNodeModulesAt,
 } from "harness";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { TestRegistry } from "registry";
 
 const { parseLockfile } = install_test_helpers;
@@ -4263,8 +4263,10 @@ describe("a workspace outside the project", () => {
     ]);
     chmodSync(join(dir, "app", "cli.js"), 0o600);
     if (link) {
-      mkdirSync(dirname(join(project, link[0])), { recursive: true });
-      symlinkSync(link[1], join(project, link[0]));
+      const parent = dirname(join(project, link[0]));
+      mkdirSync(parent, { recursive: true });
+      // A junction needs no privilege on Windows. Its target is absolute.
+      symlinkSync(isWindows ? resolve(parent, link[1]) : link[1], join(project, link[0]), "junction");
     }
     return project;
   }
@@ -4297,15 +4299,10 @@ describe("a workspace outside the project", () => {
     { entry: "packages/../../app", path: "../app" },
     { entry: "<dir>/app", path: "../app" },
     { spec: "workspace:../app", path: "../app" },
+    { entry: "link", path: "link", link: ["link", "../app"] },
+    { entry: "up/app", path: "up/app", link: ["up", ".."] },
+    { entry: "linked/*", path: "linked/app", link: ["linked/app", "../../app"] },
   ];
-  // symlinkSync to a directory needs Developer Mode or elevation on Windows.
-  if (!isWindows) {
-    layouts.push(
-      { entry: "link", path: "link", link: ["link", "../app"] },
-      { entry: "up/app", path: "up/app", link: ["up", ".."] },
-      { entry: "linked/*", path: "linked/app", link: ["linked/app", "../../app"] },
-    );
-  }
 
   describe.each(["hoisted", "isolated"])("%s linker", linker => {
     const named = layouts.map(layout => [layout.entry ?? layout.spec, layout] as const);

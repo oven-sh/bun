@@ -47,6 +47,11 @@ impl Symlinker {
 
     // Ok(true) when a link was written.
     pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<bool> {
+        self.ensure(strategy, true)
+    }
+
+    /// `may_retry`: a name that `readlink` finds free and `symlink` finds taken is looked at again.
+    fn ensure(&mut self, strategy: Strategy, may_retry: bool) -> bun_sys::Result<bool> {
         match strategy {
             Strategy::ExpectMissing => {
                 self.remove_planted_parents()?;
@@ -74,7 +79,7 @@ impl Symlinker {
                         Ok(len) => len,
                         Err(readlink_err) => {
                             if self.remove_planted_parents()? {
-                                return self.ensure_symlink(strategy);
+                                return self.ensure(strategy, may_retry);
                             }
                             return match readlink_err.get_errno() {
                                 Errno::ENOENT => {
@@ -89,8 +94,10 @@ impl Symlinker {
                                     }
                                     match linked {
                                         // Another install made it since the readlink.
-                                        Err(err) if err.get_errno() == Errno::EEXIST => {
-                                            self.ensure_symlink(strategy)
+                                        Err(err)
+                                            if may_retry && err.get_errno() == Errno::EEXIST =>
+                                        {
+                                            self.ensure(strategy, false)
                                         }
                                         linked => linked.map(|()| true),
                                     }
@@ -136,7 +143,7 @@ impl Symlinker {
                 }
 
                 if self.remove_planted_parents()? {
-                    return self.ensure_symlink(strategy);
+                    return self.ensure(strategy, may_retry);
                 }
 
                 // The wrong package. On Windows a directory link, dangling or not, needs rmdir.

@@ -200,6 +200,12 @@ pub fn is_absolute(p: &[u8]) -> bool {
     bun_core::path_sep::is_absolute_native(p)
 }
 
+/// [`is_absolute`], and on Windows with a drive or a UNC root: `\dir` names no place by itself.
+pub fn is_fully_qualified(p: &[u8]) -> bool {
+    is_absolute(p)
+        && !(cfg!(windows) && bun_core::strings::is_windows_absolute_path_missing_drive_letter(p))
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
 // legitimate callers:

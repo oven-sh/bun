@@ -141,9 +141,8 @@ pub(crate) fn write_pending_patch(
     let Some(patch) = manager.pending_patch_commit.new_patch.take() else {
         return Ok(None);
     };
-    if let PatchFeatures::Commit { patches_dir } = &manager.options.patch_features
-        && let Err(e) = sys::mkdir_recursive(patches_dir)
-    {
+    let patches_dir = resolve_path::dirname::<platform::Posix>(patch.path.as_bytes());
+    if let Err(e) = sys::mkdir_recursive(patches_dir) {
         Output::err(
             e,
             "failed to make patches dir {f}",
@@ -608,24 +607,7 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    if manager.options.dry_run
-        && let PatchFeatures::Commit { patches_dir } = &manager.options.patch_features
-    {
-        let mut spill = Vec::new();
-        let patchfile_path = resolve_path::join_spill::<platform::Posix>(
-            &mut spill,
-            &[*patches_dir, &patch_filename],
-        );
-        bun_core::prettyln!(
-            "<r><d>dry run:<r> would write {} and add <b>{}<r> to patchedDependencies",
-            bun_fmt::EscapeControlChars(bstr::BStr::new(patchfile_path)),
-            bun_fmt::for_terminal(bstr::BStr::new(&patch_key)),
-        );
-        Output::flush();
-        Global::exit(0);
-    }
-
-    let mut patches_dir: &[u8] = match &manager.options.patch_features {
+    let typed_patches_dir: &[u8] = match &manager.options.patch_features {
         PatchFeatures::Commit { patches_dir } => patches_dir,
         // Reaching `doPatchCommit` implies `Subcommand::PatchCommit`, which always
         // sets `patch_features = .commit` in `Options::load`.
@@ -633,32 +615,47 @@ pub fn do_patch_commit(
     };
 
     // First: what follows takes what fits a path buffer.
-    if patches_dir.len() >= bun_paths::MAX_PATH_BYTES {
+    if typed_patches_dir.len() >= bun_paths::MAX_PATH_BYTES {
         Output::err(
             sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::mkdir),
             "failed to make patches dir {f}",
-            (bun_fmt::quote(patches_dir),),
+            (bun_fmt::quote(typed_patches_dir),),
         );
         Global::crash();
     }
 
+    // One spelling from here on. On Windows a `\` is a `/`, which other systems read too.
+    let with_slashes = |path: &[u8]| {
+        let mut path = path.to_vec();
+        resolve_path::platform_to_posix_in_place(&mut path[..]);
+        path
+    };
+    let mut patches_dir = with_slashes(typed_patches_dir);
+
     // package.json goes to other machines: a directory inside the project is written from its root.
-    let project = FileSystem::instance().top_level_dir();
-    let mut from_project = Vec::new();
-    if bun_paths::is_absolute(patches_dir)
-        && resolve_path::is_parent_or_equal(project, patches_dir)
+    let project = with_slashes(FileSystem::instance().top_level_dir());
+    if bun_paths::is_absolute(&patches_dir)
+        && resolve_path::is_parent_or_equal(&project, &patches_dir)
             != resolve_path::ParentEqual::Unrelated
     {
-        from_project.extend_from_slice(resolve_path::relative(project, patches_dir));
-        resolve_path::platform_to_posix_in_place(&mut from_project[..]);
-        patches_dir = &from_project;
+        patches_dir = with_slashes(resolve_path::relative(&project, &patches_dir));
     }
 
     // Owned: `join` hands out the thread's one buffer, and every later `join` writes to it.
     let path_in_patches_dir = ZBox::from_bytes(resolve_path::join_spill::<platform::Posix>(
         &mut Vec::new(),
-        &[patches_dir, &patch_filename],
+        &[&patches_dir, &patch_filename],
     ));
+
+    if manager.options.dry_run {
+        bun_core::prettyln!(
+            "<r><d>dry run:<r> would write {} and add <b>{}<r> to patchedDependencies",
+            bun_fmt::escape_control_chars(path_in_patches_dir.as_bytes()),
+            bun_fmt::for_terminal(bstr::BStr::new(&patch_key)),
+        );
+        Output::flush();
+        Global::exit(0);
+    }
 
     let patchfile_path = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     manager.pending_patch_commit = PendingCommit {
@@ -1325,35 +1322,25 @@ fn replace_with_cache_copy(
     let staging = TempTree(temp_sibling(folder));
     copy_cache_entry(cache_dir, cache_dir_subpath, &staging.0)?;
 
-    let old = TempTree(temp_sibling(folder));
+    let old_path = temp_sibling(folder);
     let folder_z = ZBox::from_bytes(folder);
     let staging_z = ZBox::from_bytes(&staging.0);
-    let old_z = ZBox::from_bytes(&old.0);
+    let old_z = ZBox::from_bytes(&old_path);
 
-    let (has_old, deleted_old) = match sys::renameat(cwd, &folder_z, cwd, &old_z) {
-        Ok(()) => (true, false),
-        Err(e) if e.get_errno() == sys::E::ENOENT => (false, false),
-        // overlayfs (Docker) refuses to rename a directory from a lower layer.
-        Err(e) if e.get_errno() == sys::E::EXDEV => {
-            cwd.delete_tree(folder)?;
-            (false, true)
-        }
+    let has_old = match move_aside(&folder_z, &old_z) {
+        Ok(()) => true,
+        Err(e) if e.get_errno() == sys::E::ENOENT => false,
         Err(e) => return Err(e.into()),
     };
+    // Only now: after an error it has what could not be moved back.
+    let old = TempTree(old_path);
 
     if let Err(e) = rename_staging_into_place(cwd, &staging_z, &folder_z) {
-        if has_old {
-            if let Err(restore_err) = sys::renameat(cwd, &old_z, cwd, &folder_z) {
-                bun_core::warn!(
-                    "failed to move the previous package folder back, it is at {}: {}",
-                    bstr::BStr::new(&old.keep()),
-                    restore_err
-                );
-            }
-        } else if deleted_old {
+        if has_old && let Err(restore_err) = move_aside(&old_z, &folder_z) {
             bun_core::warn!(
-                "the copy of the package is at {}",
-                bstr::BStr::new(&staging.keep())
+                "failed to move the previous package folder back, it is at {}: {}",
+                bstr::BStr::new(&old.keep()),
+                restore_err
             );
         }
         return Err(e.into());
@@ -1377,6 +1364,54 @@ fn replace_with_cache_copy(
                 e
             );
         }
+    }
+    Ok(())
+}
+
+/// A rename. Windows refuses it while a file below `folder` is open, and overlayfs (Docker) for a
+/// folder from a lower layer: then the entries move one by one. After an error `folder` is whole.
+fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
+    let cwd = Dir::cwd();
+    let Err(refused) = sys::renameat(cwd.fd, folder, cwd.fd, aside) else {
+        return Ok(());
+    };
+    // Behind a link is the global store, which is not the project's to move.
+    if refused.get_errno() == sys::E::ENOENT || is_link(folder.as_bytes()) {
+        return Err(refused);
+    }
+    let move_all = |from: &ZStr, to: &ZStr| -> sys::Result<()> {
+        move_entries(
+            &cwd.open_dir(from.as_bytes(), ITERATE)?,
+            &cwd.make_open_path(to.as_bytes(), Default::default())?,
+        )?;
+        sys::rmdir(from)
+    };
+    move_all(folder, aside).inspect_err(|_| match move_all(aside, folder) {
+        Err(e) if e.get_errno() != sys::E::ENOENT => bun_core::warn!(
+            "failed to move everything back into the package folder, the rest is at {}: {}",
+            bstr::BStr::new(aside.as_bytes()),
+            e
+        ),
+        _ => {}
+    })
+}
+
+/// Every entry of `from` goes to `to`: a folder that the system does not rename, entry by entry.
+fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
+    let mut iter = sys::iterate_dir(from.fd);
+    while let Some(entry) = iter.next()? {
+        let name = ZBox::from_bytes(entry.name.slice_u8());
+        let Err(refused) = sys::renameat(from.fd, &name, to.fd, &name) else {
+            continue;
+        };
+        if entry.kind != sys::EntryKind::Directory {
+            return Err(refused);
+        }
+        move_entries(
+            &from.open_dir(name.as_bytes(), ITERATE)?,
+            &to.make_open_path(name.as_bytes(), Default::default())?,
+        )?;
+        sys::rmdirat(from.fd, &name)?;
     }
     Ok(())
 }

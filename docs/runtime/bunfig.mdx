@@ -16,6 +16,8 @@ To configure Bun's package manager globally, you can also create a `.bunfig.toml
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
+When `XDG_CONFIG_HOME` is set to an absolute path, Bun reads the file there and not the one in `$HOME`.
+
 Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
 
 Bun warns when one of these files exists but cannot be read. A command that installs or publishes packages then stops with an error. Other commands continue without its settings.

@@ -491,6 +491,38 @@ fn put_npm_package_env(
     Ok(())
 }
 
+/// Spells the `node_modules/.bin` entries of `PATH` by their real paths, as the `cwd` of a script is spelled, for
+/// `append_path_without_ancestor_bins`. Who wrote them went by a cwd as typed: through links, on Windows in any case.
+pub(crate) fn resolve_bin_dirs_in_path(
+    env: &mut bun_dotenv::Loader,
+) -> Result<(), bun_alloc::AllocError> {
+    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
+    // Windows takes either separator.
+    let spellings: [&[u8]; 2] = [bin, b"/node_modules/.bin"];
+    let Some(inherited) = env.get(b"PATH") else {
+        return Ok(());
+    };
+    let mut real_dir = bun_paths::path_buffer_pool::get();
+    let mut path: Vec<u8> = Vec::with_capacity(inherited.len());
+    for (i, entry) in strings::split(inherited, &[bun_paths::DELIMITER]).enumerate() {
+        if i > 0 {
+            path.push(bun_paths::DELIMITER);
+        }
+        let trimmed = strings::without_trailing_slash(entry);
+        if let Some(dir) = (spellings.iter())
+            .find_map(|bin| trimmed.strip_suffix(*bin))
+            .filter(|dir| bun_paths::is_absolute(dir))
+            && let Ok(dir) = Syscall::realpath(&ZBox::from_bytes(dir), &mut real_dir)
+        {
+            path.extend_from_slice(dir);
+            path.extend_from_slice(bin);
+        } else {
+            path.extend_from_slice(entry);
+        }
+    }
+    env.map.put(b"PATH", &path)
+}
+
 /// Without the `node_modules/.bin` of `cwd` and its ancestors that a `bun run` above put in front.
 fn append_path_without_ancestor_bins(
     path: &mut EnvPath,

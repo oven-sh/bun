@@ -1320,15 +1320,19 @@ describe.concurrent("a package folder that the system does not rename", () => {
 
   // Folders are not renamed, but for what is in a temporary folder of bun, which is new as in the
   // upper layer of overlayfs. locked.js is neither renamed nor deleted, as a file that a Windows
-  // process opened for itself alone.
+  // process opened for itself alone. With -DNO_D_TYPE a listing of what is not new does not say
+  // what is a folder, as on some FUSE and network file systems.
   const shimC = /* c */ `
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int is_locked(const char *path) {
@@ -1368,13 +1372,33 @@ int unlinkat(int dirfd, const char *path, int flags) {
   int (*real)(int, const char *, int) = dlsym(RTLD_NEXT, "unlinkat");
   return real(dirfd, path, flags);
 }
+
+#ifdef NO_D_TYPE
+long syscall(long number, ...) {
+  long a[6];
+  va_list args;
+  va_start(args, number);
+  for (int i = 0; i < 6; i++) a[i] = va_arg(args, long);
+  va_end(args);
+  long (*real)(long, ...) = dlsym(RTLD_NEXT, "syscall");
+  long length = real(number, a[0], a[1], a[2], a[3], a[4], a[5]);
+  if (number == SYS_getdents64 && length > 0 && !is_new(a[0], "")) {
+    for (long at = 0; at < length;) {
+      struct dirent64 *entry = (struct dirent64 *)((char *)a[1] + at);
+      entry->d_type = DT_UNKNOWN;
+      at += entry->d_reclen;
+    }
+  }
+  return length;
+}
+#endif
 `;
   const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
   /** `env` for a bun that runs with the shim, which is compiled into `shimDir`. */
-  async function withShim(env: Env, shimDir: string): Promise<Env> {
+  async function withShim(env: Env, shimDir: string, ...flags: string[]): Promise<Env> {
     await using compile = Bun.spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+      cmd: [cc!, ...flags, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
       cwd: shimDir,
       env: bunEnv,
       stdout: "pipe",
@@ -1387,13 +1411,16 @@ int unlinkat(int dirfd, const char *path, int flags) {
 
   // bun-musl is statically linked, so LD_PRELOAD cannot intercept renameat.
   describe.skipIf(!isLinux || isMusl || !cc).each(["hoisted", "isolated"] as const)("%s linker", linker => {
-    test("the copy takes the place of the folder", async () => {
+    test.each([
+      ["", []],
+      [", and a listing does not say what is a folder", ["-DNO_D_TYPE"]],
+    ])("the copy takes the place of the folder%s", async (_, flags) => {
       await using project = await installedProject(bundledAndNested, { linker });
       using shimDir = tempDir("bun-patch-shim", { "shim.c": shimC });
       const { dir, env } = project;
       const prepared = await preparedAndEdited(dir, env);
 
-      await bunOk(dir, await withShim(env, String(shimDir)), "patch", "bundled-transitive");
+      await bunOk(dir, await withShim(env, String(shimDir), ...flags), "patch", "bundled-transitive");
       expect(state(dir)).toEqual(prepared);
     });
 

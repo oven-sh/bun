@@ -1404,7 +1404,8 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
         let Err(refused) = sys::renameat(from.fd, &name, to.fd, &name) else {
             continue;
         };
-        if entry.kind != sys::EntryKind::Directory {
+        let kind = crate::prune::entry_kind(from, name.as_bytes(), entry.kind);
+        if kind != sys::EntryKind::Directory {
             return Err(refused);
         }
         move_entries(

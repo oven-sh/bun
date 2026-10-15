@@ -87,8 +87,7 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
-    /// arena-allocated, fully-configured transpiler, with `generation` set
-    /// on its resolver before configuration reads any directory.
+    /// arena-allocated, fully-configured transpiler.
     // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
     // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
     // mutability — the standard arena pattern `mut_from_ref` cannot see through.

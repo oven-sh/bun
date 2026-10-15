@@ -920,11 +920,11 @@ pub(crate) mod serialize {
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                return dest.write_ident_or_ref(*class, dest.css_module.is_some());
+                return dest.write_ident_or_ref(*class);
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                return dest.write_ident_or_ref(*id, dest.css_module.is_some());
+                return dest.write_ident_or_ref(*id);
             }
             Component::Host(selector) => {
                 dest.write_str(b":host")?;
@@ -1107,11 +1107,8 @@ pub(crate) mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
-            PseudoClass::Global { selector } => {
-                let css_module = dest.css_module.take();
-                serialize_selector(selector, dest, context, false)?;
-                dest.css_module = css_module;
+            PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                serialize_selector(selector, dest, context, false)?
             }
 
             // https://webkit.org/blog/363/styling-scrollbars/
@@ -1512,11 +1509,11 @@ pub(crate) mod tocss_servo {
             }
             Component::Id(s) => {
                 dest.write_char(b'#')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
+                dest.write_ident_or_ref(*s)?;
             }
             Component::Class(s) => {
                 dest.write_char(b'.')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
+                dest.write_ident_or_ref(*s)?;
             }
             Component::LocalName(local_name) => {
                 local_name.to_css(dest)?;

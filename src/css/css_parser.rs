@@ -2018,8 +2018,7 @@ mod rule_parsers {
                         break 'out;
                     }
                     let comp = &sel.components[0];
-                    if let Some(r) = comp.as_class() {
-                        let ref_ = r.as_ref().unwrap();
+                    if let Some(ref_) = comp.as_class().and_then(|class| class.as_ref()) {
                         this.composes_refs.append(ref_);
                         this.composes_state = ComposesState::Allow(SourceLocation {
                             line: loc.line,
@@ -2580,7 +2579,7 @@ mod stylesheet_impl {
                 &mut input,
                 import_records,
                 if options.css_modules.is_some() {
-                    ParserOpts::CSS_MODULES
+                    ParserOpts::CSS_MODULES | ParserOpts::MAKE_LOCAL_SYMBOLS
                 } else {
                     ParserOpts::empty()
                 },
@@ -2679,7 +2678,7 @@ mod stylesheet_impl {
                 &mut input,
                 Some(core::ptr::NonNull::from(import_records)),
                 if options.css_modules.is_some() {
-                    ParserOpts::CSS_MODULES
+                    ParserOpts::CSS_MODULES | ParserOpts::MAKE_LOCAL_SYMBOLS
                 } else {
                     ParserOpts::empty()
                 },
@@ -2981,7 +2980,9 @@ pub enum ParseUntilErrorBehavior {
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub struct ParserOpts: u8 {
-        const CSS_MODULES = 0b1;
+        const CSS_MODULES = 0b01;
+        /// Names parsed now are local to the CSS module. `:global(...)` clears it for its argument.
+        const MAKE_LOCAL_SYMBOLS = 0b10;
     }
 }
 impl ParserOpts {
@@ -2989,6 +2990,24 @@ impl ParserOpts {
     pub(crate) fn css_modules(self) -> bool {
         self.contains(Self::CSS_MODULES)
     }
+
+    #[inline]
+    pub(crate) fn make_local_symbols(self) -> bool {
+        self.contains(Self::MAKE_LOCAL_SYMBOLS)
+    }
+
+    /// Inside `:global(...)` of a CSS module.
+    #[inline]
+    pub(crate) fn in_global_scope(self) -> bool {
+        self.css_modules() && !self.make_local_symbols()
+    }
+}
+
+/// The scope that `:local(...)` or `:global(...)` gives the names in its argument.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssModuleScope {
+    Local,
+    Global,
 }
 
 pub struct Parser<'a> {
@@ -3006,6 +3025,22 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    /// Runs `parse` in `scope` and restores the enclosing scope afterwards, also when `parse` fails.
+    pub(crate) fn with_css_module_scope<T>(
+        &mut self,
+        scope: CssModuleScope,
+        parse: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let enclosing = self.flags;
+        self.flags.set(
+            ParserOpts::MAKE_LOCAL_SYMBOLS,
+            scope == CssModuleScope::Local && enclosing.css_modules(),
+        );
+        let result = parse(self);
+        self.flags = enclosing;
+        result
+    }
+
     pub(crate) fn add_symbol_for_name(
         &mut self,
         name: &[u8],
@@ -3013,7 +3048,7 @@ impl<'a> Parser<'a> {
         loc: bun_ast::Loc,
     ) -> bun_ast::Ref {
         // don't call this if css modules is not enabled!
-        debug_assert!(self.flags.css_modules());
+        debug_assert!(self.flags.css_modules() && self.flags.make_local_symbols());
         debug_assert!(self.extra.is_some());
         // tag should only have one bit set, or none
         debug_assert!(tag.bits().count_ones() <= 1);

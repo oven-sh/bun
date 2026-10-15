@@ -22,6 +22,11 @@ impl ListenSocket {
     pub fn close(&mut self) {
         c::uws_h3_listen_socket_close(self)
     }
+    /// True once the listener's UDP socket is closed and the last QUIC connection of its
+    /// app has gone. The handle itself stays valid until the app is destroyed.
+    pub fn is_released(&mut self) -> bool {
+        c::uws_h3_listen_socket_is_released(self)
+    }
     pub fn get_local_port(&mut self) -> Option<u16> {
         u16::try_from(c::uws_h3_listen_socket_port(self)).ok()
     }
@@ -418,6 +423,13 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    /// `cb(user)` runs once the app's UDP socket is closed and its last QUIC connection has
+    /// gone, after the `close(2)`. It can run inside the QUIC engine, so it must not enter
+    /// the engine or destroy the app.
+    pub fn on_released(&mut self, cb: unsafe extern "C" fn(user: *mut c_void), user: *mut c_void) {
+        // SAFETY: live handle; cb/user are stored and invoked on this thread.
+        unsafe { c::uws_h3_app_on_released(self, cb, user) }
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
@@ -595,6 +607,11 @@ mod c {
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) fn uws_h3_app_on_released(
+            app: *mut App,
+            cb: unsafe extern "C" fn(user: *mut c_void),
+            user: *mut c_void,
+        );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
@@ -687,6 +704,7 @@ mod c {
             len: c_int,
         ) -> c_int;
         pub(super) safe fn uws_h3_listen_socket_close(ls: &mut ListenSocket);
+        pub(super) safe fn uws_h3_listen_socket_is_released(ls: &mut ListenSocket) -> bool;
 
         pub(super) safe fn uws_h3_res_state(res: &mut Response) -> State;
         pub(super) fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);

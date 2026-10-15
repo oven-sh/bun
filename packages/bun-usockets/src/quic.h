@@ -51,7 +51,8 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     unsigned int ext_size, unsigned int idle_timeout_s);
 
 /* Send GOAWAY on every connection and stop accepting new ones; the engine and
- * timer keep running so in-flight streams drain. */
+ * timer keep running so in-flight streams drain. The UDP socket closes with
+ * the last connection, and on_released reports it. */
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx);
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx);
 
@@ -69,6 +70,9 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls);
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls);
 int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, int len);
+/* 1 once the listener's context has no open UDP socket and no connection left.
+ * `ls` stays valid after its fd has closed, until us_quic_socket_context_free. */
+int us_quic_listen_socket_is_released(us_quic_listen_socket_t *ls);
 
 /* Client engine: one shared lsquic engine for all outbound connections on
  * `loop`. Per-connection cert verification is decided at connect time. */
@@ -116,6 +120,12 @@ void us_quic_socket_context_on_goaway(us_quic_socket_context_t *ctx,
     void (*on_goaway)(us_quic_socket_t *));
 void us_quic_socket_context_on_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_socket_t *));
+/* The context has closed its last UDP socket and its last connection has gone,
+ * in either order. It runs after the close(2). It can run inside
+ * lsquic_engine_process_conns, so it must not enter the engine or free the
+ * context. us_quic_socket_context_free itself does not report. */
+void us_quic_socket_context_on_released(us_quic_socket_context_t *ctx,
+    void (*on_released)(us_quic_socket_context_t *));
 
 /* Stream-level callbacks */
 void us_quic_socket_context_on_stream_open(us_quic_socket_context_t *ctx,

@@ -84,6 +84,7 @@ struct us_quic_socket_context_s {
     void (*on_hsk_done)(us_quic_socket_t *, int);
     void (*on_goaway)(us_quic_socket_t *);
     void (*on_close)(us_quic_socket_t *);
+    void (*on_released)(us_quic_socket_context_t *);
     void (*on_stream_open)(us_quic_stream_t *, int);
     void (*on_stream_headers)(us_quic_stream_t *);
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
@@ -415,6 +416,19 @@ static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
     us_quic_send_unsent(ls->ctx);
 }
 
+/* Nothing of this context is on the wire: no UDP socket, no connection. */
+static int us_quic_is_released(us_quic_socket_context_t *ctx) {
+    return !ctx->listeners && ctx->conn_count == 0;
+}
+
+/* The last UDP fd and the last conn go in either order. A graceful drain
+ * closes the fd with the last conn. An abrupt close, us_quic_release_pending_port
+ * and the loop's close on a socket error take the fd from under live conns. So
+ * both ends call this, and the one that completes the release reports it. */
+static void us_quic_report_if_released(us_quic_socket_context_t *ctx) {
+    if (ctx->on_released && us_quic_is_released(ctx)) ctx->on_released(ctx);
+}
+
 static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
     us_quic_socket_context_t *ctx = ls->ctx;
@@ -429,6 +443,7 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
     }
     ls->next = ctx->closed_listeners;
     ctx->closed_listeners = ls;
+    us_quic_report_if_released(ctx);
 }
 
 /* ───── SSL ───── */
@@ -635,10 +650,14 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
 #endif
     ctx->conn_count--;
     us_internal_disable_sweep_timer(ctx->loop);
-    /* During graceful drain the UDP fd is the only thing left holding the
-     * loop; release it when the last conn closes so the process can exit. */
-    if (ctx->closing && ctx->conn_count == 0) {
-        while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    if (ctx->conn_count == 0) {
+        if (ctx->closing && ctx->listeners) {
+            /* The graceful drain ends here: release the UDP fd, the only thing
+             * left holding the loop. us_quic_udp_on_close reports the release. */
+            while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+        } else {
+            us_quic_report_if_released(ctx);
+        }
     }
 }
 
@@ -900,6 +919,9 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
+    /* The owner is going away with the context: the fd and conn teardown below
+     * must not call into it. */
+    ctx->on_released = NULL;
     struct us_loop_t *loop = ctx->loop;
     for (us_quic_socket_context_t **pp = &loop->data.quic_head; *pp; pp = &(*pp)->next) {
         if (*pp == ctx) { *pp = ctx->next; break; }
@@ -1061,6 +1083,10 @@ static void us_quic_after_engine_call(us_quic_socket_context_t *ctx) {
     us_quic_finish_pending_closes(ctx);
 }
 
+int us_quic_listen_socket_is_released(us_quic_listen_socket_t *ls) {
+    return us_quic_is_released(ls->ctx);
+}
+
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
     /* ls->udp goes NULL in udp_on_close while ls itself survives until
      * context_free; read from the cached getsockname() result instead. */
@@ -1086,6 +1112,7 @@ DEF_CB(on_open, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_hsk_done, void (*cb)(us_quic_socket_t *, int))
 DEF_CB(on_goaway, void (*cb)(us_quic_socket_t *))
 DEF_CB(on_close, void (*cb)(us_quic_socket_t *))
+DEF_CB(on_released, void (*cb)(us_quic_socket_context_t *))
 DEF_CB(on_stream_open, void (*cb)(us_quic_stream_t *, int))
 DEF_CB(on_stream_headers, void (*cb)(us_quic_stream_t *))
 DEF_CB(on_stream_data, void (*cb)(us_quic_stream_t *, const char *, unsigned int, int))

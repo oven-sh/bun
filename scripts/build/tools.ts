@@ -10,7 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { locations, pins } from "./ci-images/spec.ts";
+import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -430,10 +430,6 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
   if (os === "windows") {
     // Prefer standalone LLVM over VS-bundled
     paths.push("C:\\Program Files\\LLVM\\bin");
-  }
-
-  if (os === "linux") {
-    paths.push(`${locations.llvm}/bin`);
   }
 
   if (os === "linux" || os === "darwin") {
@@ -896,24 +892,26 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
  */
 export function findMsvcLinker(arch: Arch): string | undefined {
   // VS2022 standard layout:
-  //   C:/Program Files/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
-  // Edition is Community|Professional|Enterprise|BuildTools.
-  const vsBase = "C:/Program Files/Microsoft Visual Studio/2022";
-  if (!existsSync(vsBase)) return undefined;
+  //   <base>/Microsoft Visual Studio/2022/<edition>/VC/Tools/MSVC/<ver>/bin/<host>/<target>/link.exe
+  // Community, Professional and Enterprise are 64-bit programs. BuildTools,
+  // which is what CI's images have, goes under Program Files (x86).
+  const vsBases = ["C:/Program Files", "C:/Program Files (x86)"].map(base => `${base}/Microsoft Visual Studio/2022`);
 
   // Pick the latest MSVC toolset version across all editions. Usually
-  // there's only one edition installed, but BuildTools + Community can
-  // coexist on CI.
+  // there's only one edition installed, but BuildTools can be beside another.
   let latestVer: string | undefined;
   let latestToolset: string | undefined;
-  for (const edition of readdirSync(vsBase)) {
-    const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
-    if (!existsSync(msvcDir)) continue;
-    for (const ver of readdirSync(msvcDir)) {
-      // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
-      if (latestVer === undefined || ver > latestVer) {
-        latestVer = ver;
-        latestToolset = join(msvcDir, ver);
+  for (const vsBase of vsBases) {
+    if (!existsSync(vsBase)) continue;
+    for (const edition of readdirSync(vsBase)) {
+      const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
+      if (!existsSync(msvcDir)) continue;
+      for (const ver of readdirSync(msvcDir)) {
+        // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
+        if (latestVer === undefined || ver > latestVer) {
+          latestVer = ver;
+          latestToolset = join(msvcDir, ver);
+        }
       }
     }
   }

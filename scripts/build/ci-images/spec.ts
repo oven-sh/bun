@@ -42,8 +42,8 @@ const files = {
 export const bakeInputs: readonly string[] = ["scripts/build/ci-images/spec.ts", ...Object.values(files)];
 
 const alpineRelease = "3.23";
-/** What an apt repository calls the release of each distro's images. */
-const aptSuite = { debian: "trixie", ubuntu: "plucky" } as const;
+/** What an apt repository calls a release of Debian or Ubuntu. */
+const aptSuites: Record<string, string> = { "13": "trixie", "25.04": "plucky" };
 
 /** The file name of the image's record, on the machine and in a bake directory once the bake job has copied it out. */
 export const imageRecordName = "bun-image.txt";
@@ -652,6 +652,12 @@ const platform = (image: Image) =>
     ? (`linux-${image.arch}-musl` as const)
     : (`${image.os}-${image.arch}` as const);
 
+function aptSuite(image: LinuxImage): string {
+  const suite = aptSuites[image.release];
+  if (!suite) throw new BuildError(`aptSuites has no name for ${image.distro} ${image.release}`);
+  return suite;
+}
+
 /** Packages from the distro's own repositories. */
 function packages(image: LinuxImage): Tool {
   return {
@@ -895,7 +901,7 @@ function tailscale(image: LinuxImage): Tool {
   }
   const { version, keySha256 } = pins.tailscale;
   const repository = `https://pkgs.tailscale.com/stable/${image.distro}`;
-  const suite = aptSuite[image.distro];
+  const suite = aptSuite(image);
   return {
     name: "tailscale",
     identity: pinned(version),
@@ -1373,7 +1379,7 @@ function docker(image: LinuxImage): Tool {
   }
   const { engine, containerd, buildx, compose } = pins.docker[image.distro];
   const repository = `https://download.docker.com/linux/${image.distro}`;
-  const suite = aptSuite[image.distro];
+  const suite = aptSuite(image);
   const build = `-1~${image.distro}.${image.release}~${suite}`;
   return {
     name: "docker",

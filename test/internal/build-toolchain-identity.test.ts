@@ -156,7 +156,7 @@ test.skipIf(isWindows).concurrent.each([
        Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(pins.nodejs.version)} });
        try { checkImageTools(${JSON.stringify(toolchain)}); console.log("accepted"); } catch (e) { console.log(e.message); }`,
     ],
-    env: { ...bunEnv, ...env },
+    env: { ...bunEnv, BUN_TOOLCHAIN_LLVM: undefined, ...env },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

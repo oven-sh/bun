@@ -1399,6 +1399,9 @@ function docker(image: LinuxImage): Tool {
           `containerd.io=${containerd}${build}`,
           `docker-buildx-plugin=${buildx}${build}`,
           `docker-compose-plugin=${compose}${build}`,
+          // docker-ce only recommends these. Where the kernel has AppArmor on, no container starts without its parser,
+          // and Docker unpacks an image's layers with pigz when it is there.
+          ...["apparmor", "pigz"],
         ],
         { update: true },
       ),

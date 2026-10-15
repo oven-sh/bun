@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--no-env-file disables .env loading", async () => {
@@ -262,4 +262,238 @@ test("--no-env-file in production mode", async () => {
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("undefined");
   expect(exitCode).toBe(0);
+});
+
+// A `Bun.build()`, a macro, a `Bun.serve()` HTML route and a Worker use the environment of the process that starts
+// them. They read no `.env` file themselves. So the files that the process did not read stay out of its bundles, its
+// macros, its child processes and its Workers.
+describe("a build, a macro, an HTML route and a Worker read no .env file themselves", () => {
+  const seen = String.raw`
+    const markers = [
+      "key-from-dot-env",
+      "only-from-dot-env",
+      "key-from-custom-env",
+      "from-dot-env-local",
+      "from-dot-env-development",
+      "from-dot-env-test",
+      "early-from-dot-env",
+      "late-from-dot-env",
+    ];
+    // The values from the .env files that are in the text.
+    export const seen = (text: string) => markers.filter(marker => text.includes(marker));
+  `;
+  const files = {
+    ".env": "API_KEY=key-from-dot-env\nONLY_IN_DOT_ENV=only-from-dot-env\n",
+    "custom.env": "API_KEY=key-from-custom-env\n",
+    "client.ts": "console.log(process.env.API_KEY, process.env.ONLY_IN_DOT_ENV);\n",
+    "values.ts": "export const values = () => [process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join();\n",
+    "use-macro.ts": 'import { values } from "./values.ts" with { type: "macro" };\nconsole.log(values());\n',
+    "worker.ts": "postMessage([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join());\n",
+    "seen.ts": seen,
+    "report.ts": String.raw`
+      import { seen } from "./seen.ts";
+
+      const bundle = async (entry: string, env: any) => {
+        const result = await Bun.build({ entrypoints: [entry], env });
+        return seen(await result.outputs[0].text());
+      };
+      const macro =
+        "import { values } from " +
+        JSON.stringify(import.meta.dir + "/values.ts") +
+        ' with { type: "macro" };\nconsole.log(values());\n';
+      const print = "console.log([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join())";
+
+      export async function report() {
+        const inline = await bundle("./client.ts", "inline");
+        const prefix = await bundle("./client.ts", "API_*");
+        const buildMacro = await bundle("./use-macro.ts", "disable");
+        // The async transform runs the macro in a VM of a pool thread, as a build does.
+        const transpilerMacro = seen(await new Bun.Transpiler({ loader: "ts" }).transform(macro));
+        const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const fromWorker = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
+        await worker.terminate();
+        return {
+          inline,
+          prefix,
+          buildMacro,
+          transpilerMacro,
+          child: seen(child.stdout.toString()),
+          worker: seen(fromWorker),
+          // Read last: process.env gets the variables that the process has when it is first read.
+          own: seen([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join()),
+        };
+      }
+    `,
+    "main.ts": 'import { report } from "./report.ts";\nconsole.log("REPORT " + JSON.stringify(await report()));\n',
+    "main.test.ts": String.raw`
+      import { test } from "bun:test";
+      import { report } from "./report.ts";
+
+      test("report", async () => {
+        console.log("REPORT " + JSON.stringify(await report()));
+      });
+    `,
+  };
+
+  // Each place of the report, with the values from the .env files that reached it.
+  const everyPlace = (values: string[], prefixed = values) => ({
+    inline: values,
+    prefix: prefixed,
+    buildMacro: values,
+    transpilerMacro: values,
+    child: values,
+    worker: values,
+    own: values,
+  });
+
+  type Options = { env?: Record<string, string | undefined>; argv0?: string };
+  async function run(cwd: string, args: string[], { env, argv0 }: Options = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      argv0,
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_OPTIONS: undefined, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(line => line.startsWith("REPORT "));
+    return { report: line ? JSON.parse(line.slice("REPORT ".length)) : { stdout, stderr }, exitCode };
+  }
+
+  test.concurrent("with no switch, each of them has the values of .env", async () => {
+    using dir = tempDir("env-of-the-process", files);
+    expect(await run(String(dir), ["main.ts"])).toEqual({
+      report: everyPlace(["key-from-dot-env", "only-from-dot-env"], ["key-from-dot-env"]),
+      exitCode: 0,
+    });
+  });
+
+  const switches: [string, string[], Options & { bunfig?: string }][] = [
+    ["bun --no-env-file", ["--no-env-file", "main.ts"], {}],
+    ["bun run --no-env-file", ["run", "--no-env-file", "main.ts"], {}],
+    ["BUN_OPTIONS=--no-env-file", ["main.ts"], { env: { BUN_OPTIONS: "--no-env-file" } }],
+    ["bunfig env = false", ["main.ts"], { bunfig: "env = false\n" }],
+    ["bunfig [env] file = false", ["main.ts"], { bunfig: "[env]\nfile = false\n" }],
+    ["bun invoked as node", ["main.ts"], { argv0: "node" }],
+    ["bun test --no-env-file", ["test", "--no-env-file", "./main.test.ts"], {}],
+  ];
+  test.concurrent.each(switches)("%s: none of them has a value of .env", async (_, args, { bunfig, ...options }) => {
+    using dir = tempDir("env-of-the-process", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
+    expect(await run(String(dir), args, options)).toEqual({ report: everyPlace([]), exitCode: 0 });
+  });
+
+  test.concurrent("--env-file: each of them has the values of that file only", async () => {
+    using dir = tempDir("env-of-the-process", files);
+    expect(await run(String(dir), ["--env-file=custom.env", "main.ts"])).toEqual({
+      report: everyPlace(["key-from-custom-env"]),
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([false, true])(
+    "--no-env-file: an HTML route with [serve.static] env = 'inline' and development: %p inlines no value of .env",
+    async development => {
+      using dir = tempDir("env-of-the-process", {
+        ".env": files[".env"],
+        "bunfig.toml": '[serve.static]\nenv = "inline"\n',
+        "client.ts": files["client.ts"],
+        "index.html": '<!doctype html><script type="module" src="./client.ts"></script>\n',
+        "seen.ts": seen,
+        "main.ts": String.raw`
+          import index from "./index.html";
+          import { seen } from "./seen.ts";
+
+          const server = Bun.serve({
+            port: 0,
+            development: process.argv.includes("--development"),
+            routes: { "/": index },
+            fetch: () => new Response("not found", { status: 404 }),
+          });
+          const html = await (await fetch(server.url)).text();
+          const scripts = [...html.matchAll(/src="([^"]+)"/g)].map(match => match[1]);
+          const route: string[] = [];
+          for (const src of scripts) route.push(...seen(await (await fetch(new URL(src, server.url))).text()));
+          const own = seen([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join());
+          console.log("REPORT " + JSON.stringify({ scripts: scripts.length, route, own }));
+          await server.stop(true);
+          process.exit(0);
+        `,
+      });
+      const args = ["--no-env-file", "main.ts", ...(development ? ["--development"] : [])];
+      expect(await run(String(dir), args)).toEqual({ report: { scripts: 1, route: [], own: [] }, exitCode: 0 });
+    },
+  );
+
+  // `bun test` reads .env.test and .env. It does not read .env.local or .env.development, whatever NODE_ENV is.
+  test.concurrent("NODE_ENV=development bun test: a build reads no .env file of another mode", async () => {
+    using dir = tempDir("env-of-the-process", {
+      ".env.local": "LOCAL_ONLY=from-dot-env-local\n",
+      ".env.development": "DEVELOPMENT_ONLY=from-dot-env-development\n",
+      ".env.test": "TEST_ONLY=from-dot-env-test\n",
+      "client.ts": "console.log(process.env.LOCAL_ONLY, process.env.DEVELOPMENT_ONLY, process.env.TEST_ONLY);\n",
+      "seen.ts": seen,
+      "main.test.ts": String.raw`
+        import { test } from "bun:test";
+        import { seen } from "./seen.ts";
+
+        test("report", async () => {
+          const result = await Bun.build({ entrypoints: ["./client.ts"], env: "inline" });
+          const inline = seen(await result.outputs[0].text());
+          const print = "console.log([process.env.LOCAL_ONLY, process.env.DEVELOPMENT_ONLY, process.env.TEST_ONLY].join())";
+          const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+          const own = seen([process.env.LOCAL_ONLY, process.env.DEVELOPMENT_ONLY, process.env.TEST_ONLY].join());
+          console.log("REPORT " + JSON.stringify({ inline, child: seen(child.stdout.toString()), own }));
+        });
+      `,
+    });
+    expect(await run(String(dir), ["test", "./main.test.ts"], { env: { NODE_ENV: "development" } })).toEqual({
+      report: { inline: ["from-dot-env-test"], child: ["from-dot-env-test"], own: ["from-dot-env-test"] },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a Worker has the variables of its parent: it does not read .env again", async () => {
+    using dir = tempDir("env-of-the-process", {
+      ".env": "EARLY=early-from-dot-env\n",
+      "seen.ts": seen,
+      "worker.ts": "postMessage([process.env.EARLY, process.env.LATE].join());\n",
+      "main.ts": String.raw`
+        import { appendFileSync } from "node:fs";
+        import { seen } from "./seen.ts";
+
+        appendFileSync(".env", "LATE=late-from-dot-env\n");
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const fromWorker = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
+        await worker.terminate();
+        const own = seen([process.env.EARLY, process.env.LATE].join());
+        console.log("REPORT " + JSON.stringify({ worker: seen(fromWorker), own }));
+      `,
+    });
+    expect(await run(String(dir), ["main.ts"])).toEqual({
+      report: { worker: ["early-from-dot-env"], own: ["early-from-dot-env"] },
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a .env file written after startup is not read by the macro of a build", async () => {
+    using dir = tempDir("env-of-the-process", {
+      "values.ts": "export const values = () => String(process.env.LATE);\n",
+      "use-macro.ts": 'import { values } from "./values.ts" with { type: "macro" };\nconsole.log(values());\n',
+      "seen.ts": seen,
+      "main.ts": String.raw`
+        import { writeFileSync } from "node:fs";
+        import { seen } from "./seen.ts";
+
+        writeFileSync(".env", "LATE=late-from-dot-env\n");
+        const result = await Bun.build({ entrypoints: ["./use-macro.ts"], env: "disable" });
+        const print = "console.log(String(process.env.LATE))";
+        const child = Bun.spawnSync({ cmd: [process.execPath, "--no-env-file", "-e", print] });
+        const macro = seen(await result.outputs[0].text());
+        console.log("REPORT " + JSON.stringify({ macro, child: seen(child.stdout.toString()) }));
+      `,
+    });
+    expect(await run(String(dir), ["main.ts"])).toEqual({ report: { macro: [], child: [] }, exitCode: 0 });
+  });
 });

@@ -1192,6 +1192,14 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a comment before the `:` in an object type of Flow stays there with the configuration of oxfmt", async () => {
+    // oxfmt has no Flow, so this is what Prettier prints.
+    const files = { ".oxfmtrc.json": "{}", "a.js": "// @flow\ntype A = { a /* comment */ : B };\n" };
+    const result = await format(files, ["--parser", "flow", "a.js"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe("// @flow\ntype A = { a /* comment */: B };\n");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("`<!--` and `-->` comments in a script", async () => {
     // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
     const rows = [
@@ -1226,6 +1234,13 @@ describe.concurrent("bun fmt", () => {
     const result = await format(texts, [], { reads: names });
     expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
     expect(result.exitCode).toBe(0);
+    // Nor in one that the option `jsdoc` writes.
+    const text = 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n';
+    const withOption = await format({ "a.js": text }, ["--jsdoc"], { reads: ["a.js"] });
+    expect(withOption.files["a.js"]).toBe(
+      'import a from  // b\n/**\n * @param {T} x Text\n * @returns {U} It\n */ "d";\n',
+    );
+    expect(withOption.exitCode).toBe(0);
   });
 
   test("a binding of Vue that is nothing but a comment stays as it is", async () => {
@@ -5352,6 +5367,38 @@ try {
       [["--cursor-offset", "0"], js, printed, "0"],
       // The cursor is in a comment that moves. It stays after the name, which is the node before it.
       [["--cursor-offset", "20"], "function f // comment\n(a, b) {}\n", "function f(a, b) {} // comment\n", "10"],
+      // It is before the body, which is the node after it and has the comment in it.
+      [
+        ["--parser", "typescript", "--cursor-offset", "20"],
+        "x  ( );\nclass A  // c1\n{}\ny  ( );\n",
+        "x();\nclass A {\n  // c1\n}\ny();\n",
+        "13",
+      ],
+      // After the source of an import type, whose quotes change.
+      [
+        ["--parser", "typescript", "--cursor-offset", "30"],
+        "x  ( );\ntype A = import(  'a'  ).B;\ny  ( );\n",
+        'x();\ntype A = import("a").B;\ny();\n',
+        "24",
+      ],
+      [
+        ["--parser", "flow", "--cursor-offset", "28"],
+        "x  ( );\ndeclare class A  // c1\n{}\ny  ( );\n",
+        "x();\ndeclare class A {\n  // c1\n}\ny();\n",
+        "21",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "24"],
+        "x  ( );\ninterface A  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A {\n  // c1\n}\ny();\n",
+        "17",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "27"],
+        "x  ( );\ninterface A<T>  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A<T> {\n  // c1\n}\ny();\n",
+        "20",
+      ],
       [
         ["--range-start", "10", "--range-end", "20"],
         "a  =  1;\nb  =  2;\nc  =  3;\n",

@@ -374,7 +374,7 @@ fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'
     else {
         return false;
     };
-    (f.comments()).has_comment_in_span(Span::new(object.span().end, name_start))
+    (f.comments()).has_comment_in_span(Span::after(object.span(), name_start))
         || (member.comments(f).trailing.iter())
             .take_while(|comment| {
                 !comment.has_newline_before() && is_directly_behind(*comment, expression)
@@ -398,7 +398,7 @@ fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatte
     {
         return false;
     }
-    let between = Span::new(object.span().end, name_start);
+    let between = Span::after(object.span(), name_start);
     let end = match f.is_quiet() {
         true => None,
         false => f.comments().comments_in_span(between).first(),

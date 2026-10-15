@@ -14,7 +14,8 @@ use super::union_type::{
 use crate::cursor::around_node;
 use crate::js::comments::OwnedComments;
 use crate::js::format::{
-    format_ignorable_name, format_name, format_node, identifier, write_ignored_node,
+    format_ignorable_name, format_name, format_node, identifier, name_without_comments,
+    write_ignored_node,
 };
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
@@ -105,7 +106,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
         });
 
     let format_name_and_type_parameters = format_with(|f| {
-        write_part_of_interface_head(&name_comments, &source_text(name), f);
+        write_part_of_interface_head(&name_comments, &name_without_comments(name), f);
         if type_params.angle_brackets_span().is_some() {
             let options = FormatTSTypeParametersOptions {
                 group_id: None,
@@ -115,9 +116,11 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 if type_parameters_comments.is_ignored {
                     return write_ignored_node(type_parameters_node, f);
                 }
-                type_parameters(type_params, Node::Stmt(statement))
-                    .with_options(options)
-                    .write_without_comments(f)
+                f.around_cursor(type_parameters_node.span(), |f| {
+                    type_parameters(type_params, Node::Stmt(statement))
+                        .with_options(options)
+                        .write_without_comments(f);
+                });
             });
             write_part_of_interface_head(&type_parameters_comments, &type_parameters, f);
         }

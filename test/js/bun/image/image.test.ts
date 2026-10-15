@@ -415,7 +415,7 @@ describe("Bun.Image", () => {
           .png()
           .bytes(),
       );
-      expect([res.w, res.h]).toEqual(out);
+      expect<readonly number[]>([res.w, res.h]).toEqual(out);
     });
 
     // 7×4 and 4×7 sources into a 4×4 box need no resampling (scale 1), so the

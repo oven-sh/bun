@@ -72,11 +72,34 @@ for (let start = 0; start < paths.length; start += 100) {
     const islands = definers.get(symbol);
     if (islands === undefined) definers.set(symbol, new Set([island]));
     else islands.add(island);
-    if ("WwVv".includes(type) && !/\.bun\d+$/.test(symbol)) shared.add(symbol);
+    if ("WwVv".includes(type)) shared.add(symbol);
     if (island === 0) continue;
     if ("TDRBS".includes(type)) definedBy.set(symbol, path);
   }
 }
+// nm says "W" of what is in ELF or in bitcode. Of what is in a COFF or Mach-O object it says "T", and readobj says how the linker
+// is to treat it: a section of COFF that it keeps one of says so (`Selection`), and a symbol of Mach-O does (`WeakDef`).
+const ofIslands = paths.filter(path => islandOf.get(path) !== 0);
+for (let start = 0; start < ofIslands.length; start += 100) {
+  let name = "";
+  let section = "";
+  /** Of one COFF object. */
+  let [inSection, keptOnce] = [new Map<string, string>(), new Set<string>()];
+  for (const text of [...run(readobj, ["--symbols", ...ofIslands.slice(start, start + 100)]), "File:"]) {
+    const [, field, value] = /^ *(\w+):? ?(.*?)(?: \((?:0x)?[0-9A-Fa-f]+\))?$/.exec(text) ?? [];
+    if (field === "File") {
+      for (const [symbol, itsSection] of inSection) if (keptOnce.has(itsSection)) shared.add(symbol);
+      [inSection, keptOnce] = [new Map(), new Set()];
+    } else if (field === "Name") name = value!;
+    else if (field === "Section") section = text;
+    else if (field === "StorageClass" && value === "External") inSection.set(name, section);
+    else if (field === "Selection" && ["Any", "SameSize", "ExactMatch", "Largest", "Newest"].includes(value!))
+      keptOnce.add(section);
+    else if (field === "WeakDef") shared.add(name);
+  }
+}
+for (const symbol of shared) if (/\.bun\d+$/.test(symbol)) shared.delete(symbol);
+
 // Else the output is not what is parsed above, and nothing would be checked.
 if (uses.length === 0 || definedBy.size === 0) throw new Error(`nothing parsed from the output of ${nm}`);
 

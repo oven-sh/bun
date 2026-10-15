@@ -331,6 +331,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetColumnNameTransformFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementRunTailFunction);
 
 static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int code, const char* msg, int64_t byteOffset)
 {
@@ -749,8 +750,9 @@ private:
     {
         Base::finishCreation(vm);
         Bun::reifyStaticPropertyTable(vm, JSSQLStatementPrototype::info(), JSSQLStatementPrototypeTableValues, *this);
-        // Only builtin modules can name it: statement.native is public.
+        // Only builtin modules can name these: statement.native is public.
         putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).setColumnNameTransformPrivateName(), 1, jsSQLStatementSetColumnNameTransformFunction, ImplementationVisibility::Private, NoIntrinsic, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
+        putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).runTailPrivateName(), 1, jsSQLStatementRunTailFunction, ImplementationVisibility::Private, NoIntrinsic, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     }
 };
 
@@ -878,7 +880,7 @@ static constexpr int kExceptionPending = -2;
 
 // `Sink` is a Bun::SqliteParameter or a Bun::SqliteResult. Returns SQLite's result code or one of the two above.
 template<typename Sink>
-static int fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Sink sink, JSC::JSValue value)
+static int fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Sink sink, JSC::JSValue value, bool safeIntegers)
 {
     if (value.isInt32())
         return sink.int64(value.asInt32());
@@ -903,7 +905,8 @@ static int fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Sin
         return sink.int64(value.asBoolean());
     if (value.isHeapBigInt()) {
         JSBigInt* bigInt = value.asHeapBigInt();
-        if (JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min()) == JSBigInt::ComparisonResult::LessThan || JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max()) == JSBigInt::ComparisonResult::GreaterThan) [[unlikely]] {
+        // Without safeIntegers it keeps its low 64 bits: Bun.hash() gives an unsigned 64-bit integer, and people store it.
+        if (safeIntegers && (JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::min()) == JSBigInt::ComparisonResult::LessThan || JSBigInt::compare(bigInt, std::numeric_limits<int64_t>::max()) == JSBigInt::ComparisonResult::GreaterThan)) [[unlikely]] {
             auto bigIntString = bigInt->toString(globalObject, 10);
             RETURN_IF_EXCEPTION(scope, kExceptionPending);
             throwRangeError(globalObject, scope, makeString("BigInt value '"_s, bigIntString, "' is out of range"_s));
@@ -926,6 +929,7 @@ struct SQLiteBinder {
     // Null for the transient statement of db.run().
     JSSQLStatement* statement;
     SQLiteBindingsMap& bindings;
+    bool safeIntegers;
     sqlite3* db = sqlite3_db_handle(stmt);
 
     // `arguments` is the array of what script passed. Its first element decides: an array is the list of values,
@@ -1071,7 +1075,7 @@ private:
 
     bool bindValue(int i, JSC::JSValue value)
     {
-        int result = fromJS(globalObject, scope, Bun::SqliteParameter { stmt, i }, value);
+        int result = fromJS(globalObject, scope, Bun::SqliteParameter { stmt, i }, value, safeIntegers);
         if (result == SQLITE_OK) [[likely]]
             return true;
 
@@ -1352,6 +1356,57 @@ static void putChanges(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope
     diff->putInternalField(vm, 1, rowid);
 }
 
+// Runs the statements of `sql` from `head` on. The first of them gets `bindingsValue`. Returns how many rows they
+// changed, or nothing when there was no statement or an exception is pending.
+static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, VersionSqlite3* versionDB, sqlite3* db, const NulTerminatedSQL& sql, const char* head, JSC::JSValue bindingsValue, int32_t internalFlags)
+{
+    std::optional<int64_t> changes;
+
+    for (;;) {
+        while (isSkippedInSQLiteQuery(*head))
+            head++;
+        if (head == sql.end())
+            break;
+
+        AutoDestructingSQLiteStatement statement;
+        const char* tail = nullptr;
+        int rc = sqlite3_prepare_v3(db, head, -1, 0, &statement.stmt, &tail);
+
+        if (rc == SQLITE_OK && statement.stmt) {
+            if (!changes && !bindingsValue.isUndefinedOrNull()) {
+                SQLiteBindingsMap bindings { (internalFlags & kStrictFlag) != 0 };
+                // After a close() during binding, finalizing the statement on scope exit completes the sqlite3_close_v2.
+                if (!SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement.stmt, nullptr, bindings, (internalFlags & kSafeIntegersFlag) != 0 }.bind(bindingsValue))
+                    return std::nullopt;
+            }
+
+            const bool canWrite = !sqlite3_stmt_readonly(statement.stmt);
+            const int64_t totalChangesBefore = canWrite ? sqlite3_total_changes64(db) : 0;
+
+            do {
+                rc = sqlite3_step(statement.stmt);
+            } while (rc == SQLITE_ROW);
+
+            if (rc == SQLITE_DONE) [[likely]] {
+                rc = SQLITE_OK;
+                changes = changes.value_or(0) + (canWrite ? changesSince(db, totalChangesBefore) : 0);
+            }
+        }
+
+        if (rc != SQLITE_OK) [[unlikely]] {
+            if (!scope.exception())
+                throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db, head - sql.begin()));
+            return std::nullopt;
+        }
+
+        // A NUL inside the text.
+        if (tail == head)
+            break;
+        head = tail;
+    }
+    return changes;
+}
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -1389,60 +1444,39 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
 
     const int32_t internalFlags = internalFlagsValue.isInt32() ? internalFlagsValue.asInt32() : 0;
-    bool didExecuteAny = false;
-    int64_t changes = 0;
-
-    for (const char* head = sql.begin();;) {
-        while (isSkippedInSQLiteQuery(*head))
-            head++;
-        if (head == sql.end())
-            break;
-
-        AutoDestructingSQLiteStatement statement;
-        const char* tail = nullptr;
-        int rc = sqlite3_prepare_v3(db, head, -1, 0, &statement.stmt, &tail);
-
-        if (rc == SQLITE_OK && statement.stmt) {
-            if (!didExecuteAny && !bindingsValue.isUndefinedOrNull()) {
-                SQLiteBindingsMap bindings { (internalFlags & kStrictFlag) != 0 };
-                // After a close() during binding, finalizing the statement on scope exit completes the sqlite3_close_v2.
-                if (!SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement.stmt, nullptr, bindings }.bind(bindingsValue))
-                    return {};
-            }
-
-            const bool canWrite = !sqlite3_stmt_readonly(statement.stmt);
-            const int64_t totalChangesBefore = canWrite ? sqlite3_total_changes64(db) : 0;
-
-            do {
-                rc = sqlite3_step(statement.stmt);
-            } while (rc == SQLITE_ROW);
-
-            if (rc == SQLITE_DONE) [[likely]] {
-                rc = SQLITE_OK;
-                didExecuteAny = true;
-                if (canWrite)
-                    changes += changesSince(db, totalChangesBefore);
-            }
-        }
-
-        if (rc != SQLITE_OK) [[unlikely]] {
-            if (!scope.exception())
-                throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db, head - sql.begin()));
-            return {};
-        }
-
-        // A NUL inside the text.
-        if (tail == head)
-            break;
-        head = tail;
-    }
-
-    if (!didExecuteAny) {
+    auto changes = runStatements(lexicalGlobalObject, scope, versionDB, db, sql, sql.begin(), bindingsValue, internalFlags);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!changes) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Query contained no valid SQL statement; likely empty query."_s));
         return {};
     }
 
-    putChanges(lexicalGlobalObject, scope, callFrame->argument(2), db, changes, (internalFlags & kSafeIntegersFlag) != 0);
+    putChanges(lexicalGlobalObject, scope, callFrame->argument(2), db, *changes, (internalFlags & kSafeIntegersFlag) != 0);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+// For Bun.sql: runs what follows the statement in `sql`, the text that it was prepared from.
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementRunTailFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSSQLStatement* castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+    CHECK_PREPARED
+
+    JSC::JSValue sqlValue = callFrame->argument(0);
+    if (!sqlValue.isString()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL string"_s));
+        return {};
+    }
+
+    NulTerminatedSQL sql;
+    if (!sql.init(lexicalGlobalObject, scope, asString(sqlValue))) [[unlikely]]
+        return {};
+
+    // sqlite3_sql() ends where sqlite3_prepare_v3() stopped.
+    const size_t ownLength = std::min<size_t>(strlen(sqlite3_sql(castedThis->stmt)), sql.end() - sql.begin());
+    runStatements(lexicalGlobalObject, scope, castedThis->version_db.get(), sqlite3_db_handle(castedThis->stmt), sql, sql.begin() + ownLength, jsUndefined(), 0);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
@@ -1536,7 +1570,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlStatement->ownedByDatabase = (internalFlags & kOwnedByDatabaseFlag) != 0;
     }
 
-    if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames }.bind(bindings))
+    if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames, sqlStatement->useBigInt64 }.bind(bindings))
         return {};
     return JSValue::encode(JSValue(sqlStatement));
 }
@@ -1636,7 +1670,7 @@ struct SQLiteCallbacks {
     void setResult(sqlite3_context* context, JSValue value) const
     {
         auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-        if (fromJS(globalObject, scope, Bun::SqliteResult { context }, value) == kUnsupportedValue)
+        if (fromJS(globalObject, scope, Bun::SqliteResult { context }, value, safeIntegers) == kUnsupportedValue)
             throwTypeError(globalObject, scope, makeString("User-defined function "_s, name, "() returned an invalid value"_s));
     }
 
@@ -2049,7 +2083,7 @@ static JSSQLStatement* resetAndBind(JSC::JSGlobalObject* lexicalGlobalObject, JS
         return nullptr;
     }
 
-    if (!arguments.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, castedThis->version_db.get(), stmt, castedThis, castedThis->m_bindingNames }.bind(arguments))
+    if (!arguments.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, castedThis->version_db.get(), stmt, castedThis, castedThis->m_bindingNames, castedThis->useBigInt64 }.bind(arguments))
         return nullptr;
 
     return castedThis;

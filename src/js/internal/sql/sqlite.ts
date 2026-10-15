@@ -71,6 +71,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
               if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
               rows = stmt.all(values);
             }
+            // The result is this statement's. What follows it in the text runs too.
+            stmt.native.$runTail(sql);
           } else if (isOneStatement(sql) && (stmt.paramsCount > 0 || (values as unknown[]).length === 0)) {
             changes = stmt.run(values);
           }

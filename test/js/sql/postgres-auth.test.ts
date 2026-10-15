@@ -166,6 +166,13 @@ describeWithContainer("postgres_auth: scram-sha-256", { image: "postgres_auth", 
     expect(await sql`select current_user as x`).toEqual([{ x: "bun_sql_test_saslprep" }]);
   });
 
+  test("scram-sha-256: SASLprep is applied to the password when listen() is the first to log in", async () => {
+    await container.ready;
+    await using sql = connect("bun_sql_test_saslprep", "soft\u00adhyphen");
+    await using subscription = await sql.listen("bun_sql_test_saslprep", () => {});
+    expect(subscription.channel).toBe("bun_sql_test_saslprep");
+  });
+
   test("scram-sha-256: an iteration count below 4096 is refused by name", async () => {
     await container.ready;
     await using sql = connect("bun_sql_test_scram_1000", "bun_sql_test_scram_1000");
@@ -375,6 +382,7 @@ describe.concurrent("scripted server", () => {
     { clientTls, ...server }: Partial<Server>,
     channelBinding?: "disable" | "prefer" | "require",
     password = "secret",
+    exchanges = 1,
   ) {
     await using mock = await pgScramServer({ password: "secret", ...server });
     await using sql = new SQL({
@@ -393,8 +401,8 @@ describe.concurrent("scripted server", () => {
       () => "connected",
       ({ name, code, message }) => ({ name, code, message }),
     );
-    expect(mock.exchanges).toHaveLength(1);
-    const [{ initial, clientFinal, proofOk }] = mock.exchanges;
+    expect(mock.exchanges).toHaveLength(exchanges);
+    const { initial, clientFinal, proofOk } = mock.exchanges[exchanges - 1];
     return {
       result,
       mechanism: initial?.mechanism,
@@ -594,12 +602,19 @@ describe.concurrent("scripted server", () => {
   });
 
   // Left: what the user typed. Right: what PostgreSQL 15 makes the verifier from (checked against the real server).
+  // The password as it is comes first, SASLprep(password) when that is refused.
   test.each([
     ["maps a non-ASCII space to a space", "a\u00a0b", "a b"],
     ["maps U+200B to a space, as C.1.2 comes first", "a\u200bb", "a b"],
     ["drops what is commonly mapped to nothing", "I\u00adX\u2060", "IX"],
     ["normalizes with NFKC", "\u00aa\u2168", "aIX"],
     ["composes", "e\u0301", "\u00e9"],
+    [
+      "an output longer than the input",
+      "\ufdfa",
+      "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+    ],
+    ["outside the BMP", "\u{1d7d8}\u{1d7d9}", "01"],
     ["right-to-left from end to end", "\u05d0\u05d1", "\u05d0\u05d1"],
     // Refused by SASLprep: the password is used as it is.
     ["prohibited: as it is", "a\u0007\u00aa", "a\u0007\u00aa"],
@@ -609,8 +624,57 @@ describe.concurrent("scripted server", () => {
     ["right-to-left that does not end so: as it is", "\u05d01\u00aa", "\u05d01\u00aa"],
     ["maps to nothing: as it is", "\u00ad", "\u00ad"],
     ["ASCII control characters: as it is", "a\u0007b", "a\u0007b"],
+    // The server's checks look at the mapped input, not at the NFKC output, which here ends in a non-spacing mark...
+    ["right-to-left before NFKC only", "\u05d0\ufb1d", "\u05d0\u05d9\u05b4"],
+    // ...and here has nothing unassigned left.
+    ["unassigned before NFKC only: as it is", "a\ufe12b\u00ad", "a\ufe12b\u00ad"],
   ])("SASLprep %s", async (_, typed, stored) => {
-    expect(await login({ password: stored }, undefined, typed)).toMatchObject({ result: "connected", proofOk: true });
+    expect(await login({ password: stored }, undefined, typed, typed === stored ? 1 : 2)).toMatchObject({
+      result: "connected",
+      proofOk: true,
+    });
+  });
+
+  test("a wrong password that SASLprep leaves as it is costs one login", async () => {
+    expect(await login({}, undefined, "wrong")).toMatchObject({
+      result: { code: "ERR_POSTGRES_SERVER_ERROR", message: 'password authentication failed for user "u"' },
+      proofOk: false,
+    });
+  });
+
+  test("a login that fails for another reason is not tried with the other password", async () => {
+    expect(await login({ serverFirstExtra: ",m=ext" }, undefined, "se\u00adcret")).toMatchObject({
+      result: { code: "ERR_POSTGRES_INVALID_MESSAGE" },
+    });
+  });
+
+  const client = (port: number) =>
+    ({ adapter: "postgres", hostname: "127.0.0.1", port, username: "u", database: "db", tls: false }) as const;
+
+  test("a wrong password that SASLprep changes costs two, and the caller hears of one refusal", async () => {
+    await using mock = await pgScramServer({ password: "secret" });
+    const closed: unknown[] = [];
+    let asked = 0;
+    await using sql = new SQL({
+      ...client(mock.port),
+      password: () => (asked++, "wr\u00adong"),
+      onclose: err => void closed.push((err as any)?.errno),
+      max: 1,
+    });
+    expect(await rejection(sql.connect())).toMatchObject(refused("u"));
+    expect({ proofs: mock.exchanges.map(exchange => exchange.proofOk), closed, asked }).toEqual({
+      proofs: [false, false],
+      closed: ["28P01"],
+      asked: 2,
+    });
+  });
+
+  test("the pool goes on with the one that logged in", async () => {
+    await using mock = await pgScramServer({ password: "aIX" });
+    await using sql = new SQL({ ...client(mock.port), password: "\u00aa\u2168", max: 2 });
+    using first = await sql.reserve();
+    using second = await sql.reserve();
+    expect(mock.exchanges.map(exchange => exchange.proofOk)).toEqual([false, true, true]);
   });
 
   test("a password that is a number logs in", async () => {

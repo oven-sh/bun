@@ -153,51 +153,63 @@ impl MySQLStatement {
         &self.cached_structure
     }
 
-    /// `result.statement`. Without `has_columns`, `self.columns` are an earlier result set's.
+    /// `result.statement` of a result of a prepared statement. Without `has_columns`,
+    /// `self.columns` are an earlier result set's.
     pub(crate) fn description(
         &mut self,
         global_object: &JSGlobalObject,
         query: &bun_core::String,
         has_columns: bool,
     ) -> JsResult<JSValue> {
-        let columns = if has_columns {
-            self.columns.as_slice()
-        } else {
-            &[]
-        };
-        // Only a prepared statement has another result with these columns.
-        let shared = self.statement_id > 0 && columns.len() == self.columns.len();
-        if shared {
-            if let Some(description) = self.cached_structure.description() {
-                return Ok(description);
-            }
+        if !has_columns && !self.columns.is_empty() {
+            return describe(global_object, query, &self.params, &[]);
         }
-        let parameter_types: Vec<u32> = self.params.iter().map(|&param| param as u32).collect();
-        let description = describe_statement(
-            global_object,
-            query,
-            &parameter_types,
-            [c"name", c"type", c"table", c"length", c"flags"],
-            |values| {
-                for column in columns {
-                    values.append(column_name_to_js(global_object, &column.name_or_index)?);
-                    values.append(JSValue::js_number_from_int32(column.column_type as i32));
-                    values.append(bun_string_jsc::create_utf8_for_js(
-                        global_object,
-                        column.table.slice(),
-                    )?);
-                    values.append(JSValue::js_number_from_uint64(column.column_length.into()));
-                    values.append(JSValue::js_number_from_int32(column.flags.bits().into()));
-                }
-                Ok(())
-            },
-        )?;
-        if shared {
-            self.cached_structure
-                .set_description(global_object, description);
+        if let Some(description) = self.cached_structure.description() {
+            return Ok(description);
         }
+        let description = describe(global_object, query, &self.params, &self.columns)?;
+        self.cached_structure
+            .set_description(global_object, description);
         Ok(description)
     }
+
+    /// The columns of the result that just ended, for `describe`.
+    pub(crate) fn take_columns(&mut self, has_columns: bool) -> Vec<ColumnDefinition41> {
+        if has_columns {
+            core::mem::take(&mut self.columns)
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+/// `result.statement` in JS.
+pub(crate) fn describe(
+    global_object: &JSGlobalObject,
+    query: &bun_core::String,
+    params: &[FieldType],
+    columns: &[ColumnDefinition41],
+) -> JsResult<JSValue> {
+    let parameter_types: Vec<u32> = params.iter().map(|&param| param as u32).collect();
+    describe_statement(
+        global_object,
+        query,
+        &parameter_types,
+        [c"name", c"type", c"table", c"length", c"flags"],
+        |values| {
+            for column in columns {
+                values.append(column_name_to_js(global_object, &column.name_or_index)?);
+                values.append(JSValue::js_number_from_int32(column.column_type as i32));
+                values.append(bun_string_jsc::create_utf8_for_js(
+                    global_object,
+                    column.table.slice(),
+                )?);
+                values.append(JSValue::js_number_from_uint64(column.column_length.into()));
+                values.append(JSValue::js_number_from_int32(column.flags.bits().into()));
+            }
+            Ok(())
+        },
+    )
 }
 
 impl Drop for MySQLStatement {

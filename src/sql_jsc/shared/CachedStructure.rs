@@ -146,6 +146,29 @@ impl CachedStructure {
     }
 }
 
+/// What `result.statement` is made of, for the results of a query whose statement no other query
+/// runs: nothing would share the object, so it is made when somebody reads it.
+pub(crate) struct Undescribed<T>(Vec<Option<T>>);
+
+impl<T> Default for Undescribed<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Undescribed<T> {
+    /// Returns the number that gets `result` back from `take`.
+    pub(crate) fn push(&mut self, result: T) -> JSValue {
+        self.0.push(Some(result));
+        JSValue::js_number_from_uint64(self.0.len() as u64 - 1)
+    }
+
+    pub(crate) fn take(&mut self, number: JSValue) -> Option<T> {
+        let index = usize::try_from(number.to_int32()).ok()?;
+        self.0.get_mut(index)?.take()
+    }
+}
+
 /// Makes `result.statement`. `append_columns` appends a value per key, column after column.
 pub(crate) fn describe_statement<const KEYS: usize>(
     global_object: &JSGlobalObject,

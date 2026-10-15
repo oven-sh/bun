@@ -23,7 +23,7 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
   result.count = count || affected_rows || 0;
   result.lastInsertRowid = last_insert_rowid;
   result.affectedRows = affected_rows || 0;
-  result.statement = statement;
+  SQLResultArray.describe(result, query[_handle], statement);
   addResult(query, result);
 
   // until the server clears SERVER_MORE_RESULTS_EXISTS
@@ -47,7 +47,7 @@ interface MySQLDotZig {
       is_last: boolean,
       last_insert_rowid: number | string | bigint,
       affected_rows: number,
-      statement: SQLStatementDescription | null,
+      statement: SQLStatementDescription | number | null,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;

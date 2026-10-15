@@ -55,6 +55,7 @@ pub enum Tag {
     Raw = 10,
     Uint4 = 11,
     Uint8 = 12,
+    Numbers = 13,
 }
 
 #[repr(C)]
@@ -74,6 +75,8 @@ pub union Value {
     // LIFETIMES.tsv: SHARED — same rationale as `string`.
     pub(crate) json: WTFStringImpl,
     pub(crate) array: Array,
+    /// Numbers and nulls as JS holds them. None of them is a GC cell.
+    pub(crate) numbers: Array<JSValue>,
     pub(crate) raw: Raw,
     pub(crate) uint4: u32,
     pub(crate) uint8: u64,
@@ -84,21 +87,31 @@ pub union Value {
 // is single-writer by convention; never call `deinit` on more than one copy.
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct Array {
-    // LIFETIMES.tsv: OWNED → Vec<SQLDataCell>. Kept as raw ptr/len/cap because
+pub struct Array<T = SQLDataCell> {
+    // LIFETIMES.tsv: OWNED → Vec<T>. Kept as raw ptr/len/cap because
     // C++ reads these three fields directly across FFI; reconstructed as Vec in
     // `deinit` to free.
-    pub(crate) ptr: *mut SQLDataCell,
+    pub(crate) ptr: *mut T,
     pub(crate) len: u32,
     pub(crate) cap: u32,
 }
 
-impl Array {
-    pub(crate) fn slice(&mut self) -> &mut [SQLDataCell] {
+impl<T> Array<T> {
+    fn new(items: Vec<T>) -> Array<T> {
+        debug_assert!(items.capacity() <= u32::MAX as usize);
+        let mut items = core::mem::ManuallyDrop::new(items);
+        Array {
+            ptr: items.as_mut_ptr(),
+            len: items.len() as u32,
+            cap: items.capacity() as u32,
+        }
+    }
+
+    pub(crate) fn slice(&mut self) -> &mut [T] {
         if self.ptr.is_null() {
             return &mut [];
         }
-        // SAFETY: non-null; `SQLDataCell::array` took ptr/len from a `Vec<SQLDataCell>`.
+        // SAFETY: non-null; `new` took ptr/len from a `Vec<T>`.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.len as usize) }
     }
 
@@ -111,7 +124,7 @@ impl Array {
         if p.is_null() {
             return;
         }
-        // SAFETY: `SQLDataCell::array` took ptr/cap from a `Vec`; the caller released the cells.
+        // SAFETY: `new` took ptr/cap from a `Vec`; the caller released the items.
         unsafe { drop(Vec::from_raw_parts(p, 0, cap)) };
     }
 }
@@ -170,6 +183,10 @@ impl SQLDataCell {
                     cell.deinit();
                 }
                 array.deinit();
+            }
+            Tag::Numbers => {
+                // SAFETY: tag == Numbers ⇒ `numbers` is the active union field.
+                unsafe { &mut self.value.numbers }.deinit();
             }
             _ => {}
         }
@@ -303,16 +320,22 @@ impl SQLDataCell {
 
     /// Owned array cell: `deinit` releases the cells, then the `Vec`'s allocation.
     pub(crate) fn array(cells: Vec<SQLDataCell>) -> SQLDataCell {
-        debug_assert!(cells.capacity() <= u32::MAX as usize);
-        let mut cells = core::mem::ManuallyDrop::new(cells);
         SQLDataCell {
             tag: Tag::Array,
             value: Value {
-                array: Array {
-                    ptr: cells.as_mut_ptr(),
-                    len: cells.len() as u32,
-                    cap: cells.capacity() as u32,
-                },
+                array: Array::new(cells),
+            },
+            free_value: 1,
+            ..Default::default()
+        }
+    }
+
+    /// An array of numbers and nulls. A GC cell among them would not be kept alive.
+    pub(crate) fn numbers(values: Vec<JSValue>) -> SQLDataCell {
+        SQLDataCell {
+            tag: Tag::Numbers,
+            value: Value {
+                numbers: Array::new(values),
             },
             free_value: 1,
             ..Default::default()

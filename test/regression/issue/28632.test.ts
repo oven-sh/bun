@@ -16,6 +16,6 @@ describeWithContainer(
 
       // Unfixed: one 64-byte block per column per query, 150,000 blocks in the measured part, at least 9.2 MiB.
       await expectRssDeltaBelow([path.join(import.meta.dir, "28632.fixture.ts"), url], { release: 5, debug: 8 });
-    }, 30_000);
+    });
   },
 );

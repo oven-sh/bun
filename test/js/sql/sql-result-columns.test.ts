@@ -154,6 +154,20 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     ]);
   });
 
+  test.each([{}, { prepare: false }])(
+    "they can be read late, in any order, after the client closed, %j",
+    async options => {
+      const sql = connect(options);
+      const results = await sql.unsafe("select 1 as a; select 2 as b, 3 as c; set application_name = 'x'");
+      const one = await sql`select ${1}::int4 as d`;
+      await sql.close();
+      Bun.gc(true);
+      expect([results[2], one, results[1], results[0]].map(namesOf)).toEqual([[], ["d"], ["b", "c"], ["a"]]);
+      expect(one.statement.types).toEqual([23]);
+      expect(results[1].statement).toBe(results[1].statement);
+    },
+  );
+
   test("the runs of a prepared statement share one object, which only their results keep alive", async () => {
     await using sql = connect();
     const query = () => sql`select ${1}::int4 as id, 'hi' as msg`;
@@ -386,6 +400,15 @@ for (const [dialect, image] of [
       } finally {
         await sql.unsafe(`drop procedure ${name}`);
       }
+    });
+
+    test("they can be read late, in any order, after the client closed", async () => {
+      const sql = connect();
+      const results = await sql.unsafe("select 1 as a; select 2 as b, 3 as c; set @rc := 1");
+      await sql.close();
+      Bun.gc(true);
+      expect([results[2], results[1], results[0]].map(namesOf)).toEqual([[], ["b", "c"], ["a"]]);
+      expect(results[1].statement).toBe(results[1].statement);
     });
 
     test("the runs of a prepared statement share one object, which only their results keep alive", async () => {

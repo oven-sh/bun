@@ -6,18 +6,20 @@ use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc,
 };
+use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
+use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 // The struct, and the `declare_scope!` static of the same name that `debug!` below logs to.
 use super::my_sql_query::MySQLQuery;
-use super::my_sql_statement::MySQLStatement;
+use super::my_sql_statement::{MySQLStatement, describe};
 
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
@@ -28,6 +30,7 @@ pub struct JSMySQLQuery {
     ref_count: Cell<u32>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
+    undescribed: JsCell<Undescribed<Vec<ColumnDefinition41>>>,
 }
 
 impl JSMySQLQuery {
@@ -69,6 +72,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
+            undescribed: JsCell::new(Undescribed::default()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
@@ -187,14 +191,32 @@ impl JSMySQLQuery {
         )
     }
 
-    /// `result.statement`.
+    /// `result.statement`, or the number that `describe_result` makes it for.
     fn description(&self, has_columns: bool) -> JsResult<JSValue> {
         let query = self.query.get();
         match query.get_statement() {
-            Some(statement) if !query.is_discarding_response() => {
+            Some(_) if query.is_discarding_response() => Ok(JSValue::NULL),
+            Some(statement) if statement.statement_id > 0 => {
                 statement.description(self.global_object(), query.text(), has_columns)
             }
-            _ => Ok(JSValue::NULL),
+            Some(statement) => Ok(self
+                .undescribed
+                .with_mut(|results| results.push(statement.take_columns(has_columns)))),
+            None => Ok(JSValue::NULL),
+        }
+    }
+
+    pub fn describe_result(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        match this
+            .undescribed
+            .with_mut(|results| results.take(callframe.argument(0)))
+        {
+            Some(columns) => describe(global_object, this.query.get().text(), &[], &columns),
+            None => Ok(JSValue::NULL),
         }
     }
 

@@ -253,49 +253,45 @@ describe.concurrent("postgres: SCRAM-SHA-256 iteration count", () => {
 
 // PBKDF2 with 10,000,000 iterations holds the thread for over a second on a release build and for half a minute on a
 // debug one, so nothing runs next to this test and the mock does not compute the proof a second time to check it.
-test.skipIf(isDebug || isASAN)(
-  "postgres: SCRAM-SHA-256 iteration count 10000000 is accepted",
-  async () => {
-    const proof = Promise.withResolvers<string>();
-    const { port, server } = await listeningServer(socket => {
-      let buffered = Buffer.alloc(0);
-      let state: "startup" | "first" | "final" = "startup";
-      socket.on("error", () => {});
-      socket.on("data", chunk => {
-        buffered = Buffer.concat([buffered, chunk]);
-        if (state === "startup") {
-          const startup = pgParseStartupMessage(buffered);
-          if (!startup) return;
-          buffered = startup.rest;
-          state = "first";
-          socket.write(pgAuthenticationSASL());
+test.skipIf(isDebug || isASAN)("postgres: SCRAM-SHA-256 iteration count 10000000 is accepted", async () => {
+  const proof = Promise.withResolvers<string>();
+  const { port, server } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let state: "startup" | "first" | "final" = "startup";
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (state === "startup") {
+        const startup = pgParseStartupMessage(buffered);
+        if (!startup) return;
+        buffered = startup.rest;
+        state = "first";
+        socket.write(pgAuthenticationSASL());
+      }
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        if (type !== 0x70 /* 'p' */) return;
+        if (state === "final") {
+          proof.resolve(body.toString());
+          socket.end(pgErrorResponse({ S: "FATAL", C: "28P01", M: "the mock verifies nothing" }));
+          return;
         }
-        buffered = pgReadFrontendMessages(buffered, (type, body) => {
-          if (type !== 0x70 /* 'p' */) return;
-          if (state === "final") {
-            proof.resolve(body.toString());
-            socket.end(pgErrorResponse({ S: "FATAL", C: "28P01", M: "the mock verifies nothing" }));
-            return;
-          }
-          state = "final";
-          const nonce = pgParseSASLInitialResponse(body)
-            .clientFirstMessage.split(",")
-            .find(attribute => attribute.startsWith("r="));
-          socket.write(pgAuthenticationSASLContinue(`${nonce}server,s=${btoa("salt")},i=10000000`));
-        });
+        state = "final";
+        const nonce = pgParseSASLInitialResponse(body)
+          .clientFirstMessage.split(",")
+          .find(attribute => attribute.startsWith("r="));
+        socket.write(pgAuthenticationSASLContinue(`${nonce}server,s=${btoa("salt")},i=10000000`));
       });
     });
-    const db = new SQL({ url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=disable`, max: 1, connectionTimeout: 30 });
-    try {
-      db.connect().catch(() => {});
-      expect(await proof.promise).toMatch(/,p=[A-Za-z0-9+/]{43}=$/);
-    } finally {
-      await db.close({ timeout: 0 });
-      server.close();
-    }
-  },
-  60_000,
-);
+  });
+  const db = new SQL({ url: `postgres://u:pw@127.0.0.1:${port}/db?sslmode=disable`, max: 1, connectionTimeout: 30 });
+  try {
+    db.connect().catch(() => {});
+    expect(await proof.promise).toMatch(/,p=[A-Za-z0-9+/]{43}=$/);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
 
 // §55.7: AuthenticationKerberosV5 is Int32(2), AuthenticationGSS Int32(7), AuthenticationSSPI Int32(9).
 test.concurrent.each([

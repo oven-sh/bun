@@ -216,7 +216,7 @@ To enable WAL mode, run this pragma query at the beginning of your application:
 db.run("PRAGMA journal_mode = WAL;");
 ```
 
-In WAL mode, the SQLite that Bun bundles (Linux, Windows) defaults to `PRAGMA synchronous = NORMAL`: it syncs the files at checkpoints, not at every commit. A power loss can lose the last commits but cannot corrupt the database. Run `PRAGMA synchronous = FULL` to sync at every commit.
+For faster commits, run `PRAGMA synchronous = NORMAL`. SQLite then syncs the WAL file at checkpoints instead of at every commit. A power loss can lose the last commits, but it cannot corrupt the database.
 
 <Accordion title="What is WAL mode?">
   In WAL mode, writes to the database go directly to a separate file called the "WAL file" (`-wal`). SQLite also creates
@@ -491,9 +491,9 @@ const results = query.all("hello", "goodbye");
 
 SQLite supports signed 64-bit integers, but JavaScript only supports signed 53-bit integers or arbitrary-precision integers with `bigint`.
 
-`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance.
+`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. The option also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
 
-`bun:sqlite` binds a `number` as `INTEGER` when `Number.isSafeInteger()` is true, and as `REAL` otherwise (also `-0`). A `bigint` that does not fit in a signed 64-bit integer throws a `RangeError`.
+`bun:sqlite` binds a `number` as `INTEGER` when `Number.isSafeInteger()` is true, and as `REAL` otherwise (also `-0`).
 
 ### `safeIntegers: true`
 
@@ -513,6 +513,27 @@ console.log(result.max_int);
 9007199254741093n
 ```
 
+When `safeIntegers` is `true`, `bun:sqlite` throws a `RangeError` if a `bigint` value in a bound parameter does not fit in a signed 64-bit integer:
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: true });
+db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+try {
+  query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n });
+} catch (e) {
+  console.log(e.message);
+}
+```
+
+```txt
+BigInt value '81129638414606663681390495662081' is out of range
+```
+
 ### `safeIntegers: false` (default)
 
 When `safeIntegers` is `false`, `bun:sqlite` returns integers as `number` types and rounds integers beyond 53 bits to the nearest representable `number`:
@@ -529,6 +550,8 @@ console.log(result.max_int);
 ```txt
 9007199254741092
 ```
+
+A `bigint` parameter that does not fit in a signed 64-bit integer keeps its low 64 bits. For example, `2n ** 64n - 1n` is stored as `-1`.
 
 ### `.safeIntegers()`
 
@@ -707,7 +730,7 @@ db.query("SELECT count_args(1, 2, 3) AS n").get(); // { n: 3 }
 | `varargs`       | `false`                 | The SQL function takes any number of arguments.                                                                                                                                      |
 | `deterministic` | `false`                 | You promise that the same arguments give the same result. SQLite then allows the function in an index and in a generated column.                                                     |
 | `directOnly`    | `false`                 | Only SQL that you pass to the `Database` can call the function. A view or a trigger cannot. Use it for a function with side effects when the database file comes from somebody else. |
-| `safeIntegers`  | the `Database`'s option | An `INTEGER` argument is a `bigint` instead of a `number`.                                                                                                                           |
+| `safeIntegers`  | the `Database`'s option | An `INTEGER` argument is a `bigint` instead of a `number`, and a `bigint` result outside 64 bits throws.                                                                             |
 
 **Values.** An argument has the type that a column of a result row has, so a `BLOB` is a `Uint8Array`. Bun stores the return value like a [bound parameter](#datatypes), and `undefined` is `NULL`. Any other return value, such as an object or a promise, makes the query throw a `TypeError`.
 

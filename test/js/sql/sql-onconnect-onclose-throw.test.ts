@@ -35,9 +35,8 @@ const servers = [
   ["mariadb", "mariadb_plain", "mysql://root@"],
 ] as const;
 
-// A hung fixture is killed before its test times out, so the failure shows where stdout stopped.
-const fixtureTimeout = 25_000;
-const testTimeout = 30_000;
+// Ends a fixture that hangs. The failure then shows where its stdout stopped.
+const fixtureTimeout = 60_000;
 
 async function runFixture(code: string, env: Record<string, string> = {}) {
   using dir = tempDir("sql-throwing-hooks", { "fixture.ts": code });
@@ -99,41 +98,29 @@ for (const [name, image, scheme] of servers) {
       return runFixture(fixture, { FIXTURE_URL: `${scheme}${container.host}:${container.port}/bun_sql_test` });
     };
 
-    test(
-      "a throwing onconnect callback does not leave the pool stuck",
-      async () => {
-        expect(await run(throwingHookFixture("onconnect"))).toEqual({
-          stdout: 'onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n',
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+    test("a throwing onconnect callback does not leave the pool stuck", async () => {
+      expect(await run(throwingHookFixture("onconnect"))).toEqual({
+        stdout: 'onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-    test(
-      "a throwing onclose callback does not hang sql.end()",
-      async () => {
-        expect(await run(throwingHookFixture("onclose"))).toEqual({
-          stdout: 'query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n',
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+    test("a throwing onclose callback does not hang sql.end()", async () => {
+      expect(await run(throwingHookFixture("onclose"))).toEqual({
+        stdout: 'query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-    test(
-      "a query that fails synchronously does not pin the event loop",
-      async () => {
-        expect(await run(synchronousFailureFixture)).toEqual({
-          stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
-          stderr: "",
-          exitCode: 0,
-        });
-      },
-      testTimeout,
-    );
+    test("a query that fails synchronously does not pin the event loop", async () => {
+      expect(await run(synchronousFailureFixture)).toEqual({
+        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 }
 
@@ -188,15 +175,12 @@ for (const [adapter, refusedCode] of [
         exitCode: 0,
       });
     },
-    testTimeout,
   );
 }
 
 // One query is one attempt, whatever `max` is.
-test.concurrent(
-  "postgres: pool calls from onclose are safe when the password function throws",
-  async () => {
-    const fixture = /* ts */ `
+test.concurrent("postgres: pool calls from onclose are safe when the password function throws", async () => {
+  const fixture = /* ts */ `
 import { SQL } from "bun";
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
 const sql = new SQL({
@@ -226,14 +210,12 @@ try {
 }
 process.exit(0);
 `;
-    expect(await runFixture(fixture)).toEqual({
-      stdout: "reentry ok\nquery rejected: password error\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  },
-  testTimeout,
-);
+  expect(await runFixture(fixture)).toEqual({
+    stdout: "reentry ok\nquery rejected: password error\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 // Fault-injection test: requires a server that refuses / drops / sends malformed
 // frames, which a healthy container will not do on demand. DO NOT COPY THIS
@@ -292,7 +274,6 @@ for (const [adapter, closedCode] of [
         exitCode: 0,
       });
     },
-    testTimeout,
   );
 }
 

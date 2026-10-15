@@ -12,6 +12,7 @@ const {
   onRejectQuery,
   createPooledConnectionHandle,
   sameSettings,
+  tryOtherPassword,
 } = require("internal/sql/pool");
 const {
   symbols: { _results, _handle, _copy },
@@ -195,7 +196,7 @@ initPostgres(
     }
 
     result.count = count;
-    result.statement = statement;
+    SQLResultArray.describe(result, query[_handle], statement);
     addResult(query, result);
   },
   onRejectQuery,
@@ -210,7 +211,7 @@ interface PostgresDotZig {
       commandTag: string | number,
       count: number,
       is_last: boolean,
-      statement: SQLStatementDescription | null,
+      statement: SQLStatementDescription | number | null,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
     arrayLiteral: (values: ArrayLike<unknown>, kind: ArrayKind) => string,
@@ -553,7 +554,7 @@ class ListenConnection {
     }));
   }
 
-  #connect(): Promise<ListenHandle> {
+  #connect(login = { saslprep: this.#adapter.saslprep }): Promise<ListenHandle> {
     const adapter = this.#adapter;
     const { promise, resolve, reject } = Promise.withResolvers<ListenHandle>();
     let live: ListenHandle | null = null;
@@ -584,7 +585,7 @@ class ListenConnection {
               err ??= adapter.connectionClosedError();
               if (live === null) {
                 this.#handshake = null;
-                return reject(err);
+                return tryOtherPassword(login, err) ? resolve(this.#connect(login)) : reject(err);
               }
               if (this.#conn === live) {
                 this.#conn = null;
@@ -594,6 +595,7 @@ class ListenConnection {
               adapter.runUserCallback(adapter.connectionInfo.onclose, err);
             }),
             undefined,
+            login,
           ),
         undefined,
       )

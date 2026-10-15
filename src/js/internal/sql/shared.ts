@@ -77,13 +77,19 @@ export interface SQLStatementDescription {
   types: number[];
   columns: object[];
 }
+/** The native query. */
+interface ResultDescriber {
+  describeResult(number: number): SQLStatementDescription | null;
+}
 
 class SQLResultArray<T> extends PublicArray<T> {
   #count: number | null = null;
   #command: string | null = null;
   #lastInsertRowid: number | bigint | string | null = null;
   #affectedRows: number | bigint | null = null;
-  #statement: SQLStatementDescription | null = null;
+  /** The native query while `#undescribed` is a number that it makes the description for. */
+  #statement: SQLStatementDescription | ResultDescriber | null = null;
+  #undescribed = -1;
 
   static [Symbol.toStringTag] = "SQLResults";
 
@@ -119,13 +125,32 @@ class SQLResultArray<T> extends PublicArray<T> {
     this.#affectedRows = value;
   }
   get statement() {
-    return this.#statement;
+    const number = this.#undescribed;
+    if (number !== -1) {
+      this.#statement = (this.#statement as ResultDescriber).describeResult(number);
+      this.#undescribed = -1;
+    }
+    return this.#statement as SQLStatementDescription | null;
   }
   set statement(value) {
     this.#statement = value;
+    this.#undescribed = -1;
   }
   get columns() {
-    return this.#statement?.columns ?? null;
+    return this.statement?.columns ?? null;
+  }
+  /** `statement`: the description, or the number that `handle` makes it for once somebody reads it. */
+  static describe(
+    result: SQLResultArray<unknown>,
+    handle: ResultDescriber,
+    statement: SQLStatementDescription | number | null,
+  ) {
+    if (typeof statement === "number") {
+      result.#statement = handle;
+      result.#undescribed = statement;
+    } else {
+      result.#statement = statement;
+    }
   }
 
   static get [Symbol.species]() {
@@ -450,6 +475,8 @@ class QueryBuilder {
     const columnCount = columns.length;
     const cells = $newArrayWithSize<unknown>(rowCount * columnCount);
     const defined = $newArrayWithSize<boolean>(columnCount);
+    // `cells` is the list of the query's parameters as it is
+    let plain = this.values.length === 0;
     for (let r = 0, at = 0; r < rowCount; r++) {
       const row = rows[r];
       if (row == null) {
@@ -459,7 +486,17 @@ class QueryBuilder {
         let cell = row[columns[c]];
         if (cell === undefined) cell = this.undefinedValue();
         $putByValDirect(cells, at, cell);
-        if (cell !== undefined) $putByValDirect(defined, c, true);
+        if (cell === undefined) {
+          plain = false;
+          continue;
+        }
+        $putByValDirect(defined, c, true);
+        if (
+          $isObject(cell) &&
+          (cell instanceof Query || cell instanceof SQLHelper || cell instanceof SQLArrayParameter || $isArray(cell))
+        ) {
+          plain = false;
+        }
       }
     }
 
@@ -473,6 +510,23 @@ class QueryBuilder {
       throw new SyntaxError("Insert needs to have at least one column with a defined value");
     }
     this.text += ") VALUES";
+
+    if (plain) {
+      this.values = cells;
+      if (this.adapter.placeholder(1) === "?") {
+        const row = "(?" + ", ?".repeat(columnCount - 1) + ")";
+        this.text += row + ("," + row).repeat(rowCount - 1);
+        return;
+      }
+      const numbers = $newArrayWithSize<number>(columnCount);
+      let text = this.text;
+      for (let r = 0, number = 0; r < rowCount; r++) {
+        for (let c = 0; c < columnCount; c++) $putByValDirect(numbers, c, ++number);
+        text = `${text}${r === 0 ? "($" : ",($"}${numbers.join(", $")})`;
+      }
+      this.text = text;
+      return;
+    }
 
     for (let r = 0, at = 0; r < rowCount; r++) {
       separator = r === 0 ? "(" : ",(";

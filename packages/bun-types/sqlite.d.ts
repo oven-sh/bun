@@ -61,6 +61,10 @@ declare module "bun:sqlite" {
      *
      * When `false`, integers are returned as `number`, and integers beyond 53 bits are rounded to the nearest `number`.
      *
+     * When `true`, a `bigint` parameter that does not fit in a signed 64-bit
+     * integer throws a `RangeError`. When `false`, it keeps its low 64 bits:
+     * `2n ** 64n - 1n` is stored as `-1`.
+     *
      * @default false
      * @since v1.1.14
      */
@@ -1507,7 +1511,8 @@ declare module "bun:sqlite" {
     directOnly?: boolean | undefined;
 
     /**
-     * An `INTEGER` argument is a `bigint` instead of a `number`.
+     * An `INTEGER` argument is a `bigint` instead of a `number`, and a `bigint`
+     * result that does not fit in a signed 64-bit integer throws a `RangeError`.
      *
      * @default the `safeIntegers` option of the `Database`
      */

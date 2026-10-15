@@ -114,6 +114,69 @@ test("text that is not a value of the type rejects, in a column and in an array"
   ]);
 });
 
+// No server writes a number in most of these ways. What one does write is in postgres-decode.test.ts.
+test.each([
+  [
+    "float8",
+    OID.float8,
+    OID_ARRAY.float8,
+    [
+      ...[
+        "0",
+        "-0",
+        "00",
+        "-00.0",
+        "007",
+        "-007.50",
+        "1.",
+        ".5",
+        "-.5",
+        "+5",
+        "+0.5",
+        "1e3",
+        "1E3",
+        "1.5e-7",
+        "0.1e1",
+        "1e+20",
+      ],
+      ...["999999999999999", "9999999999999999", "0.999999999999999", "0.9999999999999999", "000000000000000001"],
+      ...[
+        "123456789012345.6",
+        "9007199254740993",
+        "0.000000000000001",
+        "0.0000000000000001",
+        "99999999999999999999999",
+      ],
+      ...["NaN", "nan", "Infinity", "-Infinity", "inf", "-inf"],
+      ...["1.5x", "1..5", "1.5.", "-", "--1", "1-", ".", "-.", "e5", "1e", "0x10", " 1", "1 "],
+    ],
+  ],
+  [
+    "int4",
+    OID.int4,
+    OID.int4_array,
+    [
+      ...["0", "-0", "00", "007", "-007", "+5", "2147483647", "-2147483648", "0000000002147483647"],
+      ...["2147483648", "-2147483649", "999999999999999", "9999999999999999", "99999999999999999999"],
+      ...["1.", "1.0", ".5", "1e3", "-", "--1", "1-", "x", "0x10", " 1", "1 ", "NaN"],
+    ],
+  ],
+] as const)(
+  "%s: an element of an array reads as a column does, however it is written",
+  async (_, column, array, texts) => {
+    const show = (value: unknown) => (Object.is(value, -0) ? "-0" : String(value));
+    const columns = (await decode(texts.map(value => text(column, value)))).map(show);
+    expect(new Set(columns).size).toBeGreaterThan(5);
+
+    const alone = await decode(texts.map(value => text(array, `{${value}}`)));
+    expect(alone.map(value => (Array.isArray(value) ? value.map(show).join() : value))).toEqual(columns);
+
+    const numbers = texts.filter((_, i) => !columns[i].startsWith("ERR_"));
+    const [together] = (await decode([text(array, `{${numbers.join(",NULL,")}}`)])) as [unknown[]];
+    expect(together.map(show)).toEqual(columns.filter(value => !value.startsWith("ERR_")).flatMap(value => ["null", value]).slice(1)); // prettier-ignore
+  },
+);
+
 test("a binary value of the wrong width rejects", async () => {
   expect(
     await decode([

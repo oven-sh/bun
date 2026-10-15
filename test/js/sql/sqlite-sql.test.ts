@@ -966,6 +966,82 @@ describe("Query Execution", () => {
     expect(result2[0].id).toBe(2);
   });
 
+  describe("the statements after one that returns rows run too", () => {
+    const open = async () => {
+      const sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE tail (id INTEGER PRIMARY KEY)`;
+      return sql;
+    };
+    const ids = async (sql: SQL) => (await sql`SELECT id FROM tail ORDER BY id`.values()).flat();
+
+    test("SELECT, then INSERT", async () => {
+      await using sql = await open();
+      const result = await sql.unsafe("SELECT 1 AS one; INSERT INTO tail VALUES (7)");
+      expect(result).toEqual([{ one: 1 }]);
+      expect({ command: result.command, count: result.count }).toEqual({ command: "SELECT", count: 1 });
+      expect(await ids(sql)).toEqual([7]);
+    });
+
+    test("PRAGMA, then CREATE TABLE, through sql.file()", async () => {
+      using dir = tempDir("sqlite-sql-tail", {
+        "migrate.sql":
+          "PRAGMA journal_mode = WAL;\nCREATE TABLE migrated (id INTEGER);\nINSERT INTO migrated VALUES (1);\n",
+      });
+      await using sql = new SQL({ adapter: "sqlite", filename: join(String(dir), "migrated.sqlite") });
+      expect(await sql.file(join(String(dir), "migrate.sql"))).toEqual([{ journal_mode: "wal" }]);
+      expect(await sql`SELECT id FROM migrated`).toEqual([{ id: 1 }]);
+    });
+
+    test("three statements, of which the second returns rows as well", async () => {
+      await using sql = await open();
+      expect(await sql.unsafe("SELECT 1 AS a; SELECT 2 AS b; INSERT INTO tail VALUES (3)")).toEqual([{ a: 1 }]);
+      expect(await ids(sql)).toEqual([3]);
+    });
+
+    test("one that fails rejects the query, and what ran before it stays", async () => {
+      await using sql = await open();
+      const error = await sql
+        .unsafe(
+          "INSERT INTO tail VALUES (1) RETURNING id; INSERT INTO tail VALUES (2); INSERT INTO tail VALUES (1); INSERT INTO tail VALUES (4)",
+        )
+        .catch(e => e);
+      expect(error).toBeInstanceOf(SQL.SQLiteError);
+      expect(error.code).toBe("SQLITE_CONSTRAINT_PRIMARYKEY");
+      expect(await ids(sql)).toEqual([1, 2]);
+    });
+
+    test.each([
+      ["a ';' in a literal", "SELECT 'a; b' AS v; INSERT INTO tail VALUES (1)", "a; b", [1]],
+      ["a ';' in a comment", "SELECT 1 AS v /* ; */; -- ;\n INSERT INTO tail VALUES (1)", 1, [1]],
+      ["a comment at the end", "SELECT 1 AS v; INSERT INTO tail VALUES (1); -- the end", 1, [1]],
+      ["text that is longer in UTF-8 than in UTF-16", "SELECT 'é😀' AS v; INSERT INTO tail VALUES (1)", "é😀", [1]],
+      [
+        "a trigger body",
+        "SELECT 1 AS v; CREATE TRIGGER g AFTER INSERT ON tail WHEN new.id = 1 BEGIN INSERT INTO tail VALUES (2); END; INSERT INTO tail VALUES (1)",
+        1,
+        [1, 2],
+      ],
+      // One statement each: nothing follows that could run or fail.
+      ["only a ';' in a literal", "SELECT 'a; INSERT INTO tail VALUES (1)' AS v", "a; INSERT INTO tail VALUES (1)", []],
+      ["only a line comment", "SELECT 1 AS v; -- INSERT INTO tail VALUES (1)", 1, []],
+      ["only a block comment, semicolons and white space", "SELECT 1 AS v;; /* ; */ ;\n ", 1, []],
+    ])("%s", async (_, text, v, expected) => {
+      await using sql = await open();
+      expect(await sql.unsafe(text)).toEqual([{ v }]);
+      expect(await ids(sql)).toEqual(expected);
+    });
+
+    test("in every result mode, with parameters, and in a tagged template", async () => {
+      await using sql = await open();
+      expect(await sql.unsafe("SELECT 1 AS a; INSERT INTO tail VALUES (1)").values()).toEqual([[1]]);
+      expect(await sql.unsafe("SELECT 'x' AS a; INSERT INTO tail VALUES (2)").raw()).toEqual([[Buffer.from("x")]]);
+      // The first statement gets the parameters, as when it returns no rows.
+      expect(await sql.unsafe("SELECT ? AS a; INSERT INTO tail VALUES (3)", [5])).toEqual([{ a: 5 }]);
+      expect(await sql`SELECT ${6} AS a; INSERT INTO tail VALUES (4)`).toEqual([{ a: 6 }]);
+      expect(await ids(sql)).toEqual([1, 2, 3, 4]);
+    });
+  });
+
   // SQLite copies text that does not end in a NUL once per statement. The same text with a NUL is the control.
   // On Linux without ASAN malloc is mimalloc, so heapStats() sees what SQLite allocates.
   test.skipIf(!isLinux || isASAN || isDebug)(
@@ -2189,6 +2265,7 @@ describe("Error handling", () => {
     const second = "DELETE FROM offsets WHERE name = 'é'; DELETE FROM offsets WHERE nmae = 1";
     const third = second.replace("nmae", "name") + ";\n  DELETE FROM offsets WHERE nmae = 2; DELETE FROM offsets";
     const select = "\n      SELECT nmae FROM offsets";
+    const afterRows = "SELECT 'é' AS a; DELETE FROM offsets WHERE nmae = 1";
     using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
 
     expect({
@@ -2199,6 +2276,7 @@ describe("Error handling", () => {
       file: await byteOffsetOf(sql.file(join(String(dir), "statements.sql"))),
       transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
       select: await byteOffsetOf(sql.unsafe(select)),
+      afterRows: await byteOffsetOf(sql.unsafe(afterRows)),
     }).toEqual({
       tagged: at(indented, "nmae"),
       unsafe: at(second, "nmae"),
@@ -2206,6 +2284,7 @@ describe("Error handling", () => {
       file: at(second, "nmae"),
       transaction: at(second, "nmae"),
       select: at(select, "nmae"),
+      afterRows: at(afterRows, "nmae"),
     });
 
     const closed = new SQL("sqlite://:memory:");

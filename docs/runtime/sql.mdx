@@ -614,7 +614,7 @@ Simple queries cannot use parameters (`${value}`). If you need parameters, split
 These rules apply to every string with several statements, also through `sql.file` and `sql.unsafe`:
 
 - On PostgreSQL and MySQL, the query resolves to an array with one result per statement.
-- On SQLite, the query resolves to one result. If the first statement returns rows, the statements after it do not run.
+- On SQLite, every statement runs and the query resolves to one result. It holds the rows of the first statement if that statement returns rows. Otherwise its `count` is the number of rows that all the statements changed.
 - Only PostgreSQL runs the string as one implicit transaction. On MySQL and SQLite, the statements before a failing one stay applied. Wrap the call in [`sql.begin`](#transactions) if you need all or nothing.
 
 ### Queries in files
@@ -1214,7 +1214,7 @@ await sql.rollbackDistributed("tx1");
 
 Bun supports SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (SASL), MD5, and Clear Text authentication. We recommend SASL for better security. See [Postgres SASL Authentication](https://www.postgresql.org/docs/current/sasl-authentication.html).
 
-For a SCRAM login, Bun normalizes a non-ASCII password with SASLprep, like `psql`. The same password logs in whichever Unicode form you type it in.
+A non-ASCII password logs in whichever Unicode form you type it in. Bun first logs in with the password as you typed it. If the server refuses it, Bun tries once more with its SASLprep form, the form that `psql` uses. A wrong non-ASCII password can therefore count as two failed logins.
 
 ### Channel binding
 
@@ -1353,8 +1353,9 @@ With `bun --hot`, a `new SQL()` with the same connection settings takes over the
 
 - `onconnect` runs again for each connection that the new client takes over.
 - Session state, such as `SET` and temporary tables, stays on the connection.
-- When you edit the settings, Bun closes the old connections: idle ones at the first query of the new client, busy ones when they finish.
-- A `password` or `transform.column.from` function that the file defines is a new function in each load. Bun treats it as a changed setting and connects again. Presets such as `SQL.camel` stay the same.
+- When you edit the settings, the old connections stay open for one more reload. At the first query of a load, Bun closes the connections of clients from earlier loads that ran no query during the whole previous load: idle ones at once, busy ones when they finish.
+- A client that you keep on `globalThis` and use keeps its connections.
+- A `password` or `transform.column.from` function that the file defines is a new function in each load. Bun treats it as a changed setting and connects again, so the database sees up to twice `max` sessions. Presets such as `SQL.camel` stay the same.
 
 A [`sql.listen()`](#listen--notify-postgresql) subscription of an earlier load stays active, so a callback that you register at module level runs once for each load that registered it. Keep the subscription on `globalThis`, and remove it before you subscribe again:
 

@@ -130,7 +130,12 @@ impl PostgresSQLStatement {
         &self.cached_structure
     }
 
-    /// `result.statement` in JS.
+    /// Other queries run it too.
+    pub(crate) fn is_named(&self) -> bool {
+        !self.signature.prepared_statement_name.is_empty()
+    }
+
+    /// `result.statement` of the results of a named statement.
     pub(crate) fn description(
         &mut self,
         global_object: &JSGlobalObject,
@@ -139,36 +144,49 @@ impl PostgresSQLStatement {
         if let Some(description) = self.cached_structure.description() {
             return Ok(description);
         }
-        let description = describe_statement(
-            global_object,
-            query,
-            &self.parameters,
-            [c"name", c"type", c"table", c"number"],
-            |values| {
-                for field in &self.fields {
-                    values.append(column_name_to_js(global_object, &field.name_or_index)?);
-                    values.append(JSValue::js_number_from_uint64(field.type_oid.into()));
-                    values.append(JSValue::js_number_from_uint64(field.table_oid.into()));
-                    values.append(JSValue::js_number_from_int32(field.attribute_number.into()));
-                }
-                Ok(())
-            },
-        )?;
-        // Only a named statement has another result with these fields.
-        if !self.signature.prepared_statement_name.is_empty() {
-            self.cached_structure
-                .set_description(global_object, description);
-        }
+        let description = describe(global_object, query, &self.parameters, &self.fields)?;
+        self.cached_structure
+            .set_description(global_object, description);
         Ok(description)
     }
 
-    /// In a simple query a command that returns no rows comes without a RowDescription.
-    pub(crate) fn clear_fields(&mut self) {
-        self.fields = Vec::new();
+    /// What `describe` takes, of the result that just ended. The next one starts with no fields:
+    /// in a simple query a command that returns no rows comes without a RowDescription.
+    pub(crate) fn take_result(&mut self) -> ResultDescription {
         self.cached_structure = Default::default();
         self.needs_duplicate_check = true;
         self.fields_flags = Default::default();
+        (
+            core::mem::take(&mut self.parameters),
+            core::mem::take(&mut self.fields),
+        )
     }
+}
+
+pub(crate) type ResultDescription = (Box<[int4]>, Vec<protocol::FieldDescription>);
+
+/// `result.statement` in JS.
+pub(crate) fn describe(
+    global_object: &JSGlobalObject,
+    query: &bun_core::String,
+    parameters: &[int4],
+    fields: &[protocol::FieldDescription],
+) -> JsResult<JSValue> {
+    describe_statement(
+        global_object,
+        query,
+        parameters,
+        [c"name", c"type", c"table", c"number"],
+        |values| {
+            for field in fields {
+                values.append(column_name_to_js(global_object, &field.name_or_index)?);
+                values.append(JSValue::js_number_from_uint64(field.type_oid.into()));
+                values.append(JSValue::js_number_from_uint64(field.table_oid.into()));
+                values.append(JSValue::js_number_from_int32(field.attribute_number.into()));
+            }
+            Ok(())
+        },
+    )
 }
 
 impl Drop for PostgresSQLStatement {

@@ -122,26 +122,48 @@ describe("safeIntegers", () => {
     const query = db.query("INSERT INTO test (value) VALUES ($value)");
 
     expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
-    // safeIntegers only controls how integers are returned.
     query.safeIntegers(false);
-    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
   });
 
-  it.each([false, true])(
-    "safeIntegers: %p takes a BigInt parameter in the signed 64-bit range and no other",
-    safeIntegers => {
-      using db = new Database(":memory:", { safeIntegers });
-      // CAST(... AS TEXT) reads the value back without the precision loss of a number.
-      const text = db.query("SELECT CAST(? AS TEXT) AS t");
+  describe.each([false, true])("safeIntegers: %p and a BigInt parameter", safeIntegers => {
+    // CAST(... AS TEXT) reads the value back without the precision loss of a number.
+    const stored = {
+      "Statement#get": (db, value) => db.query("SELECT CAST(? AS TEXT) AS t").get(value).t,
+      "Database#prepare": (db, value) => db.prepare("SELECT CAST(? AS TEXT) AS t", [value]).get().t,
+      "Database#run": (db, value) => {
+        db.run("CREATE TABLE t (a)");
+        db.run("INSERT INTO t VALUES (?)", [value]);
+        return db.query("SELECT CAST(a AS TEXT) AS t FROM t").get().t;
+      },
+    };
+
+    it.each(Object.keys(stored))("%s: in the signed 64-bit range it is stored as it is", how => {
       for (const value of [0n, 2n ** 62n, 2n ** 63n - 1n, -(2n ** 63n)]) {
-        expect(text.get(value)).toEqual({ t: String(value) });
+        using db = new Database(":memory:", { safeIntegers });
+        expect(stored[how](db, value)).toBe(String(value));
       }
-      for (const value of [2n ** 63n, -(2n ** 63n) - 1n, 2n ** 64n + 5n, -(2n ** 64n) - 5n]) {
-        expect(() => text.get(value)).toThrow(RangeError);
-        expect(() => text.get(value)).toThrow(`BigInt value '${value}' is out of range`);
-      }
-    },
-  );
+    });
+
+    // Bun.hash() returns an unsigned 64-bit integer.
+    const hash = Bun.hash("b");
+    const outside = [hash, 2n ** 63n, 2n ** 64n - 1n, -(2n ** 63n) - 1n, 2n ** 64n + 5n, -(2n ** 64n) - 5n];
+
+    it.each(Object.keys(stored))(
+      safeIntegers ? "%s: outside of it, it is a RangeError" : "%s: outside of it, it keeps its low 64 bits",
+      how => {
+        expect(hash).toBeGreaterThanOrEqual(2n ** 63n);
+        for (const value of outside) {
+          using db = new Database(":memory:", { safeIntegers });
+          if (safeIntegers) {
+            expect(() => stored[how](db, value)).toThrow(new RangeError(`BigInt value '${value}' is out of range`));
+          } else {
+            expect(stored[how](db, value)).toBe(String(BigInt.asIntN(64, value)));
+          }
+        }
+      },
+    );
+  });
 });
 
 {
@@ -2526,7 +2548,7 @@ it("#13082", async () => {
 
   // close(false) leaves prepare() statements usable even after the Database wrapper is collected
   await Promise.all(runs);
-}, 30_000);
+});
 
 it("internal SQL helpers reject what is not a database handle", async () => {
   const src = `
@@ -5127,7 +5149,7 @@ it("a trigger that raises an empty message throws a SQLiteError", async () => {
 });
 
 // macOS loads the system SQLite, which has its own default.
-it.skipIf(isMacOS)("a WAL database syncs at checkpoints, not at every commit", () => {
+it.skipIf(isMacOS)("a WAL database syncs at every commit unless the application says otherwise", () => {
   using dir = tempDir("sqlite-wal-synchronous", {});
   using db = new Database(path.join(String(dir), "wal.sqlite"));
   const synchronous = () => db.query("PRAGMA synchronous").values()[0][0];
@@ -5135,11 +5157,11 @@ it.skipIf(isMacOS)("a WAL database syncs at checkpoints, not at every commit", (
   const NORMAL = 1;
   expect(synchronous()).toBe(FULL);
   db.run("PRAGMA journal_mode = WAL");
-  // The default takes effect with the next transaction.
+  // A default for WAL mode would take effect with the next transaction.
   db.run("CREATE TABLE t (a)");
-  expect(synchronous()).toBe(NORMAL);
-  db.run("PRAGMA synchronous = FULL");
   expect(synchronous()).toBe(FULL);
+  db.run("PRAGMA synchronous = NORMAL");
+  expect(synchronous()).toBe(NORMAL);
 });
 
 // https://github.com/nodejs/node/pull/59405
@@ -5240,9 +5262,11 @@ describe("db.function()", () => {
     }
   });
 
-  it("a BigInt that does not fit in 64 bits is a RangeError", () => {
+  it("a BigInt that does not fit in 64 bits is treated as a parameter is: by the safeIntegers of the function", () => {
     using db = new Database(":memory:");
-    db.function("f", () => 2n ** 63n);
+    db.function("wraps", () => 2n ** 64n - 1n);
+    expect(db.query("SELECT wraps() AS result, ? AS bound").get(2n ** 64n - 1n)).toEqual({ result: -1, bound: -1 });
+    db.function("f", { safeIntegers: true }, () => 2n ** 63n);
     expect(() => db.query("SELECT f()").get()).toThrow(
       new RangeError("BigInt value '9223372036854775808' is out of range"),
     );

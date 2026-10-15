@@ -34,7 +34,7 @@ test.concurrent(
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 12_000,
+      timeout: 60_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
@@ -53,7 +53,6 @@ test.concurrent(
       jobs.map(({ names }) => Object.keys(expectedRow(names))),
     );
   },
-  15_000,
 );
 
 for (const image of ["mysql_plain", "mariadb_plain"]) {

@@ -6,6 +6,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectInitializationScope.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/DateInstance.h>
@@ -51,6 +52,13 @@ typedef struct DataCellArray {
     uint32_t cap;
 } DataCellArray;
 
+// Numbers and nulls. No GC cell.
+typedef struct DataCellNumbers {
+    JSC::JSValue* values;
+    uint32_t length;
+    uint32_t cap;
+} DataCellNumbers;
+
 typedef struct DataCellRaw {
     void* ptr;
     uint64_t length;
@@ -68,6 +76,7 @@ typedef union DataCellValue {
     size_t bytea[2];
     WTF::StringImpl* json;
     DataCellArray array;
+    DataCellNumbers numbers;
     DataCellRaw raw;
     uint32_t unsigned_integer;
 } DataCellValue;
@@ -86,6 +95,7 @@ enum class DataCellTag : uint8_t {
     Raw = 10,
     UnsignedInteger = 11,
     UnsignedBigint = 12,
+    Numbers = 13,
 };
 
 enum class BunResultMode : uint8_t {
@@ -209,6 +219,31 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return {};
         }
         RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
+    }
+    case DataCellTag::Numbers: {
+        const JSValue* values = cell.value.numbers.values;
+        uint32_t length = cell.value.numbers.length;
+        IndexingType indexingType = ArrayWithInt32;
+        for (JSValue value : std::span { values, length }) {
+            if (value.isInt32())
+                continue;
+            if (!value.isDouble() || std::isnan(value.asDouble())) {
+                indexingType = ArrayWithContiguous;
+                break;
+            }
+            indexingType = ArrayWithDouble;
+        }
+        ObjectInitializationScope initializationScope(vm);
+        JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
+        if (!array) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        // ArrayStorage when the global object is having a bad time.
+        indexingType = array->indexingType();
+        for (uint32_t i = 0; i < length; i++)
+            array->initializeIndexWithoutBarrier(initializationScope, i, values[i], indexingType);
+        return array;
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();

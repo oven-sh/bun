@@ -83,6 +83,10 @@ for (const type of types) {
           fn: "setPendingValueFromJS",
           length: 1,
         },
+        describeResult: {
+          fn: "describeResult",
+          length: 1,
+        },
         ...(type === "PostgresSQL"
           ? {
               setCopy: {

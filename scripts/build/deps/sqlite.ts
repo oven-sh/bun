@@ -40,9 +40,6 @@ export const sqlite: Dependency = {
       SQLITE_ENABLE_MATH_FUNCTIONS: 1,
       SQLITE_ENABLE_UPDATE_DELETE_LIMIT: 1,
       SQLITE_UDL_CAPABLE_PARSER: 1,
-      // In WAL mode, fsync at checkpoints and not at every commit. A power loss can
-      // lose the last commits; it cannot corrupt the database.
-      SQLITE_DEFAULT_WAL_SYNCHRONOUS: 1,
       // node:sqlite exposes createSession/applyChangeset + columns()
       // metadata. Match Node.js's compile-time feature set so those
       // APIs work identically. PREUPDATE_HOOK is a prerequisite for the

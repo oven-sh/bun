@@ -94,10 +94,13 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
   connectStartedAt: number = monotonicNowMs();
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;
+  saslprep: boolean;
+  otherPassword: boolean | undefined;
   #releaseQuery: () => void;
 
   constructor(adapter: BaseSQLAdapter<ConnectionHandle, any>) {
     this.adapter = adapter;
+    this.saslprep = adapter.saslprep;
     this.#releaseQuery = adapter.release.bind(adapter, this);
   }
 
@@ -144,6 +147,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
     }
     this.connection = connection;
     this.state = PooledConnectionState.open;
+    this.adapter.saslprep = this.saslprep;
     this.adapter.connectionOpened(this);
   }
 
@@ -152,6 +156,10 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
       return;
     }
     this.connection = null;
+    if (this.state === PooledConnectionState.connecting && tryOtherPassword(this, err)) {
+      this.dial();
+      return;
+    }
     if (this.state === PooledConnectionState.connecting && this.#isConnectFailure(err) && this.#canKeepRetrying()) {
       const delay = Math.min(20 * 2 ** ++this.connectAttempts, 1000);
       this.retryTimer = setTimeout(PooledConnection.#retryTimerFired, delay, this, err);
@@ -341,36 +349,45 @@ function rememberHotPool(pool: BaseSQLAdapter<any, any>) {
   hotPools.add(pool);
 }
 
-/// The settings changed: what earlier loads left open and no pool of this load would take over closes.
-function retireReplacedPools(generation: number) {
-  for (const stale of hotPools) {
-    if (stale.generation === generation || stale.connections.length === 0) {
-      continue;
-    }
-    let successor = false;
-    for (const pool of hotPools) {
-      if (pool.generation === generation && sameSettings(stale, pool)) {
-        successor = true;
-        break;
+let sweptGeneration = 0;
+
+/// At the first dial of a load: a pool of an earlier load that nobody has asked for a connection since the first
+/// dial of the load before is one that the program did not keep.
+function retireUnusedPools(generation: number) {
+  sweptGeneration = generation;
+  for (const pool of hotPools) {
+    if (pool.generation !== generation) {
+      if (!pool.asked) {
+        pool.retire();
       }
-    }
-    if (!successor) {
-      stale.retire();
+      pool.asked = false;
     }
   }
 }
 
-/// SCRAM hashes SASLprep(password) (RFC 4013). A password that SASLprep refuses is used as it is, like in libpq.
-/// The server refuses by the tables of Unicode 3.2 and by text direction. Here anything right-to-left, outside the
-/// BMP or a pictograph counts as refused, which only gives up the normalization.
 function saslprep(password: string): string {
-  const mapped = password
+  return password
     .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
-    .replace(/\u034f|\u200d|[\ufe00-\ufe0f]|[\u00ad\u1806\u180b-\u180d\u200c\u2060\ufeff]/g, "");
-  return mapped === "" ||
-    /[\p{C}\p{Extended_Pictographic}\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc\u{10000}-\u{10ffff}]/u.test(mapped)
-    ? password
-    : mapped.normalize("NFKC");
+    .replace(/\u034f|\u200d|[\ufe00-\ufe0f]|[\u00ad\u1806\u180b-\u180d\u200c\u2060\ufeff]/g, "")
+    .normalize("NFKC");
+}
+
+/// The server made its SCRAM verifier from SASLprep(password) (RFC 4013), or from the password as it is when it
+/// refused to prepare that. Which, only the server knows.
+interface Login {
+  saslprep: boolean;
+  /// undefined before the first dial: whether the other one is another string that was not tried
+  otherPassword?: boolean;
+}
+
+/// Whether to dial once more after `err`.
+function tryOtherPassword(login: Login, err: Error | null): boolean {
+  if (!login.otherPassword || (err as any)?.errno !== "28P01") {
+    return false;
+  }
+  login.otherPassword = false;
+  login.saslprep = !login.saslprep;
+  return true;
 }
 
 /**
@@ -383,7 +400,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
   onRetire: (() => void) | undefined,
-  pooled?: PooledConnection,
+  login: Login & { state?: PooledConnectionState },
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -419,9 +436,11 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   }
 
   // the pool was torn down while the password was made
-  if (pooled?.state === PooledConnectionState.closed) return null;
+  if (login.state === PooledConnectionState.closed) return null;
 
   password = String(password || "");
+  const prepared = saslprep(password);
+  login.otherPassword ??= prepared !== password;
 
   return nativeCreateConnection(
     hostname,
@@ -444,7 +463,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     foundRows,
     channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
     transform?.column.from,
-    saslprep(password),
+    login.saslprep ? prepared : password,
   );
 }
 
@@ -486,7 +505,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public queue: Array<OnConnected | Reservation> = [];
 
   public totalQueries: number = 0;
+  /// of the login that worked last
+  public saslprep: boolean = false;
   public readonly generation: number = hotReloadGeneration();
+  /// see retireUnusedPools()
+  public asked: boolean = false;
   #closing: PromiseWithResolvers<void> | null = null;
   #tornDown: boolean = false;
   #closeTimers: ReturnType<typeof setTimeout>[] = [];
@@ -649,7 +672,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (generation <= 0 || generation !== hotReloadGeneration()) {
       return false;
     }
-    let predecessor = false;
+    if (sweptGeneration !== generation) {
+      retireUnusedPools(generation);
+    }
     // The newest first: an older one may be a pool that the program kept.
     const pools = Array.from(hotPools);
     for (let i = pools.length - 1; i >= 0; i--) {
@@ -657,7 +682,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       if (pool.generation === generation || !sameSettings(pool, this)) {
         continue;
       }
-      predecessor = true;
       for (const connection of pool.readyConnections) {
         if (connection.queryCount === 0 && connection.connection.inTransaction !== true) {
           pool.connections.splice(pool.connections.indexOf(connection), 1);
@@ -668,9 +692,6 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
           return true;
         }
       }
-    }
-    if (!predecessor && this.connections.length === 0) {
-      retireReplacedPools(generation);
     }
     return false;
   }
@@ -908,6 +929,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     if (this.#closing !== null) {
       return onConnected(this.connectionClosedError(), null);
     }
+    this.asked = true;
     this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
     this.#serve();
   }
@@ -920,4 +942,5 @@ export default {
   closeTimeoutMs,
   createPooledConnectionHandle,
   sameSettings,
+  tryOtherPassword,
 };

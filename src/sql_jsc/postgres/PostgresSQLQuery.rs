@@ -2,6 +2,7 @@ use core::cell::Cell;
 use core::mem;
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
+use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
@@ -14,7 +15,7 @@ use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
 use super::postgres_sql_connection;
-use super::postgres_sql_statement::Status as StatementStatus;
+use super::postgres_sql_statement::{ResultDescription, Status as StatementStatus, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::shared::ConnectionFlags;
@@ -32,6 +33,7 @@ pub struct PostgresSQLQuery {
     /// The connection whose queue it is in.
     connection: JsCell<Option<RefPtr<PostgresSQLConnection>>>,
     pub(crate) query: BunString,
+    undescribed: JsCell<Undescribed<ResultDescription>>,
 
     pub(crate) this_value: JsCell<JsRef>,
 
@@ -48,6 +50,7 @@ impl Default for PostgresSQLQuery {
             statement: JsCell::new(None),
             connection: JsCell::new(None),
             query: BunString::EMPTY,
+            undescribed: JsCell::new(Undescribed::default()),
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
@@ -292,12 +295,8 @@ impl PostgresSQLQuery {
 
         // The last call ends the query and brings no result.
         let statement = match self.statement_mut().filter(|_| !is_last) {
-            Some(statement) => {
-                let description = statement.description(global_object, &self.query);
-                if self.flags.get().simple {
-                    statement.clear_fields();
-                }
-                match description {
+            Some(statement) if statement.is_named() => {
+                match statement.description(global_object, &self.query) {
                     Ok(description) => description,
                     Err(e) => {
                         let err = global_object.take_exception(e);
@@ -305,6 +304,9 @@ impl PostgresSQLQuery {
                     }
                 }
             }
+            Some(statement) => self
+                .undescribed
+                .with_mut(|results| results.push(statement.take_result())),
             None => JSValue::NULL,
         };
 
@@ -345,6 +347,23 @@ impl PostgresSQLQuery {
                 statement,
             ],
         );
+    }
+
+    /// `result.statement` of the result for which `on_result` gave this number instead.
+    pub fn describe_result(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        match this
+            .undescribed
+            .with_mut(|results| results.take(callframe.argument(0)))
+        {
+            Some((parameters, fields)) => {
+                describe(global_object, &this.query, &parameters, &fields)
+            }
+            None => Ok(JSValue::NULL),
+        }
     }
 
     pub fn estimated_size(&self) -> usize {

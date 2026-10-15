@@ -7,10 +7,6 @@ import path from "node:path";
 const fixture = path.join(import.meta.dir, "postgres-dispatch-fixture.ts");
 const wireFixture = path.join(import.meta.dir, "postgres-dispatch-wire-fixture.ts");
 
-// Every test starts a subprocess, which a debug build takes seconds to do. A fixture that hangs stops itself
-// at 25 s, so the test reports what the fixture printed.
-const timeout = 30_000;
-
 const ok = (...rows: object[]) => ({ ok: rows });
 const closed = { err: "ERR_POSTGRES_CONNECTION_CLOSED" };
 const afterwards = ok({ ok: 1 });
@@ -201,14 +197,10 @@ async function run(fixture: string, expected: Record<string, object>, env: Recor
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
   const url = () => `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
 
-  test.concurrent.each(Object.entries(groups))(
-    "%s",
-    async (_, expected) => {
-      await container.ready;
-      await run(fixture, expected, { DATABASE_URL: url() });
-    },
-    timeout,
-  );
+  test.concurrent.each(Object.entries(groups))("%s", async (_, expected) => {
+    await container.ready;
+    await run(fixture, expected, { DATABASE_URL: url() });
+  });
 
   test.concurrent.each([true, false])(
     "a script exits on its own when the outer and the nested conversion both throw (prepare: %p)",
@@ -245,7 +237,6 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
         exitCode: 0,
       });
     },
-    timeout,
   );
 });
 
@@ -258,20 +249,16 @@ const wire = (nested: string, ...frames: string[]) => ({
 });
 const nestedBind = ["B(nested)", "E", "S"];
 
-test.concurrent(
-  "wire order equals queue order",
-  async () => {
-    await run(wireFixture, {
-      "prepared statement": wire("nested", "B(outer)", "E", "S", ...nestedBind),
-      "prepared statement, nested query without parameters": wire(
-        "",
-        ...["B(outer)", "E", "S", "P", "D", "B()", "E", "S"],
-      ),
-      "prepared statement, nested simple query": wire("simple", "B(outer)", "E", "S", "Q"),
-      "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "S", ...nestedBind),
-      // An object with a toString asks for the types first. A string does not.
-      "prepare: false": wire("nested", "P", "D", "S", "P", "B(outer)", "E", "S", "P", "D", ...nestedBind),
-    });
-  },
-  timeout,
-);
+test.concurrent("wire order equals queue order", async () => {
+  await run(wireFixture, {
+    "prepared statement": wire("nested", "B(outer)", "E", "S", ...nestedBind),
+    "prepared statement, nested query without parameters": wire(
+      "",
+      ...["B(outer)", "E", "S", "P", "D", "B()", "E", "S"],
+    ),
+    "prepared statement, nested simple query": wire("simple", "B(outer)", "E", "S", "Q"),
+    "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "S", ...nestedBind),
+    // An object with a toString asks for the types first. A string does not.
+    "prepare: false": wire("nested", "P", "D", "S", "P", "B(outer)", "E", "S", "P", "D", ...nestedBind),
+  });
+});

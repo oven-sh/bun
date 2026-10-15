@@ -307,6 +307,16 @@ function suite(dialect: Dialect, url: () => string) {
       ]);
     });
 
+    test("many rows arrive in their places, with and without a fragment among the cells", async () => {
+      await using sql = connect();
+      const table = sql(await tableOf(sql, "id int, a varchar(20), b int"));
+      const rows = Array.from({ length: 400 }, (_, id) => ({ id, a: id % 7 ? "a" + id : null, b: id * 3 }));
+      const more = rows.map(row => ({ ...row, id: row.id + rows.length }));
+      await sql`insert into ${table} ${sql(rows)}`;
+      await sql`insert into ${table} ${sql(more.map(row => ({ ...row, id: sql`${row.id}` })))}`;
+      expect(await sql`select * from ${table} order by id`).toEqual([...rows, ...more]);
+    });
+
     test("undefined is NULL as a value, and no column when every row leaves it undefined", async () => {
       await using sql = connect();
       const table = sql(await tableOf(sql, "id int, a int default 7, b int default 8"));

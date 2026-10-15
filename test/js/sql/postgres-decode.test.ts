@@ -1,7 +1,7 @@
 // What a PostgreSQL value reads as in JS. It has to be the same on every path a result takes, in text or in binary.
 import { SQL } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { describeWithContainer } from "harness";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 
 /** One line per value, so that -0, NaN, an Invalid Date, a Buffer and a typed array differ from their look-alikes. */
 function show(value: unknown): string {
@@ -276,6 +276,76 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       expect(await read(bigints, path[0], { ...path[1], bigint: true })).toEqual(bigints);
     });
   }
+
+  // An element of an array of numbers is read by other code than a column. Three readers have to agree on every
+  // value: the array's, the column's, and JS's own on the text that the server prints.
+  test.each(["float4", "float8", "int4"])(
+    "%s: an element of an array is the number that a column gives",
+    async type => {
+      await container.ready;
+      await using sql = connect();
+
+      let state = 0x2545f491;
+      const random = () => {
+        state ^= state << 13;
+        state ^= state >>> 17;
+        state ^= state << 5;
+        return state >>> 0;
+      };
+      const edges = {
+        int4: "2147483647 -2147483648 999999999 1000000000 -999999999 -1000000000",
+        // 15 digits are the most that the short way takes
+        float4:
+          "-0 NaN Infinity -Infinity 0.1 0.2 0.3 -0.5 1e-7 1e15 1e16 1e20 16777216 1e-45 3.4028235e38 " +
+          "999999999999999 9999999999999999 0.999999999999999 0.9999999999999999 123456789.012345 " +
+          "9007199254740993 0.000000000000001 0.0000000000000001",
+        get float8() {
+          return this.float4 + " 5e-324 1.7976931348623157e308";
+        },
+      }[type];
+      const values = ["0", "1", "-1", ...edges.split(" ")];
+      const bits = new DataView(new ArrayBuffer(8));
+      for (let i = 0; i < 2000; i++) {
+        bits.setUint32(0, random());
+        bits.setUint32(4, random());
+        const anyBits = i % 2 ? NaN : type === "float8" && i % 4 ? bits.getFloat64(0) : bits.getFloat32(0);
+        if (type === "int4") values.push(String((random() | 0) >> (random() % 32)));
+        else if (Number.isFinite(anyBits)) values.push(String(anyBits));
+        // up to nine digits, the point anywhere among them
+        else values.push(String(((random() % 10 ** (1 + (i % 9))) / 10 ** (random() % 10)) * (i % 3 ? 1 : -1)));
+      }
+      const list = "null," + values.map(value => `'${value}'`).join(",");
+
+      const elements = (await sql.unsafe(`select array[${list}]::${type}[] as v`))[0].v;
+      const rows = await sql.unsafe(
+        `select v, v::text as t from unnest(array[${list}]::${type}[]) with ordinality as u(v, i) order by i`,
+      );
+      expect(elements.length).toBeGreaterThan(2000);
+      expect(elements.map(show)).toEqual(rows.map(row => show(row.v)));
+      expect(elements.map(show)).toEqual(rows.map(row => show(row.t === null ? null : Number(row.t))));
+    },
+  );
+
+  // From then on every array of the realm has another storage. In a process of its own: there is no way back.
+  test("an array of numbers when Array.prototype has an indexed accessor", async () => {
+    await container.ready;
+    const script = `
+      Object.defineProperty(Array.prototype, "7", { get: () => "inherited" });
+      const sql = new Bun.SQL(process.env.POSTGRES_URL, { max: 1 });
+      const [{ a, b }] = await sql\`select '{1,2,3}'::int4[] as a, '{0.5,NULL}'::float8[] as b\`;
+      console.log(JSON.stringify([a, b, a[7]]));
+      await sql.close();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, POSTGRES_URL: `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: '[[1,2,3],[0.5,null],"inherited"]\n', stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
   test("a numeric with more than 32767 base-10000 digits", async () => {
     await container.ready;

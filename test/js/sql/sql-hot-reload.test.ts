@@ -220,20 +220,25 @@ for (const server of servers) {
       expect(await program.open()).toBe(2);
     });
 
-    test.each<[string, string]>([
-      ["database", `url: process.env.SQL_OTHER_URL`],
-      ["maxLifetime", `url, maxLifetime: 3600`],
-      ["password, now a function", `url, password: () => ""`],
-    ])("other settings (%s) close them", async (_, options) => {
+    // A pool that nobody asks for a connection during a whole load is one that the program did not keep.
+    test.each<[string, string, number]>([
+      ["database", `url: process.env.SQL_OTHER_URL`, 2],
+      ["maxLifetime", `url, maxLifetime: 3600`, 2],
+      // Never the same settings, so the load before has two of its own.
+      ["password, now a function", `url, password: () => ""`, 4],
+    ])("other settings (%s) close them at the load after", async (_, options, left) => {
       await using program = await start();
       const before = await program.load(sameSettings);
-      const after = await program.load(`
+      const changed = /* ts */ `
         const sql = new SQL({ ${options}, max: 2 });
         report({ ids: await sessions(sql), closed: globalThis.closed });
-      `);
-      expect(after).toEqual({ ids: [expect.any(Number), expect.any(Number)], closed: [server.closed, server.closed] });
+      `;
+      const after = await program.load(changed);
+      expect(after).toEqual({ ids: [expect.any(Number), expect.any(Number)], closed: [] });
       expect(after.ids.filter((id: number) => before.ids.includes(id))).toEqual([]);
-      expect(await program.settlesAt(2)).toBe(2);
+      expect(await program.open()).toBe(4);
+      expect((await program.load(changed)).closed).toEqual([server.closed, server.closed]);
+      expect(await program.settlesAt(left)).toBe(left);
     });
 
     test.each<[string, string]>([
@@ -242,16 +247,18 @@ for (const server of servers) {
     ])("%s is never the same settings", async (_, option) => {
       await using program = await start();
       const seen: number[] = [];
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         const report = await program.load(`
           const sql = new SQL(url, { max: 2, ${option} });
           report({ ids: await sessions(sql) });
         `);
         expect(report).toEqual({ ids: [expect.any(Number), expect.any(Number)] });
         seen.push(...report.ids);
-        expect(await program.settlesAt(2)).toBe(2);
+        // Those of this load and of the one before.
+        const open = i === 0 ? 2 : 4;
+        expect(await program.settlesAt(open)).toBe(open);
       }
-      expect(new Set(seen).size).toBe(6);
+      expect(new Set(seen).size).toBe(8);
     });
 
     /** Its transaction is open until `commit.resolve()`. `transaction` resolves with the session that committed. */
@@ -369,6 +376,23 @@ for (const server of servers) {
         expect(await program.load(body, imports)).toEqual(first);
       }
       expect(await program.open()).toBe(3);
+    });
+
+    test("a pool that the program keeps and uses is left alone when every load has a pool with other settings", async () => {
+      await using program = await start();
+      const body = /* ts */ `
+        globalThis.sql ??= new SQL(url, { max: 2, onclose });
+        const other = new SQL(url, { max: 1, password: () => "" });
+        await sessionId(other);
+        report({ ids: await sessions(sql), closed: globalThis.closed });
+      `;
+      const first = await program.load(body);
+      expect(first).toEqual({ ids: [expect.any(Number), expect.any(Number)], closed: [] });
+      for (let i = 0; i < 3; i++) {
+        expect(await program.load(body)).toEqual(first);
+      }
+      // Its two, and the other pool's of this load and of the one before.
+      expect(await program.settlesAt(4)).toBe(4);
     });
 
     test("a pool that the program keeps is left alone by one with the same settings that every load makes", async () => {

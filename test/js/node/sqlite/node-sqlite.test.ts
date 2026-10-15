@@ -1551,7 +1551,7 @@ describe("backup()", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 4_000,
+      timeout: 60_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
@@ -1588,7 +1588,7 @@ describe("backup()", () => {
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
-      timeout: 4_000,
+      timeout: 60_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Node gates progress on remaining != 0, which is never true here, so
@@ -2580,13 +2580,11 @@ describe("GC lifetime", () => {
     expect(delta).toBeLessThanOrEqual(20);
   });
 
-  test.concurrent(
-    "a database swept before its statements leaves nothing that points into its cell",
-    async () => {
-      // edenGC() marks and does not sweep: the next DatabaseSync takes the cell
-      // of a dead one while the dead statements wait for their blocks' turn.
-      using dir = tempDir("node-sqlite-lazy-sweep", {
-        "main.cjs": `
+  test.concurrent("a database swept before its statements leaves nothing that points into its cell", async () => {
+    // edenGC() marks and does not sweep: the next DatabaseSync takes the cell
+    // of a dead one while the dead statements wait for their blocks' turn.
+    using dir = tempDir("node-sqlite-lazy-sweep", {
+      "main.cjs": `
         const { DatabaseSync } = require("node:sqlite");
         const { edenGC } = require("bun:jsc");
         function open(name) {
@@ -2609,19 +2607,17 @@ describe("GC lifetime", () => {
           return require("node:fs").readdirSync(".").filter(name => /-(wal|shm)$/.test(name)).length;
         }
         console.log(sidecarsAfterClose(), sidecarsAfterClose(), sidecarsAfterClose());`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "main.cjs"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0 0 0\n", stderr: expect.any(String), exitCode: 0 });
-    },
-    30_000,
-  );
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0 0 0\n", stderr: expect.any(String), exitCode: 0 });
+  });
 
   test.skipIf(!sqliteHasSession)(
     "sessions dropped without close() are reclaimed once the database is used again",

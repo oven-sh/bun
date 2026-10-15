@@ -72,6 +72,54 @@ impl Drop for ArrayCells {
     }
 }
 
+/// Appends the digits at the start of `bytes` to `value`. Returns what follows them.
+fn digits<'a>(mut bytes: &'a [u8], value: &mut u64) -> &'a [u8] {
+    while let [digit @ b'0'..=b'9', rest @ ..] = bytes {
+        *value = value.wrapping_mul(10).wrapping_add(u64::from(digit - b'0'));
+        bytes = rest;
+    }
+    bytes
+}
+
+/// `-?digits`, for a float `-?digits(.digits)?`, at the start of `bytes`, and what follows it.
+/// Only up to 15 digits: a double holds those exactly, and the power of ten too, so the division
+/// rounds once and gives what `parse_f64` gives.
+fn plain_number(bytes: &[u8], is_float: bool) -> Option<(JSValue, &[u8])> {
+    const POWERS_OF_TEN: [f64; 16] = [
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+    ];
+    let (negative, unsigned) = match bytes {
+        [b'-', rest @ ..] => (true, rest),
+        _ => (false, bytes),
+    };
+    let mut value = 0;
+    let mut rest = digits(unsigned, &mut value);
+    let mut count = unsigned.len() - rest.len();
+    let mut fraction = 0;
+    if count == 0 {
+        return None;
+    }
+    if is_float && let [b'.', after @ ..] = rest {
+        rest = digits(after, &mut value);
+        fraction = after.len() - rest.len();
+        if fraction == 0 {
+            return None;
+        }
+        count += fraction;
+    }
+    if count > 15 {
+        return None;
+    }
+    let value = value as i64;
+    let number = if is_float {
+        let value = value as f64 / POWERS_OF_TEN[fraction];
+        JSValue::js_double_number(if negative { -value } else { value })
+    } else {
+        JSValue::js_number_from_int32(i32::try_from(if negative { -value } else { value }).ok()?)
+    };
+    Some((number, rest))
+}
+
 /// Parses what the server's `array_out` prints.
 struct ArrayParser<'a> {
     rest: &'a [u8],
@@ -83,28 +131,65 @@ struct ArrayParser<'a> {
 }
 
 impl<'a> ArrayParser<'a> {
-    fn level(&mut self, depth: usize) -> Result<ArrayCells> {
+    fn level(&mut self, depth: usize) -> Result<SQLDataCell> {
+        use types::Tag as T;
         if depth > MAX_ARRAY_DIMENSIONS || self.next_byte()? != b'{' {
             return Err(AnyPostgresError::UnsupportedArrayFormat);
         }
         let mut cells = ArrayCells(Vec::new());
-        if self.rest.first() == Some(&b'}') {
-            self.rest = &self.rest[1..];
-            return Ok(cells);
+        match (self.rest.first(), self.element) {
+            (Some(b'}'), _) => {
+                self.rest = &self.rest[1..];
+                return cells.into_cell();
+            }
+            (Some(b'{'), _) => {}
+            (_, T::int2 | T::int4) => return self.numbers(false),
+            (_, T::float4 | T::float8) => return self.numbers(true),
+            _ => {}
         }
         loop {
             let cell = match self.rest.first() {
-                Some(b'{') => self.level(depth + 1)?.into_cell()?,
+                Some(b'{') => self.level(depth + 1)?,
                 Some(b'"') => self.quoted()?,
                 _ => self.bare()?,
             };
             cells.0.push(cell);
             match self.next_byte()? {
-                b'}' => return Ok(cells),
+                b'}' => return cells.into_cell(),
                 byte if byte == self.delimiter => {}
                 _ => return Err(AnyPostgresError::UnsupportedArrayFormat),
             }
         }
+    }
+
+    /// The rest of a level of numbers and NULLs, which need no cell each.
+    fn numbers(&mut self, is_float: bool) -> Result<SQLDataCell> {
+        use bun_core::fmt::{parse_decimal, parse_f64};
+        let mut values: Vec<JSValue> = Vec::new();
+        loop {
+            values.push(match plain_number(self.rest, is_float) {
+                Some((number, rest @ [end, ..])) if *end == self.delimiter || *end == b'}' => {
+                    self.rest = rest;
+                    number
+                }
+                _ => match self.bare_text()? {
+                    b"NULL" => JSValue::NULL,
+                    text if is_float => JSValue::js_double_number(JSValue::purify_nan(
+                        parse_f64(text).ok_or(AnyPostgresError::InvalidCharacter)?,
+                    )),
+                    text => JSValue::js_number_from_int32(
+                        parse_decimal(text).ok_or(AnyPostgresError::InvalidCharacter)?,
+                    ),
+                },
+            });
+            if self.next_byte()? == b'}' {
+                break;
+            }
+        }
+        if values.capacity() > u32::MAX as usize {
+            return Err(AnyPostgresError::UnsupportedArrayFormat);
+        }
+        Ok(SQLDataCell::numbers(values))
     }
 
     fn next_byte(&mut self) -> Result<u8> {
@@ -144,15 +229,20 @@ impl<'a> ArrayParser<'a> {
     }
 
     fn bare(&mut self) -> Result<SQLDataCell> {
+        match self.bare_text()? {
+            b"NULL" => Ok(SQLDataCell::null()),
+            text => from_text(self.bigint, self.element, text, self.global_object),
+        }
+    }
+
+    /// Up to the delimiter or the brace that ends the element.
+    fn bare_text(&mut self) -> Result<&'a [u8]> {
         let end = strings::index_of_any(self.rest, &[self.delimiter, b'}'])
+            .filter(|&end| end > 0)
             .ok_or(AnyPostgresError::UnsupportedArrayFormat)?;
         let (text, rest) = self.rest.split_at(end);
         self.rest = rest;
-        match text {
-            b"" => Err(AnyPostgresError::UnsupportedArrayFormat),
-            b"NULL" => Ok(SQLDataCell::null()),
-            _ => from_text(self.bigint, self.element, text, self.global_object),
-        }
+        Ok(text)
     }
 }
 
@@ -179,11 +269,12 @@ fn parse_array(
         global_object,
         unescaped: Vec::new(),
     };
-    let cells = parser.level(1)?;
+    let mut cell = parser.level(1)?;
     if !parser.rest.is_empty() {
+        cell.deinit();
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
-    cells.into_cell()
+    Ok(cell)
 }
 
 /// `Tag::is_binary_format_supported`, plus the types whose binary form is their text.

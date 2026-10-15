@@ -112,7 +112,9 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
 /// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
 ///    keeps its window's end across structuredClone/postMessage
-const SERIALIZATION_VERSION: u8 = 4;
+/// 5: Added byte for `name_detached`, so a view of a File does not take its
+///    store's path as a name on the receiving side
+const SERIALIZATION_VERSION: u8 = 5;
 
 pub(crate) use bun_jsc::generated::JSBlob as js;
 
@@ -768,6 +770,8 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(0)?;
             }
         }
+
+        writer.write_int_le::<u8>(self.name_detached.get() as u8)?;
         Ok(())
     }
 
@@ -1920,7 +1924,7 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
-        if let Some(path) = self.store_path() {
+        if let Some(path) = self.store_name() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
         }
@@ -3099,6 +3103,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    name_detached: Cell::new(blob.name_detached.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -3923,6 +3928,12 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         if version == 3 {
             break 'versions;
         }
+
+        if version == 4 {
+            break 'versions;
+        }
+
+        blob.name_detached.set(reader.read_int_le::<u8>()? != 0);
     }
 
     debug_assert!(
@@ -4000,9 +4011,11 @@ pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) 
     }
 }
 
+/// The copy a FormData entry holds and the one `get()` returns: a `File`
+/// stays that `File`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
-    Blob::new(this.dupe_with_content_type(true))
+    Blob::new(this.dupe_with_identity())
 }
 
 #[unsafe(no_mangle)]

@@ -32,7 +32,9 @@
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
+#include "JSDOMExceptionHandling.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -194,18 +196,43 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
+// it to the Worker object. `thrown` is the JSC::Exception when the thrower still had it, whose stack
+// says where it was thrown, else the value. The overrides are what only the caller knows: the text
+// and the position of a module that did not load.
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, JSC::EncodedJSValue thrown, BunString messageOverride, BunString filenameOverride, uint32_t lineno, uint32_t colno)
 {
-    JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message.transferToWTFString();
+    String message = messageOverride.transferToWTFString();
+    String filename = filenameOverride.transferToWTFString();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Script only ever sees the value, never the JSC::Exception.
+    JSC::JSValue error = JSC::JSValue::decode(thrown);
+    auto* exception = dynamicDowncast<JSC::Exception>(error);
+    if (exception)
+        error = exception->value();
+
+    ExceptionDetails details = extractErrorInformation(*globalObject, error, exception, scope);
+    // Describing a value can run its toString(). A worker that stopped meanwhile reports nothing.
+    if (vm.hasPendingTerminationException())
+        return;
+
     ErrorEvent::Init init;
-    init.message = messageStr;
+    init.message = message.isEmpty() ? details.message : message;
+    if (lineno || !filename.isEmpty()) {
+        init.filename = errorEventFilename(filename);
+        init.lineno = lineno;
+        init.colno = colno;
+    } else {
+        init.filename = details.sourceURL;
+        init.lineno = details.lineNumber;
+        init.colno = details.columnNumber;
+    }
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+    proxy->postErrorToWorkerObject(*globalObject, init.message, init.filename, init.lineno, init.colno, error, message);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

@@ -81,6 +81,9 @@ void WebWorker__releaseParentPollRef(void*);
 void WebWorker__join(void*);
 // Drop one ref on the thread object; the last one frees it.
 void WebWorker__deref(void*);
+// The console's rendering of `value`: what node:worker_threads shows for an error it cannot clone.
+// Empty if rendering threw. Worker thread.
+BunString WebWorker__formatErrorForParentFallback(Zig::GlobalObject*, JSC::EncodedJSValue value);
 
 } // extern "C"
 
@@ -450,14 +453,17 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
+void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message, String&& filename, unsigned lineno, unsigned colno)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy(), filename = WTF::move(filename).isolatedCopy(), lineno, colno](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
         ErrorEvent::Init init;
         init.message = message;
+        init.filename = filename;
+        init.lineno = lineno;
+        init.colno = colno;
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
 }
@@ -503,16 +509,31 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     });
 }
 
-void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue error)
+void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, const String& filename, unsigned lineno, unsigned colno, JSC::JSValue error, const String& loadErrorMessage)
 {
     switch (m_options.kind) {
     case WorkerOptions::Kind::Web:
-        postMessageErrorToWorkerObject(String { message });
+        postMessageErrorToWorkerObject(String { message }, String { filename }, lineno, colno);
         return;
-    case WorkerOptions::Kind::Node:
-        if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
-            postMessageErrorToWorkerObject(String { message });
+    case WorkerOptions::Kind::Node: {
+        if (postSerializedErrorToWorkerObject(workerGlobalObject, error))
+            return;
+        // node:worker_threads wraps this text in an Error, and reads "(entry point)" out of it.
+        String text = loadErrorMessage;
+        if (text.isEmpty()) {
+            // Rendering runs script: an inspect hook, getters.
+            auto& vm = JSC::getVM(&workerGlobalObject);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            text = WebWorker__formatErrorForParentFallback(&workerGlobalObject, JSC::JSValue::encode(error)).transferToWTFString();
+            CLEAR_IF_EXCEPTION(scope);
+            if (vm.hasPendingTerminationException())
+                return;
+            if (text.isEmpty())
+                text = message;
+        }
+        postMessageErrorToWorkerObject(WTF::move(text), String { filename }, lineno, colno);
         return;
+    }
     }
 }
 

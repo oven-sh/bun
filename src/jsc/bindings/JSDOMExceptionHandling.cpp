@@ -24,15 +24,19 @@
 #include "ErrorCode.h"
 
 #include "DOMException.h"
+#include "FormatStackTraceForJS.h"
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMPromiseDeferred.h"
+#include "PathInlines.h"
 
 #include <JavaScriptCore/ErrorHandlingScope.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <JavaScriptCore/ScriptCallStackFactory.h>
+#include <JavaScriptCore/Symbol.h>
 #include "headers.h"
 
 #include "CachedScript.h"
@@ -99,7 +103,12 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = dynamicDowncast<ErrorInstance>(exception))
+    if (auto* domException = dynamicDowncast<JSDOMException>(exception)) {
+        auto& wrapped = domException->wrapped();
+        String name = wrapped.name();
+        String message = wrapped.message();
+        errorMessage = makeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
+    } else if (auto* error = dynamicDowncast<ErrorInstance>(exception))
         errorMessage = error->sanitizedToString(&lexicalGlobalObject);
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);
@@ -109,6 +118,57 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     (void)topExceptionScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
+}
+
+String errorEventFilename(const String& sourceURL)
+{
+    return isAbsolutePath(sourceURL) ? URL::fileURLWithFileSystemPath(sourceURL).string() : sourceURL;
+}
+
+ExceptionDetails extractErrorInformation(JSGlobalObject& lexicalGlobalObject, JSValue thrownValue, JSC::Exception* exception, TopExceptionScope& topExceptionScope)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    ExceptionDetails details;
+
+    details.message = retrieveErrorMessage(lexicalGlobalObject, vm, thrownValue, topExceptionScope);
+    if (details.message.isNull()) {
+        // ToString threw: a Symbol, an object with no prototype, a toString() that throws.
+        if (thrownValue.isSymbol())
+            details.message = asSymbol(thrownValue)->tryGetDescriptiveString().value_or(String());
+        else if (auto* object = thrownValue.getObject())
+            details.message = makeString("[object "_s, object->className(), ']');
+    }
+
+    // Where it was thrown, else where the Error was made. Reading an Error's frames runs no script;
+    // materializing its `stack` would call a user's Error.prepareStackTrace.
+    auto* globalObject = defaultGlobalObject(&lexicalGlobalObject);
+    String sourceURL;
+    LineColumn position;
+    bool found = exception && Bun::scriptPositionOfStackTrace(vm, globalObject, exception->stack(), sourceURL, position);
+    if (!found) {
+        if (auto* error = dynamicDowncast<ErrorInstance>(thrownValue)) {
+            if (auto* stackTrace = error->stackTrace())
+                found = Bun::scriptPositionOfStackTrace(vm, globalObject, *stackTrace, sourceURL, position);
+            else if (error->line()) {
+                // Its frames were formatted already, which moved the URL into the `sourceURL` property.
+                position = { error->line(), error->column() };
+                sourceURL = error->sourceURL();
+                if (sourceURL.isEmpty()) {
+                    JSValue property = error->getDirect(vm, vm.propertyNames->sourceURL);
+                    if (property && property.isString())
+                        sourceURL = asString(property)->tryGetValue();
+                }
+                found = true;
+            }
+        }
+    }
+    if (found) {
+        constexpr unsigned maxInt = std::numeric_limits<int>::max();
+        details.sourceURL = errorEventFilename(sourceURL);
+        details.lineNumber = position.line <= maxInt ? position.line : 0;
+        details.columnNumber = position.column <= maxInt ? position.column : 0;
+    }
+    return details;
 }
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)

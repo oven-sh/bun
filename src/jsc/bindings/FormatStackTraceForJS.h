@@ -70,6 +70,10 @@ WTF::String formatStackTrace(
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
 
+// The source-mapped position of the first frame in a script: the one formatStackTrace() stamps as an
+// Error's line / column / sourceURL. False when no frame is in a script.
+bool scriptPositionOfStackTrace(JSC::VM&, Zig::GlobalObject*, const WTF::Vector<JSC::StackFrame>&, WTF::String& sourceURL, JSC::LineColumn&);
+
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);

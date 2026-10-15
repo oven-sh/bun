@@ -103,7 +103,10 @@ public:
     // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
-    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // What the worker's own 'error' event said. A Web Worker object's event says the same;
+    // node:worker_threads gets a clone of `error`, or text if it cannot be cloned: `loadErrorMessage`
+    // for a module that did not load, else the console's rendering of `error`.
+    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, const String& filename, unsigned lineno, unsigned colno, JSC::JSValue error, const String& loadErrorMessage);
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -126,7 +129,7 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message);
+    void postMessageErrorToWorkerObject(String&& message, String&& filename, unsigned lineno, unsigned colno);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
     // Parent thread only.

@@ -58,6 +58,12 @@ WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromis
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 
 String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
+// What an ErrorEvent says about an uncaught `thrownValue`: its message and the script position it
+// came from (https://html.spec.whatwg.org/multipage/webappapis.html#extract-error). `exception` is the
+// JSC::Exception that carried it, or null when only the value is left.
+ExceptionDetails extractErrorInformation(JSC::JSGlobalObject&, JSC::JSValue thrownValue, JSC::Exception*, JSC::TopExceptionScope&);
+// ErrorEvent.filename is a URL. A module loaded from disk has its path as its source URL.
+String errorEventFilename(const String& sourceURL);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::JSValue exception, CachedScript* = nullptr, bool = false);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*, CachedScript* = nullptr, bool = false, ExceptionDetails* = nullptr);
 

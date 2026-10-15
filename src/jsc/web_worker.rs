@@ -166,11 +166,16 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
+    /// `thrown` may be the `JSC::Exception` cell. The overrides are empty / 0 for a value
+    /// that describes itself.
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
-        message: BunString,
-        err: JSValue,
+        thrown: JSValue,
+        message_override: BunString,
+        filename_override: BunString,
+        lineno: u32,
+        colno: u32,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
@@ -1126,13 +1131,128 @@ impl WebWorker {
                 return;
             }
         };
+        let (filename, lineno, colno) = diagnostic_position(
+            vm_log
+                .msgs
+                .first()
+                .and_then(|msg| msg.data.location.as_ref()),
+        );
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
+            WebWorker__dispatchError(
+                global,
+                self.messaging_proxy,
+                err,
+                str,
+                filename,
+                lineno,
+                colno,
+            )
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
         }
     }
+}
+
+/// Where a parse or resolve diagnostic points: an 'error' event's filename / lineno / colno.
+fn diagnostic_position(location: Option<&bun_ast::Location>) -> (BunString, u32, u32) {
+    match location {
+        Some(location) if location.line > 0 => (
+            BunString::clone_utf8(&location.file),
+            location.line as u32,
+            location.column.max(0) as u32,
+        ),
+        _ => (BunString::EMPTY, 0, 0),
+    }
+}
+
+/// Runs `f` on the parse or resolve diagnostic that `value` wraps, if it wraps one.
+fn with_diagnostic<R>(value: JSValue, f: impl FnOnce(&bun_ast::Msg) -> R) -> Option<R> {
+    // SAFETY: `as_` returned a live cell of that class, read here on the worker (JS) thread
+    // that owns it, and `value` keeps it alive while `f` runs.
+    let msg: &bun_ast::Msg = if let Some(build) = value.as_::<crate::BuildMessage>() {
+        unsafe { &(*build).msg }
+    } else if let Some(resolve) = value.as_::<crate::ResolveMessage>() {
+        unsafe { &(*resolve).msg }
+    } else {
+        return None;
+    };
+    Some(f(msg))
+}
+
+/// What only its diagnostics say about a module that did not load: where and, when there are
+/// several, what. The `AggregateError` thrown for several only counts them. Returns the message
+/// and the position to report instead of what the value gives; empty for any other value.
+fn load_error_overrides(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> (BunString, (BunString, u32, u32)) {
+    let none = || (BunString::EMPTY, (BunString::EMPTY, 0, 0));
+
+    let position_of = |msg: &bun_ast::Msg| diagnostic_position(msg.data.location.as_ref());
+    if let Some(position) = with_diagnostic(value, position_of) {
+        return (BunString::EMPTY, position);
+    }
+    if !value.is_aggregate_error(global) {
+        return none();
+    }
+    let described = (|| -> jsc::JsResult<Option<(Vec<u8>, (BunString, u32, u32))>> {
+        let Some(errors) = value.fast_get(global, jsc::BuiltinName::errors)? else {
+            return Ok(None);
+        };
+        if !errors.is_array() {
+            return Ok(None);
+        }
+        let mut text: Vec<u8> = Vec::new();
+        let mut first_position = None;
+        let mut iter = errors.array_iterator(global)?;
+        while let Some(member) = iter.next()? {
+            let position = with_diagnostic(member, |msg| {
+                if first_position.is_some() {
+                    text.push(b'\n');
+                }
+                text.extend_from_slice(&msg.data.text);
+                position_of(msg)
+            });
+            let Some(position) = position else {
+                return Ok(None);
+            };
+            first_position.get_or_insert(position);
+        }
+        Ok(first_position.map(|position| (text, position)))
+    })();
+    match described {
+        Ok(Some((text, position))) => (BunString::clone_utf8(&text), position),
+        Ok(None) => none(),
+        Err(_) => {
+            let _ = global.clear_exception_except_termination();
+            none()
+        }
+    }
+}
+
+/// The console's rendering of `value`: what `node:worker_threads` shows for an error it
+/// cannot clone. Empty if rendering threw, with the exception left pending for the caller.
+// HOST_EXPORT(WebWorker__formatErrorForParentFallback, c)
+pub fn format_error_for_parent_fallback(global: &JSGlobalObject, value: JSValue) -> BunString {
+    let mut array: Vec<u8> = Vec::new();
+    let formatted = jsc::console_object::format2(
+        jsc::console_object::MessageLevel::Debug,
+        global,
+        &[value],
+        &mut array,
+        jsc::console_object::FormatOptions {
+            enable_colors: false,
+            add_newline: false,
+            flush: false,
+            max_depth: 32,
+            ..Default::default()
+        },
+    );
+    if formatted.is_err() || global.has_exception() {
+        return BunString::EMPTY;
+    }
+    BunString::clone_utf8(&array)
 }
 
 fn on_unhandled_rejection(
@@ -1154,6 +1274,13 @@ fn on_unhandled_rejection(
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);
+    // The worker being stopped is not an error of its own to dispatch.
+    if error_instance.is_termination_exception() {
+        return;
+    }
+    let thrown_value = error_instance;
+    let (message_override, (filename_override, lineno, colno)) =
+        load_error_overrides(global_object, thrown_value);
 
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
@@ -1164,34 +1291,18 @@ fn on_unhandled_rejection(
         let text: &[u8] = unsafe { &(*bm).msg.data.text };
         error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
     }
-
-    let mut array: Vec<u8> = Vec::new();
+    // The JSC::Exception, when that is what arrived, says where its value was thrown.
+    let thrown = if error_instance == thrown_value {
+        error_instance_or_exception
+    } else {
+        error_instance
+    };
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
     // heap `WebWorker` owned by C++ that outlives `vm`. `&WebWorker` (not
     // `&mut`) — see worker-thread `&self` note.
     let worker = vm.worker_ref().expect("Assertion failure: no worker");
 
-    let format_result = jsc::console_object::format2(
-        jsc::console_object::MessageLevel::Debug,
-        global_object,
-        &[error_instance],
-        &mut array,
-        jsc::console_object::FormatOptions {
-            enable_colors: false,
-            add_newline: false,
-            flush: false,
-            max_depth: 32,
-            ..Default::default()
-        },
-    );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
-    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() {
-        return;
-    }
     jsc::mark_binding();
     // We RETURN through
     // the live C++ frames after dispatching (see the note below), so the
@@ -1203,13 +1314,15 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
-    let error_message = BunString::clone_utf8(&array);
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,
             worker.messaging_proxy,
-            error_message,
-            error_instance,
+            thrown,
+            message_override,
+            filename_override,
+            lineno,
+            colno,
         );
     })
     .is_err()

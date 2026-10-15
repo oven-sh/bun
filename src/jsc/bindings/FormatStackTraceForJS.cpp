@@ -210,6 +210,56 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
     return formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, prepareStackTrace);
 }
 
+// An error's position is its first frame in a script. A frame of JavaScriptCore's own JS (no URL) or
+// of one of Bun's modules says nothing about the program: `[].reduce(cb)` on an empty array throws
+// inside `reduce`.
+static bool isScriptSourceURL(const WTF::String& sourceURL)
+{
+    return !sourceURL.isEmpty() && !sourceURL.startsWith("node:"_s) && !sourceURL.startsWith("bun:"_s) && !sourceURL.startsWith("internal:"_s);
+}
+
+static void remapLineColumn(JSC::VM& vm, const WTF::String& sourceURL, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
+{
+    OwnedZigStackFrames frames(1);
+    ZigStackFrame& frame = frames[0];
+    frame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+    frame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+    frame.source_url = Bun::toStringRef(sourceURL);
+
+    frames.remap(Bun::vm(vm));
+
+    if (frame.remapped) {
+        lineColumn.line = frame.position.line().oneBasedInt();
+        lineColumn.column = frame.position.column().oneBasedInt();
+        remappedSourceURL = frame.source_url.toWTFString();
+    }
+}
+
+bool scriptPositionOfStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, const Vector<JSC::StackFrame>& stackTrace, WTF::String& sourceURL, JSC::LineColumn& lineColumn)
+{
+    for (const StackFrame& frame : stackTrace) {
+        if (!frame.hasLineAndColumnInfo())
+            continue;
+        WTF::String frameURL = Zig::sourceURL(vm, frame);
+        if (!isScriptSourceURL(frameURL))
+            continue;
+
+        lineColumn = frame.computeLineAndColumn();
+        sourceURL = WTF::move(frameURL);
+
+        // A frame of a node:vm context keeps its own positions, as in formatStackTrace().
+        JSC::JSGlobalObject* globalObjectForFrame = globalObject;
+        if (auto* callee = frame.callee()) {
+            if (auto* object = callee->getObject())
+                globalObjectForFrame = object->globalObject();
+        }
+        if (globalObjectForFrame == globalObject)
+            remapLineColumn(vm, String { sourceURL }, lineColumn, sourceURL);
+        return true;
+    }
+    return false;
+}
+
 WTF::String formatStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
@@ -391,7 +441,7 @@ WTF::String formatStackTrace(
                 sourceURLForFrame = remappedFrame.source_url.toWTFString();
             }
 
-            if (!hasSet) {
+            if (!hasSet && isScriptSourceURL(sourceURLs[i])) {
                 hasSet = true;
                 line = displayLine;
                 column = displayColumn;
@@ -671,22 +721,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
         return;
     }
 
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
-
-    OwnedZigStackFrames frames(1);
-    ZigStackFrame& frame = frames[0];
-    frame.position.line_zero_based = line.zeroBasedInt();
-    frame.position.column_zero_based = column.zeroBasedInt();
-    frame.source_url = Bun::toStringRef(sourceURL);
-
-    frames.remap(Bun::vm(vm));
-
-    if (frame.remapped) {
-        lineColumn.line = frame.position.line().oneBasedInt();
-        lineColumn.column = frame.position.column().oneBasedInt();
-        remappedSourceURL = frame.source_url.toWTFString();
-    }
+    remapLineColumn(vm, sourceURL, lineColumn, remappedSourceURL);
 }
 
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.

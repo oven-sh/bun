@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 // JS/TS/TOML parse diagnostics must count columns in UTF-16 code units, the
@@ -185,3 +185,159 @@ test.concurrent("CLI caret counts a tab the same with and without non-ASCII text
   // "1 | " is 4 columns. Each of the two wide characters takes 2.
   expect({ ascii, accent, wide }).toEqual({ ascii: 4 + 18, accent: 4 + 18, wide: 4 + 20 });
 });
+
+// A diagnostic that the logger locates from a byte offset has the same line,
+// column and line text for every way to end a line. Each source is written from
+// explicit bytes: a fixture file would get LF.
+const lineBreaks = { LF: "\n", CRLF: "\r\n", CR: "\r" };
+
+async function diagnostics(file: string, source: string) {
+  await Bun.write(file, source);
+  const { logs } = await Bun.build({ entrypoints: [file], throw: false });
+  return logs.map(({ message, position }) => ({
+    message,
+    line: position?.line,
+    column: position?.column,
+    lineText: position?.lineText,
+  }));
+}
+
+async function diagnosticsPerLineBreak(ext: string, lines: string[], names = Object.keys(lineBreaks)) {
+  using dir = tempDir("parse-col-line-breaks", {});
+  const found: Record<string, unknown> = {};
+  for (const name of names) {
+    const lineBreak = lineBreaks[name as keyof typeof lineBreaks];
+    found[name] = await diagnostics(join(String(dir), `${name}.${ext}`), lines.join(lineBreak) + lineBreak);
+  }
+  return found;
+}
+
+test.concurrent.each([
+  { ext: "js", lines: ["const port = 3000;", "function start() {"], message: "Unexpected end of file", column: 19 },
+  { ext: "jsx", lines: ["const port = 3000;", "function start() {"], message: "Unexpected end of file", column: 19 },
+  { ext: "ts", lines: ["const port = 3000;", "listen(port,"], message: "Unexpected end of file", column: 13 },
+  {
+    ext: "tsx",
+    lines: ["const port = 3000;", "class Server {"],
+    message: 'Expected "}" but found end of file',
+    column: 15,
+  },
+  { ext: "json", lines: ["{", '  "port": 3000,'], message: "Expected string but found end of file", column: 16 },
+  {
+    ext: "jsonc",
+    lines: ["{ // the port", '  "port": 3000,'],
+    message: "Expected string but found end of file",
+    column: 16,
+  },
+  { ext: "json5", lines: ["{", "  port: 3000,"], message: "Unexpected end of input", column: 14 },
+  // TOML has no lone CR line break. CSS is not here: its tokenizer locates its own errors (test/js/bun/css/).
+  {
+    ext: "toml",
+    lines: ["port = 3000", "hosts = [1,"],
+    message: "Unterminated array; expected ']'",
+    column: 12,
+    names: ["LF", "CRLF"],
+  },
+  { ext: "yaml", lines: ["port: 3000", "hosts: [1,"], message: "Unexpected token", column: 11 },
+  { ext: "xml", lines: ["<config>", "<port>3000"], message: "Missing closing tag for element 'port'", column: 11 },
+])(
+  "$ext: an error at the end of the file is on the last line for every line break",
+  async ({ ext, lines, message, column, names = Object.keys(lineBreaks) }) => {
+    const onLastLine = [{ message, line: 2, column, lineText: lines[1] }];
+    expect(await diagnosticsPerLineBreak(ext, lines, names)).toEqual(
+      Object.fromEntries(names.map(name => [name, onLastLine])),
+    );
+  },
+);
+
+test.concurrent.each([
+  ["];", 1],
+  ["const host = ];", 14],
+])("the column of the error in %j on line 2 counts from 1 for every line break", async (secondLine, column) => {
+  const found = [{ message: "Unexpected ]", line: 2, column, lineText: secondLine }];
+  expect(await diagnosticsPerLineBreak("js", ["const port = 3000;", secondLine])).toEqual({
+    LF: found,
+    CRLF: found,
+    CR: found,
+  });
+});
+
+test.concurrent("both errors for an unclosed ${ are on the last line for every line break", async () => {
+  // The lexer reports the second one at the last byte of the file, not at its end.
+  const lines = ["const port = 3000;", "const url = `http://localhost:${port"];
+  const found = ['Expected "}" but found end of file', "Unterminated string literal"].map(message => ({
+    message,
+    line: 2,
+    column: 37,
+    lineText: lines[1],
+  }));
+  expect(await diagnosticsPerLineBreak("js", lines)).toEqual({ LF: found, CRLF: found, CR: found });
+});
+
+test.concurrent("an error at the end of the file is not located inside a multi-byte sequence", async () => {
+  using dir = tempDir("parse-col-sequence", {});
+  const at = (name: string, source: string) => diagnostics(join(String(dir), name), source);
+  expect({
+    lineSeparator: await at("ls.js", "const port = 3000;\nfunction start() {\u2028"),
+    paragraphSeparator: await at("ps.js", "const port = 3000;\nfunction start() {\u2029"),
+    lastCharacter: await at("cjk.js", "foo(\u4E2D"),
+    lastCharacterTwice: await at("template.js", "const s = `${a\u4E2D"),
+  }).toEqual({
+    lineSeparator: [{ message: "Unexpected end of file", line: 2, column: 19, lineText: "function start() {" }],
+    paragraphSeparator: [{ message: "Unexpected end of file", line: 2, column: 19, lineText: "function start() {" }],
+    // With no final line break the error is at the last character, as it is for ASCII.
+    lastCharacter: [{ message: 'Expected ")" but found end of file', line: 1, column: 5, lineText: "foo(\u4E2D" }],
+    lastCharacterTwice: [
+      { message: 'Expected "}" but found end of file', line: 1, column: 15, lineText: "const s = `${a\u4E2D" },
+      { message: "Unterminated string literal", line: 1, column: 15, lineText: "const s = `${a\u4E2D" },
+    ],
+  });
+});
+
+const braceLeftOpenCRLF = "const port = 3000;\r\nfunction start() {\r\n";
+
+test.concurrent("Bun.Transpiler and import() locate the end of a CR LF source on its last line", async () => {
+  using dir = tempDir("parse-col-crlf-import", { "crlf.js": braceLeftOpenCRLF });
+  const position = (thrown: any) => {
+    const { line, column, lineText } = (thrown.errors?.[0] ?? thrown).position;
+    return { line, column, lineText };
+  };
+  let transformed, imported;
+  try {
+    new Bun.Transpiler({ loader: "js" }).transformSync(braceLeftOpenCRLF);
+  } catch (thrown) {
+    transformed = position(thrown);
+  }
+  try {
+    await import(join(String(dir), "crlf.js"));
+  } catch (thrown) {
+    imported = position(thrown);
+  }
+  const onLastLine = { line: 2, column: 19, lineText: "function start() {" };
+  expect({ transformed, imported }).toEqual({ transformed: onLastLine, imported: onLastLine });
+});
+
+test.concurrent.each(["build", "run"])(
+  "bun %s prints the last line of a CR LF file for a brace left open",
+  async command => {
+    using dir = tempDir("parse-col-crlf-cli", { "crlf.js": braceLeftOpenCRLF });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), command, "crlf.js"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, frame: normalizeBunSnapshot(stderr, String(dir)).split("\n").slice(0, 4), exitCode }).toEqual({
+      stdout: "",
+      frame: [
+        "2 | function start() {",
+        "                      ^",
+        "error: Unexpected end of file",
+        "    at <dir>/crlf.js:2:19",
+      ],
+      exitCode: 1,
+    });
+  },
+);

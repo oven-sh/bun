@@ -1,6 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import { writeFile } from "fs/promises";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { join } from "node:path";
 test("fs.promises.writeFile async iterator", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
     "file1.txt": "0 Hello, world!",
@@ -50,4 +51,32 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   };
   expect(() => writeFile(String(dir), fn as any)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
+});
+
+// The writer buffers a small chunk and reports it as written. With a file size limit of 0
+// the write at the end of the tick fails, and the failure has to reach the promise.
+test.skipIf(!isLinux)("fs.promises.writeFile async iterator rejects when a chunk cannot be written", async () => {
+  using dir = tempDir("fs-promises-writeFile-efbig", {});
+  const script = `
+    const { writeFile } = require("node:fs/promises");
+    async function* chunks() {
+      yield "first\\n";
+      await new Promise(resolve => setImmediate(resolve));
+      yield "second\\n";
+    }
+    try {
+      await writeFile(${JSON.stringify(join(String(dir), "out.txt"))}, chunks());
+      console.log("resolved");
+    } catch (e) {
+      console.log(e.code);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", 'ulimit -f 0 && exec "$@"', "sh", bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "EFBIG\n", stderr: "", exitCode: 0 });
 });

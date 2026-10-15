@@ -168,6 +168,78 @@ describe("child.stdin", () => {
   });
 });
 
+// child.stdin is a Writable over a FileSink. A write under the sink's buffer size is
+// reported as written and goes out later, so its failure has no write() to fail. It has to
+// reach the next end(). destroy() and the child's exit are teardowns, not callers: Node
+// emits nothing there either.
+describe.skipIf(!isPosix)("child.stdin after a buffered write", () => {
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+
+  function errorsOf(child) {
+    const errors = [];
+    child.stdin.on("error", err => errors.push("error " + err.code));
+    return errors;
+  }
+
+  // The child closes its stdin, says so, and stays alive.
+  async function spawnChildThatClosedStdin() {
+    const child = spawn(
+      bunExe(),
+      ["-e", `require("node:fs").closeSync(0); console.log("closed"); setInterval(() => {}, 1 << 30);`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "inherit"] },
+    );
+    await once(child.stdout, "data");
+    return child;
+  }
+
+  it("end() reports a write the child could not take", async () => {
+    const child = await spawnChildThatClosedStdin();
+    try {
+      const events = errorsOf(child);
+      child.stdin.on("finish", () => events.push("finish"));
+      // Not events.once(): it rejects on 'error'.
+      const closed = new Promise(resolve => child.stdin.on("close", resolve));
+      child.stdin.write("one line\n");
+      await turn();
+      child.stdin.end(err => events.push("end callback " + err?.code));
+      await closed;
+      expect(events.sort()).toEqual(["end callback EPIPE", "error EPIPE"]);
+    } finally {
+      child.kill();
+      await once(child, "close");
+    }
+  });
+
+  it("destroy() does not report it", async () => {
+    const child = await spawnChildThatClosedStdin();
+    try {
+      const errors = errorsOf(child);
+      const closed = new Promise(resolve => child.stdin.on("close", resolve));
+      child.stdin.write("one line\n");
+      child.stdin.destroy();
+      await closed;
+      await turn();
+      expect(errors).toEqual([]);
+    } finally {
+      child.kill();
+      await once(child, "close");
+    }
+  });
+
+  it("the exit of a child that never read it reports nothing", async () => {
+    const child = spawn(bunExe(), ["-e", "setInterval(() => {}, 1 << 30)"], {
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "inherit"],
+    });
+    const errors = errorsOf(child);
+    child.stdin.write("one line\n");
+    child.kill();
+    await once(child, "close");
+    await turn();
+    expect(errors).toEqual([]);
+  });
+});
+
 describe.skipIf(!isPosix)("stdio handed to the child", () => {
   // Prints whether O_NONBLOCK is set on each fd number given in argv.
   const probe = join(import.meta.dir, "..", "..", "bun", "spawn", "fixtures", "fd-nonblock-probe.js");

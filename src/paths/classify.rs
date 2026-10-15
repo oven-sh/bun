@@ -66,10 +66,15 @@ mod tests {
     use super::*;
 
     #[track_caller]
-    fn check(rel: &str, fmt: PathFormat, want: (bool, bool, bool)) {
+    fn check(rel: &str, fmt: PathFormat, want: (bool, bool, bool, bool)) {
         let f = classify_rel_t(rel.as_bytes(), fmt);
         assert_eq!(
-            (f.has_sep, f.has_dot, f.climbs_above_start),
+            (
+                f.has_sep,
+                f.has_dot,
+                f.has_dots_only_component,
+                f.climbs_above_start,
+            ),
             want,
             "{rel:?} {fmt:?}"
         );
@@ -77,7 +82,12 @@ mod tests {
         let wide: Vec<u16> = rel.encode_utf16().collect();
         let f = classify_rel_t(&wide, fmt);
         assert_eq!(
-            (f.has_sep, f.has_dot, f.climbs_above_start),
+            (
+                f.has_sep,
+                f.has_dot,
+                f.has_dots_only_component,
+                f.climbs_above_start,
+            ),
             want,
             "{rel:?} {fmt:?} (u16)"
         );
@@ -86,46 +96,46 @@ mod tests {
     #[test]
     fn windows_cases() {
         use PathFormat::Windows as W;
-        check("", W, (false, false, false));
-        check("a", W, (false, false, false));
-        check("a.b", W, (false, true, false));
-        check("a\\b", W, (true, false, false));
-        check("a/b", W, (true, false, false));
+        check("", W, (false, false, false, false));
+        check("a", W, (false, false, false, false));
+        check("a.b", W, (false, true, false, false));
+        check("a\\b", W, (true, false, false, false));
+        check("a/b", W, (true, false, false, false));
         // Bare `..`: no separator, but it climbs.
-        check("..", W, (false, true, true));
-        check("..\\x", W, (true, true, true));
-        check("a/../b", W, (true, true, false));
-        check("a\\..", W, (true, true, false));
-        check("..a", W, (false, true, false));
-        check("a..", W, (false, true, false));
-        check("...", W, (false, true, false));
-        check("a\\...\\b", W, (true, true, false));
+        check("..", W, (false, true, true, true));
+        check("..\\x", W, (true, true, true, true));
+        check("a/../b", W, (true, true, true, false));
+        check("a\\..", W, (true, true, true, false));
+        check("..a", W, (false, true, false, false));
+        check("a..", W, (false, true, false, false));
+        check("...", W, (false, true, true, false));
+        check("a\\...\\b", W, (true, true, true, false));
         // Doubled separator: the empty component costs no depth.
-        check("a\\\\..", W, (true, true, false));
-        check("a\\", W, (true, false, false));
+        check("a\\\\..", W, (true, true, true, false));
+        check("a\\", W, (true, false, false, false));
         // The `!other` guard: dots mixed with other chars never form `..`.
-        check("..a\\x", W, (true, true, false));
-        check("a..\\x", W, (true, true, false));
-        check(".a.\\x", W, (true, true, false));
+        check("..a\\x", W, (true, true, false, false));
+        check("a..\\x", W, (true, true, false, false));
+        check(".a.\\x", W, (true, true, false, false));
         // Field-exactness: the closing separator flips has_sep, nothing else.
-        check("..\\", W, (true, true, true));
+        check("..\\", W, (true, true, true, true));
         // Within-tree `..` never climbs; net-negative walks do.
-        check("a\\..\\b", W, (true, true, false));
-        check("a\\..\\..", W, (true, true, true));
-        check("..a\\..", W, (true, true, false));
-        check(".\\..", W, (true, true, true));
-        check("a\\..\\b\\..\\..", W, (true, true, true));
+        check("a\\..\\b", W, (true, true, true, false));
+        check("a\\..\\..", W, (true, true, true, true));
+        check("..a\\..", W, (true, true, true, false));
+        check(".\\..", W, (true, true, true, true));
+        check("a\\..\\b\\..\\..", W, (true, true, true, true));
     }
 
     #[test]
     fn posix_cases() {
         use PathFormat::Posix as P;
         // Backslash is not a separator: one component `a\b`.
-        check("a\\b", P, (false, false, false));
+        check("a\\b", P, (false, false, false, false));
         // Component is `a\..`, not `..`.
-        check("a\\..", P, (false, true, false));
-        check("..", P, (false, true, true));
-        check("a/../b", P, (true, true, false));
-        check("a/..", P, (true, true, false));
+        check("a\\..", P, (false, true, false, false));
+        check("..", P, (false, true, true, true));
+        check("a/../b", P, (true, true, true, false));
+        check("a/..", P, (true, true, true, false));
     }
 }

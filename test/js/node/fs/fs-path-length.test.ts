@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -97,9 +98,9 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
     expect(() => fs.writeFileSync(longRelative, "")).toThrow("ENAMETOOLONG");
   });
 
-  // A relative path containing no '\\', '/', or '.' takes the early-return
-  // branch that copies the path directly into `buf` and appends a NUL. When
-  // path.len == buf.len the NUL write would land one past the end.
+  // A single name takes the early-return branch that copies the path
+  // directly into `buf` and appends a NUL. When path.len == buf.len the NUL
+  // write would land one past the end.
   it("rejects a PATH_MAX_WIDE-length separator-free relative path", () => {
     const noSep = Buffer.alloc(32767, "a").toString();
     expect(() => fs.readdirSync(noSep)).toThrow("ENAMETOOLONG");
@@ -129,6 +130,27 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   it("rejects overly long device paths", () => {
     const devLong = "\\\\.\\" + Buffer.alloc(32763, "a").toString();
     expect(() => fs.readdirSync(devLong)).toThrow("ENAMETOOLONG");
+  });
+
+  // rmSync opens each entry by its name, relative to the handle of its
+  // directory. A name with a dot used to be joined to the `\Device\…` name of
+  // that handle first, which is some 20 units longer than the `C:\…` path, so
+  // it did not fit where the path itself still does.
+  it("removes a directory with a dot in its name whose path almost fills the buffer", () => {
+    using dir = tempDir("fs-path-length", {});
+    const length = 32741;
+    const dotted = "d.d";
+    let deep = String(dir);
+    const left = () => length - dotted.length - 1 - deep.length - 1;
+    const down = (name: string) => fs.mkdirSync((deep = path.join(deep, name)));
+    while (left() > 250) down(Buffer.alloc(200, "a").toString());
+    down(Buffer.alloc(left(), "b").toString());
+    down(dotted);
+    expect(deep.length).toBe(length);
+
+    const top = path.join(String(dir), fs.readdirSync(String(dir))[0]);
+    fs.rmSync(top, { recursive: true });
+    expect(fs.existsSync(top)).toBe(false);
   });
 });
 

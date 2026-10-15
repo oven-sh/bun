@@ -1209,11 +1209,11 @@ extern "C"
   }
 
   /* uws_res_end_without_body(res, true) minus its writes, for a response
-   * node:http destroyed (res.destroy() / req.destroy() close the socket right
-   * after this; with the header section still open, the writes would have
-   * been a complete empty 200 response). HTTP_END_CALLED is what
-   * JSNodeHTTPServerSocket::close() reads to discard, rather than flush, any
-   * still-corked write() bytes of the destroyed response. */
+   * that node:http destroyed (res.destroy() / req.destroy() close the socket
+   * right after this). With the header section still open those writes finish
+   * the head, and the client gets a whole response that the handler never
+   * finished. HTTP_END_CALLED is what JSNodeHTTPServerSocket::close() reads to
+   * discard, rather than flush, a write() that is still corked. */
   void uws_res_abandon(int ssl, uws_res_r res)
   {
     if (ssl)

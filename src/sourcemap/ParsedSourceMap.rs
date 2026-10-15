@@ -14,7 +14,7 @@ use crate::{
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
     pub mappings: mapping::List,
-    /// Bytes in the longest `sourcesContent` entry, for a map from JSON in which every source has one.
+    /// Bytes in the longest `sourcesContent` entry, if the map is JSON and every source has one.
     pub(crate) longest_source_text: Option<u32>,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
@@ -255,7 +255,7 @@ impl ParsedSourceMap {
     /// How many lines to make room for when indexing by the original line of a mapping.
     pub fn original_line_bound(&self) -> u32 {
         if let Some(internal) = &self.internal {
-            return (internal.input_line_count() as u32).saturating_add(1);
+            return (internal.input_line_count() as u32).wrapping_add(1);
         }
         let named = self
             .mappings

@@ -813,7 +813,8 @@ console.log(JSON.stringify({ withTheMap, withoutTheMap }));
     const { withTheMap, withoutTheMap } = JSON.parse(stdout);
     // Each run reports that `second` was never called, which is below the threshold.
     expect([withTheMap.exitCode, withoutTheMap.exitCode]).toEqual([1, 1]);
-    // The run with the map took 768 MiB more. While it does, the runs of the next hook need
+    // The run with the map took 768 MiB more. Both runs are the same build, so the difference
+    // needs no other bound for ASAN. While it is that large, the runs of the next hook need
     // gigabytes, and they do not start after a hook that failed.
     expect(withTheMap.maxRSS - withoutTheMap.maxRSS).toBeLessThan(256 * 1024 * 1024);
   });
@@ -827,14 +828,16 @@ console.log(JSON.stringify({ withTheMap, withoutTheMap }));
 
   afterAll(() => dir?.[Symbol.dispose]());
 
-  test.each(["linked", "inline", "external"])("bun build --sourcemap=%s reports the lines of the source", kind => {
-    // `second` is never called. It starts on line 4, and `return 2;` is line 5.
-    expect(serial.rows[`dist/${kind}/lib.js`]).toEqual({
-      functions: "50.00",
-      lines: expect.any(String),
-      uncovered: expect.stringMatching(/^4(-5)?$/),
+  describe.each(["linked", "inline", "external"])("bun build --sourcemap=%s", kind => {
+    test("reports the lines of the source", () => {
+      // `second` is never called. It starts on line 4, and `return 2;` is line 5.
+      expect(serial.rows[`dist/${kind}/lib.js`]).toEqual({
+        functions: "50.00",
+        lines: expect.any(String),
+        uncovered: expect.stringMatching(/^4(-5)?$/),
+      });
+      expect(serial.lines[`dist/${kind}/lib.js`]).toEqual([1, 2, 4, 5]);
     });
-    expect(serial.lines[`dist/${kind}/lib.js`]).toEqual([1, 2, 4, 5]);
   });
 
   test("a bundle of two sources has room for the lines of the longer one", () => {
@@ -866,9 +869,11 @@ console.log(JSON.stringify({ withTheMap, withoutTheMap }));
     expect(serial.lines["dist/text-of-4-bytes.js"]).toEqual(serial.lines["dist/plain.js"].filter(line => line < 6));
   });
 
-  test.each(["null-text", "empty-text", "no-sources"])("%s: the report has the lines that the mappings name", name => {
-    expect(serial.rows[`dist/${name}.js`]).toEqual(serial.rows["dist/plain.js"]);
-    expect(serial.lines[`dist/${name}.js`]).toEqual(serial.lines["dist/plain.js"]);
+  describe.each(["null-text", "empty-text", "no-sources"])("%s", name => {
+    test("reports the lines that the mappings name", () => {
+      expect(serial.rows[`dist/${name}.js`]).toEqual(serial.rows["dist/plain.js"]);
+      expect(serial.lines[`dist/${name}.js`]).toEqual(serial.lines["dist/plain.js"]);
+    });
   });
 
   test("bun:jsc codeCoverageForFile()", () => {

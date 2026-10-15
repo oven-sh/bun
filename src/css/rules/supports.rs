@@ -96,8 +96,6 @@ impl SupportsCondition {
 
 impl SupportsCondition {
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // Hand-expanded because `#[derive(CssEql)]` would require
-        // `PropertyId: CssEql` (it only provides `PartialEq`).
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {

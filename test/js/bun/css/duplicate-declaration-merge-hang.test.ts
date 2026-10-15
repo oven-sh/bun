@@ -209,9 +209,11 @@ test("duplicate-rule detection respects the normal/!important split", () => {
   expect(cssInternals._test(".z{color:red !important}.q{z-index:9}.z{color:blue}", "")).toBe(
     ".z {\n  color: red !important;\n}\n\n.q {\n  z-index: 9;\n}\n\n.z {\n  color: #00f;\n}\n",
   );
-  // Reversed order: the later !important rule must not erase the earlier
-  // normal one either (it does not redeclare the same property at normal
-  // priority, so the earlier rule is not dead).
+  expect(cssInternals.minifyTest(".z{color:red;top:0 !important}.q{z-index:9}.z{color:blue;top:1px}", "")).toBe(
+    ".z{color:red;top:0!important}.q{z-index:9}.z{color:#00f;top:1px}",
+  );
+  // Reversed order: the rules differ in importance, so neither is a duplicate
+  // of the other. Both stay, as in lightningcss after 93b9e66.
   expect(cssInternals._test(".z{color:red}.q{z-index:9}.z{color:blue !important}", "")).toBe(
     ".z {\n  color: red;\n}\n\n.q {\n  z-index: 9;\n}\n\n.z {\n  color: #00f !important;\n}\n",
   );
@@ -222,5 +224,12 @@ test("duplicate-rule detection respects the normal/!important split", () => {
   // Same split, same properties: the earlier rule *is* dead.
   expect(cssInternals.minifyTest(".z{color:red !important}.q{z-index:9}.z{color:blue !important}", "")).toBe(
     ".q{z-index:9}.z{color:#00f!important}",
+  );
+  // The lightningcss tests for 93b9e66 (test_duplicate_rules_preserve_importance).
+  expect(
+    cssInternals.minifyTest(".x { --c: first !important } @layer a { .y { --c: middle } } .x { --c: last }", ""),
+  ).toBe(".x{--c:first!important}@layer a{.y{--c:middle}}.x{--c:last}");
+  expect(cssInternals.minifyTest(".x { color: red !important } .y { color: green } .x { color: blue }", "")).toBe(
+    ".x{color:red!important}.y{color:green}.x{color:#00f}",
   );
 });

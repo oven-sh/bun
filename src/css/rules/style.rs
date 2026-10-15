@@ -459,7 +459,7 @@ impl<R> StyleRule<R> {
     }
 
     /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors and defines the same properties.
+    /// This means it has the same selectors, properties, and importance.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
         let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {

@@ -619,9 +619,9 @@ impl PropertyIdTag {
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
 //
-// Do NOT `#[derive(PartialEq, Eq)]`: the `CustomPropertyName` payload holds
-// arena `*const [u8]` idents and a derived impl would compare raw pointers.
-// The hand-written impl below compares tag + prefix + custom-name bytes.
+// No `#[derive(PartialEq, Eq)]`: the `CustomPropertyName` payload holds arena
+// `*const [u8]` idents, which have `CssEql` and no `PartialEq`. The
+// hand-written impl below compares tag + prefix + custom name.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -882,8 +882,8 @@ pub enum PropertyId {
 
 // `PropertyId` equality compares the tag, the `VendorPrefix` payload (via
 // `prefix()`, which is `VendorPrefix::empty()` for every non-prefixed
-// variant), and for `Custom` the property-name bytes: `--a` and `--b` are
-// distinct properties and must not collapse in duplicate-rule detection.
+// variant), and for `Custom` the property name: `--a` and `--b` are distinct
+// properties.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {

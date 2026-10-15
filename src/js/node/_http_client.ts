@@ -435,7 +435,7 @@ function ClientRequest(input?, options?, cb?): void {
       }
     }
     if (typeof opts.createConnection === "function") {
-      const oncreate = once(onCreateConnection.$bind(this));
+      const oncreate = once(onCreateConnection.bind(this));
 
       try {
         const newSocket = opts.createConnection(opts, oncreate);
@@ -1091,7 +1091,7 @@ function onSocketNT(req, socket, err) {
         socket.emit("free");
         socket.removeListener("error", socketErrorListener);
       } else {
-        finished(socket.destroy(err || req[kError]), onSocketFinishedDestroy.$bind(undefined, req, socket, err));
+        finished(socket.destroy(err || req[kError]), onSocketFinishedDestroy.bind(undefined, req, socket, err));
         return;
       }
     }
@@ -1118,7 +1118,7 @@ function deferToConnectOnSocket(this: any, method, arguments_) {
   if (this.socket.writable) {
     callSocketMethod.$call(this, method, arguments_);
   } else {
-    this.socket.once("connect", callSocketMethod.$bind(this, method, arguments_));
+    this.socket.once("connect", callSocketMethod.bind(this, method, arguments_));
   }
 }
 
@@ -1131,7 +1131,7 @@ function _deferToConnect(this: any, method, arguments_) {
   // assigned out of the pool and is eventually writable).
 
   if (!this.socket) {
-    this.once("socket", deferToConnectOnSocket.$bind(this, method, arguments_));
+    this.once("socket", deferToConnectOnSocket.bind(this, method, arguments_));
   } else {
     deferToConnectOnSocket.$call(this, method, arguments_);
   }
@@ -1150,7 +1150,7 @@ ClientRequest.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (socket) {
     setSocketTimeout(socket, msecs);
   } else {
-    this.once("socket", onSocketSetTimeout.$bind(undefined, msecs));
+    this.once("socket", onSocketSetTimeout.bind(undefined, msecs));
   }
 
   return this;

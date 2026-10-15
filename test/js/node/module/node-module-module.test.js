@@ -6,50 +6,6 @@ import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wra
 import path from "path";
 
 describe.concurrent("node-module-module", () => {
-  test("loading the built-in modules hands none of their functions to a replaced Function.prototype.bind", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          // Records what a replaced Function.prototype.bind is handed, and calls none of it.
-          const original = Function.prototype.bind;
-          const handed = [];
-          Function.prototype.bind = function (...args) {
-            handed.push(this);
-            return Reflect.apply(original, this, args);
-          };
-          const failed = [];
-          for (const name of require("node:module").builtinModules) {
-            try {
-              require(name);
-            } catch (e) {
-              failed.push(name + ": " + e.message);
-            }
-          }
-          function own() {}
-          own.bind();
-          // A script can reach these without replacing anything.
-          const reachable = [own, Promise.withResolvers];
-          console.log(JSON.stringify({
-            failed,
-            recordsOwn: handed.includes(own),
-            handed: handed.filter(fn => !reachable.includes(fn)).map(fn => fn.name),
-          }));
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      out: { failed: [], recordsOwn: true, handed: [] },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
   test("builtinModules exists", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     // "bun:wrap" is no longer listed: it is internal transpiler plumbing,

@@ -63,6 +63,7 @@ const { deprecate } = require("internal/util/deprecate");
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
+const FunctionPrototypeBind = Function.prototype.bind;
 
 // Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
 // "SystemError", an enumerable `info` object, errno/syscall accessors that
@@ -248,9 +249,9 @@ function newHandle(type, lookup) {
     },
   };
   if (type === "udp4") {
-    handle.lookup = lookup4.$bind(handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup4, handle, lookup);
   } else if (type === "udp6") {
-    handle.lookup = lookup6.$bind(handle, lookup);
+    handle.lookup = FunctionPrototypeBind.$call(lookup6, handle, lookup);
   } else {
     throw $ERR_SOCKET_BAD_TYPE();
   }
@@ -835,7 +836,7 @@ Socket.prototype.connect = function (port, address, callback) {
   if (state.bindState === BIND_STATE_UNBOUND) this.bind({ port: 0, exclusive: true }, null);
 
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, _connect.$bind(this, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(_connect, this, port, address, callback));
     return;
   }
 
@@ -1047,7 +1048,7 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
   // If the socket hasn't been bound yet, push the outbound packet onto the
   // send queue and send after binding is complete.
   if (state.bindState !== BIND_STATE_BOUND) {
-    enqueue(this, this.send.$bind(this, list, port, address, callback));
+    enqueue(this, FunctionPrototypeBind.$call(this.send, this, list, port, address, callback));
     return;
   }
 
@@ -1149,7 +1150,7 @@ Socket.prototype.close = function (callback) {
   if (typeof callback === "function") this.on("close", callback);
 
   if (queue !== undefined) {
-    queue.push(this.close.$bind(this));
+    queue.push(FunctionPrototypeBind.$call(this.close, this));
     return this;
   }
 
@@ -1185,17 +1186,20 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(onAsyncDisposeClosed.$bind(undefined, promise));
+  this.close(createAsyncDisposeClosedCallback(promise));
 
   return promise;
 };
 
-function onAsyncDisposeClosed(promise, err) {
-  if (err) {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-  } else {
-    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-  }
+// Not bind(): user code can replace it, and would be handed a function that settles whatever it is given, unchecked.
+function createAsyncDisposeClosedCallback(promise) {
+  return err => {
+    if (err) {
+      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+    } else {
+      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+    }
+  };
 }
 
 function socketCloseNT(self) {

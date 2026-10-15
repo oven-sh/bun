@@ -90,7 +90,7 @@ class ReplHistory {
     if (this[kHistoryPath] === "") {
       // Save a reference to the context's original _historyPrev
       this.historyPrev = this[kContext]._historyPrev;
-      this[kContext]._historyPrev = this[kReplHistoryMessage].$bind(this);
+      this[kContext]._historyPrev = this[kReplHistoryMessage].bind(this);
       return onReadyCallback(null, this[kContext]);
     }
 
@@ -103,7 +103,7 @@ class ReplHistory {
 
       // Save a reference to the context's original _historyPrev
       this.historyPrev = this[kContext]._historyPrev;
-      this[kContext]._historyPrev = this[kReplHistoryMessage].$bind(this);
+      this[kContext]._historyPrev = this[kReplHistoryMessage].bind(this);
       return onReadyCallback(null, this[kContext]);
     }
 
@@ -330,8 +330,8 @@ class ReplHistory {
 
       await handle.truncate(0);
 
-      this[kContext].on("line", this[kOnLine].$bind(this));
-      this[kContext].once("exit", this[kOnExit].$bind(this));
+      this[kContext].on("line", this[kOnLine].bind(this));
+      this[kContext].once("exit", this[kOnExit].bind(this));
 
       this[kContext].once("flushHistory", () => {
         if (!this[kContext].closed) {
@@ -358,7 +358,7 @@ class ReplHistory {
 
     // Save a reference to the context's original _historyPrev
     this.historyPrev = this[kContext]._historyPrev;
-    this[kContext]._historyPrev = this[kReplHistoryMessage].$bind(this);
+    this[kContext]._historyPrev = this[kReplHistoryMessage].bind(this);
     this[kContext].resume();
     return onReadyCallback(null, this[kContext]);
   }
@@ -404,10 +404,10 @@ class ReplHistory {
 
   async [kOnExit]() {
     if (this[kIsFlushing]) {
-      this[kContext].once("flushHistory", this[kOnExit].$bind(this));
+      this[kContext].once("flushHistory", this[kOnExit].bind(this));
       return;
     }
-    this[kContext].off("line", this[kOnLine].$bind(this));
+    this[kContext].off("line", this[kOnLine].bind(this));
 
     await this[kCloseHandle]();
   }

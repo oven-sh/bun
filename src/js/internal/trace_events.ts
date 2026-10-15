@@ -43,11 +43,11 @@ let suppressFsEvents = false;
 // output through this so node:fs is never evaluated pre-user-code and the
 // agent's own stderr writes never show up as fs.sync.write trace events.
 const fsBinding = require("internal/fs/binding");
-const rawWriteSync = fsBinding.writeSync.$bind(fsBinding);
+const rawWriteSync = fsBinding.writeSync.bind(fsBinding);
 // Same reasoning for reads: pre_execution's --trace-env-js-stack source-line
 // lookup must not evaluate node:fs pre-user-code (which would freeze
 // unwrapped natives into its bound exports) nor show up as fs.sync events.
-const rawReadFileSync = fsBinding.readFileSync.$bind(fsBinding);
+const rawReadFileSync = fsBinding.readFileSync.bind(fsBinding);
 
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";

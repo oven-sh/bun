@@ -448,7 +448,7 @@ function normalizeQuery(
             const { definedColumns, columnsSql } = buildDefinedColumnsAndQuery(
               columns,
               items,
-              adapter.escapeIdentifier.$bind(adapter),
+              adapter.escapeIdentifier.bind(adapter),
             );
 
             const definedColumnCount = definedColumns.length;
@@ -644,7 +644,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   /// `method` bound to this slot for the native connection to call.
   protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
-    return this.adapter.ownerCallback(method.$bind(this));
+    return this.adapter.ownerCallback(method.bind(this));
   }
 
   async #beginConnecting() {
@@ -804,7 +804,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   bindQuery(query: QueryType<any, any>, onClose: (err: Error) => void) {
     this.queries.add(onClose);
-    query.finally(onQueryFinish.$bind(this, onClose));
+    query.finally(onQueryFinish.bind(this, onClose));
   }
 
   protected doRetry() {

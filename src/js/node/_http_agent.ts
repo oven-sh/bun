@@ -276,7 +276,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     $debug("call onSocket", sockLen, freeLen);
     // If we are under maxSockets create a new one.
     try {
-      this.createSocket(req, options, onSocketCreated.$bind(this, req, name));
+      this.createSocket(req, options, onSocketCreated.bind(this, req, name));
     } catch (err) {
       dropEmptySocketsEntry(this, name);
       throw err;

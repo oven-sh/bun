@@ -114,7 +114,7 @@ const SQL = function SQL(
     }
 
     if (connectionHandle.bindQuery) {
-      connectionHandle.bindQuery(query, onQueryDisconnected.$bind(query));
+      connectionHandle.bindQuery(query, onQueryDisconnected.bind(query));
     }
 
     try {
@@ -139,7 +139,7 @@ const SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
-    pool.connect(onQueryConnected.$bind(query, handle));
+    pool.connect(onQueryConnected.bind(query, handle));
   }
 
   function queryFromPool(
@@ -192,7 +192,7 @@ const SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
-    query.finally(onTransactionQueryDisconnected.$bind(transactionQueries, query));
+    query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
 
     try {
       // Use adapter method to get the actual connection
@@ -219,7 +219,7 @@ const SQL = function SQL(
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.$bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );
 
@@ -248,7 +248,7 @@ const SQL = function SQL(
         strings,
         values,
         flags,
-        queryFromTransactionHandler.$bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );
       transactionQueries.add(query);
@@ -327,8 +327,8 @@ const SQL = function SQL(
     onTransactionConnected(
       callback,
       options,
-      settleReservedTransaction.$bind(null, reservedTransaction, finished, resolve),
-      settleReservedTransaction.$bind(null, reservedTransaction, finished, reject),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
       true,
       distributed,
       null,
@@ -359,7 +359,7 @@ const SQL = function SQL(
       pool.release(pooledConnection);
     }
 
-    const onDisconnected = onTransactionDisconnected.$bind(state);
+    const onDisconnected = onTransactionDisconnected.bind(state);
     function onClose(err: Error) {
       onDisconnected(err);
       releaseReservation();
@@ -660,7 +660,7 @@ const SQL = function SQL(
       }
     }
 
-    const onClose = onTransactionDisconnected.$bind(state);
+    const onClose = onTransactionDisconnected.bind(state);
     // Use adapter method to attach connection close handler
     if (pool.attachConnectionCloseHandler) {
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
@@ -867,7 +867,7 @@ const SQL = function SQL(
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
         transactionSavepoints.add(promise);
-        return await promise.finally(onSavepointFinished.$bind(null, promise));
+        return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }
     let needs_rollback = false;
@@ -970,13 +970,13 @@ const SQL = function SQL(
     // Try to reserve a connection - adapters that support it will handle appropriately
     const promiseWithResolvers = Promise.withResolvers();
     if (signal === undefined) {
-      pool.connect(onReserveConnected.$bind(promiseWithResolvers), true);
+      pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
       return promiseWithResolvers.promise;
     }
 
     const state: ReserveAbortState = { signal, promiseWithResolvers, onConnected: null, onAbort: null };
-    state.onConnected = onReserveConnectedWithSignal.$bind(state);
-    state.onAbort = onReserveAbort.$bind(state);
+    state.onConnected = onReserveConnectedWithSignal.bind(state);
+    state.onAbort = onReserveAbort.bind(state);
     // resistStopPropagation: a user listener on the same signal calling
     // stopImmediatePropagation() must not starve the cancellation.
     signal.addEventListener("abort", state.onAbort, resistStopPropagation({ __proto__: null, once: true }));
@@ -1034,7 +1034,7 @@ const SQL = function SQL(
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.$bind(null, callback, name, resolve, reject, false, true), useReserved);
+    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
     return promise;
   };
 
@@ -1055,7 +1055,7 @@ const SQL = function SQL(
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.$bind(null, callback, options, resolve, reject, false, false), useReserved);
+    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
     return promise;
   };
   sql.connect = () => {

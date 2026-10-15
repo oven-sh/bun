@@ -81,7 +81,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
       : function (fd, cb) {
           return fh.sync().then(() => cb(), cb);
         },
-  close: streamFileHandleClose.$bind(fh),
+  close: streamFileHandleClose.bind(fh),
 });
 
 function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void) {

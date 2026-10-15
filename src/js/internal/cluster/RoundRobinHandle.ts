@@ -32,7 +32,7 @@ export default class RoundRobinHandle {
     this.inFlight = new Map();
     this.server = net.createServer(
       { pauseOnConnect: true, allowHalfOpen: true },
-      RoundRobinHandle.prototype.onServerConnection.$bind(this),
+      RoundRobinHandle.prototype.onServerConnection.bind(this),
     );
 
     if (fd >= 0) this.server.listen({ fd, backlog });
@@ -51,13 +51,13 @@ export default class RoundRobinHandle {
         readableAll,
         writableAll,
       }); // UNIX socket path.
-    this.server.once("listening", RoundRobinHandle.prototype.onServerListening.$bind(this));
+    this.server.once("listening", RoundRobinHandle.prototype.onServerListening.bind(this));
   }
 
   onServerConnection(socket) {
     const handle = makeAcceptedHandle(socket);
     socket.on("error", noop);
-    socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.$bind(this, handle));
+    socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
     this.distribute(0, handle);
   }
 

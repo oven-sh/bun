@@ -370,7 +370,7 @@ class Debugger {
         hostname,
         // empty port from new URL("ws://host/") -> let the OS pick a free port instead of falling back to Bun.serve's default 3000
         port: port || 0,
-        fetch: this.#fetch.$bind(this),
+        fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
 
@@ -383,7 +383,7 @@ class Debugger {
     if (protocol === "ws+unix:") {
       Bun.serve({
         unix: pathname,
-        fetch: this.#fetch.$bind(this),
+        fetch: this.#fetch.bind(this),
         websocket: this.#websocket,
       });
       return;

@@ -303,7 +303,7 @@ function WritableState(options, stream, isDuplex) {
   this.corked = 0;
 
   // The callback that's passed to _write(chunk, cb).
-  this.onwrite = onwrite.$bind(undefined, stream);
+  this.onwrite = onwrite.bind(undefined, stream);
 
   // The amount that is being written when _write is called.
   this.writelen = 0;

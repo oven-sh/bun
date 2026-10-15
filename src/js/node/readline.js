@@ -26,6 +26,7 @@ var __node_module__ = { exports: {} };
 
 const {
   DateNow,
+  FunctionPrototypeBind,
   FunctionPrototypeCall,
   ObjectDefineProperties,
   Promise,
@@ -104,7 +105,7 @@ function Interface(input, output, completer, terminal) {
   FunctionPrototypeCall(InterfaceConstructor, this, input, output, completer, terminal);
 
   if (process.env.TERM === "dumb") {
-    this._ttyWrite = _ttyWriteDumb.$bind(this);
+    this._ttyWrite = FunctionPrototypeBind(_ttyWriteDumb, this);
   }
 }
 

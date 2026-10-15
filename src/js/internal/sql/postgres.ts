@@ -153,7 +153,7 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
-    return `{${value.map(arrayValueSerializer.$bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
   switch (typeof value) {
@@ -241,7 +241,7 @@ function serializeArray(values: any[], type: ArrayType) {
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
 
-  return `{${values.map(arrayValueSerializer.$bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
+  return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
 }
 
 function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {

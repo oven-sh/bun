@@ -203,7 +203,7 @@ async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
   const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
-  require("node:fs").opendir(dir, options, settleFromNodeCallback.$bind(null, resolve, reject));
+  require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;
 }
 
@@ -237,9 +237,9 @@ const private_symbols = {
   FileHandle: null as any,
 };
 
-const _readFile = fs.readFile.$bind(fs);
-const _writeFile = fs.writeFile.$bind(fs);
-const _appendFile = fs.appendFile.$bind(fs);
+const _readFile = fs.readFile.bind(fs);
+const _writeFile = fs.writeFile.bind(fs);
+const _appendFile = fs.appendFile.bind(fs);
 
 type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
 

@@ -27,7 +27,7 @@ const ObjectEntries = Object.entries;
 const ObjectDefineProperty = Object.defineProperty;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const PromiseWithResolvers = Promise.withResolvers.bind(Promise);
-const PromiseResolve = Promise.$resolve.$bind(Promise);
+const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromisePrototypeThen = $Promise.prototype.$then;
 const SafePromisePrototypeFinally = $Promise.prototype.finally;
 

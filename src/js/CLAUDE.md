@@ -46,18 +46,16 @@ object->putDirectBuiltinFunction(vm, globalObject, identifier,
 
 ## $ Globals and Special Syntax
 
-**CRITICAL**: Use `.$call`, `.$apply` and `.$bind`, never `.call`, `.apply` or `.bind`:
+**CRITICAL**: Use `.$call` and `.$apply`, never `.call` or `.apply`:
 
 ```typescript
 // ✗ WRONG - User can tamper
 callback.call(undefined, arg1);
 fn.apply(undefined, args);
-internalFn.bind(undefined, arg1); // the user's `bind` is also handed `internalFn`
 
 // ✓ CORRECT - Tamper-proof
 callback.$call(undefined, arg1);
 fn.$apply(undefined, args);
-internalFn.$bind(undefined, arg1);
 
 // $ prefix for private APIs
 const arr = $Array.from(...);           // Private globals
@@ -94,7 +92,7 @@ ModuleLoader.rs loads modules by numeric ID via `InternalModuleRegistry.cpp`.
 
 ## Key Rules
 
-- Use `.$call`/`.$apply`/`.$bind` not `.call`/`.apply`/`.bind`
+- Use `.$call`/`.$apply` not `.call`/`.apply`
 - String literal `require()` only
 - Export via `export default {}`
 - Use JSC intrinsics for performance

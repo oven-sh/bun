@@ -197,7 +197,7 @@ function callbackify(original) {
   function callbackified(...args) {
     const maybeCb = Array.prototype.pop.$call(args);
     validateFunction(maybeCb, "last argument");
-    const cb = maybeCb.$bind(this);
+    const cb = Function.prototype.bind.$call(maybeCb, this);
     // In true node style we process the callback on `nextTick` with all the
     // implications (stack, `uncaughtException`, `async_hooks`)
     original.$apply(this, args).then(
@@ -641,6 +641,12 @@ function onAbortedCallback(promise: Promise<void>) {
   $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
 
+// Its own function so the listener's scope holds `promise` and not aborted()'s `resource`. Not
+// onAbortedCallback.bind(): that looks up `bind` on Function.prototype, which user code can replace.
+function createAbortedListener(promise: Promise<void>) {
+  return () => onAbortedCallback(promise);
+}
+
 function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
@@ -655,7 +661,7 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   const promise = $newPromise<void>();
-  const listener = onAbortedCallback.$bind(undefined, promise);
+  const listener = createAbortedListener(promise);
   signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {

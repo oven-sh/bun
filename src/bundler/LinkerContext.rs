@@ -18,7 +18,7 @@ use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::BundledAst as JSAst;
 use bun_ast::{
-    Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt, TlaCheck,
+    Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt,
 };
 // Note: `crate::Index` (= `bun_ast::Index`) — the
 // bundler's source-index newtype. `bun_ast::Index` is layout-identical
@@ -872,72 +872,10 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        // Validate top-level await for all files first.
+        // The async flags have to be final before `scan_imports_and_exports` makes the wrappers.
         // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
         if unsafe { (*bundle).has_any_top_level_await_modules } {
-            // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
-            // from `*self` (= `BundleV2.linker`). The SoA column slices below
-            // are physically disjoint and the underlying slabs do not
-            // reallocate inside `validate_tla`; we cache raw column pointers
-            // and reborrow once for the loop to satisfy borrowck alongside
-            // `&mut self`.
-            let parse_graph: *mut Graph<'a> = self.parse_graph;
-            let import_records_list: *const [bun_ast::import_record::List<'a>] =
-                self.graph.ast.items_import_records();
-            let flags: *mut [crate::js_meta::Flags] = self.graph.meta.items_flags_mut();
-            let css_asts: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
-            let files_len = self.graph.files.len();
-            // SAFETY: see block comment above — `parse_graph` backref disjoint
-            // from `*self`, stable SoA slabs; `validate_tla` neither
-            // reallocates the slabs nor forms a competing `&mut` to any
-            // read-only column. All seven derefs share that invariant.
-            let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = unsafe {
-                (
-                    (*parse_graph).ast.items_top_level_await_keyword(),
-                    (*parse_graph).ast.items_tla_check_mut(),
-                    (*parse_graph).input_files.items_source(),
-                    &*import_records_list,
-                    &*css_asts,
-                    &mut *flags,
-                )
-            };
-            let import_records_len = import_records_list.len();
-
-            // Process all files in source index order, like esbuild does
-            let mut source_index: u32 = 0;
-            while (source_index as usize) < files_len {
-                // Skip runtime
-                if source_index == Index::RUNTIME.get() {
-                    source_index += 1;
-                    continue;
-                }
-
-                // Skip if not a JavaScript AST
-                if source_index as usize >= import_records_len {
-                    source_index += 1;
-                    continue;
-                }
-
-                // Skip CSS files
-                if css_asts[source_index as usize].is_some() {
-                    source_index += 1;
-                    continue;
-                }
-
-                self.validate_tla(
-                    source_index,
-                    tla_keywords,
-                    tla_checks,
-                    input_files,
-                    flags,
-                    import_records_list,
-                );
-
-                source_index += 1;
-            }
-
-            // after validation propagate async through all importers.
-            self.graph.propagate_async_dependencies()?;
+            self.mark_async_files_and_validate_requires();
         }
 
         scan_imports_and_exports(self)?;
@@ -2057,195 +1995,187 @@ impl<'a> LinkerContext<'a> {
         hasher.digest()
     }
 
-    pub(crate) fn validate_tla(
-        &mut self,
-        source_index: crate::IndexInt,
-        tla_keywords: &[Range],
-        tla_checks: &mut [TlaCheck],
-        input_files: &[Source],
-        meta_flags: &mut [crate::js_meta::Flags],
-        ast_import_records: &[bun_ast::import_record::List<'a>],
-    ) {
-        // Explicit-stack postorder DFS (was per-edge recursive). `Enter`
-        // seeds a file and queues each followed import paired with an
-        // `AfterChild` resume point; that resume reads the child's completed
-        // `tla_checks` entry. `Leave` sets the async flag once all children
-        // are settled. Successors are pushed in pop order then the tail is
-        // reversed so LIFO pop reproduces the original recursion order.
-        #[derive(Copy, Clone)]
-        enum Frame {
-            Enter(crate::IndexInt),
-            AfterChild {
-                source_index: crate::IndexInt,
-                import_record_index: u32,
-            },
-            Leave(crate::IndexInt),
+    /// Marks each file that has a top-level await or reaches one through `import` statements, then reports each `require()` of a marked file.
+    fn mark_async_files_and_validate_requires(&mut self) {
+        use std::io::Write;
+
+        // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint from
+        // `*self` (= `BundleV2.linker`) and valid for the link step. Both columns
+        // are only read here.
+        let (tla_keywords, sources): (&[Range], &[Source]) = unsafe {
+            (
+                (*self.parse_graph).ast.items_top_level_await_keyword(),
+                (*self.parse_graph).input_files.items_source(),
+            )
+        };
+        let import_records = self.graph.ast.items_import_records();
+        let css = self.graph.ast.items_css();
+        let reachable_files = self.graph.reachable_files.as_slice();
+        let files_len = import_records.len();
+        let javascript_files = || {
+            (reachable_files.iter().map(|index| index.get()))
+                .filter(|&file| css[file as usize].is_none())
+        };
+
+        // `importers[importers_start[file]..importers_start[file + 1]]`: the files that import `file` with an `import` statement.
+        let mut importers_start: Vec<u32> = vec![0; files_len + 2];
+        for file in javascript_files() {
+            for record in import_records[file as usize].as_slice() {
+                if record.kind == ImportKind::Stmt && record.source_index.is_valid() {
+                    importers_start[record.source_index.get() as usize + 2] += 1;
+                }
+            }
+        }
+        for file in 2..importers_start.len() {
+            importers_start[file] += importers_start[file - 1];
+        }
+        let mut importers: Vec<u32> = vec![0; importers_start[files_len + 1] as usize];
+        // Each `require()` of a file of the bundle: the file and its import record.
+        let mut requires: Vec<(u32, u32)> = Vec::new();
+        // The files with a top-level await, then each file that is async through an earlier one.
+        let mut async_files: Vec<u32> = Vec::new();
+        let flags = self.graph.meta.items_flags_mut();
+        for file in javascript_files() {
+            if tla_keywords[file as usize].len > 0 {
+                flags[file as usize].is_async_or_has_async_dependency = true;
+                async_files.push(file);
+            }
+            let records = import_records[file as usize].as_slice();
+            for (record_index, record) in records.iter().enumerate() {
+                if !record.source_index.is_valid() {
+                    continue;
+                }
+                let imported = record.source_index.get() as usize;
+                match record.kind {
+                    ImportKind::Stmt => {
+                        importers[importers_start[imported + 1] as usize] = file;
+                        importers_start[imported + 1] += 1;
+                    }
+                    ImportKind::Require => requires.push((file, record_index as u32)),
+                    _ => {}
+                }
+            }
+        }
+        let importers_of = |file: u32| {
+            let file = file as usize;
+            &importers[importers_start[file] as usize..importers_start[file + 1] as usize]
+        };
+        let with_top_level_await = async_files.len();
+        let mut next = 0;
+        while next < async_files.len() {
+            for &importer in importers_of(async_files[next]) {
+                let flags = &mut flags[importer as usize];
+                if !flags.is_async_or_has_async_dependency {
+                    flags.is_async_or_has_async_dependency = true;
+                    async_files.push(importer);
+                }
+            }
+            next += 1;
         }
 
-        if tla_checks[source_index as usize].depth != 0 {
-            return;
-        }
-
-        let mut stack: Vec<Frame> = vec![Frame::Enter(source_index)];
-
-        while let Some(frame) = stack.pop() {
-            match frame {
-                Frame::Enter(source_index) => {
-                    if tla_checks[source_index as usize].depth != 0 {
-                        continue;
-                    }
-                    tla_checks[source_index as usize].depth = 1;
-                    if tla_keywords[source_index as usize].len > 0 {
-                        tla_checks[source_index as usize].parent = source_index;
-                    }
-
-                    let mark = stack.len();
-                    for (import_record_index, record) in ast_import_records[source_index as usize]
-                        .as_slice()
-                        .iter()
-                        .enumerate()
-                    {
-                        if Index::is_valid(record.source_index)
-                            && (record.kind == ImportKind::Require
-                                || record.kind == ImportKind::Stmt)
-                        {
-                            stack.push(Frame::Enter(record.source_index.get()));
-                            stack.push(Frame::AfterChild {
-                                source_index,
-                                import_record_index: u32::try_from(import_record_index)
-                                    .expect("int cast"),
-                            });
-                        }
-                    }
-                    stack.push(Frame::Leave(source_index));
-                    stack[mark..].reverse();
+        let flags = self.graph.meta.items_flags();
+        // Per async file: how many imports away the nearest top-level await is, for the notes of an error.
+        let mut distance: Vec<u32> = Vec::new();
+        for &(file, record_index) in &requires {
+            let record = &import_records[file as usize].as_slice()[record_index as usize];
+            let imported = record.source_index.get();
+            // esbuild 0.28.2 also asks that `file` is async: https://github.com/evanw/esbuild/blob/v0.28.2/internal/bundler/bundler.go#L2886-L2894
+            if !flags[imported as usize].is_async_or_has_async_dependency {
+                continue;
+            }
+            if distance.is_empty() {
+                distance = vec![u32::MAX; files_len];
+                for &awaits in &async_files[..with_top_level_await] {
+                    distance[awaits as usize] = 0;
                 }
-                Frame::Leave(source_index) => {
-                    // Make sure that if we wrap this module in a closure, the closure is also
-                    // async. This happens when you call "import()" on this module and code
-                    // splitting is off.
-                    if Index::is_valid(Index::init(tla_checks[source_index as usize].parent)) {
-                        meta_flags[source_index as usize].is_async_or_has_async_dependency = true;
-                    }
-                }
-                Frame::AfterChild {
-                    source_index,
-                    import_record_index,
-                } => {
-                    let record = &ast_import_records[source_index as usize].as_slice()
-                        [import_record_index as usize];
-                    let parent = tla_checks[record.source_index.get() as usize];
-                    if Index::is_invalid(Index::init(parent.parent)) {
-                        continue;
-                    }
-
-                    let result_tla_check = &mut tla_checks[source_index as usize];
-
-                    // Follow any import chains
-                    if record.kind == ImportKind::Stmt
-                        && (Index::is_invalid(Index::init(result_tla_check.parent))
-                            || parent.depth < result_tla_check.depth)
-                    {
-                        result_tla_check.depth = parent.depth + 1;
-                        result_tla_check.parent = record.source_index.get();
-                        result_tla_check.import_record_index = import_record_index;
-                        continue;
-                    }
-
-                    // Require of a top-level await chain is forbidden
-                    if record.kind == ImportKind::Require {
-                        let mut notes: Vec<Data> = Vec::new();
-
-                        let mut tla_pretty_path: &[u8] = b"";
-                        let mut other_source_index = record.source_index.get();
-
-                        // Build up a chain of notes for all of the imports
-                        loop {
-                            let parent_result_tla_keyword =
-                                tla_keywords[other_source_index as usize];
-                            let parent_tla_check = tla_checks[other_source_index as usize];
-                            let parent_source_index = other_source_index;
-
-                            if parent_result_tla_keyword.len > 0 {
-                                let source = &input_files[other_source_index as usize];
-                                tla_pretty_path = source.path.pretty;
-                                let mut text = Vec::new();
-                                use std::io::Write;
-                                write!(
-                                    &mut text,
-                                    "The top-level await in {} is here:",
-                                    bstr::BStr::new(tla_pretty_path)
-                                )
-                                .expect("infallible: in-memory write");
-                                notes.push(Data {
-                                    text: text.into(),
-                                    location: bun_ast::Location::init_or_null(
-                                        Some(source),
-                                        parent_result_tla_keyword,
-                                    ),
-                                    ..Default::default()
-                                });
-                                break;
-                            }
-
-                            if !Index::is_valid(Index::init(parent_tla_check.parent)) {
-                                notes.push(Data {
-                                    text: b"unexpected invalid index"[..].into(),
-                                    ..Default::default()
-                                });
-                                break;
-                            }
-
-                            other_source_index = parent_tla_check.parent;
-
-                            let mut text = Vec::new();
-                            use std::io::Write;
-                            write!(
-                                &mut text,
-                                "The file {} imports the file {} here:",
-                                bstr::BStr::new(
-                                    &input_files[parent_source_index as usize].path.pretty
-                                ),
-                                bstr::BStr::new(
-                                    &input_files[other_source_index as usize].path.pretty
-                                ),
-                            )
-                            .unwrap();
-                            notes.push(Data {
-                                text: text.into(),
-                                location: bun_ast::Location::init_or_null(
-                                    Some(&input_files[parent_source_index as usize]),
-                                    ast_import_records[parent_source_index as usize].as_slice()
-                                        [tla_checks[parent_source_index as usize]
-                                            .import_record_index
-                                            as usize]
-                                        .range,
-                                ),
-                                ..Default::default()
-                            });
+                // `async_files` is in breadth-first order, so the first file that reaches an importer is a nearest one.
+                for &nearer in &async_files {
+                    for &importer in importers_of(nearer) {
+                        if distance[importer as usize] == u32::MAX {
+                            distance[importer as usize] = distance[nearer as usize] + 1;
                         }
-
-                        let source: &Source = &input_files[source_index as usize];
-                        let imported_pretty_path = &source.path.pretty;
-                        let mut text = Vec::new();
-                        use std::io::Write;
-                        if imported_pretty_path[..] == tla_pretty_path[..] {
-                            write!(&mut text, "This require call is not allowed because the imported file \"{}\" contains a top-level await", bstr::BStr::new(imported_pretty_path)).expect("infallible: in-memory write");
-                        } else {
-                            write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
-                        }
-
-                        // Split-borrow with `source`/`record` (parse_graph backref
-                        // slices) — `log_disjoint` returns the disjoint backref.
-                        self.log_disjoint().add_range_error_with_notes(
-                            Some(source),
-                            record.range,
-                            text,
-                            notes.into_boxed_slice(),
-                        );
                     }
                 }
             }
+
+            let mut notes: Vec<Data> = Vec::new();
+            let mut tla_pretty_path: &[u8] = b"";
+            let mut other_source_index = imported;
+
+            // Build up a chain of notes for all of the imports
+            loop {
+                let other_source = &sources[other_source_index as usize];
+                let tla_keyword = tla_keywords[other_source_index as usize];
+                if tla_keyword.len > 0 {
+                    tla_pretty_path = other_source.path.pretty;
+                    let mut text = Vec::new();
+                    write!(
+                        &mut text,
+                        "The top-level await in {} is here:",
+                        bstr::BStr::new(tla_pretty_path)
+                    )
+                    .expect("infallible: in-memory write");
+                    notes.push(Data {
+                        text: text.into(),
+                        location: bun_ast::Location::init_or_null(Some(other_source), tla_keyword),
+                        ..Default::default()
+                    });
+                    break;
+                }
+
+                // Of the imports that are nearest to a top-level await, the last one.
+                let nearer = distance[other_source_index as usize] - 1;
+                let Some(import) = (import_records[other_source_index as usize]
+                    .as_slice()
+                    .iter())
+                .rfind(|import| {
+                    import.kind == ImportKind::Stmt
+                        && import.source_index.is_valid()
+                        && distance[import.source_index.get() as usize] == nearer
+                }) else {
+                    debug_assert!(
+                        false,
+                        "an async file has a top-level await or imports an async file"
+                    );
+                    break;
+                };
+                let parent_source_index = other_source_index;
+                other_source_index = import.source_index.get();
+
+                let mut text = Vec::new();
+                write!(
+                    &mut text,
+                    "The file {} imports the file {} here:",
+                    bstr::BStr::new(&sources[parent_source_index as usize].path.pretty),
+                    bstr::BStr::new(&sources[other_source_index as usize].path.pretty),
+                )
+                .expect("infallible: in-memory write");
+                notes.push(Data {
+                    text: text.into(),
+                    location: bun_ast::Location::init_or_null(
+                        Some(&sources[parent_source_index as usize]),
+                        import.range,
+                    ),
+                    ..Default::default()
+                });
+            }
+
+            let source: &Source = &sources[file as usize];
+            let imported_pretty_path = &source.path.pretty;
+            let mut text = Vec::new();
+            if imported_pretty_path[..] == tla_pretty_path[..] {
+                write!(&mut text, "This require call is not allowed because the imported file \"{}\" contains a top-level await", bstr::BStr::new(imported_pretty_path)).expect("infallible: in-memory write");
+            } else {
+                write!(&mut text, "This require call is not allowed because the transitive dependency \"{}\" contains a top-level await", bstr::BStr::new(tla_pretty_path)).expect("infallible: in-memory write");
+            }
+
+            // `source` and `record` borrow the parse graph, so the log comes through `log_disjoint`.
+            self.log_disjoint().add_range_error_with_notes(
+                Some(source),
+                record.range,
+                text,
+                notes.into_boxed_slice(),
+            );
         }
     }
 

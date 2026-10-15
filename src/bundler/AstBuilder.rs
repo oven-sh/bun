@@ -561,7 +561,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             css: None,
             url_for_css: b"",
             require_ref: Ref::NONE,
-            tla_check: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: u32::MAX,
             ts_enums: Default::default(),

@@ -397,4 +397,61 @@ describe("bundler", () => {
       expect(bundled).not.toMatch(/await\s+__promiseAll\s*\(/);
     },
   });
+
+  // p.mjs and q.mjs are on an import cycle with r.mjs, and only r.mjs imports the
+  // file with the top-level await. Each of the three wrappers has an `await`, so
+  // each has to be `async`.
+  itBundled("bundler/every __esm wrapper on an import cycle that reaches a top-level await is async", {
+    files: {
+      "/entry.mjs": `const m = await import("./r.mjs"); console.log(m.default);`,
+      "/p.mjs": `import { q } from "./q.mjs"; export function p() { return typeof q; }`,
+      "/q.mjs": `import { p } from "./p.mjs"; import r from "./r.mjs"; export function q() { return p(); } export const peekR = () => r;`,
+      "/r.mjs": `import { q } from "./q.mjs"; import { tla } from "./dep.mjs"; export default q() + tla;`,
+      "/dep.mjs": `export const tla = await Promise.resolve("x");`,
+    },
+    format: "esm",
+    run: { stdout: "functionx" },
+  });
+
+  // https://github.com/evanw/esbuild/issues/4498
+  itBundled("bundler/__esm wrappers of an import cycle with a top-level await behind import() are async", {
+    files: {
+      "/entry.mjs": `await import("./main.mjs");`,
+      "/main.mjs": `import { a } from "./a.mjs"; console.log(a());`,
+      "/a.mjs": `import { b } from "./b.mjs"; import { tla } from "./dep.mjs"; export function a() { return b() + tla; }`,
+      "/b.mjs": `import { a } from "./a.mjs"; export function b() { return typeof a; }`,
+      "/dep.mjs": `export const tla = await Promise.resolve("x");`,
+    },
+    format: "esm",
+    run: { stdout: "functionx" },
+  });
+
+  // f.js imports p.js, which is on an import cycle that reaches a top-level
+  // await, so f.js is async and may not fold into the chunk of x.js: that
+  // chunk would wait for the await before it logs.
+  itBundled("bundler/an importer of an async import cycle does not fold into a chunk that runs first", {
+    files: {
+      "/a.js": `import "./r.js"; import { f } from "./f.js"; console.log("a", f());`,
+      "/b.js": `import { g } from "./g.js"; console.log("b", g());`,
+      "/c.js": `import { x } from "./x.js"; import { f } from "./f.js"; console.log("c", x, f());`,
+      "/d.js": `import { x } from "./x.js"; import { g } from "./g.js"; console.log("d", x, g());`,
+      "/f.js": `import { p } from "./p.js"; import { x } from "./x.js"; export function f() { return p() + x; }`,
+      "/g.js": `import { q } from "./q.js"; export function g() { return typeof q; }`,
+      "/x.js": `console.log("eval x"); export const x = "x"; // ${Buffer.alloc(16 * 1024, "padding ").toString()}`,
+      "/p.js": `import { q } from "./q.js"; export function p() { return typeof q; }`,
+      "/q.js": `import { p } from "./p.js"; import { r } from "./r.js"; export function q() { return typeof p + typeof r; }`,
+      "/r.js": `import { q } from "./q.js"; import { t } from "./t.js"; export function r() { return typeof q + t; }`,
+      "/t.js": `console.log("pre t"); export const t = await Promise.resolve("t"); console.log("tla t");`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    minChunkSize: 1024 * 1024,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "pre t\neval x\ntla t\na functionx" },
+      { file: "/out/c.js", stdout: "eval x\npre t\ntla t\nc x functionx" },
+      { file: "/out/d.js", stdout: "eval x\npre t\ntla t\nd x function" },
+    ],
+  });
 });

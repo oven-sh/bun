@@ -871,8 +871,7 @@ const SQL = function SQL(
       };
     }
     let needs_rollback = false;
-    // The rejection of the BEFORE_COMMIT_OR_ROLLBACK statement, when ROLLBACK still has to follow it.
-    let before_rejection: unknown;
+    let before_sent = false;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
@@ -883,14 +882,12 @@ const SQL = function SQL(
       // at this point we dont need to rollback anymore
       needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+        before_sent = true;
         try {
           await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
         } catch (err) {
-          if (pool.isRollbackOwedAfterBeforeRejection?.(err)) {
-            // The server still holds the transaction, and only ROLLBACK ends it.
-            needs_rollback = true;
-            before_rejection = err;
-          }
+          // The server still holds the transaction, and only ROLLBACK ends it.
+          if (pool.isRollbackOwedAfterBeforeRejection?.(err)) needs_rollback = true;
           throw err;
         }
       }
@@ -909,19 +906,17 @@ const SQL = function SQL(
     } catch (err) {
       try {
         if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND && before_rejection === undefined) {
+          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND && !before_sent) {
             try {
               await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
             } catch (before_err) {
               if (!pool.isRollbackOwedAfterBeforeRejection?.(before_err)) throw before_err;
-              before_rejection = before_err;
             }
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
-      } catch (rollback_err) {
-        // A failed ROLLBACK does not replace the rejection of the statement before it.
-        return reject(before_rejection ?? rollback_err);
+      } catch (err) {
+        return reject(err);
       }
       return reject(err);
     } finally {

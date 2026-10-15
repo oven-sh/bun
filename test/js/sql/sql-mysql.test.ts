@@ -1340,6 +1340,7 @@ if (isDockerEnabled()) {
 // the cases run on both. The gate on the MariaDB container is the one in sql-mariadb-json.test.ts.
 const mariadbProvided =
   !!process.env.BUN_TEST_SERVICE_mariadb_plain || !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled());
+if (!mariadbProvided) describe.todo("distributed transaction (mariadb_plain)");
 for (const image of mariadbProvided ? ["mysql_plain", "mariadb_plain"] : ["mysql_plain"]) {
   describeWithContainer(`distributed transaction (${image})`, { image }, container => {
     const getOptions = () => ({ url: `mysql://root@${container.host}:${container.port}/bun_sql_test` });

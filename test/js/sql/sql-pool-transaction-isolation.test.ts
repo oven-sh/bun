@@ -676,22 +676,25 @@ describe("mysql distributed transaction, XA END rejected", () => {
     expect(xa.server.statements()).toEqual(["XA START 'x'", "SELECT 'DEADLOCK'", "XA END 'x'", "XA ROLLBACK 'x'"]);
   });
 
-  // The rollback did not get through. begin() rejects with the answer to XA END, not with the
-  // answer to XA ROLLBACK.
-  test("XA END and XA ROLLBACK both rejected: begin() rejects with the answer to XA END", async () => {
-    await using xa = await connect("mysql", { rejectRollbacks: 1 });
+  // The rollback did not get through, and the branch is still on the connection. begin() says so:
+  // it rejects with the answer to XA ROLLBACK, also when the callback returned.
+  test.each(["throws", "returns"])(
+    "XA ROLLBACK is rejected too, the callback %s: begin() rejects with the answer to XA ROLLBACK",
+    async settles => {
+      await using xa = await connect("mysql", { rejectRollbacks: 1 });
 
-    const begin = await answered(
-      xa.sql.beginDistributed("x", async tx => {
-        await answered(tx.unsafe("SELECT 'DEADLOCK'"));
-        throw new Error("callback error");
-      }),
-    );
+      const begin = await answered(
+        xa.sql.beginDistributed("x", async tx => {
+          await answered(tx.unsafe("SELECT 'DEADLOCK'"));
+          if (settles === "throws") throw new Error("callback error");
+        }),
+      );
 
-    expect(begin).toEqual({ errno: 1614, sqlState: "XA102" });
-    expect(xa.server.statements()).toEqual(["XA START 'x'", "SELECT 'DEADLOCK'", "XA END 'x'", "XA ROLLBACK 'x'"]);
-    expect(xa.server.state()).toBe("ROLLBACK ONLY");
-  });
+      expect(begin).toEqual({ errno: 1401, sqlState: "XAE03" });
+      expect(xa.server.statements()).toEqual(["XA START 'x'", "SELECT 'DEADLOCK'", "XA END 'x'", "XA ROLLBACK 'x'"]);
+      expect(xa.server.state()).toBe("ROLLBACK ONLY");
+    },
+  );
 
   // XA ROLLBACK works by name. It also removes a prepared branch, and MySQL lets any session do
   // that. So the runner sends it only for a ROLLBACK ONLY branch. After every other rejection of

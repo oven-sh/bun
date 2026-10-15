@@ -68,6 +68,10 @@ const IDX_STATS_MAX_BYTES_ACCUMULATED: usize = 12;
 
 const DEFAULT_HIGH_WATER_MARK: u32 = 16 * 1024;
 
+/// The receive window lsquic gives a stream whose advertised window is 0
+/// (`lsquic_stream_new`, lsquic_stream.c).
+const LSQUIC_ZERO_WINDOW: u64 = 16 * 1024;
+
 /// Stream-id bit 1 selects the direction: 0 = bidirectional,
 /// 1 = unidirectional (RFC 9000 §2.1).
 const STREAM_ID_UNI_BIT: i64 = 0x2;
@@ -79,6 +83,8 @@ const PULL_STATUS_EOS: f64 = 0.0;
 const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
+/// The connection ended while lsquic still held bytes of this stream.
+const PULL_STATUS_ABORTED: f64 = -2.0;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum PendingEnd {
@@ -98,8 +104,24 @@ pub(super) struct Outbound {
 #[derive(Default)]
 pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
+    /// Bytes in `chunks`.
+    pub queued: u64,
     pub ended: bool,
     pub errored: bool,
+    /// lsquic freed the stream while it still held bytes the gate kept back.
+    pub truncated: bool,
+}
+
+/// Whether `on_stream_read` may take bytes from lsquic. Each byte
+/// `lsquic_stream_read` returns is flow-control credit for the peer, so a
+/// stream is not read while its unread queue is above `read_mark`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadGate {
+    Open,
+    /// Read interest is off. `pull()` turns it back on.
+    Paused,
+    /// Read interest is back on and `on_stream_read` has not run since.
+    Resuming,
 }
 
 /// `#[repr(C)]` so `vtable` is at offset 0 — the C shim reads it via
@@ -117,6 +139,9 @@ pub(crate) struct QuicStream {
     stats: Cell<*mut u64>,
     pub(super) outbound: JsCell<Outbound>,
     inbound: JsCell<Inbound>,
+    /// The receive window this endpoint advertised for the stream: the most
+    /// that `inbound.queued` may hold before the gate pauses reads.
+    read_mark: Cell<u64>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
     wrote_to_lsquic: Cell<bool>,
@@ -129,6 +154,7 @@ pub(crate) struct QuicStream {
     announce_suppressed: Cell<bool>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
+    read_gate: Cell<ReadGate>,
 }
 
 impl QuicStream {
@@ -149,6 +175,7 @@ impl QuicStream {
             stats: Cell::new(null_mut()),
             outbound: JsCell::new(Outbound::default()),
             inbound: JsCell::new(Inbound::default()),
+            read_mark: Cell::new(LSQUIC_ZERO_WINDOW),
             wakeup: JsCell::new(None),
             peer_stop_sending_code: Cell::new(None),
             wrote_to_lsquic: Cell::new(false),
@@ -160,6 +187,7 @@ impl QuicStream {
             announce_suppressed: Cell::new(false),
             close_reported: Cell::new(false),
             destroyed: Cell::new(false),
+            read_gate: Cell::new(ReadGate::Open),
         };
         let raw_ptr = bun_core::heap::into_raw(Box::new(stream));
         let handle = crate::generated_classes::js_QuicStream::to_js(raw_ptr, global);
@@ -250,11 +278,15 @@ impl QuicStream {
                 }
             }
         }
+        let session = self.session_ref();
+        let local = (id & 1 == 0) != session.is_some_and(|session| session.is_server());
+        let window = session.map_or(0, |session| session.stream_receive_window(uni, local));
+        self.read_mark.set(if window == 0 {
+            LSQUIC_ZERO_WINDOW
+        } else {
+            window
+        });
         if uni {
-            let session = self.session.get();
-            // SAFETY: the session outlives its streams.
-            let is_server = !session.is_null() && unsafe { (*session).is_server() };
-            let local = (id & 1 == 0) != is_server;
             if local {
                 self.inbound.with_mut(|i| i.ended = true);
                 self.with_state(|s| s.read_ended = 1);
@@ -375,6 +407,7 @@ impl QuicStream {
         self.inbound.with_mut(|inbound| {
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
+                inbound.queued += data.len() as u64;
             }
             if fin {
                 inbound.ended = true;
@@ -393,6 +426,34 @@ impl QuicStream {
         if fin {
             self.with_state(|s| s.fin_received = 1);
         }
+    }
+
+    /// The peer closed the connection. lsquic dispatches read events once
+    /// more before it frees the streams: let that dispatch take all it holds.
+    pub(super) fn lift_read_gate(&self) {
+        self.read_mark.set(u64::MAX);
+        if self.read_gate.get() == ReadGate::Paused {
+            self.read_gate.set(ReadGate::Resuming);
+            if let Some(s) = self.ls() {
+                s.want_read(true);
+            }
+        }
+    }
+
+    /// Queues what lsquic holds for a paused stream. Call it before an lsquic
+    /// call that ends the read side or the connection, which drops those bytes.
+    pub(super) fn drain_paused(&self) {
+        if self.read_gate.get() == ReadGate::Open {
+            return;
+        }
+        let Some(s) = self.ls() else { return };
+        let mark = self.read_mark.replace(u64::MAX);
+        // SAFETY: `self` is the live ctx of the live lsquic stream `s`.
+        unsafe { on_stream_read(core::ptr::from_ref(self).cast_mut().cast(), s.raw()) };
+        self.read_mark.set(mark);
+        // That read ran with read interest off. A read side that is still
+        // open needs it back on; lsquic refuses it once the read side is shut.
+        s.want_read(true);
     }
 
     pub(super) fn take_wakeup(&self) -> Option<Strong> {
@@ -432,9 +493,11 @@ impl QuicStream {
         }
         self.inbound.with_mut(|inbound| {
             inbound.chunks.clear();
+            inbound.queued = 0;
             inbound.errored = true;
             inbound.ended = true;
         });
+        self.read_gate.set(ReadGate::Open);
         self.with_state(|s| {
             s.reset = 1;
             // First reset wins: lsquic re-resets rejected 0-RTT streams with
@@ -592,8 +655,10 @@ impl QuicStream {
         self.outbound.with_mut(|o| o.data.clear());
         self.inbound.with_mut(|i| {
             i.chunks.clear();
+            i.queued = 0;
             i.ended = true;
         });
+        self.read_gate.set(ReadGate::Open);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
             let vm = global.bun_vm().as_mut();
@@ -639,13 +704,29 @@ impl QuicStream {
             if inbound.errored {
                 (PULL_STATUS_ERROR, None)
             } else if let Some(chunk) = inbound.chunks.pop_front() {
+                inbound.queued -= chunk.len() as u64;
                 (PULL_STATUS_DATA, Some(chunk))
+            } else if inbound.truncated {
+                (PULL_STATUS_ABORTED, None)
             } else if inbound.ended {
                 (PULL_STATUS_EOS, None)
             } else {
                 (PULL_STATUS_BLOCKED, None)
             }
         });
+        // Outside the `inbound` borrow: `schedule_process` can run
+        // `on_stream_read` for this stream before it returns.
+        if self.read_gate.get() == ReadGate::Paused
+            && self.inbound.get().queued <= self.read_mark.get() / 2
+        {
+            self.read_gate.set(ReadGate::Resuming);
+            if let Some(s) = self.ls() {
+                s.want_read(true);
+            }
+            if let Some(session) = self.session_ref() {
+                session.schedule_process();
+            }
+        }
         let buffer_js = match buffer {
             Some(bytes) => {
                 self.write_stat(
@@ -827,6 +908,8 @@ impl QuicStream {
             o.data.clear();
             o.end = PendingEnd::None;
         });
+        // lsquic also ends the read side when the peer's FIN is already in.
+        self.drain_paused();
         if let Some(s) = self.ls() {
             s.reset(code);
         }
@@ -839,6 +922,7 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let code = error_code_arg(frame.arguments_as_array::<1>()[0]);
+        self.drain_paused();
         if let Some(s) = self.ls() {
             s.stop_sending(code);
         }
@@ -1042,6 +1126,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
+    qs.read_gate.set(ReadGate::Open);
     // Returns false if a malformed header block reset the stream.
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
@@ -1101,6 +1186,13 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
+        // Strictly above: a body that fills the window exactly still reaches
+        // its FIN below without a reader.
+        if qs.inbound.get().queued > qs.read_mark.get() {
+            stream.want_read(false);
+            qs.read_gate.set(ReadGate::Paused);
+            break;
+        }
         let n = stream.read(buf);
         match n {
             n if n > 0 => {
@@ -1144,6 +1236,9 @@ lsquic_callback! {
     ) {
         // The lsquic_stream is freed immediately after this callback returns.
         qs.raw.set(null_mut());
+        if qs.read_gate.replace(ReadGate::Open) != ReadGate::Open {
+            qs.inbound.with_mut(|i| i.truncated = true);
+        }
         if let Some(session) = qs.session_ref() {
             session.push_event(SessionEvent::StreamClosed { stream: ctx.cast() });
         }

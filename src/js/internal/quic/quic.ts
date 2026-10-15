@@ -305,6 +305,8 @@ const {
 
 // Ported verbatim from Node lib/internal/blob.js createBlobReaderIterable().
 const kMaxBatchChunks = 16;
+// PULL_STATUS_ABORTED in src/runtime/node/quic/stream.rs.
+const kPullStatusAborted = -2;
 
 interface BlobReaderIterableOptions {
   getReadError?: (status: number) => unknown;
@@ -1744,7 +1746,10 @@ class QuicStream {
     if (!inner.reader) return;
 
     yield* createBlobReaderIterable(inner.reader, {
-      getReadError: () => {
+      getReadError: (status: number) => {
+        if (status === kPullStatusAborted) {
+          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
+        }
         if (inner.state.readEnded && !inner.state.finReceived) {
           if (inner.state.reset) {
             return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));

@@ -631,6 +631,25 @@ impl QuicSession {
             ep.schedule_process();
         }
     }
+    /// The receive window this endpoint advertised for one class of stream,
+    /// or 0 once the session has left its endpoint.
+    pub(super) fn stream_receive_window(&self, uni: bool, local: bool) -> u64 {
+        let Some(ep) = self.endpoint_ref() else {
+            return 0;
+        };
+        let tp = if self.is_server.get() {
+            ep.server_local_tp.get()
+        } else {
+            ep.client_local_tp.get()
+        };
+        if uni {
+            tp.initial_max_stream_data_uni
+        } else if local {
+            tp.initial_max_stream_data_bidi_local
+        } else {
+            tp.initial_max_stream_data_bidi_remote
+        }
+    }
     pub(super) fn note_stream_write(&self) {
         self.write_marker
             .set(self.write_marker.get().wrapping_add(1));
@@ -1945,6 +1964,11 @@ impl QuicSession {
 
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
+        for &stream in self.streams.get().iter() {
+            // SAFETY: pointers in `streams` are unregistered before their
+            // owner is destroyed (registry invariant).
+            unsafe { (*stream).drain_paused() };
+        }
         if app || code != 0 || reason.len() > 1 {
             let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
@@ -2514,6 +2538,11 @@ lsquic_callback! {
                 core::slice::from_raw_parts(reason.cast::<u8>(), reason_len as usize).to_vec()
             }
         };
+        for &stream in session.streams.get().iter() {
+            // SAFETY: pointers in `streams` are unregistered before their
+            // owner is destroyed (registry invariant).
+            unsafe { (*stream).lift_read_gate() };
+        }
         session.push_event(SessionEvent::PeerClose {
             app_error: app_error == 1,
             code,

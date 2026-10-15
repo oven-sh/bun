@@ -664,6 +664,8 @@ describe("receive backpressure", () => {
       await using pair = await open(serverReadsBidi, body, 1);
       await pair.sender.closed;
       await pair.roundTrip();
+      // destroy() sends no CONNECTION_CLOSE, so the server waits out its idle timer.
+      pair.client.destroy();
       await pair.serverSession.closed.catch(() => {});
 
       const chunks: Uint8Array[] = [];

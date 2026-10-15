@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -330,6 +331,54 @@ describe("Channel", () => {
   // keeps per channel also go away in FinalizationRegistry callbacks, after the
   // collection. So check what the node test is after directly: once
   // unsubscribed, nothing holds the channels.
+  test("subscribe() after _subscribers was replaced", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { channel } = require("node:diagnostics_channel");
+          const values = {
+            number: 5, string: "abc", boolean: true, object: {}, null: null, undefined: undefined,
+            symbol: Symbol("s"), bigint: 1n, frozen: Object.freeze([]),
+          };
+          const outcome = {};
+          for (const [name, value] of Object.entries(values)) {
+            const dc = channel("replaced-" + name);
+            dc.subscribe(() => {});
+            dc._subscribers = value;
+            try {
+              dc.subscribe(() => {});
+              outcome[name] = "returned";
+            } catch (e) {
+              outcome[name] = e.constructor.name;
+            }
+          }
+          console.log(JSON.stringify(outcome));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ outcome: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      outcome: {
+        number: "returned",
+        string: "returned",
+        boolean: "returned",
+        object: "returned",
+        null: "TypeError",
+        undefined: "TypeError",
+        symbol: "returned",
+        bigint: "returned",
+        frozen: "returned",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("references are not leaked", () => {
     function noop() {}
 

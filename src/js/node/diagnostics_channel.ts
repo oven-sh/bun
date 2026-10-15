@@ -8,6 +8,7 @@ const SafeFinalizationRegistry = FinalizationRegistry;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -99,7 +100,9 @@ class ActiveChannel {
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
-    $arrayPush(this._subscribers, subscription);
+    const subscribers = ArrayPrototypeSlice.$call(this._subscribers);
+    $arrayPush(subscribers, subscription);
+    this._subscribers = subscribers;
     channels.incRef(this.name);
   }
 

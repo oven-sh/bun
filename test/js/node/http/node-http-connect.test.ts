@@ -626,7 +626,7 @@ describe("HTTP server CONNECT", () => {
     const socket = await upgradeSocket.promise;
     const highWaterMark = socket.readableHighWaterMark;
     const pongs: Buffer[] = [];
-    for (let left = highWaterMark; left > 0; ) {
+    for (let left = highWaterMark; left > 0;) {
       // A frame is 6 to 131 bytes. Never leave less than a frame.
       const length = left <= 131 ? left : Math.min(131, left - 6);
       pongs.push(frame(0xa, Buffer.alloc(length - 6)));

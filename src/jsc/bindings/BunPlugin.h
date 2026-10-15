@@ -172,7 +172,7 @@ namespace Bun {
 JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
 // Returns null if the factory has settled or the generated ES module will call it (never when `synchronous`), else a promise for that.
-JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, bool synchronous);
+JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);
 // False if the mock was replaced or removed before its factory was called.
 bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 // The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
@@ -180,7 +180,7 @@ JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
 // Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
 bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
-// Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy.
+// Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);

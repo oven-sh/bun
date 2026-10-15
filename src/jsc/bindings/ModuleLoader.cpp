@@ -433,7 +433,7 @@ static JSValue handleVirtualModuleResult(
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* moduleMock = wasModuleMock ? virtualModuleResult.getObject() : nullptr;
     if (wasModuleMock) {
-        JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock, !allowPromise || commonJSModule);
+        JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock, specifier->toWTFString(BunString::ZeroCopy), !allowPromise || commonJSModule);
         RETURN_IF_EXCEPTION(scope, {});
         if (pending)
             virtualModuleResult = pending;
@@ -616,7 +616,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (globalObject->onLoadPlugins.hasVirtualModules() && isBunTest) [[unlikely]] {
         if (JSValue moduleMock = Bun::findModuleMock(globalObject, specifier)) {
-            JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), true);
+            JSC::JSPromise* pending = Bun::runModuleMock(globalObject, moduleMock.getObject(), specifier->toWTFString(BunString::ZeroCopy), true);
             RETURN_IF_EXCEPTION(scope, {});
             JSC::JSObject* result = pending ? nullptr : Bun::resultOfModuleMock(moduleMock.getObject());
             if (!result) {

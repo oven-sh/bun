@@ -5047,6 +5047,66 @@ describe.concurrent(
   },
 );
 
+describe.concurrent("a factory that loads a module which imports another mock", () => {
+  // hook.js is mocked in part. wrapper.js is mocked by a factory that loads the real component, which imports hook.js and store.js.
+  const files = {
+    "hook.js": `import { everything } from "./everything.js"; export const useHook = () => "real"; export const other = () => everything;`,
+    "everything.js": `import { state } from "./store.js"; import { useHook } from "./hook.js"; export const everything = () => [state, useHook];`,
+    "store.js": `import { everything } from "./everything.js"; globalThis.stores = (globalThis.stores ?? 0) + 1; export const state = { uses: () => everything };`,
+    "wrapper.js": `export const Lazy = () => import("./component.js").then(m => m.Component());`,
+    "component.js": `import { useHook } from "./hook.js"; import { state } from "./store.js"; export const Component = () => useHook(); export { state };`,
+    "page.js": `import { Lazy } from "./wrapper.js"; import { useHook } from "./hook.js"; export const page = () => [useHook(), Lazy()];`,
+  };
+  const mocks = `
+    import { expect, test, vi } from "vitest";
+    vi.mock("./hook.js", async importOriginal => ({ ...(await importOriginal()), useHook: () => "mock" }));
+    vi.mock("./wrapper.js", async () => {
+      const actual = await vi.importActual("./component.js");
+      globalThis.stateOfComponent = actual.state;
+      return { Lazy: actual.Component };
+    });
+    import { page } from "./page.js";
+    import { state } from "./store.js";
+  `;
+
+  test("is called once the modules behind that mock are fetched, so what it loads gets that mock and shares them", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "shared.test.js": `${mocks}
+          test("one of each", () => {
+            expect(page()).toEqual(["mock", "mock"]);
+            expect([globalThis.stores, globalThis.stateOfComponent === state]).toEqual([1, true]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a mock that waits for the factory is a mock for what the factory loads too", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "everything.js": `import { page } from "./page.js"; ${files["everything.js"]}`,
+        "a.test.js": `${mocks}
+          test("the original of hook.js imports wrapper.js", () => {
+            expect(page()).toEqual(["mock", "mock"]);
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "vitest";
+          import { Component } from "./component.js";
+          test("until the file ends", () => {
+            expect(Component()).toBe("real");
+          });
+        `,
+      },
+      2,
+    );
+  });
+});
+
 test.concurrent(
   "a factory that asks vi.importActual() for another mocked module, which imports the one it mocks",
   async () => {

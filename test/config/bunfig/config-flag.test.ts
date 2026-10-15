@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // `-c` / `--config` must bind its path argument in every spelling.
 // https://github.com/oven-sh/bun/issues/6300, https://github.com/oven-sh/bun/issues/21431
 
-async function run(cwd: string, argv: string[]) {
+async function run(cwd: string, argv: string[], env = bunEnv) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...argv],
-    env: bunEnv,
+    env,
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -96,4 +97,96 @@ describe.concurrent("bun [run] --config path binding", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ fromCfg: "yes", argv: ["pass-through"] });
     expect(exitCode).toBe(0);
   });
+});
+
+// A path left as a positional (`./ci.toml`, `/abs/ci.toml`) was run as the program:
+// bun loaded the toml file, printed nothing and exited 0.
+describe.concurrent("-c / --config with a path", () => {
+  const ci = `[define]\n"process.env.FROM_CFG" = '"ci"'\n\n[install]\nsaveTextLockfile = false\n`;
+  const files = {
+    "proj/package.json": JSON.stringify({
+      name: "proj",
+      version: "1.0.0",
+      workspaces: ["dep"],
+      scripts: { build: "echo built > built.txt" },
+      dependencies: { dep: "workspace:*" },
+    }),
+    "proj/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "proj/ci.toml": ci,
+    "proj/config/ci.toml": ci,
+    "proj/main.ts": `console.log("main cfg=" + (process.env.FROM_CFG ?? "none"));`,
+    "proj/x.test.ts": `import { test } from "bun:test"; test("t", () => console.log("test cfg=" + (process.env.FROM_CFG ?? "none")));`,
+  };
+
+  const flags: [string, (proj: string) => string[]][] = [
+    ["--config=./ci.toml", () => ["--config=./ci.toml"]],
+    ["--config ci.toml", () => ["--config", "ci.toml"]],
+    ["--config ./ci.toml", () => ["--config", "./ci.toml"]],
+    ["-c ./ci.toml", () => ["-c", "./ci.toml"]],
+    ["-c ../proj/ci.toml", () => ["-c", "../proj/ci.toml"]],
+    ["-c <absolute>/ci.toml", proj => ["-c", join(proj, "ci.toml")]],
+    ["-c config/ci.toml", () => ["-c", "config/ci.toml"]],
+  ];
+
+  // What each command leaves behind when it ran with ci.toml loaded.
+  const ran = {
+    "main.ts": { printed: ["main cfg=ci"], made: [] },
+    "test": { printed: ["test cfg=ci"], made: [] },
+    "install": { printed: [], made: ["node_modules/dep", "bun.lockb"] },
+    "run build": { printed: [], made: ["built.txt"] },
+  };
+  type Placement = [command: keyof typeof ran, beforeFlag: string[], afterFlag: string[]];
+  const keywordFirst: Placement[] = [
+    ["main.ts", [], ["main.ts"]],
+    ["test", ["test"], []],
+    ["install", ["install"], []],
+    ["run build", ["run"], ["build"]],
+  ];
+  const flagFirst: Placement[] = [
+    ["test", [], ["test"]],
+    ["install", [], ["install"]],
+    ["run build", [], ["run", "build"]],
+  ];
+  const cases = (spellings: typeof flags, placements: Placement[]) =>
+    spellings.flatMap(([spelling, flag]) =>
+      placements.map(
+        ([command, before, after]) =>
+          [
+            [...before, spelling, ...after].join(" "),
+            ran[command],
+            (proj: string) => [...before, ...flag(proj), ...after],
+          ] as const,
+      ),
+    );
+
+  async function check(_title: string, want: (typeof ran)[keyof typeof ran], argv: (proj: string) => string[]) {
+    using dir = tempDir("config-flag-path", files);
+    const proj = join(String(dir), "proj");
+    // A regression that sends the path to `bun add` must stay off the public registry.
+    const registryHits: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        registryHits.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const { stdout, exitCode } = await run(proj, argv(proj), { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href });
+
+    expect({
+      printed: stdout.split(/\r?\n/).filter(line => line.includes("cfg=")),
+      made: ["built.txt", "node_modules/dep", "bun.lock", "bun.lockb"].filter(file => existsSync(join(proj, file))),
+      registryHits,
+      exitCode,
+    }).toEqual({ ...want, registryHits: [], exitCode: 0 });
+  }
+
+  test.each(cases(flags, keywordFirst))("bun %s", check);
+  test.each(cases(flags.slice(0, 1), flagFirst))("bun %s", check);
+
+  // `Command::which()` picks the command before any flag value is parsed, so a path in its own
+  // token in front of a keyword is taken for the command: `Script not found "test"`, and for
+  // `run` the usage text with exit 0. `--cwd <dir>` and `--env-file <file>` do the same.
+  test.todo.each(cases(flags.slice(1), flagFirst))("bun %s", check);
 });

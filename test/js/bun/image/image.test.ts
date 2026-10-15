@@ -434,6 +434,10 @@ describe("Bun.Image", () => {
       ["right top", 3, 0],
       ["left bottom", 0, 3],
       ["right bottom", 3, 3],
+      ["top left", 0, 0],
+      ["top right", 3, 0],
+      ["bottom left", 0, 3],
+      ["bottom right", 3, 3],
     ] as const)('fit: "cover" crops at position %p', async (position, x, y) => {
       const crop = async (w: number, h: number) => {
         const png = makePng(w, h, (px, py) => [px * 40, py * 40, 0, 255]);
@@ -455,8 +459,8 @@ describe("Bun.Image", () => {
       const img = () => new Bun.Image(gradientPng);
       expect(() => img().resize(8, 8, { position: "top" })).toThrow("position requires fit: 'cover'");
       expect(() => img().resize(8, 8, { fit: "inside", position: "top" })).toThrow("position requires fit: 'cover'");
-      expect(() => img().resize(8, 8, { fit: "cover", position: "top left" as any })).toThrow(
-        "position must be one of 'center', 'centre', 'top', 'right top', 'right', 'right bottom', 'bottom', 'left bottom', 'left' or 'left top'",
+      expect(() => img().resize(8, 8, { fit: "cover", position: "top-left" as any })).toThrow(
+        "position must be one of 'center', 'centre', 'top', 'right top', 'top right', 'right', 'right bottom', 'bottom right', 'bottom', 'left bottom', 'bottom left', 'left', 'left top' or 'top left'",
       );
       expect(() => img().resize(8, 8, { fit: "contain" as any })).toThrow(
         "fit must be one of 'fill', 'inside' or 'cover'",

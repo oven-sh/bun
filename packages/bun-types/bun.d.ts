@@ -9456,12 +9456,16 @@ declare module "bun" {
         | "centre"
         | "top"
         | "right top"
+        | "top right" // alias for "right top"
         | "right"
         | "right bottom"
+        | "bottom right" // alias for "right bottom"
         | "bottom"
         | "left bottom"
+        | "bottom left" // alias for "left bottom"
         | "left"
-        | "left top";
+        | "left top"
+        | "top left"; // alias for "left top"
       /**
        * Never upscale — if the source is already smaller, leave it. With
        * `fit: "cover"` the image is then only cropped, so the result can be

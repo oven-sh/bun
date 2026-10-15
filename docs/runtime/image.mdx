@@ -70,7 +70,7 @@ img.resize(800, 600, { filter: "mitchell" });
 | `"inside"`         | Preserve aspect ratio; result fits _within_ the box                       |
 | `"cover"`          | Preserve aspect ratio; scale until the image covers the box, then crop it |
 
-With `fit: "cover"`, `position` picks the part of the image to keep: `"center"` (the default), `"top"`, `"right top"`, `"right"`, `"right bottom"`, `"bottom"`, `"left bottom"`, `"left"` or `"left top"`. `resize()` throws if you pass `position` with any other `fit`.
+With `fit: "cover"`, `position` picks the part of the image to keep: `"center"` (the default), `"top"`, `"right top"`, `"right"`, `"right bottom"`, `"bottom"`, `"left bottom"`, `"left"` or `"left top"`. A corner can also be written the other way round, such as `"top left"`. `resize()` throws if you pass `position` with any other `fit`.
 
 With `withoutEnlargement`, cover never scales the image up. If the image is at least as large as the box on both sides, cover scales it down only if needed and crops any overflow. If the image is smaller than the box on either side, the image keeps its size and cover only crops what overflows the box, so a 500×200 image resized to 400×400 becomes 400×200.
 

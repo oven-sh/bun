@@ -186,6 +186,11 @@ bun_core::comptime_string_map! {
         b"right bottom" => Position::RightBottom,
         b"left bottom" => Position::LeftBottom,
         b"left top" => Position::LeftTop,
+        // The corners in the other order too, as CSS's `object-position` allows.
+        b"top right" => Position::RightTop,
+        b"bottom right" => Position::RightBottom,
+        b"bottom left" => Position::LeftBottom,
+        b"top left" => Position::LeftTop,
     };
 }
 impl jsc::FromJsEnum for Position {
@@ -194,7 +199,7 @@ impl jsc::FromJsEnum for Position {
             global,
             prop,
             &POSITION_MAP,
-            "'center', 'centre', 'top', 'right top', 'right', 'right bottom', 'bottom', 'left bottom', 'left' or 'left top'",
+            "'center', 'centre', 'top', 'right top', 'top right', 'right', 'right bottom', 'bottom right', 'bottom', 'left bottom', 'bottom left', 'left', 'left top' or 'top left'",
         )
     }
 }

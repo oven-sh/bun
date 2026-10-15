@@ -22,24 +22,21 @@ const dir = String(
       export const handle = await fs.promises.open(import.meta.path, "r");
     `,
     "dep.mjs": `export const dep = { tag: typeof TAG === "undefined" ? "host" : TAG };`,
-    // Not awaited: Bun's periodic collections start once the main module has been evaluated.
     "host-that-only-disposes.mjs": `
-      (async () => {
-        let collected = 0;
-        const registry = new FinalizationRegistry(() => { collected++; });
-        const graphs = [];
-        for (let i = 0; i < 5; i++) {
-          const graph = new Bun.ModuleGraph();
-          registry.register((await graph.import(import.meta.dir + "/dep.mjs")).dep, i);
-          graphs.push(graph);
-        }
-        // What has lived through a collection is freed only by a full one.
-        Bun.gc(true);
-        for (const graph of graphs) graph.dispose();
-        for (let turns = 0; turns < 1000 && !collected; turns++) await new Promise(resolve => setTimeout(resolve, 1));
-        console.log(JSON.stringify({ collected: collected > 0 }));
-        process.exit(0);
-      })();
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => { collected++; });
+      const graphs = [];
+      for (let i = 0; i < 5; i++) {
+        const graph = new Bun.ModuleGraph();
+        registry.register((await graph.import(import.meta.dir + "/dep.mjs")).dep, i);
+        graphs.push(graph);
+      }
+      // What has lived through a collection is freed only by a full one.
+      Bun.gc(true);
+      for (const graph of graphs) graph.dispose();
+      for (let turns = 0; turns < 1000 && !collected; turns++) await new Promise(resolve => setTimeout(resolve, 1));
+      console.log(JSON.stringify({ collected: collected > 0 }));
+      process.exit(0);
     `,
     "esm.mjs": `
       import { dep } from "./dep.mjs";

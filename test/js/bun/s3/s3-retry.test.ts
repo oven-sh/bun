@@ -156,7 +156,9 @@ function bucketOfAWaitingUpload() {
       upload.resolve(asked);
       return fails(503, "SlowDown", { "Retry-After": "60" });
     }
-    await (await upload.promise).closed;
+    await (
+      await upload.promise
+    ).closed;
     return ok(asked);
   });
 }

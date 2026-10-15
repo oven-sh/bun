@@ -1,10 +1,10 @@
 use crate as css;
 use crate::css_parser::{CssResult as Result, Parser, Token};
-use crate::generics::{CssEql as _, DeepClone as _};
+use crate::generics::{CssEql as _, DeepClone as _, Parse as _};
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
-use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::number::{CSSNumber, CSSNumberFns, NonNegative};
 use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percentage};
 use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
@@ -877,7 +877,7 @@ impl WebKitGradient {
                 // Webkit radial gradients are always circles, not ellipses, and must be specified in pixels.
                 let radius = match &radial.shape {
                     EndingShape::Circle(circle) => match circle {
-                        Circle::Radius(r) => r.to_px()?,
+                        Circle::Radius(r) => r.0.to_px()?,
                         _ => return None,
                     },
                     _ => return None,
@@ -1270,9 +1270,9 @@ impl<D: GradientPosition> ColorStop<D> {
 #[derive(Clone, PartialEq)]
 pub struct EllipseSize {
     /// The x-radius of the ellipse.
-    pub(crate) x: LengthPercentage,
+    pub(crate) x: NonNegative<LengthPercentage>,
     /// The y-radius of the ellipse.
-    pub(crate) y: LengthPercentage,
+    pub(crate) y: NonNegative<LengthPercentage>,
 }
 
 /// An ellipse ending shape for a `radial-gradient()`.
@@ -1301,8 +1301,8 @@ impl Ellipse {
             return Ok(Ellipse::Extent(extent));
         }
 
-        if let Ok(x) = input.try_parse(LengthPercentage::parse) {
-            let y = LengthPercentage::parse(input)?;
+        if let Ok(x) = input.try_parse(NonNegative::<LengthPercentage>::parse) {
+            let y = NonNegative::<LengthPercentage>::parse(input)?;
             // The `ellipse` keyword is optional if there are two lengths.
             let _ = input.try_parse(|i| i.expect_ident_matching(b"ellipse"));
             return Ok(Ellipse::Size(EllipseSize { x, y }));
@@ -1316,8 +1316,8 @@ impl Ellipse {
                 return Ok(Ellipse::Extent(extent));
             }
 
-            if let Ok(x) = input.try_parse(LengthPercentage::parse) {
-                let y = LengthPercentage::parse(input)?;
+            if let Ok(x) = input.try_parse(NonNegative::<LengthPercentage>::parse) {
+                let y = NonNegative::<LengthPercentage>::parse(input)?;
                 return Ok(Ellipse::Size(EllipseSize { x, y }));
             }
 
@@ -1332,9 +1332,9 @@ impl Ellipse {
         // The `ellipse` keyword is optional, so we don't emit it.
         match self {
             Ellipse::Size(s) => {
-                s.x.to_css(dest)?;
+                s.x.0.to_css(dest)?;
                 dest.write_char(b' ')?;
-                s.y.to_css(dest)
+                s.y.0.to_css(dest)
             }
             Ellipse::Extent(e) => e.to_css(dest),
         }
@@ -1359,7 +1359,7 @@ pub enum ShapeExtent {
 #[derive(Clone, PartialEq)]
 pub enum Circle {
     /// A circle with a specified radius.
-    Radius(Length),
+    Radius(NonNegative<Length>),
     /// A shape extent keyword.
     Extent(ShapeExtent),
 }
@@ -1372,7 +1372,7 @@ impl Circle {
             return Ok(Circle::Extent(extent));
         }
 
-        if let Ok(length) = input.try_parse(Length::parse) {
+        if let Ok(length) = input.try_parse(NonNegative::<Length>::parse) {
             // The `circle` keyword is optional if there is only a single length.
             // We are assuming here that Ellipse.parse ran first.
             let _ = input.try_parse(|i| i.expect_ident_matching(b"circle"));
@@ -1387,7 +1387,7 @@ impl Circle {
                 return Ok(Circle::Extent(extent));
             }
 
-            if let Ok(length) = input.try_parse(Length::parse) {
+            if let Ok(length) = input.try_parse(NonNegative::<Length>::parse) {
                 return Ok(Circle::Radius(length));
             }
 
@@ -1400,7 +1400,7 @@ impl Circle {
 
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            Circle::Radius(r) => r.to_css(dest),
+            Circle::Radius(r) => r.0.to_css(dest),
             Circle::Extent(extent) => {
                 dest.write_str(b"circle")?;
                 if *extent != ShapeExtent::FarthestCorner {

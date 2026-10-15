@@ -763,14 +763,14 @@ Bun uses the first of these variables that is set:
 
 | Order | Variables                                                      | Adapter                 |
 | ----- | -------------------------------------------------------------- | ----------------------- |
-| 1     | `POSTGRES_URL`, `PGURL`, `PG_URL`, `TLS_POSTGRES_DATABASE_URL` | PostgreSQL              |
-| 2     | `MYSQL_URL`, `TLS_MYSQL_DATABASE_URL`                          | MySQL                   |
-| 3     | `MARIADB_URL`, `TLS_MARIADB_DATABASE_URL`                      | MariaDB                 |
-| 4     | `SQLITE_URL`                                                   | SQLite                  |
-| 5     | `DATABASE_URL`, `TLS_DATABASE_URL`                             | From the URL's protocol |
+| 1     | `DATABASE_URL`, `TLS_DATABASE_URL`                             | From the URL's protocol |
+| 2     | `POSTGRES_URL`, `PGURL`, `PG_URL`, `TLS_POSTGRES_DATABASE_URL` | PostgreSQL              |
+| 3     | `MYSQL_URL`, `TLS_MYSQL_DATABASE_URL`                          | MySQL                   |
+| 4     | `MARIADB_URL`, `TLS_MARIADB_DATABASE_URL`                      | MariaDB                 |
+| 5     | `SQLITE_URL`                                                   | SQLite                  |
 
 - A URL that Bun reads from a `TLS_*` variable uses at least `sslmode=require`. If you pass `process.env.TLS_DATABASE_URL` to `new SQL()` yourself, add `?sslmode=require` or `tls: true`.
-- With the `adapter` option, Bun reads only that adapter's variables and then `DATABASE_URL`. It skips a `DATABASE_URL` whose protocol names another adapter.
+- With the `adapter` option, Bun reads `DATABASE_URL` and then only that adapter's variables. It skips a `DATABASE_URL` whose protocol names another adapter.
 
 ### PostgreSQL Environment Variables
 

@@ -1110,18 +1110,36 @@ describe("SQL adapter environment variable precedence", () => {
     const pg = "postgres://pu:pp@pghost:1/pd";
     const my = "mysql://mu:mp@myhost:2/md";
     test.each<Row>([
-      ["POSTGRES_URL before DATABASE_URL", { DATABASE_URL: envUrl, POSTGRES_URL: pg }, [], { hostname: "pghost" }],
+      ["DATABASE_URL before POSTGRES_URL", { DATABASE_URL: envUrl, POSTGRES_URL: pg }, [], { hostname: "envhost" }],
       [
-        "MYSQL_URL before DATABASE_URL",
+        "DATABASE_URL before MYSQL_URL",
         { DATABASE_URL: pg, MYSQL_URL: my },
         [],
-        { adapter: "mysql", hostname: "myhost" },
+        { adapter: "postgres", hostname: "pghost" },
       ],
       [
-        "TLS_POSTGRES_DATABASE_URL before DATABASE_URL",
+        "DATABASE_URL before SQLITE_URL",
+        { DATABASE_URL: pg, SQLITE_URL: "sqlite://x.db" },
+        [],
+        { adapter: "postgres", hostname: "pghost" },
+      ],
+      [
+        "DATABASE_URL before TLS_POSTGRES_DATABASE_URL",
         { DATABASE_URL: envUrl, TLS_POSTGRES_DATABASE_URL: pg },
         [],
-        { hostname: "pghost", sslMode: 2 },
+        { hostname: "envhost", sslMode: 0 },
+      ],
+      [
+        "{ adapter: 'postgres' }: DATABASE_URL before POSTGRES_URL",
+        { DATABASE_URL: envUrl, POSTGRES_URL: pg },
+        [{ adapter: "postgres" }],
+        { hostname: "envhost" },
+      ],
+      [
+        "POSTGRES_URL before MYSQL_URL",
+        { POSTGRES_URL: pg, MYSQL_URL: my },
+        [],
+        { adapter: "postgres", hostname: "pghost" },
       ],
       [
         "{ adapter: 'mysql' }: MYSQL_URL, not the PostgreSQL DATABASE_URL",

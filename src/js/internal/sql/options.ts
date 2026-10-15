@@ -107,11 +107,11 @@ function schemeOf(target: string | URL): string {
 
 // The adapter a name implies, then the names in the order they are read.
 const ENVIRONMENT_URLS: [Adapter | null, ...string[]][] = [
+  [null, "DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL"],
   ["postgres", "POSTGRES_URL", "PGURL", "PG_URL", "TLS_POSTGRES_DATABASE_URL"],
   ["mysql", "MYSQL_URL", "MYSQLURL", "TLS_MYSQL_DATABASE_URL"],
   ["mariadb", "MARIADB_URL", "MARIADBURL", "TLS_MARIADB_DATABASE_URL"],
   ["sqlite", "SQLITE_URL", "SQLITEURL"],
-  [null, "DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL"],
 ];
 
 function urlFromEnvironment(

@@ -369,7 +369,7 @@ describe("which string names the database", () => {
     [{ SQLITE_URL: "sqlite://env.db" }, [], "env.db"],
     [{ SQLITEURL: "env.db" }, [{ adapter: "sqlite" }], "env.db"],
     [{ SQLITE_URL: "env.db", DATABASE_URL: server }, [{ adapter: "sqlite" }], "env.db"],
-    [{ SQLITE_URL: "env.db", DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "env.db"],
+    [{ SQLITE_URL: "env.db", DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "generic.db"],
     [{ SQLITE_URL: "env.db" }, [{ adapter: "sqlite", hostname: "h" } as never], "env.db"],
     [{ SQLITE_URL: "env.db" }, ["", { adapter: "sqlite" }], "env.db"],
 

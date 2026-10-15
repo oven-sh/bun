@@ -386,8 +386,8 @@ declare module "bun" {
        * the default) or `memory`. Any other mode throws. The `readonly` and
        * `create` options take priority over it.
        *
-       * Without a `filename`, Bun reads `SQLITE_URL`, then a `DATABASE_URL`
-       * that is not a PostgreSQL, MySQL or MariaDB URL.
+       * Without a `filename`, Bun reads a `DATABASE_URL` that is not a
+       * PostgreSQL, MySQL or MariaDB URL, then `SQLITE_URL`.
        *
        * @default ":memory:"
        */

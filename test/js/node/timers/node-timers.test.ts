@@ -351,7 +351,7 @@ describe("_idleStart", () => {
 });
 
 describe("_repeat", () => {
-  type TimerWithRepeat = Timer & { _repeat: number | null };
+  type TimerWithRepeat = NodeJS.Timeout & { _repeat: number | null };
 
   // Each statement runs in the first callback of a setTimeout whose `_repeat` is set.
   const clearsInCallback = [

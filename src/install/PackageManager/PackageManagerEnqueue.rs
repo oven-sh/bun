@@ -1139,12 +1139,17 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
         return;
     };
     if !asked.version.tag.is_npm()
-        // `Wanted` keeps the text of a range, and a version that a command made up has none.
-        || asked.version.literal.is_empty()
+        // `Wanted` keeps the text of a range, and a range that a command made up has none. A tag
+        // without text is what `bun add <name>` and `"name": ""` ask for, and it means `latest`.
+        || (asked.version.tag == dependency::version::Tag::Npm
+            && asked.version.literal.is_empty())
         || unsafe_name(&this.lockfile, &dependency, &asked).is_some()
     {
         return;
     }
+    // The rows of a package that the peer pass added are queued like any other package's. Its
+    // peers are in the next batch, and all they wait for is their turn.
+    let install_peer = item.install_peer || this.look_ahead.in_peer_pass;
     let latest_for_target = picks_latest_tag(
         this,
         &dependency,
@@ -1163,7 +1168,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
         asked.version_was_replaced,
         id,
         resolution,
-        item.install_peer,
+        install_peer,
         latest_for_target,
     );
     if settled.is_some() || this.look_ahead.seen.insert(asked.name_hash, ()).is_some() {
@@ -1175,7 +1180,7 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
         asked.version.literal.slice(buf),
         asked.name.slice(buf),
         asked.name_hash,
-        item.install_peer || this.look_ahead.in_peer_pass,
+        install_peer,
     );
     look_ahead(this, wanted);
 }
@@ -1286,9 +1291,11 @@ fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut
     }
 
     let bundled = package.bundled_dependencies.get(&manifest.bundled_deps_buf);
+    // Only the first entry of a name is followed. An optional dependency goes first because it
+    // replaces a dependency of the same name.
     for (group, is_peer) in [
-        (package.dependencies, false),
         (package.optional_dependencies, false),
+        (package.dependencies, false),
         (package.peer_dependencies, true),
     ] {
         // Before the peer pass nobody can tell whether the tree will provide a peer.

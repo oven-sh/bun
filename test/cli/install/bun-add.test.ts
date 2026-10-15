@@ -3523,6 +3523,32 @@ it("should add multiple dependencies specified on command line", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("requests the manifests of all the packages on the command line at once", async () => {
+  const registry = dummyRegistry([]);
+  const lastWasRequested = Promise.withResolvers<void>();
+  setHandler(async request => {
+    if (request.url.endsWith("/moo")) lastWasRequested.resolve();
+    if (request.url.endsWith("/bar")) await lastWasRequested.promise;
+    return registry(request);
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "bar", "baz", "moo", "--lockfile-only"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: { bar: "^0.0.2", baz: "^0.0.2", moo: "^0.0.2" },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("should install tarball with tarball dependencies", async () => {
   // This test verifies that tarballs containing dependencies that are also tarballs
   // can be installed correctly. Regression test for URL corruption bug where

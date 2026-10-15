@@ -5611,6 +5611,45 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("requests the peers that wait for the next round while a dependency waits for its manifest", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = {
+        first: { "1.0.0": { peerDependencies: { near: "1.0.0" } } },
+        second: { "1.0.0": { peerDependencies: { other: "1.0.0" } } },
+        near: { "1.0.0": { peerDependencies: { far: "1.0.0" } } },
+        other: { "1.0.0": { dependencies: { slow: "1.0.0" } } },
+        far: { "1.0.0": {} },
+        slow: { "1.0.0": {} },
+      };
+      setContextHandler(ctx, heldRegistry(ctx, [], registry, { slow: "far" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { first: "1.0.0", second: "1.0.0" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "far": "far@1.0.0",
+        "first": "first@1.0.0",
+        "near": "near@1.0.0",
+        "other": "other@1.0.0",
+        "second": "second@1.0.0",
+        "slow": "slow@1.0.0",
+      });
+    });
+  });
+
+  it("requests the manifests of dependencies with an empty version at once", async () => {
+    await withContext(defaultOpts, async ctx => {
+      setContextHandler(ctx, heldRegistry(ctx, [], { holder: kept, kept, short }, { holder: "short" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { holder: "", kept: "", short: "" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "holder": "holder@1.0.0",
+        "kept": "kept@1.0.0",
+        "short": "short@1.0.0",
+      });
+    });
+  });
+
   it("reports a registry URL that cannot be used once, when two dependencies ask for the same package", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeProject(

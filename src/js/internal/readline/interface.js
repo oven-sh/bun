@@ -27,6 +27,8 @@ const {
   StringPrototypeCodePointAt,
   StringPrototypeEndsWith,
   StringPrototypeIncludes,
+  StringPrototypeIndexOf,
+  StringPrototypeLastIndexOf,
   StringPrototypeRepeat,
   StringPrototypeReplaceAll,
   StringPrototypeSlice,
@@ -615,6 +617,46 @@ class Interface extends InterfaceConstructor {
     if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
       if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
       this[kSawReturnAt] = 0;
+    }
+
+    // The line buffer never holds "\r", "\u2028" or "\u2029": every one of them
+    // ends a line, so only the new chunk needs the check. When the chunk has
+    // none of them, "\n" is the only line ending and indexOf finds each line
+    // without the match array that RegExpPrototypeExec allocates per line.
+    if (
+      StringPrototypeIndexOf(string, "\r") === -1 &&
+      StringPrototypeIndexOf(string, "\u2028") === -1 &&
+      StringPrototypeIndexOf(string, "\u2029") === -1
+    ) {
+      let newline = StringPrototypeIndexOf(string, "\n");
+      if (newline === -1) {
+        if (string) {
+          // No newlines this time, save what we have for next time
+          if (this[kLine_buffer]) {
+            this[kLine_buffer] += string;
+          } else {
+            this[kLine_buffer] = string;
+          }
+        }
+        return;
+      }
+      if (this[kLine_buffer]) {
+        newline += this[kLine_buffer].length;
+        string = this[kLine_buffer] + string;
+        this[kLine_buffer] = null;
+      }
+      this[kSawReturnAt] = 0;
+      const lastNewline = StringPrototypeLastIndexOf(string, "\n");
+      // Either '' or (conceivably) the unfinished portion of the next line
+      this[kLine_buffer] = StringPrototypeSlice(string, lastNewline + 1);
+      let start = 0;
+      while (true) {
+        this[kOnLine](StringPrototypeSlice(string, start, newline));
+        if (newline === lastNewline) break;
+        start = newline + 1;
+        newline = StringPrototypeIndexOf(string, "\n", start);
+      }
+      return;
     }
 
     // Run test() on the new string chunk, not on the entire line buffer.

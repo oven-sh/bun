@@ -260,6 +260,9 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// The preloads of a reload loaded, and stay listed for the reload that was deferred
+    /// meanwhile: it loads them once more.
+    pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
@@ -293,7 +296,7 @@ pub struct VirtualMachine {
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
-    pub(crate) hot_reload_deferred: bool,
+    pub hot_reload_deferred: bool,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,

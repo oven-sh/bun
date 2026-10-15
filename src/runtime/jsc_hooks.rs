@@ -715,6 +715,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: per fn contract.
         unsafe { (*vm_for_guard).is_in_preload = false };
     }
+    // SAFETY: per fn contract.
+    let kept_for_this_walk = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
@@ -825,47 +827,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
-        {
-            // SAFETY: per fn contract.
-            if unsafe { &*vm }.is_watcher_enabled() {
-                // pending_internal_promise can change if hot module reloading is
-                // enabled.
-                // SAFETY: `el` is the live per-thread event loop.
-                let el = unsafe { &*vm }.event_loop();
-                loop {
-                    // SAFETY: `pending_internal_promise` was set just above (or
-                    // swapped by HMR to another live cell); `status()` is a
-                    // read-only FFI call on a live JSC heap cell.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (set just above or
-                    // the protected `promise` fallback).
-                    if unsafe { &*pip }.status() != PromiseStatus::Pending {
-                        break;
-                    }
-                    // SAFETY: `el` is the live per-thread event loop.
-                    unsafe { (*el).tick() };
-                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-                    let pip = unsafe { &*vm }
-                        .pending_internal_promise()
-                        .unwrap_or(promise);
-                    // SAFETY: `pip` is a live JSC heap cell (see above).
-                    if unsafe { &*pip }.status() == PromiseStatus::Pending {
-                        // SAFETY: per fn contract — short-lived `&mut *vm` for the
-                        // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
-                    }
-                }
-            } else {
-                // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
-                // live protected JSC heap cell.
-                let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
-            }
-        }
+        // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
+        // protected JSC heap cell.
+        let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };
 
         // SAFETY: `promise` is a live (still-protected) JSC heap cell.
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {
@@ -882,13 +846,18 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // Under --isolate each test file gets
     // a fresh global, so preloads must re-execute for every file. Otherwise,
-    // only load preloads once.
-    // SAFETY: per fn contract.
-    if !unsafe { &*vm }.test_isolation_enabled {
+    // only load preloads once. One more time for a reload that was deferred
+    // while the preloads of a reload loaded: this walk can have read a file
+    // before that save, or in the middle of it. Once, because a preload that
+    // saves a watched file each time would not end.
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    let vm = unsafe { &mut *vm };
+    vm.preloads_kept_for_reload =
+        vm.hot_reload_deferred && vm.hot_reload_counter != 0 && !kept_for_this_walk;
+    if !vm.test_isolation_enabled && !vm.preloads_kept_for_reload {
         // `Vec::clear` drops the `Box<[u8]>`
         // payloads but keeps capacity.
-        // SAFETY: per fn contract — `vm` is the live per-thread VM.
-        unsafe { (*vm).preload.clear() };
+        vm.preload.clear();
     }
 
     Ok(ptr::null_mut())

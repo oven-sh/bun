@@ -7,7 +7,8 @@ use crate::css_properties::Property;
 use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::Length;
-use crate::generics::{CssEql, DeepClone, IsCompatible};
+use crate::css_values::number::NonNegative;
+use crate::generics::{CssEql, DeepClone, IsCompatible, Parse as _};
 use crate::prefixes::Feature;
 use bun_alloc::Arena;
 use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate)
@@ -21,7 +22,7 @@ pub struct BoxShadow {
     /// The y offset of the shadow.
     pub(crate) y_offset: Length,
     /// The blur radius of the shadow.
-    pub(crate) blur: Length,
+    pub(crate) blur: NonNegative<Length>,
     /// The spread distance of the shadow.
     pub(crate) spread: Length,
     /// Whether the shadow is inset within the box.
@@ -57,7 +58,7 @@ impl BoxShadow {
         struct Lengths {
             x: Length,
             y: Length,
-            blur: Length,
+            blur: NonNegative<Length>,
             spread: Length,
         }
         let mut lengths: Option<Lengths> = None;
@@ -78,12 +79,17 @@ impl BoxShadow {
                 let value = input.try_parse(|p: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(p)?;
                     let vertical = Length::parse(p)?;
-                    let blur = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
-                    let spread = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
+                    let blur = p.try_parse(NonNegative::<Length>::parse).ok();
+                    // A rejected blur radius must not be reinterpreted as a spread.
+                    let spread = if blur.is_some() {
+                        p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero)
+                    } else {
+                        Length::zero()
+                    };
                     Ok(Lengths {
                         x: horizontal,
                         y: vertical,
-                        blur,
+                        blur: blur.unwrap_or_else(|| NonNegative(Length::zero())),
                         spread,
                     })
                 });
@@ -127,9 +133,9 @@ impl BoxShadow {
         dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
-        if self.blur != Length::zero() || self.spread != Length::zero() {
+        if self.blur != NonNegative(Length::zero()) || self.spread != Length::zero() {
             dest.write_char(b' ')?;
-            self.blur.to_css(dest)?;
+            self.blur.0.to_css(dest)?;
 
             if self.spread != Length::zero() {
                 dest.write_char(b' ')?;

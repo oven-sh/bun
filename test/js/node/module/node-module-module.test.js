@@ -225,6 +225,47 @@ describe.concurrent("node-module-module", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("module.constructor is Module before anything loads node:module", async () => {
+      using dir = tempDir("module-prototype-compile-ctor", {
+        "main.js": `
+          const ctor = module.constructor;
+          const protoRequire = Object.getPrototypeOf(module).require;
+          const Module = require("node:module");
+          console.log(JSON.stringify({
+            ctor: ctor === Module,
+            protoRequire: typeof protoRequire === "function",
+            instance: module instanceof Module,
+            compile: Object.getPrototypeOf(module)._compile === Module.prototype._compile,
+          }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ ctor: true, protoRequire: true, instance: true, compile: true });
+    });
+
+    test("bun build --format=cjs output with a hashbang reaches the hook as its body", async () => {
+      using dir = tempDir("module-prototype-compile-bundled", {
+        ...files,
+        "src.js": "#!/usr/bin/env bun\nmodule.exports = require('./nested.js') + 1;\n",
+        "main.js": `
+          const { compiled } = require("./hook.js");
+          const result = require("./out/bundled.cjs");
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), result }));
+        `,
+      });
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--target=bun", "--format=cjs", "--outfile=out/bundled.cjs", "src.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await build.stderr.text()).toBe("");
+      expect(await build.exited).toBe(0);
+      const bundled = await Bun.file(`${dir}/out/bundled.cjs`).text();
+      expect(bundled.startsWith("#!/usr/bin/env bun\n// @bun @bun-cjs\n(function(")).toBe(true);
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["bundled.cjs"], result: 101 });
+    });
+
     test("Module.prototype is the prototype of module objects", () => {
       const entry =
         require.cache[require.resolve("./extensions-fixture/d.js")] ??

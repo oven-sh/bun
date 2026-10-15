@@ -319,13 +319,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
 // The transpiler prints a CommonJS module as
 //   (function(exports, require, module, __filename, __dirname[, $Bun_import_meta]) {<body>});
-// after a `// @bun` header line when `bun build` made it. Returns the body, or a null string
-// when the source has no wrapper.
+// `bun build` output puts a hashbang and a `// @bun` header line before it. Returns the body,
+// or a null string when the source has no wrapper.
 static String stripCommonJSWrapper(StringView source)
 {
     size_t start = 0;
-    if (source.startsWith("// @bun"_s)) {
-        start = source.find('\n');
+    while (source.substring(start).startsWith("#!"_s) || source.substring(start).startsWith("//"_s)) {
+        start = source.find('\n', start);
         if (start == WTF::notFound)
             return {};
         start++;
@@ -1026,6 +1026,11 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+        this->putDirectCustomAccessor(
+            vm,
+            clientData(vm)->builtinNames().requirePublicName(),
+            JSC::CustomGetterSetter::create(vm, getterRequireFunction, setterRequireFunction),
+            0);
     }
 };
 
@@ -1403,6 +1408,15 @@ Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject)
 {
     return JSCommonJSModule::createStructure(globalObject);
+}
+
+// The structure, prototype and constructor (`require("node:module")`) of CommonJS module
+// objects are one lazy class: `module.constructor` is `Module` before anything loads node:module.
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto* globalObject = static_cast<Zig::GlobalObject*>(init.global);
+    init.setStructure(JSCommonJSModule::createStructure(globalObject));
+    init.setConstructor(createNodeModuleConstructor(init.vm, globalObject));
 }
 
 void JSCommonJSModule::setModuleGraph(JSC::VM& vm, JSModuleGraph* graph)

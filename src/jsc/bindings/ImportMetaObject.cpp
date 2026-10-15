@@ -247,7 +247,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 args.append(jsBoolean(false));
                 args.append(resolveFilenameOptions);
 
-                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                JSValue thisValue = globalObject->nodeModuleConstructor();
                 JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!isRequireDotResolve) {

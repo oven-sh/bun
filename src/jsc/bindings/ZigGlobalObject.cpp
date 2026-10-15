@@ -2210,6 +2210,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSStatsClassStructure(init);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleClassStructure), [](LazyClassStructure::Initializer& init) {
+             Bun::initCommonJSModuleClassStructure(init);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsBigIntClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSBigIntStatsClassStructure(init);
          } },
@@ -2377,9 +2380,6 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_S3ErrorStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::createS3ErrorStructure(init.vm, init.owner));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_commonJSModuleObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::createCommonJSModuleStructure(static_cast<Zig::GlobalObject*>(init.owner)));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSSocketAddressDTOStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));

@@ -453,7 +453,8 @@ describe("receive backpressure", () => {
       name: "a client does not read the answer on its own bidirectional stream",
       alpn: "quic-test",
       writer: "server",
-      clientParams: { initialMaxStreamDataBidiLocal: WINDOW },
+      // The second window is for the stream that `roundTrip()` opens from the server.
+      clientParams: { initialMaxStreamDataBidiLocal: WINDOW, initialMaxStreamDataBidiRemote: WINDOW },
       onServerStream(stream, ends) {
         stream.setBody(ends.payload);
         ends.sender.resolve(stream);
@@ -497,16 +498,16 @@ describe("receive backpressure", () => {
   async function open(shape: Shape, payload: Uint8Array, idle = 10) {
     const ends: Ends = { payload, sender: Promise.withResolvers(), receiver: Promise.withResolvers() };
     const serverSession = Promise.withResolvers<any>();
-    const markers: PromiseWithResolvers<void>[] = [];
-    // A session's `onstream`: `first` gets the first stream, a marker waiter each later one.
+    // A session's `onstream`: `first` gets the first stream. Each later one is
+    // the stream of a `roundTrip()`, which HTTP/3 answers in `onheaders`.
     const route = (first?: (stream: any, ends: Ends) => void) => (stream: any) => {
       keep(stream);
       if (first) {
         const handler = first;
         first = undefined;
         handler(stream, ends);
-      } else {
-        markers.shift()?.resolve();
+      } else if (shape.alpn) {
+        stream.writer.endSync();
       }
     };
     const server = await listen(
@@ -546,17 +547,15 @@ describe("receive backpressure", () => {
       serverSession: await serverSession.promise,
       sender,
       receiver,
-      // Resolves when the other session has every packet that the writer sent
-      // before this call: a stream that the writer opens now arrives after them.
-      async arrived() {
-        const marker = Promise.withResolvers<void>();
-        markers.push(marker);
-        keep(
-          shape.alpn
-            ? await writer.createUnidirectionalStream({ body: new Uint8Array(1) })
-            : await writer.createBidirectionalStream({ headers: request }),
-        );
-        await marker.promise;
+      // The writer opens one more stream and waits for the answer to it. The
+      // other session gets that stream after every packet the writer sent
+      // before, and the writer gets the answer after every packet the other
+      // session sent before it.
+      async roundTrip() {
+        const stream = shape.alpn
+          ? await writer.createBidirectionalStream({ body: new Uint8Array(1) })
+          : await writer.createBidirectionalStream({ headers: request });
+        await stream.closed;
       },
       async [Symbol.asyncDispose]() {
         await Promise.all([clientEndpoint.destroy(), server.destroy()]);
@@ -585,7 +584,7 @@ describe("receive backpressure", () => {
     );
 
     await sender.closed;
-    await pair.arrived();
+    await pair.roundTrip();
     expect(queued(receiver)).toBeGreaterThan(WINDOW);
     expect(queued(receiver)).toBeLessThanOrEqual(WINDOW + READ_PIECE);
     expect(receiverClosed).toBe(false);
@@ -603,10 +602,11 @@ describe("receive backpressure", () => {
     expect(await delivered(pair.receiver, exact)).toEqual({ length: WINDOW, same: true });
   });
 
-  // The sender has far more than two windows to send. `onblocked` also fires
-  // when the congestion window is the limit, so wait for the one that flow
-  // control causes: it comes after the sender is past 1.5 windows, and with
-  // nothing read the sender cannot pass two windows and one read.
+  // The sender has far more than two windows to send. A round trip lets it
+  // use every acknowledgement and every window that the receiver gave before,
+  // so round trips that do not move `bytesSent` mean the sender waits for a
+  // window that only a read gives. With nothing read that is at most the
+  // receiver's queue (one window and one read) and one more window in lsquic.
   test.each([
     { window: WINDOW, total: 1024 * 1024 },
     { window: 256, total: 8192 },
@@ -617,14 +617,14 @@ describe("receive backpressure", () => {
     await using pair = await open(shape, payload);
     const { sender, receiver } = pair;
 
-    const blocked = Promise.withResolvers<number>();
-    sender.onblocked = () => {
-      const sent = Number(sender.stats.bytesSent);
-      if (sent > window * 1.5) blocked.resolve(sent);
-    };
-    sender.closed.then(() => blocked.resolve(Number(sender.stats.bytesSent)), blocked.reject);
-
-    expect(await blocked.promise).toBeLessThanOrEqual(2 * window + piece);
+    let sent = -1;
+    for (let still = 0; still < 2; ) {
+      await pair.roundTrip();
+      const now = Number(sender.stats.bytesSent);
+      still = now === sent ? still + 1 : 0;
+      sent = now;
+    }
+    expect(sent).toBeLessThanOrEqual(2 * window + piece);
     expect(queued(receiver)).toBeLessThanOrEqual(window + piece);
 
     expect(await delivered(receiver, payload)).toEqual({ length: total, same: true });
@@ -636,7 +636,7 @@ describe("receive backpressure", () => {
     test("is read in full after the peer closed the session", async () => {
       await using pair = await open(serverReadsBidi, body);
       await pair.sender.closed;
-      await pair.arrived();
+      await pair.roundTrip();
       pair.client.close();
       await pair.serverSession.closed;
       expect(await delivered(pair.receiver, body)).toEqual({ length: BODY, same: true });
@@ -645,16 +645,16 @@ describe("receive backpressure", () => {
     test.each(["resetStream", "stopSending"])("is read in full after %s()", async method => {
       await using pair = await open(serverReadsBidi, body);
       await pair.sender.closed;
-      await pair.arrived();
+      await pair.roundTrip();
       pair.receiver[method]();
       expect(await delivered(pair.receiver, body)).toEqual({ length: BODY, same: true });
     });
 
-    test("is read in full after its own session closed", async () => {
+    test("is read in full after close() of its own session", async () => {
       await using pair = await open(serverReadsBidi, body);
       await pair.sender.closed;
-      await pair.arrived();
-      await pair.serverSession.close();
+      await pair.roundTrip();
+      pair.serverSession.close();
       expect(await delivered(pair.receiver, body)).toEqual({ length: BODY, same: true });
     });
 
@@ -663,7 +663,7 @@ describe("receive backpressure", () => {
     test("ends with ERR_QUIC_STREAM_ABORTED after the session timed out", async () => {
       await using pair = await open(serverReadsBidi, body, 1);
       await pair.sender.closed;
-      await pair.arrived();
+      await pair.roundTrip();
       await pair.serverSession.closed.catch(() => {});
 
       const chunks: Uint8Array[] = [];

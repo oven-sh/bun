@@ -543,8 +543,12 @@ fn rules_of_plugin(registry: &Registry, js_plugins: &[NamedPlugin], prefix: &[u8
         Some(own) => meta.plugin == own,
         None => Plugin::spelled(prefix).any(|it| it == meta.plugin),
     };
-    let rules = native_rules(registry).filter(|it| is_in_plugin(it.0));
-    rules.map(|it| it.1).collect()
+    // `react/jsx-uses-react` reports nothing. It keeps `no-unused-vars` quiet about `React`, so turning it off adds reports.
+    let rules = native_rules(registry).filter(|it| it.1 != b"react/jsx-uses-react");
+    rules
+        .filter(|it| is_in_plugin(it.0))
+        .map(|it| it.1)
+        .collect()
 }
 
 /// The plugin name closest to `prefix`, for a "Did you mean" hint. `None` if nothing is close.

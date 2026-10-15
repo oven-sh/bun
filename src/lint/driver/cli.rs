@@ -786,7 +786,9 @@ impl Options {
                 let (wildcards, said): (Vec<_>, Vec<_>) =
                     (said.into_iter()).partition(|it| Wildcard::plugin_of(&it.0).is_some());
                 for (id, setting) in wildcards {
-                    if bun_lint::linter::severity_of(&setting) != Some(Severity::Off) {
+                    let severity = setting.as_array().and_then(|it| it.first());
+                    let severity = severity.unwrap_or(&setting);
+                    if bun_lint::linter::severity_of(severity) != Some(Severity::Off) {
                         return Err(UsageError(Wildcard::must_be_off(&id)));
                     }
                     self.wildcards.push(Wildcard { id, key_at: None });

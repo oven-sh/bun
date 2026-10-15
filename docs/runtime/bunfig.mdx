@@ -447,6 +447,7 @@ Use `*` as the rule name to turn off every rule of a plugin. In the same table, 
 
 - A wildcard can only be `"off"`. To turn rules on, name them or use [`lint.categories`](#lint-categories).
 - [`lint.overrides`](#lint-overrides) and flags apply after `[lint.rules]`. A wildcard there also turns off a rule that `[lint.rules]` sets by name.
+- `"react/*"` leaves `react/jsx-uses-react` on. That rule reports nothing. It keeps `no-unused-vars` quiet about `React`.
 - A wildcard works with Bun's own lint config. If the working directory has an ESLint or oxlint config, `bun lint` rejects the wildcard. Files under a config file in a nested directory follow that file, and the wildcard doesn't apply to them.
 
 Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
@@ -498,7 +499,7 @@ A category sets the rules of every built-in plugin. The plugins for a framework 
 | `jest`   | `jest`                                           |
 | `vitest` | `vitest`                                         |
 
-For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`. If the closest `package.json` lists neither `jest` nor `vitest`, Bun also looks in the ones above it. Bun doesn't look above the root of the repository.
+For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`. If the closest `package.json` lists neither `jest` nor `vitest`, Bun also looks in the ones above it. Bun doesn't look above the root of the repository you run it in.
 
 `[lint.rules]` doesn't depend on `package.json`. To turn off a plugin that a category turns on, set `"unicorn/*" = "off"`. To use a plugin without its package, set `"jsx-a11y/*" = "warn"`.
 

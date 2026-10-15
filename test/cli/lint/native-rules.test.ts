@@ -1133,13 +1133,13 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
     const inside = (directory: string) =>
       Object.fromEntries(Object.entries(frameworkFiles).map(([name, text]) => [`${directory}/${name}`, text]));
     const repository = { "project/.git/HEAD": "ref: refs/heads/main\n" };
-    /** Lints `project` three ways. Detection walks up from inside it, and the directory walk goes down into it from above. */
+    /** Lints from inside `project`, three ways. Detection walks up from a file, and the directory walk goes down from `..`. */
     const runs = async (files: Record<string, string>) => {
       const names = Object.keys(files).filter(it => /\.jsx?$/.test(it));
       const results = await Promise.all([
         lint(files, ["-f", "json"], "project"),
         lint(files, [...names.map(it => it.replace("project/", "")), "-f", "json"], "project"),
-        lint(files, ["project", "-f", "json"]),
+        lint(files, ["..", "-f", "json"], "project"),
       ]);
       for (const { stderr, exitCode } of results) {
         expect(stderr).not.toContain("error:");
@@ -1162,6 +1162,9 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
       expect(await runs(files)).toEqual([inherited, inherited, inherited]);
       const bounded = sorted(general, general);
       expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
+      // From above, `project` is a repository nested in what is linted, and is part of it.
+      const fromAbove = await lint({ ...files, ...repository }, ["project", "-f", "json"]);
+      expect(problems(fromAbove.stdout)).toEqual(inherited);
     });
 
     test("doesn't decide for a repository that has none at its root", async () => {
@@ -1180,6 +1183,21 @@ describe.concurrent("[lint.categories] and framework plugins", () => {
       const bounded = sorted(general, general);
       expect(await runs({ ...files, ...repository })).toEqual([bounded, bounded, bounded]);
     });
+  });
+
+  test("a repository nested in the project is part of it", async () => {
+    // Like a submodule. It has no package.json, so the project's package.json decides.
+    const files = {
+      ".git/HEAD": "ref: refs/heads/main\n",
+      "package.json": dependsOn("react"),
+      "packages/ui/.git": "gitdir: ../../.git/modules/ui\n",
+      "packages/ui/app.jsx": `export function App({ on }) {\n  if (on) useState(0);\n  return null;\n}\n`,
+    };
+    const results = await Promise.all([
+      lint(files, ["-f", "json"]),
+      lint(files, ["packages/ui/app.jsx", "-f", "json"]),
+    ]);
+    for (const { stdout } of results) expect(problems(stdout)).toContain("app.jsx:2 react-hooks/rules-of-hooks");
   });
 
   test("--print-config detects frameworks from the file's path", async () => {
@@ -1230,6 +1248,16 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
       [ofReact],
       [ofReact],
     ]);
+  });
+
+  test("react/* leaves react/jsx-uses-react on, which only keeps no-unused-vars quiet about React", async () => {
+    const files = {
+      "app.jsx": `import React from "react";\nexport const App = () => <div />;\n`,
+      "package.json": dependsOn("react"),
+    };
+    const off = `[lint.rules]\n"react/*" = "off"\n`;
+    expect(await found(off, [], files)).toEqual([]);
+    expect(await found(`${off}"react/jsx-uses-react" = "off"\n`, [], files)).toEqual(["app.jsx:1 no-unused-vars"]);
   });
 
   describe("a rule that has an ESLint and a typescript-eslint version", () => {
@@ -1290,6 +1318,8 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
     const override = `[[lint.overrides]]\nfiles = ["*.jsx"]\nrules = { "nextjs/*" = "off" }\n`;
     expect(await found(correctnessAndPerf, ["--rule", "nextjs/*: off"])).toEqual(withoutNext);
     expect(await found(correctnessAndPerf, ["-A", "nextjs/*"])).toEqual(withoutNext);
+    expect(await found(correctnessAndPerf, ["--rule", "nextjs/*: [off]"])).toEqual(withoutNext);
+    expect(await found(`${correctnessAndPerf}[lint.rules]\n"nextjs/*" = ["off"]\n`)).toEqual(withoutNext);
     expect(await found(correctnessAndPerf + override)).toEqual(withoutNext);
   });
 

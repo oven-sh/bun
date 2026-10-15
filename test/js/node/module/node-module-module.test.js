@@ -62,6 +62,193 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  describe("Module.prototype._compile override", () => {
+    // The `_compile` hook receives the body Bun hands to the wrapper, so a rewrite targets that text.
+    const files = {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "target.js": "module.exports = function target() { return require('./nested.js') + 1; };\n",
+      "nested.js": "module.exports = 1;\n",
+      "meta.cjs": "module.exports = typeof import.meta.url;\n",
+      "hook.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const orig = Module.prototype._compile;
+        const compiled = [];
+        Module.prototype._compile = function (content, filename, ...rest) {
+          compiled.push({ file: path.basename(filename), isModule: this instanceof Module, id: this.id === filename });
+          return orig.call(this, content.replace("= 1;", "= 100;"), filename, ...rest);
+        };
+        module.exports = { compiled, orig };
+      `,
+    };
+
+    async function run(dir, args) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    test("require() calls it for every CommonJS file, with the module as this", async () => {
+      using dir = tempDir("module-prototype-compile", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const { compiled, orig } = require("./hook.js");
+          const result = require("./target.js")();
+          Module.prototype._compile = orig;
+          const afterRestore = compiled.length;
+          delete require.cache[require.resolve("./nested.js")];
+          require("./nested.js");
+          console.log(JSON.stringify({ compiled, result, calledAfterRestore: compiled.length - afterRestore }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({
+        compiled: [
+          { file: "target.js", isModule: true, id: true },
+          { file: "nested.js", isModule: true, id: true },
+        ],
+        result: 101,
+        calledAfterRestore: 0,
+      });
+    });
+
+    test("an own module._compile shadows the prototype override", async () => {
+      using dir = tempDir("module-prototype-compile-own", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const { compiled, orig } = require("./hook.js");
+          let own = 0;
+          const ext = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            if (filename.endsWith("nested.js")) {
+              module._compile = function (content, filename) {
+                own++;
+                return orig.call(this, content, filename);
+              };
+            }
+            return ext.call(this, module, filename);
+          };
+          const result = require("./target.js")();
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), own, result }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["target.js"], own: 1, result: 2 });
+    });
+
+    test("a Module._extensions wrapper that delegates still reaches the prototype override", async () => {
+      using dir = tempDir("module-prototype-compile-bridge", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const { compiled } = require("./hook.js");
+          const ext = Module._extensions[".js"];
+          let wrapped = 0;
+          Module._extensions[".js"] = function (module, filename) {
+            wrapped++;
+            return ext.call(this, module, filename);
+          };
+          const result = require("./target.js")();
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), wrapped, result }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["target.js", "nested.js"], wrapped: 2, result: 101 });
+    });
+
+    test("import of a CommonJS file from ESM goes through it", async () => {
+      using dir = tempDir("module-prototype-compile-esm", {
+        ...files,
+        "main.mjs": `
+          import { createRequire } from "node:module";
+          const { compiled } = createRequire(import.meta.url)("./hook.js");
+          const { default: target } = await import("./target.js");
+          const result = target();
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), result }));
+        `,
+      });
+      expect(await run(dir, ["main.mjs"])).toEqual({ compiled: ["target.js", "nested.js"], result: 101 });
+    });
+
+    test("the default _compile accepts a body that uses import.meta", async () => {
+      using dir = tempDir("module-prototype-compile-meta", {
+        ...files,
+        "main.js": `
+          const { compiled } = require("./hook.js");
+          const meta = require("./meta.cjs");
+          console.log(JSON.stringify({ compiled: compiled.map(c => c.file), meta }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ compiled: ["meta.cjs"], meta: "string" });
+    });
+
+    test("a hook that evaluates the body itself leaves a loaded module with exports", async () => {
+      using dir = tempDir("module-prototype-compile-self", {
+        ...files,
+        "main.js": `
+          const Module = require("node:module");
+          const vm = require("node:vm");
+          let calls = 0;
+          Module.prototype._compile = function (content, filename) {
+            calls++;
+            const fn = vm.runInThisContext(Module.wrap(content), { filename });
+            fn.call(this.exports, this.exports, this.require.bind(this), this, filename, require("path").dirname(filename));
+          };
+          const result = require("./target.js")();
+          const entry = require.cache[require.resolve("./nested.js")];
+          console.log(JSON.stringify({ calls, result, loaded: entry.loaded, exports: entry.exports }));
+        `,
+      });
+      expect(await run(dir, ["main.js"])).toEqual({ calls: 2, result: 2, loaded: true, exports: 1 });
+    });
+
+    test("bun test --isolate runs it for a file served from the isolation cache", async () => {
+      using dir = tempDir("module-prototype-compile-isolate", {
+        ...files,
+        "a.test.js": `
+          const { compiled } = require("./hook.js");
+          test("a", () => { expect(require("./target.js")()).toBe(101); expect(compiled.map(c => c.file)).toEqual(["target.js", "nested.js"]); });
+        `,
+        "b.test.js": `
+          const { compiled } = require("./hook.js");
+          test("b", () => { expect(require("./target.js")()).toBe(101); expect(compiled.map(c => c.file)).toEqual(["target.js", "nested.js"]); });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "a.test.js", "b.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Module.prototype is the prototype of module objects", () => {
+      const entry =
+        require.cache[require.resolve("./extensions-fixture/d.js")] ??
+        (require("./extensions-fixture/d.js"), require.cache[require.resolve("./extensions-fixture/d.js")]);
+      expect(Object.getPrototypeOf(entry)).toBe(Module.prototype);
+      expect(entry instanceof Module).toBe(true);
+      expect(new Module("x") instanceof Module).toBe(true);
+      expect(Module.prototype.constructor).toBe(Module);
+      expect(Object.getOwnPropertyDescriptor(Module.prototype, "constructor").enumerable).toBe(false);
+      expect(typeof Module.prototype._compile).toBe("function");
+      expect(typeof Module.prototype.require).toBe("function");
+      expect(new Module("x")._compile).toBe(Module.prototype._compile);
+    });
+  });
+
   test("Module.prototype is not enumerable", async () => {
     const Module = require("module");
     const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");

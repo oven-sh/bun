@@ -1,5 +1,7 @@
+import type { BuildConfig, BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -256,6 +258,27 @@ describe("bundler", () => {
       },
     });
   }
+
+  // The loader that onLoad returns replaces the loader from the file extension.
+  itBundled("plugin/ResolveReturnsUndefinedOnLoadToJsKeepsSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./setup.txt";
+        console.log("entry");
+      `,
+      "/setup.txt": `console.log("setup.txt ran");`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+      builder.onLoad({ filter: /\.txt$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "js",
+      }));
+    },
+    run: {
+      stdout: "setup.txt ran\nentry",
+    },
+  });
 
   // Load Plugin Errors
   itBundled("plugin/ResolveThrow", {
@@ -2091,5 +2114,709 @@ describe("bundler", () => {
       receivers: Array(6).fill("ERR_INVALID_THIS"),
     });
     expect(exitCode).toBe(0);
+  });
+
+  const bytes = (seed: number) => Buffer.from(Array.from({ length: 300 }, (_, i) => (i * 7 + seed) & 0xff));
+
+  type Project = Omit<BuildConfig, "entrypoints" | "files" | "plugins"> & {
+    // The files on disk, and the files of the `files` option. Both are relative to the project.
+    files: Record<string, string | Buffer>;
+    memory?: Record<string, string>;
+    entrypoints: string[];
+  };
+
+  async function buildProject(root: string, project: Project, plugins: BunPlugin[] = []) {
+    const { files: _, memory, entrypoints, ...options } = project;
+    const result = await Bun.build({
+      ...options,
+      entrypoints: entrypoints.map(entrypoint => join(root, entrypoint)),
+      ...(memory && {
+        files: Object.fromEntries(Object.entries(memory).map(([name, contents]) => [join(root, name), contents])),
+      }),
+      throw: false,
+      plugins,
+    });
+    const outputs = await Promise.all(
+      result.outputs.map(async output => ({
+        path: output.path,
+        kind: output.kind,
+        contents: output.kind === "asset" ? `hash ${Bun.hash(await output.arrayBuffer())}` : await output.text(),
+      })),
+    );
+    return {
+      success: result.success,
+      logs: result.logs.map(log => `${log.level}: ${log.message}`).sort(),
+      outputs: outputs.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
+    };
+  }
+
+  // A plugin whose onResolve callbacks all return nothing leaves every import and every entry
+  // point to the bundler. The build must then be the build that runs without the plugin: the
+  // same outputs under the same names, and the same errors.
+  describe("plugin/onResolve that declines changes nothing", () => {
+    const projects: Record<string, Project> = {
+      "jsx settings of the tsconfig.json of an imported file": {
+        files: {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { jsx: "react", jsxFactory: "h", jsxFragmentFactory: "F" },
+          }),
+          "entry.js": `import { view } from "./view.jsx"; console.log(JSON.stringify(view()));`,
+          "view.jsx": `import { h, F } from "./h.js"; export const view = () => <div><>{"x"}</></div>;`,
+          "h.js": `export const h = (tag, props, ...children) => ({ tag, children }); export const F = "fragment";`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "legacy decorators of the tsconfig.json of an imported file": {
+        files: {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false },
+          }),
+          "entry.ts": `import { Model } from "./model"; console.log(new Model().x);`,
+          "model.ts": `function d(target: any, key: string) {} class Base { set x(v: number) {} } export class Model extends Base { @d x = 1; }`,
+        },
+        entrypoints: ["entry.ts"],
+      },
+      'unused import from a package with "sideEffects": false': {
+        files: {
+          "entry.js": `import { used } from "pkg/used.js"; import { unused } from "pkg/unused.js"; console.log(used);`,
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", sideEffects: false }),
+          "node_modules/pkg/used.js": `export const used = "used";`,
+          "node_modules/pkg/unused.js": `console.log("unused ran"); export const unused = 1;`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      'barrel of a package with a "sideEffects" list': {
+        files: {
+          "entry.js": `import "pkg/register.js"; import { used } from "pkg"; console.log(used);`,
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", sideEffects: ["./register.js"] }),
+          "node_modules/pkg/index.js": `export { used } from "./used.js"; export { unused } from "./unused.js";`,
+          "node_modules/pkg/register.js": `console.log("register ran");`,
+          "node_modules/pkg/used.js": `export const used = "used";`,
+          "node_modules/pkg/unused.js": `console.log("unused ran"); export const unused = 1;`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "unused import of a Node.js builtin": {
+        files: { "entry.js": `import fs from "node:fs"; console.log("entry");` },
+        entrypoints: ["entry.js"],
+        target: "node",
+      },
+      'package.json "imports" entry that names a Node.js builtin': {
+        files: {
+          "package.json": JSON.stringify({ name: "app", imports: { "#fs": "node:fs" } }),
+          "entry.js": `import { existsSync } from "#fs"; console.log(typeof existsSync);`,
+        },
+        entrypoints: ["entry.js"],
+        target: "bun",
+      },
+      "external package": {
+        files: {
+          "entry.js": `import x from "left-pad"; import "./local.js"; console.log(x);`,
+          "local.js": `console.log("local");`,
+        },
+        entrypoints: ["entry.js"],
+        external: ["left-pad"],
+      },
+      "import of an HTML file in a build for a server": {
+        files: {
+          "entry.js": `import page from "./page.html"; console.log(Object.keys(page).sort().join());`,
+          "page.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
+          "client.js": `console.log("client");`,
+        },
+        entrypoints: ["entry.js"],
+        target: "bun",
+      },
+      "manifest.json that an HTML entry point links": {
+        files: {
+          "index.html": `<!doctype html><html><head><link rel="manifest" href="./manifest.json"></head><body><script type="module" src="./client.js"></script></body></html>`,
+          "manifest.json": `{"name":"app"}`,
+          "client.js": `console.log("client");`,
+        },
+        entrypoints: ["index.html"],
+      },
+      "stylesheet and icon of an HTML entry point": {
+        files: {
+          "index.html": `<!doctype html><html><head><link rel="stylesheet" href="./style.css"><link rel="icon" href="./icon.png"></head><body><script type="module" src="./client.js"></script></body></html>`,
+          "style.css": `body { color: red; background: url("./bg.png"); }`,
+          "icon.png": bytes(1),
+          "bg.png": bytes(2),
+          "client.js": `import "./more.css"; console.log("client");`,
+          "more.css": `p { color: blue; }`,
+        },
+        entrypoints: ["index.html"],
+      },
+      "HTML entry point of a build for a server": {
+        files: {
+          "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
+          "client.js": `console.log(typeof document);`,
+        },
+        entrypoints: ["index.html"],
+        target: "bun",
+      },
+      "asset import, with the hash of the importer in its name": {
+        files: { "entry.js": `import logo from "./logo.png"; console.log(logo);`, "logo.png": bytes(3) },
+        entrypoints: ["entry.js"],
+        naming: { entry: "[name]-[hash].[ext]" },
+      },
+      "import attributes": {
+        files: {
+          "entry.js": `import text from "./data.json" with { type: "text" }; import json from "./note.txt" with { type: "json" }; import file from "./code.js" with { type: "file" }; console.log(text, json.a, file);`,
+          "data.json": `{"a":1}`,
+          "note.txt": `{"a":2}`,
+          "code.js": `console.log("not bundled");`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "import() and require()": {
+        files: {
+          "entry.js": `const cjs = require("./cjs.cjs"); import("./lazy.js").then(m => console.log(cjs.a, m.b));`,
+          "cjs.cjs": `exports.a = 1;`,
+          "lazy.js": `export const b = 2;`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "two entry points that share a chunk": {
+        files: {
+          "a.js": `import { shared } from "./shared.js"; import("./lazy.js"); console.log("a", shared);`,
+          "b.js": `import { shared } from "./shared.js"; console.log("b", shared);`,
+          "shared.js": `export const shared = "shared";`,
+          "lazy.js": `console.log("lazy");`,
+        },
+        entrypoints: ["a.js", "b.js"],
+        splitting: true,
+      },
+      "stylesheet with @import, url() and a CSS module": {
+        files: {
+          "entry.js": `import "./a.css"; import styles from "./b.module.css"; console.log(styles.title);`,
+          "a.css": `@import "./c.css"; body { background: url("./bg.png"); }`,
+          "c.css": `p { margin: 0; }`,
+          "b.module.css": `.title { color: red; composes: base from "./d.module.css"; }`,
+          "d.module.css": `.base { font-weight: bold; }`,
+          "bg.png": bytes(4),
+        },
+        entrypoints: ["entry.js"],
+      },
+      'package.json "exports", "browser" and tsconfig.json "paths"': {
+        files: {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { "@lib/*": ["src/lib/*"] } } }),
+          "entry.ts": `import { x } from "@lib/x"; import y from "cond-pkg"; import z from "browser-pkg"; console.log(x, y, z);`,
+          "src/lib/x.ts": `export const x: string = "x";`,
+          "node_modules/cond-pkg/package.json": JSON.stringify({
+            name: "cond-pkg",
+            exports: { ".": { import: "./esm.js", require: "./cjs.js" } },
+          }),
+          "node_modules/cond-pkg/esm.js": `export default "esm";`,
+          "node_modules/cond-pkg/cjs.js": `module.exports = "cjs";`,
+          "node_modules/browser-pkg/package.json": JSON.stringify({
+            name: "browser-pkg",
+            main: "./node.js",
+            browser: "./browser.js",
+          }),
+          "node_modules/browser-pkg/node.js": `module.exports = "node";`,
+          "node_modules/browser-pkg/browser.js": `module.exports = "browser";`,
+        },
+        entrypoints: ["entry.ts"],
+        target: "browser",
+      },
+      "barrel of a package without side effects": {
+        files: {
+          "entry.js": `import { a } from "barrel"; console.log(a);`,
+          "node_modules/barrel/package.json": JSON.stringify({
+            name: "barrel",
+            main: "./index.js",
+            sideEffects: false,
+          }),
+          "node_modules/barrel/index.js": `export { a } from "./a.js"; export { b } from "./b.js"; export * from "./c.js";`,
+          "node_modules/barrel/a.js": `export const a = "a";`,
+          "node_modules/barrel/b.js": `export const b = "b";`,
+          "node_modules/barrel/c.js": `export const c = "c";`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "require.resolve() of a bundled file": {
+        files: {
+          "entry.js": `console.log(require.resolve("./dep.js"));`,
+          "dep.js": `module.exports = 1;`,
+        },
+        entrypoints: ["entry.js"],
+        target: "node",
+      },
+      "module.exports = require()": {
+        files: {
+          "entry.js": `import a from "./redirect.cjs"; import b from "./other.js"; console.log(a, b);`,
+          "redirect.cjs": `module.exports = require("./target.cjs");`,
+          "target.cjs": `module.exports = "target";`,
+          "other.js": `export { default } from "./redirect.cjs";`,
+        },
+        entrypoints: ["entry.js"],
+      },
+      "imports that do not resolve": {
+        files: { "entry.js": `import "./missing.js"; import "missing-pkg";` },
+        entrypoints: ["entry.js"],
+      },
+      "require() that does not resolve, in a try block": {
+        files: { "entry.js": `try { require("./missing.js"); } catch { console.log("caught"); }` },
+        entrypoints: ["entry.js"],
+      },
+      "import of the bun builtin in a build for the browser": {
+        files: { "entry.js": `import "bun";` },
+        entrypoints: ["entry.js"],
+        target: "browser",
+      },
+      "import of a file of the files option": {
+        files: {
+          "entry.js": `import { a } from "./virtual.js"; import logo from "./logo.png"; console.log(a, logo);`,
+        },
+        memory: { "virtual.js": `export const a = "in memory";`, "logo.png": "not really a png" },
+        entrypoints: ["entry.js"],
+        naming: { entry: "[name]-[hash].[ext]" },
+      },
+      "entry point of the files option": {
+        files: { "dep.js": `export const dep = "on disk";` },
+        memory: { "entry.js": `import { dep } from "./dep.js"; console.log(dep);` },
+        entrypoints: ["entry.js"],
+      },
+      "HTML entry point of the files option": {
+        files: {},
+        memory: {
+          "index.html": `<!doctype html><html><body><script type="module" src="./app.js"></script></body></html>`,
+          "app.js": `console.log("app");`,
+        },
+        entrypoints: ["index.html"],
+      },
+    };
+
+    const declines: Record<string, OnResolveCallback> = {
+      "undefined": () => undefined,
+      "null": () => null,
+      "a promise of undefined": async () => undefined,
+    };
+
+    for (const [name, project] of Object.entries(projects)) {
+      test.concurrent(name, async () => {
+        using dir = tempDir("plugin-declines", project.files);
+        const root = String(dir);
+        const withoutPlugin = await buildProject(root, project);
+
+        for (const [returns, decline] of Object.entries(declines)) {
+          let asked = 0;
+          const declined = await buildProject(root, project, [
+            {
+              name: "declines",
+              setup(build) {
+                build.onResolve({ filter: /.*/ }, args => {
+                  asked++;
+                  return decline(args);
+                });
+              },
+            },
+          ]);
+          expect({ returns, asked: asked > 0, ...declined }).toEqual({ returns, asked: true, ...withoutPlugin });
+        }
+      });
+    }
+  });
+
+  // A build for a server imports an HTML file as the manifest of its page. An onLoad plugin can
+  // make the file something else. An import that went to the onResolve plugins is a manifest
+  // only when the file is still HTML after onLoad.
+  describe("plugin/import of an HTML file in a build for a server", () => {
+    const onLoads = {
+      "no onLoad": undefined,
+      "onLoad returns nothing": () => undefined,
+      "onLoad returns HTML": () => ({
+        contents: `<!doctype html><html><body><h1>page of the plugin</h1><script type="module" src="./client.js"></script></body></html>`,
+        loader: "html" as const,
+      }),
+      "onLoad returns JavaScript": () => ({
+        contents: `export default "template of the plugin";`,
+        loader: "js" as const,
+      }),
+    };
+    for (const onResolve of ["no onResolve", "onResolve declines", "onResolve names the page"] as const) {
+      for (const [onLoadName, onLoad] of Object.entries(onLoads)) {
+        // An import that no onResolve plugin saw does not wait for onLoad.
+        if (onResolve === "no onResolve" && onLoadName === "onLoad returns JavaScript") continue;
+
+        test.concurrent(`${onResolve}, ${onLoadName}`, async () => {
+          const specifier = onResolve === "onResolve names the page" ? "the:page" : "./page.html";
+          using dir = tempDir("plugin-html-import", {
+            "entry.js": `import page from "${specifier}"; console.log(typeof page === "string" ? page : "manifest of " + page.index.split("/").pop());`,
+            "page.html": `<!doctype html><html><body><h1>page on disk</h1><script type="module" src="./client.js"></script></body></html>`,
+            "client.js": `console.log("client");`,
+          });
+          const root = String(dir);
+          const result = await Bun.build({
+            entrypoints: [join(root, "entry.js")],
+            outdir: join(root, "out"),
+            target: "bun",
+            throw: false,
+            plugins: [
+              {
+                name: "html",
+                setup(build) {
+                  if (onResolve === "onResolve declines") {
+                    build.onResolve({ filter: /page\.html$/ }, () => undefined);
+                  }
+                  if (onResolve === "onResolve names the page") {
+                    build.onResolve({ filter: /^the:page$/ }, () => ({ path: join(root, "page.html") }));
+                  }
+                  if (onLoad) build.onLoad({ filter: /page\.html$/ }, onLoad);
+                },
+              },
+            ],
+          });
+          expect(result.logs.map(String)).toEqual([]);
+          const pages = await Promise.all(
+            result.outputs.filter(output => output.path.endsWith(".html")).map(output => output.text()),
+          );
+
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), join(root, "out", "entry.js")],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const titles = pages.map(page => page.match(/<h1>(.*?)<\/h1>/)?.[1]);
+          // stderr is in the object only when the process failed, so that the failure shows it.
+          expect({ stdout, pages: titles, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+            ...(onLoadName === "onLoad returns JavaScript"
+              ? { stdout: "template of the plugin\n", pages: [] }
+              : {
+                  stdout: "manifest of page.html\n",
+                  pages: [onLoadName === "onLoad returns HTML" ? "page of the plugin" : "page on disk"],
+                }),
+            exitCode: 0,
+            stderr: "",
+          });
+        });
+      }
+    }
+  });
+
+  // The import names its loader. The path that onResolve returns does not change that.
+  itBundled("plugin/ImportAttributeOfFileThatResolveNames", ({ root }) => ({
+    files: {
+      "/entry.js": `import text from "the:data" with { type: "text" }; console.log(typeof text, text);`,
+      "/data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^the:data$/ }, () => ({ path: join(root, "data.json") }));
+    },
+    run: {
+      stdout: `string {"a":1}`,
+    },
+  }));
+
+  // The name of the importer has the hash of its contents, and those contain the name of the asset.
+  test.concurrent("plugin/hash of the importer covers an asset that onResolve names", async () => {
+    using dir = tempDir("plugin-named-asset-hash", {
+      "entry.js": `import logo from "the:logo"; console.log(logo);`,
+      "logo.png": bytes(5),
+    });
+    const root = String(dir);
+    async function build() {
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        naming: { entry: "[name]-[hash].[ext]" },
+        throw: false,
+        plugins: [
+          {
+            name: "logo",
+            setup(build) {
+              build.onResolve({ filter: /^the:logo$/ }, () => ({ path: join(root, "logo.png") }));
+            },
+          },
+        ],
+      });
+      expect(result.logs.map(String)).toEqual([]);
+      return Object.fromEntries(result.outputs.map(output => [output.kind, path.basename(output.path)]));
+    }
+
+    const first = await build();
+    writeFileSync(join(root, "logo.png"), bytes(6));
+    const second = await build();
+    expect({ asset: first.asset === second.asset, entry: first["entry-point"] === second["entry-point"] }).toEqual({
+      asset: false,
+      entry: false,
+    });
+  });
+
+  // Like esbuild: the resolver is not asked about a file that onResolve names. The file gets
+  // the options of the build, and not the settings of the tsconfig.json next to it.
+  test.concurrent("plugin/file that onResolve names is compiled with the options of the build", async () => {
+    using dir = tempDir("plugin-named-build-options", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+      "entry.js": `import { view } from "the:view"; console.log(view());`,
+      "view.jsx": `export const view = () => <div />;`,
+    });
+    const root = String(dir);
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      external: ["react/jsx-dev-runtime", "react/jsx-runtime"],
+      throw: false,
+      plugins: [
+        {
+          name: "view",
+          setup(build) {
+            build.onResolve({ filter: /^the:view$/ }, () => ({ path: join(root, "view.jsx") }));
+          },
+        },
+      ],
+    });
+    expect(result.logs.map(String)).toEqual([]);
+    const text = await result.outputs[0].text();
+    expect({ automaticRuntime: /react\/jsx(-dev)?-runtime/.test(text), factoryOfTsconfig: /\bh\(/.test(text) }).toEqual(
+      {
+        automaticRuntime: true,
+        factoryOfTsconfig: false,
+      },
+    );
+  });
+
+  // An import by absolute path names a module of the build as it is written. The answer of
+  // onResolve still decides what the import is.
+  test.concurrent("plugin/onResolve answer wins over a module that the specifier names as written", async () => {
+    using dir = tempDir("plugin-answer-wins", {
+      "a.js": `export default "real";`,
+      "mock.js": `export default "mock";`,
+    });
+    const root = String(dir);
+    writeFileSync(
+      join(root, "entry.js"),
+      `import real from "./a.js"; import mock from ${JSON.stringify(join(root, "a.js"))}; console.log(real, mock);`,
+    );
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "mock",
+          setup(build) {
+            // Only the absolute specifier matches. "./a.js" goes to the resolver.
+            build.onResolve({ filter: /^(\/|[A-Za-z]:).*a\.js$/ }, () => ({ path: join(root, "mock.js") }));
+          },
+        },
+      ],
+    });
+    expect(result.logs.map(String)).toEqual([]);
+    const text = await result.outputs[0].text();
+    expect({ real: text.includes(`"real"`), mock: text.includes(`"mock"`) }).toEqual({ real: true, mock: true });
+  });
+
+  // The resolver lists a directory once. It does not look at the directory of a file that
+  // onResolve names, so a plugin can write more files there later, and a relative import
+  // finds them.
+  test.concurrent("plugin/onResolve can write a file after it named another file of the directory", async () => {
+    using dir = tempDir("plugin-named-then-writes", {
+      "entry.js": `import a from "gen:a"; console.log(a);`,
+      "gen/a.js": `import b from "gen:b"; export default "a " + b;`,
+    });
+    const root = String(dir);
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "generate",
+          setup(build) {
+            build.onResolve({ filter: /^gen:a$/ }, () => ({ path: join(root, "gen", "a.js") }));
+            // The bundler offers this import only after it parsed gen/a.js.
+            build.onResolve({ filter: /^gen:b$/ }, () => {
+              writeFileSync(join(root, "gen", "b.js"), `import c from "./c.js"; export default "b " + c;`);
+              writeFileSync(join(root, "gen", "c.js"), `export default "c ran";`);
+              return { path: join(root, "gen", "b.js") };
+            });
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    expect(await result.outputs[0].text()).toContain("c ran");
+  });
+
+  test.concurrent("plugin/onLoad can write a file that the module it loads imports", async () => {
+    using dir = tempDir("plugin-onload-writes", {
+      "entry.js": `import "alias/generated";`,
+      "generated/module.js": `console.log("replaced by onLoad");`,
+    });
+    const root = String(dir);
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "generate",
+          setup(build) {
+            build.onResolve({ filter: /^alias\/generated$/ }, () => ({ path: join(root, "generated", "module.js") }));
+            build.onLoad({ filter: /generated[\\/]module\.js$/ }, async () => {
+              await Bun.write(join(root, "generated", "sibling.js"), `console.log("sibling ran");`);
+              return { contents: `import "./sibling.js"; console.log("module ran");`, loader: "js" };
+            });
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({ sibling: text.includes("sibling ran"), module: text.includes("module ran") }).toEqual({
+      sibling: true,
+      module: true,
+    });
+  });
+
+  // A module that only a plugin can name is a module with side effects: the "sideEffects" of
+  // the package.json above it does not remove it.
+  test.concurrent("plugin/file that onResolve names keeps its side effects", async () => {
+    using dir = tempDir("plugin-named-side-effects", {
+      "package.json": JSON.stringify({ name: "app", sideEffects: false }),
+      "entry.js": `
+        import "alias/not-on-disk";
+        import "alias/on-disk";
+        console.log("entry");
+      `,
+      "src/on-disk.js": `console.log("file on disk: ran");`,
+    });
+    const root = String(dir);
+    const targets = {
+      "not-on-disk": join(root, "src", "not-on-disk.js"),
+      "on-disk": join(root, "src", "on-disk.js"),
+    };
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "alias",
+          setup(build) {
+            build.onResolve({ filter: /^alias\// }, args => ({
+              path: targets[args.path.slice("alias/".length) as keyof typeof targets],
+            }));
+            build.onLoad({ filter: /not-on-disk\.js$/ }, () => ({
+              contents: `console.log("path with no file: ran");`,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({
+      notOnDisk: text.includes("path with no file: ran"),
+      onDisk: text.includes("file on disk: ran"),
+    }).toEqual({
+      notOnDisk: true,
+      onDisk: true,
+    });
+  });
+
+  // The outputs of the entry points come in the order of the request, also when an onResolve
+  // plugin holds one of them back.
+  for (const answer of ["declines", "names the file"] as const) {
+    test.concurrent(`plugin/entry point that onResolve ${answer} keeps its place in the outputs`, async () => {
+      using dir = tempDir("plugin-entry-order", {
+        "a.js": `console.log("a");`,
+        "b.js": `console.log("b");`,
+        "c.js": `console.log("c");`,
+      });
+      const root = String(dir);
+      const result = await Bun.build({
+        entrypoints: ["a.js", "b.js", "c.js"].map(entry => join(root, entry)),
+        throw: false,
+        plugins: [
+          {
+            name: "holds b",
+            setup(build) {
+              build.onResolve({ filter: /b\.js$/ }, args => (answer === "declines" ? undefined : { path: args.path }));
+            },
+          },
+        ],
+      });
+      expect(result.logs.map(String)).toEqual([]);
+      expect(result.outputs.map(output => path.basename(output.path))).toEqual(["a.js", "b.js", "c.js"]);
+    });
+  }
+
+  // An import of another entry point can make the module before the plugins answer for the
+  // entry point. The file is still an entry point, with the output that it has without the plugin.
+  test.concurrent("plugin/entry point that onResolve declines after an import made its module", async () => {
+    using dir = tempDir("plugin-entry-after-import", {
+      "a.js": `import "./b.js"; console.log("a");`,
+      "b.js": `console.log("b");`,
+    });
+    const root = String(dir);
+    const entrypoints = [join(root, "a.js"), join(root, "b.js")];
+    const outputsOf = async (result: Awaited<ReturnType<typeof Bun.build>>) =>
+      Promise.all(result.outputs.map(async output => [path.basename(output.path), await output.text()]));
+
+    const moduleExists = Promise.withResolvers<void>();
+    const withPlugin = await Bun.build({
+      entrypoints,
+      throw: false,
+      plugins: [
+        {
+          name: "declines late",
+          setup(build) {
+            // Only the entry point is an absolute path. The import in a.js is "./b.js".
+            build.onResolve({ filter: /^(\/|[A-Za-z]:).*b\.js$/ }, async () => {
+              await moduleExists.promise;
+              return undefined;
+            });
+            build.onLoad({ filter: /b\.js$/ }, () => {
+              moduleExists.resolve();
+              return undefined;
+            });
+          },
+        },
+      ],
+    });
+    const withoutPlugin = await Bun.build({ entrypoints, throw: false });
+
+    expect(withPlugin.logs.map(String)).toEqual([]);
+    expect(await outputsOf(withPlugin)).toEqual(await outputsOf(withoutPlugin));
+    expect(withPlugin.outputs.map(output => path.basename(output.path))).toEqual(["a.js", "b.js"]);
+  });
+
+  // An HTML entry point of a build for a server is a page for the browser, also when an
+  // onResolve callback named the file.
+  test.concurrent("plugin/HTML entry point that onResolve names is a page for the browser", async () => {
+    using dir = tempDir("plugin-named-html-entry", {
+      "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
+      "client.js": `console.log(typeof document);`,
+    });
+    const root = String(dir);
+    const result = await Bun.build({
+      entrypoints: ["the-page"],
+      target: "bun",
+      throw: false,
+      plugins: [
+        {
+          name: "page",
+          setup(build) {
+            build.onResolve({ filter: /^the-page$/ }, () => ({ path: join(root, "index.html") }));
+          },
+        },
+      ],
+    });
+    expect(result.logs.map(String)).toEqual([]);
+    const scripts = await Promise.all(
+      result.outputs.filter(output => output.path.endsWith(".js")).map(output => output.text()),
+    );
+    expect({
+      pages: result.outputs.filter(output => output.path.endsWith(".html")).length,
+      scripts: scripts.length,
+      scriptsForBun: scripts.filter(script => script.startsWith("// @bun")).length,
+    }).toEqual({ pages: 1, scripts: 1, scriptsForBun: 0 });
   });
 });

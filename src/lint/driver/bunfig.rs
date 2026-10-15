@@ -9,6 +9,7 @@
 //! Bun's bunfig.toml loader finds and parses the file, then calls into this module.
 
 use crate::args::{Param, UsageError, error};
+use crate::cli::Wildcard;
 use crate::format::Format;
 use bun_ast::expr::Data;
 use bun_ast::{Expr, Loc};
@@ -955,25 +956,39 @@ fn json_of(value: &Expr) -> Result<Json, Refusal> {
     )
 }
 
+/// What [`rules`] returns: the single rules, where each one is, and the wildcards.
+type Rules = (Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>, Vec<Wildcard>);
+
 /// Parses `[lint.rules]` or an override's `rules`, and records where each entry is. This doesn't go through `--rule`,
 /// because that flag parses levn, which can't express every string.
-fn rules(table: &Expr) -> Result<(Vec<(Vec<u8>, Json)>, Vec<RuleOfBunfig>), Refusal> {
-    let (mut rules, mut places) = (Vec::new(), Vec::new());
+fn rules(table: &Expr) -> Result<Rules, Refusal> {
+    let (mut rules, mut places, mut wildcards) = (Vec::new(), Vec::new(), Vec::new());
     for (rule, setting) in entries(table)? {
         let first = match &setting.data {
             Data::EArray(items) => items.slice().first().unwrap_or(setting),
             _ => setting,
         };
+        let key_at = rule.at.start.max(0) as usize;
+        if Wildcard::plugin_of(&rule.name).is_some() {
+            if bun_lint::linter::severity_of(&json_of(first)?) != Some(Severity::Off) {
+                return refuse(first.loc, &[&Wildcard::must_be_off(&rule.name)]);
+            }
+            wildcards.push(Wildcard {
+                id: rule.name,
+                key_at: Some(key_at),
+            });
+            continue;
+        }
         severity_of(&rule.name, first)?;
         let written = json_of(setting)?;
         places.push(RuleOfBunfig {
-            key_at: rule.at.start.max(0) as usize,
+            key_at,
             setting: written.clone(),
             place: Place::of(setting),
         });
         rules.push((rule.name, written));
     }
-    Ok((rules, places))
+    Ok((rules, places, wildcards))
 }
 
 /// Parses `[[lint.overrides]]`.
@@ -985,7 +1000,7 @@ fn overrides_of_lint(value: &Expr) -> Result<Vec<crate::cli::Override>, Refusal>
             match &key.name[..] {
                 b"files" => it.files = patterns(value)?,
                 b"excludeFiles" => it.excluded = patterns(value)?,
-                b"rules" => (it.rules, it.places) = rules(value)?,
+                b"rules" => (it.rules, it.places, it.wildcards) = rules(value)?,
                 b"globals" => it.globals = globals(value)?,
                 b"settings" => it.settings = settings(value)?,
                 _ => {
@@ -1117,7 +1132,9 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                 }
             }
             b"plugins" => (options.plugin, options.plugins_of_bunfig) = plugins(value)?,
-            b"rules" => (options.rule, options.rules_of_bunfig) = rules(value)?,
+            b"rules" => {
+                (options.rule, options.rules_of_bunfig, options.wildcards) = rules(value)?;
+            }
             b"settings" => options.settings = settings(value)?,
             b"overrides" => options.overrides = overrides_of_lint(value)?,
             b"parserOptions" => {

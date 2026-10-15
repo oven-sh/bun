@@ -603,7 +603,7 @@ fn finish_clone(
 ) -> Result<bun_sys::Dir, Error> {
     let req = task.request_git_clone();
     let (name, urls) = (req.name.slice().to_vec(), clone_urls(req.url.slice()));
-    let config = bun_core::ZBox::from_bytes(&[&staging.tmp_name[..], b"/config"].concat());
+    let config = bun_core::ZBox::from_bytes([&staging.tmp_name[..], b"/config"].concat());
     let written = bun_sys::File::read_from(staging.cache_dir, config.as_bytes()).and_then(|git| {
         let is_sha256 = strings::contains(&git, b"objectformat = sha256");
         bun_sys::File::write_file(staging.cache_dir, &config, &clone_config(url, is_sha256))
@@ -781,7 +781,7 @@ impl GitSubprocess {
                         Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
                         return Ok(());
                     }
-                    return Self::spawn_fetch(this, repo, url.to_vec(), false);
+                    return Self::spawn_fetch(this, repo, url, false);
                 }
             }
             Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {}
@@ -817,13 +817,13 @@ impl GitSubprocess {
     fn spawn_fetch(
         this: ThisPtr<Self>,
         repo: bun_sys::Dir,
-        url: Vec<u8>,
+        url: &[u8],
         is_retry: bool,
     ) -> Result<(), Error> {
         let git_dir = this.git_dir_arg(this.task().id);
         this.step.set(Step::Fetch {
             repo,
-            url: url.clone(),
+            url: url.to_vec(),
             is_retry,
         });
         // --prune clears refs renamed upstream.
@@ -836,7 +836,7 @@ impl GitSubprocess {
                 b"--prune",
                 b"--no-recurse-submodules",
                 b"--",
-                &url,
+                url,
                 // A pattern may match nothing: the HEAD of a remote can name no branch.
                 b"+HEAD*:refs/remotes/origin/HEAD*",
                 b"+refs/heads/*:refs/heads/*",
@@ -1225,7 +1225,7 @@ impl GitSubprocess {
                     Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
                 } else if lost_a_ref {
                     this.reset_polls();
-                    if let Err(err) = Self::spawn_fetch(this, repo, url, true) {
+                    if let Err(err) = Self::spawn_fetch(this, repo, &url, true) {
                         Self::fail(this, err);
                     }
                 } else {

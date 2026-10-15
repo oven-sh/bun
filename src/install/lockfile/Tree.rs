@@ -658,13 +658,14 @@ impl PeerProbes {
         }
     }
 
-    /// Do `tree_deps` hold an out-of-range version of a peer that staying put finds in range?
+    /// Does the tree hold an out-of-range version of a peer that staying put finds in range?
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
         deps: &[Dependency],
         resolutions: &[PackageID],
-        tree_deps: &[DependencyID],
+        placed: &Placed,
+        tree_id: Id,
     ) -> bool {
         let pkg_resolutions = lockfile.packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -673,9 +674,8 @@ impl PeerProbes {
         while i < self.0.len() {
             let (peer_dep_id, provided) = self.0[i];
             let peer = &deps[peer_dep_id as usize];
-            let held = tree_deps
-                .iter()
-                .find(|&&dep_id| deps[dep_id as usize].name_hash == peer.name_hash)
+            let held = placed
+                .get(&(tree_id, peer.name_hash))
                 .map(|&dep_id| resolutions[dep_id as usize])
                 .filter(|&res_id| res_id != invalid_package_id)
                 .map(|res_id| {
@@ -1738,7 +1738,8 @@ impl Tree {
                 builder.lockfile.get(),
                 deps,
                 &*builder.resolutions,
-                this_deps,
+                &builder.placed,
+                this.id,
             )
         {
             return HoistDependencyResult::DependencyLoop; // 3

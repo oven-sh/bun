@@ -1038,14 +1038,12 @@ pub fn install_with_manager(
         && install_summary.skipped > 0
         && install_summary.fail == 0
         && (runs_root_scripts || manager.root_lifecycle_scripts.is_none())
-        && let Some(laid) = &install_summary.successfully_installed
     {
         crate::prune::remove_copies_of_the_older_layout(
             manager,
             install_root_dependencies,
             &workspace_filters,
             core::mem::take(&mut install_summary.places),
-            laid,
         );
     }
     if manager.options.global && manager.options.do_.install_packages() {

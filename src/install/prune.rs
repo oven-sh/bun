@@ -1590,8 +1590,16 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
             })
             .flatten()
             .map(|id| {
+                // In `before` the member has the rows of its new package.json.
+                let mut roots: Vec<PackageID> = vec![id as PackageID];
+                roots.extend(
+                    (manager.summary.dropped_rows.iter())
+                        .filter(|row| row.owner as usize == id)
+                        .map(|row| row.package),
+                );
                 let options = reachable::Options::all(id as PackageID);
-                reachable::packages(before, before.buffers.resolutions.as_slice(), options)
+                let resolutions = before.buffers.resolutions.as_slice();
+                reachable::packages_from(before, resolutions, &roots, true, options)
             });
         if !removes_other_entries && all_stay && reached.is_none() {
             continue;
@@ -1640,21 +1648,16 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 /// now, nor below it, so the folder goes: it hides the package further up, which has what it needs.
 /// What the owner's tarball or scripts can have put there stays. For an install that laid something,
 /// as the first one over such a tree does. bun.lock is saved. `places`: `tree::Builder::places`.
-/// `laid`: the packages that this run laid.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     mut places: Vec<(u64, PackageID)>,
-    laid: &DynamicBitSet,
 ) {
-    places.sort_unstable_by_key(|&(key, _)| key);
-    if !is_laid_package_hidden(&manager.lockfile, &places, laid) {
-        return;
-    }
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
     };
+    places.sort_unstable_by_key(|&(key, _)| key);
     // A hoist can bind a peer.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
     if let Ok(saved) = hoist_tree(
@@ -1712,71 +1715,6 @@ fn tarball_has(
         return Some(true);
     }
     is_folder(&entry)?.then_some(false)
-}
-
-/// Whether a folder that today's layout does not have stands between a package and a dependency of
-/// it that this run laid. A copy of the older layout does: that layout had something else where the
-/// dependency is now, or it would not have made the copy. So a run that finds none has no need to
-/// work the older layout out. `lockfile` carries the saved tree.
-fn is_laid_package_hidden(
-    lockfile: &Lockfile,
-    places: &[(u64, PackageID)],
-    laid: &DynamicBitSet,
-) -> bool {
-    // Its install tree is not the saved one.
-    if lockfile.self_contained_workspaces.count() > 0 {
-        return true;
-    }
-    let trees = lockfile.buffers.trees.as_slice();
-    let rows = lockfile.buffers.hoisted_dependencies.as_slice();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let lists = lockfile.packages.items_resolutions();
-    let folders = tree::folder_keys(trees, deps);
-    let today = |folder: u64, name_hash: u64| {
-        let place = tree::place_key(folder, name_hash);
-        places.binary_search_by_key(&place, |&(key, _)| key).is_ok()
-    };
-    let is_there = |folder: &[u8], name: &[u8]| !is_dangling(&Dir::cwd(), &join(folder, name));
-    for (id, saved) in trees.iter().enumerate() {
-        // No row to find it by.
-        if saved.is_unlinked_member(trees, rows, deps) {
-            return true;
-        }
-        for &row in saved.dependencies.get(rows) {
-            let (owner, pkg_id) = (&deps[row as usize], resolutions[row as usize]);
-            let Some(list) = lists.get(pkg_id as usize) else {
-                continue;
-            };
-            for edge in list.begin() as usize..list.end() as usize {
-                if !laid.is_set_allow_out_of_bound(resolutions[edge] as usize, false) {
-                    continue;
-                }
-                let (name, name_hash) = (deps[edge].name.slice(buf), deps[edge].name_hash);
-                if today(tree::place_key(folders[id], owner.name_hash), name_hash) {
-                    continue;
-                }
-                let own = workspace_node_modules(lockfile, pkg_id).unwrap_or_else(|| {
-                    join(
-                        &join(&tree_path(lockfile, id), owner.name.slice(buf)),
-                        ROOT_DIR,
-                    )
-                });
-                if is_there(&own, name) {
-                    return true;
-                }
-                let mut above = id;
-                while above != 0 && !today(folders[above], name_hash) {
-                    if is_there(&tree_path(lockfile, above), name) {
-                        return true;
-                    }
-                    above = trees[above].parent as usize;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// The `node_modules` of a tree, from the project's folder.

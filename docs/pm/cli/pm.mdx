@@ -15,8 +15,6 @@ bun pm pack
 
 `bun pm pack` creates a `.tgz` file containing all files that would be published to npm, following the same rules as `npm pack`.
 
-Without a `files` field in `package.json`, `.npmignore` (or, where there is none, `.gitignore`) says what is left out. As in npm, a workspace also goes by the `.npmignore` / `.gitignore` of the workspace root and of the folders between the two. A build folder such as `dist` that the root's `.gitignore` names is therefore not packed unless `files` lists it, or the workspace's own `.npmignore` has `!dist`.
-
 ## Examples
 
 Basic usage:
@@ -469,12 +467,10 @@ bun pm trust <names>
 
 Options for the `trust` command:
 
-- `--all`: Trust all untrusted dependencies, and run the scripts of the trusted ones again.
+- `--all`: Trust all untrusted dependencies.
 - `--dry-run`: Print the scripts that would run and the packages that would be trusted, without running scripts or writing `package.json` and `bun.lock`.
 
-A package that is already trusted runs its scripts again. Use this when `bun install` has nothing to do but the scripts never ran in this `node_modules`: after `bun install --ignore-scripts`, or when the trust came with a `git pull`.
-
-`bun pm trust` and `bun add --trust` run what `bun install` runs once the name is listed. A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun pm untrusted` marks the others with `cannot be trusted by name`.
+A package that does not come from the npm registry (a tarball, `git`, `file:` or `link:` dependency) also has to be declared in the `package.json` of the project or of a workspace. `bun install`, `bun pm trust` and `bun add --trust` do not run the scripts of the others, and `bun pm untrusted` marks them with `cannot be trusted by name`.
 
 ## default-trusted
 

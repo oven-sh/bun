@@ -988,29 +988,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // Auto-install: resolution errors go to `this.log` instead of propagating.
     is_root: bool,
 ) -> crate::Result<()> {
-    let log_mark = this.log_mut().msgs.len();
-    enqueue_dependency_logging(
-        this,
-        id,
-        dependency,
-        resolution,
-        install_peer,
-        success_fn,
-        is_root,
-    )?;
-    this.hold_log_since(log_mark, HeldAbout::Row(id));
-    Ok(())
-}
-
-fn enqueue_dependency_logging(
-    this: &mut PackageManager,
-    id: DependencyID,
-    dependency: &Dependency,
-    resolution: PackageID,
-    install_peer: bool,
-    success_fn: SuccessFn,
-    is_root: bool,
-) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
         return Ok(());
     }
@@ -1072,7 +1049,17 @@ fn enqueue_dependency_logging(
             };
             let overridden = (this.lockfile.overrides)
                 .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
-                .map(|rule| rule.version().clone());
+                .map(|rule| rule.version().clone())
+                // Auto-install follows a rule to the registry. Any other, such as `file:`, is passed over.
+                .filter(|new| {
+                    !this.options.runtime_auto_install
+                        || matches!(
+                            new.tag,
+                            dependency::version::Tag::Npm
+                                | dependency::version::Tag::DistTag
+                                | dependency::version::Tag::Catalog
+                        )
+                });
             if let Some(new) = &overridden {
                 bun_output::scoped_log!(
                     PackageManager,
@@ -1180,9 +1167,15 @@ fn enqueue_dependency_logging(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            return report_resolve_error(
+                            let log_mark = this.log_mut().msgs.len();
+                            report_resolve_error(
                                 this, id, dependency, name, &version, err, is_root,
-                            );
+                            )?;
+                            // The manifest is there and has no such version.
+                            if version.tag.is_npm() {
+                                this.hold_log_since(log_mark, HeldAbout::Row(id));
+                            }
+                            return Ok(());
                         }
                     };
 
@@ -3274,8 +3267,8 @@ impl PackageManager {
         })
     }
 
-    /// Takes what was logged since `mark` back out of the log until `log_held` judges it.
-    #[inline]
+    /// Takes the registry's "no", logged since `mark`, back out of the log until `log_held` judges it.
+    #[cold]
     pub(crate) fn hold_log_since(&mut self, mark: usize, about: HeldAbout) {
         let log = self.log_mut();
         if log.msgs.len() <= mark {
@@ -3300,7 +3293,6 @@ impl PackageManager {
                 // `populate_manifest_cache` started it, and its caller reads the log.
                 None => true,
             },
-            HeldAbout::Package(_) => false,
         };
         if settled {
             return;
@@ -3317,14 +3309,6 @@ impl PackageManager {
             }
         }
         held.push((about, msgs));
-    }
-
-    /// The package a download was for, or the row that still waits for it.
-    pub(crate) fn about_download(&self, dependency_id: DependencyID) -> HeldAbout {
-        match self.lockfile.buffers.resolutions[dependency_id as usize] {
-            id if id == invalid_package_id => HeldAbout::Row(dependency_id),
-            id => HeldAbout::Package(id),
-        }
     }
 
     /// After dedupe: logs what was held about the packages that are still in the tree.
@@ -3350,7 +3334,6 @@ impl PackageManager {
                 };
                 match about {
                     HeldAbout::Row(row) => is_in_tree(row).then_some(true),
-                    HeldAbout::Package(id) => tree.is_set(id as usize).then_some(true),
                     HeldAbout::Task(id) => match self.task_queue.get(&id) {
                         Some(waiters) if !waiters.is_empty() => waiters
                             .iter()
@@ -3395,28 +3378,39 @@ impl PackageManager {
         }
     }
 
-    /// Like npm, unbinds an optional dependency when something it cannot do without failed.
+    /// Like npm, unbinds an optional dependency when the registry has nothing for a row it cannot do without.
     fn leave_out_broken_optional_dependencies(&mut self, held: &[(HeldAbout, Vec<bun_ast::Msg>)]) {
+        use bun_collections::DynamicBitSet;
         let lockfile = &*self.lockfile;
         let lists = lockfile.packages.items_dependencies();
         let owners = lockfile.packages.items_resolution();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let buf = lockfile.buffers.string_bytes.as_slice();
         let mut resolutions = lockfile.buffers.resolutions.clone();
-        let mut broken = bun_collections::DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
-        for (about, msgs) in held {
-            if let HeldAbout::Package(id) = *about
-                && msgs.iter().any(|msg| msg.kind == bun_ast::Kind::Err)
-            {
-                broken.set(id as usize);
+        // A row that is unresolved for another reason breaks nothing: the next install may resolve it.
+        let mut refused = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
+        for (about, _) in held {
+            match *about {
+                HeldAbout::Row(row) => refused.set(row as usize),
+                HeldAbout::Task(id) => {
+                    for waiter in self.task_queue.get(&id).into_iter().flatten() {
+                        if let TaskCallbackContext::Dependency(row) = *waiter {
+                            refused.set(row as usize);
+                        }
+                    }
+                }
             }
         }
+        let mut broken = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
         loop {
             let broken_before = broken.count();
             for (owner, list) in lists.iter().enumerate() {
                 if (list.begin() as usize..list.end() as usize).any(|row| {
                     (self.options).must_resolve(owners[owner].tag, dependencies[row].behavior)
-                        && broken.is_set_allow_out_of_bound(resolutions[row] as usize, true)
+                        && match resolutions[row] {
+                            id if id == invalid_package_id => refused.is_set(row),
+                            id => broken.is_set(id as usize),
+                        }
                 }) {
                     broken.set(owner);
                 }

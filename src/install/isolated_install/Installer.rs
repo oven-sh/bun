@@ -952,8 +952,6 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
-    /// The dependency links written into an entry that was there before. See `Installer::prune_bins`.
-    pub(crate) relinked: Vec<install::DependencyID>,
     /// Warnings of `lay_folder_links`. See `Installer::warn_left_out_links`.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
@@ -1115,12 +1113,7 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = installer.symlink_dependencies(
-                        entry_id,
-                        strategy,
-                        made_entry,
-                        &mut self.relinked,
-                    )?;
+                    let changed = installer.symlink_dependencies(entry_id, strategy, made_entry)?;
 
                     if relinking {
                         self.relink = changed;
@@ -1945,7 +1938,6 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
         made_entry: bool,
-        relinked: &mut Vec<install::DependencyID>,
     ) -> TaskResult<Relink> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2069,9 +2061,6 @@ impl<'a> Installer<'a> {
                     .unwrap_or(b"");
             }
             if written? {
-                if matches!(strategy, symlinker::Strategy::ExpectExisting) {
-                    relinked.push(dep.dep_id);
-                }
                 let behavior = dependencies[dep.dep_id as usize].behavior;
                 if !(behavior.is_optional() || behavior.is_optional_peer()) {
                     changed = Relink::Changed;
@@ -2168,52 +2157,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread, once every task is done: what a link led to before may have had other bins.
-    pub(crate) fn prune_bins(&self) {
-        if self.is_new_bun_modules {
-            return;
-        }
-        let (lockfile, store) = (self.lockfile(), self.store);
-        let options = &self.manager().options;
-        for task in self.tasks.iter().filter(|task| !task.relinked.is_empty()) {
-            let entry_id = task.entry_id;
-            let mut placed: Vec<bin_real::Placed<'_>> = store.entries.items_dependencies()
-                [entry_id.get() as usize]
-                .slice()
-                .iter()
-                .map(|dep| bin_real::Placed {
-                    folder: lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
-                    package_id: store.ids(dep.entry_id).pkg_id,
-                    replaced: task.relinked.contains(&dep.dep_id),
-                })
-                .collect();
-            // `Step::Binaries` links the package's own.
-            placed.extend(
-                self.entry_store_node_modules_package_name(entry_id)
-                    .map(|folder| bin_real::Placed {
-                        folder,
-                        package_id: store.ids(entry_id).pkg_id,
-                        replaced: false,
-                    }),
-            );
-            let is_left_over = |name: &[u8], target: &[u8]| {
-                bin_real::is_left_over(lockfile, &placed, name, target)
-            };
-
-            let mut path = AutoAbsPath::init_top_level_dir();
-            self.append_store_node_modules_path(&mut path, entry_id);
-            if !self.linked.contains(path.slice())
-                && let Ok(node_modules) = sys::Dir::open(path.slice())
-            {
-                crate::prune::prune_bins(&node_modules, Some(&is_left_over));
-            }
-            if entry_id == StoreEntryId::ROOT && options.global {
-                let bin_path = options.bin_path.as_bytes();
-                crate::prune::prune_global_bins(bin_path, path.slice(), Some(&is_left_over));
-            }
-        }
-    }
-
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> TaskResult<()> {
         let (lockfile, store) = (self.lockfile(), self.store);
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2288,9 +2231,11 @@ impl<'a> Installer<'a> {
     fn bin_links(&self, entry_id: StoreEntryId) -> BinLinks {
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut node_modules_path, entry_id, Which::Staging);
+        let is_behind_link = self.linked.contains(node_modules_path.slice());
         self.linked.resolve(&mut node_modules_path);
         BinLinks {
             node_modules_path,
+            is_behind_link,
             seen: StringHashMap::default(),
             abs_target_buf: paths::path_buffer_pool::get(),
             abs_dest_buf: paths::path_buffer_pool::get(),
@@ -2338,6 +2283,7 @@ impl<'a> Installer<'a> {
             abs_target_buf: &mut *links.abs_target_buf,
             abs_dest_buf: &mut *links.abs_dest_buf,
             rel_buf: &mut *links.rel_buf,
+            is_behind_link: links.is_behind_link,
             err: None,
             skipped_due_to_missing_bin: false,
         };
@@ -2797,6 +2743,7 @@ pub enum Which {
 
 struct BinLinks {
     node_modules_path: DefaultAbsPath,
+    is_behind_link: bool,
     seen: StringHashMap<()>,
     abs_target_buf: paths::path_buffer_pool::Guard,
     abs_dest_buf: paths::path_buffer_pool::Guard,

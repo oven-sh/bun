@@ -54,7 +54,7 @@ enum Action {
     Defer,
 }
 
-/// An installed dependency that has lifecycle scripts, blocked unless `is_trusted`.
+/// An installed dependency whose lifecycle scripts the installers do not run.
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
@@ -67,7 +67,7 @@ struct Blocked {
 }
 
 impl Blocked {
-    /// None for the project and its workspaces, whose scripts always run.
+    /// The installers' gate: the project's and its workspaces' scripts always run, every other package needs trust.
     fn scripts_at(
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
@@ -86,6 +86,10 @@ impl Blocked {
         if matches!(
             resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace
+        ) || lockfile.has_trusted_dependency(
+            alias,
+            packages.items_name()[package_id].slice(buf),
+            resolution,
         ) {
             return Ok(None);
         }
@@ -214,15 +218,6 @@ impl Blocked {
         (alias, trusted_name)
     }
 
-    /// The installers' gate.
-    fn is_trusted(&self, lockfile: &Lockfile) -> bool {
-        lockfile.has_trusted_dependency(
-            self.names(lockfile).0,
-            lockfile.str(&lockfile.packages.items_name()[self.package_id as usize]),
-            &lockfile.packages.items_resolution()[self.package_id as usize],
-        )
-    }
-
     /// Whether the installers run it once its name is listed. `bun pm trust` runs nothing else.
     fn can_trust(&self, lockfile: &Lockfile) -> bool {
         lockfile.can_trust_by_name(
@@ -289,8 +284,7 @@ impl UntrustedCommand {
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         read_trusted_dependencies(pm);
 
-        let mut blocked = Blocked::find_all(pm, linker)?;
-        blocked.retain(|info| !info.is_trusted(&pm.lockfile));
+        let blocked = Blocked::find_all(pm, linker)?;
         if blocked.is_empty() {
             bun_core::pretty!(
                 "Found <b>0<r> untrusted dependencies with scripts.\n\
@@ -329,12 +323,12 @@ impl TrustCommand {
         Output::print(format_args!("\n"));
         if trust_all {
             Output::err_generic(
-                "0 scripts ran. This means none of your dependencies have scripts.",
+                "0 scripts ran. This means all dependencies are already trusted or none have scripts.",
                 (),
             );
         } else {
             Output::err_generic(
-                "0 scripts ran. The following packages don't have scripts to run or don't exist:\n\n",
+                "0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n",
                 (),
             );
             for arg in packages_to_trust {
@@ -475,8 +469,6 @@ impl TrustCommand {
                 scripts_count += info.scripts_list.total as usize;
             }
         }
-        // A trusted one that was asked for runs again: nothing says whether its scripts ran here.
-        blocked.retain(|info| info.action != Action::Skip || !info.is_trusted(lockfile));
 
         if package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, packages_to_trust);

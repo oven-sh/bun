@@ -841,6 +841,69 @@ test.concurrent("the last dependency that left package.json is unlinked from nod
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun"]);
 });
 
+// A link goes from the node_modules of the package that lost the dependency only, and only the link bun made for it.
+test.concurrent.each(["install", "remove no-deps"])(
+  "a dependency that left one package.json keeps every other link of its name: bun %s",
+  async command => {
+    const member = (name: string, dependencies: Record<string, string>) =>
+      JSON.stringify({ name, version: "1.0.0", dependencies });
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "own-links", workspaces: ["packages/*"] }),
+        "packages/drops/package.json": member("drops", { "no-deps": "1.0.0", "a-dep": "1.0.1" }),
+        "packages/drops-relinked/package.json": member("drops-relinked", { "no-deps": "1.0.0", "a-dep": "1.0.1" }),
+        "packages/lists/package.json": member("lists", { "no-deps": "1.0.0" }),
+        "packages/by-hand/package.json": member("by-hand", { "a-dep": "1.0.1" }),
+        "packages/bun-link/package.json": member("bun-link", { "a-dep": "1.0.1" }),
+        "mine/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }),
+      },
+    });
+    const env = {
+      ...installEnv(packageDir),
+      BUN_INSTALL: join(packageDir, "global"),
+      BUN_INSTALL_GLOBAL_DIR: join(packageDir, "global", "install", "global"),
+    };
+    const run = async (cwd: string, ...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    };
+    const linkIn = (...folder: string[]) => join(packageDir, ...folder, "node_modules", "no-deps");
+    // The version that `import "no-deps"` finds in each node_modules.
+    const versions = async () => {
+      const found: Record<string, string | undefined> = {};
+      for (const folder of ["", "drops", "drops-relinked", "lists", "by-hand", "bun-link"]) {
+        const manifest = file(join(folder ? linkIn("packages", folder) : linkIn(), "package.json"));
+        found[folder] = (await manifest.exists()) ? (await manifest.json()).version : undefined;
+      }
+      return found;
+    };
+
+    await run(packageDir, "install");
+    await run(join(packageDir, "mine"), "link");
+    await run(join(packageDir, "packages", "bun-link"), "link", "no-deps");
+    rmSync(linkIn("packages", "drops-relinked"));
+    for (const link of [linkIn(), linkIn("packages", "by-hand"), linkIn("packages", "drops-relinked")]) {
+      symlinkSync(join(packageDir, "mine"), link, "junction");
+    }
+    const mine = { "": "9.9.9", "drops-relinked": "9.9.9", "by-hand": "9.9.9", "bun-link": "9.9.9" };
+    expect(await versions()).toEqual({ ...mine, drops: "1.0.0", lists: "1.0.0" });
+
+    // An install puts back the link of a dependency that is still listed, so the changed link goes first.
+    for (const name of ["drops-relinked", "drops"]) {
+      const folder = join(packageDir, "packages", name);
+      if (command === "install") {
+        await write(join(folder, "package.json"), member(name, { "a-dep": "1.0.1" }));
+      }
+      await run(folder, ...command.split(" "));
+    }
+
+    expect(await versions()).toEqual({ ...mine, drops: undefined, lists: "1.0.0" });
+  },
+);
+
 // The copy of a folder dependency is made again by an install that finds other names or files in the folder.
 test.concurrent("what is deleted from a folder dependency is removed from its copy on the next install", async () => {
   const { packageDir } = await registry.createTestDir({
@@ -4080,6 +4143,27 @@ describe.concurrent("--linker flag", () => {
 
     expect({ root: await readdirSorted(rootModules), web: await readdirSorted(webModules) }).toEqual({ root, web });
     expect(await file(join(webModules, ".vite", "deps", "key")).text()).toBe("warm");
+  });
+
+  test("replacing the tree of another package manager takes its own dot entries along", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: { "package.json": JSON.stringify({ name: "was-pnpm", dependencies: { "no-deps": "1.0.0" } }) },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    await Promise.all(
+      [
+        ".pnpm/no-deps@1.0.0/node_modules/no-deps/index.js",
+        ".pnpm-workspace-state.json",
+        ".modules.yaml",
+        ".package-lock.json",
+        ".yarn-integrity",
+        ".yarn-state.yml",
+        ".vite/deps/key",
+      ].map(path => write(join(nodeModules, path), "warm")),
+    );
+    await installWithLinker(packageDir, "isolated");
+
+    expect(await readdirSorted(nodeModules)).toEqual([".bun", ".vite", "no-deps"]);
   });
 
   // `--linker` on the command line is saved nowhere. Without workspaces the default is hoisted, so

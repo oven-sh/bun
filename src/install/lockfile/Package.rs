@@ -803,12 +803,19 @@ impl Package<u64> {
 
 pub(crate) struct Diff;
 
+/// The `package.json` of `owner` no longer has `name`, which was `package`. Of the lockfile as loaded.
+pub(crate) struct DroppedRow {
+    pub(crate) owner: PackageID,
+    pub(crate) name: String,
+    pub(crate) package: PackageID,
+}
+
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
-    /// What `remove` counts.
-    pub(crate) removed_names: Vec<PackageNameHash>,
+    /// Of the root and the members.
+    pub(crate) dropped_rows: Vec<DroppedRow>,
     pub(crate) update: u32,
     /// Of `update`: the ones that leave every dependency as it is.
     pub(crate) script_only_updates: u32,
@@ -829,6 +836,9 @@ pub struct DiffSummary {
     pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
+    /// Not in `add`: rows of the new root for members that a lockfile of Bun 1.4 or older has no
+    /// entry for, because the root gives their name to another package.
+    pub(crate) members_left_out: Vec<u32>,
 }
 
 impl DiffSummary {
@@ -874,7 +884,7 @@ impl Diff {
         id_mapping: Option<&mut [PackageID]>,
     ) -> crate::Result<DiffSummary> {
         let mut removed_names: Vec<PackageNameHash> = Vec::new();
-        let mut summary = Self::generate_inner(
+        Self::generate_inner(
             pm,
             log,
             from_lockfile,
@@ -884,9 +894,7 @@ impl Diff {
             update_requests,
             id_mapping,
             &mut removed_names,
-        )?;
-        summary.removed_names = removed_names;
-        Ok(summary)
+        )
     }
 
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
@@ -1070,6 +1078,18 @@ impl Diff {
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);
                 }
+                // The root's row for a member from "workspaces" links nothing.
+                if !from_dep.behavior.is_workspace()
+                    && !to_deps!().iter().any(|to_dep| {
+                        to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
+                    })
+                {
+                    summary.dropped_rows.push(DroppedRow {
+                        owner: from.meta.id,
+                        name: from_dep.name,
+                        package: from_resolutions[i],
+                    });
+                }
                 continue;
             };
             to_i = cur_to_i + 1;
@@ -1204,7 +1224,7 @@ impl Diff {
                         recorded: from_pkg.dependencies,
                     });
 
-                    let diff = Self::generate_inner(
+                    let mut diff = Self::generate_inner(
                         pm,
                         log,
                         from_lockfile,
@@ -1215,6 +1235,7 @@ impl Diff {
                         None,
                         removed_names,
                     )?;
+                    summary.dropped_rows.append(&mut diff.dropped_rows);
                     // Both calls may have grown `to_lockfile.buffers.dependencies`.
                     to_deps = to
                         .dependencies
@@ -1300,6 +1321,20 @@ impl Diff {
             summary.script_only_updates += (retyped || recorded_request || range_link) as u32;
         }
 
+        if is_root {
+            summary.members_left_out = (to_deps!().iter().enumerate())
+                .filter(|(to_i, member)| {
+                    member.behavior.is_workspace()
+                        && !paired.is_set(*to_i)
+                        && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
+                            own.name_hash == member.name_hash
+                                && !own.behavior.is_workspace()
+                                && paired.is_set(own_i)
+                        })
+                })
+                .map(|(to_i, _)| to_i as u32)
+                .collect();
+        }
         // An older bun.lock lacks the `*` optional peer of a name only `peerDependenciesMeta` has.
         summary.add = to_deps!()
             .iter()
@@ -1310,7 +1345,8 @@ impl Diff {
                         && to_dep.behavior.is_optional_peer()
                         && to_dep.version.literal.slice(to_buf!()) == b"*")
             })
-            .count() as u32;
+            .count() as u32
+            - summary.members_left_out.len() as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
             // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.

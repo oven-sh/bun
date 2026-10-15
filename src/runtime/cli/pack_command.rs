@@ -449,7 +449,6 @@ fn iterate_included_project_tree(
             pack_queue,
             bins,
             Some(excludes),
-            Vec::new(),
             included_dir_info,
             log_level,
         )?;
@@ -759,14 +758,6 @@ fn add_bundled_dep(
     let dir = (Dir::cwd().open_dir(&real_path, ITERABLE))
         .unwrap_or_else(|err| fail_open_dir(err.into(), &real_path));
 
-    // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball. Only that
-    // takes the other workspaces. They are read before the parse below, whose `Store` nodes they would reset.
-    let manifests: Option<&WorkspaceManifests> =
-        if strings::contains(&real_path, path::NODE_MODULES_NEEDLE) {
-            None
-        } else {
-            Some(&*manifests.get_or_insert_with(|| WorkspaceManifests::load(manager)))
-        };
     let log = manager.log_mut();
 
     let source = match File::read_from(dir.fd, b"package.json") {
@@ -784,14 +775,25 @@ fn add_bundled_dep(
             Global::crash();
         }
     };
-    let json = (source.as_ref())
-        .and_then(|source| JSON::parse_package_json_utf8(source, log, pack_bump()).ok())
-        .inspect(|json| drop_shadowed_properties(*json));
+    let mut parse = || {
+        (source.as_ref())
+            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, pack_bump()).ok())
+            .inspect(|json| drop_shadowed_properties(*json))
+    };
+    let mut json = parse();
+
+    // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball.
+    let is_own_package = !strings::contains(&real_path, path::NODE_MODULES_NEEDLE);
+    if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
+        // Reading the other workspaces resets the `Store` that `json` is in.
+        *manifests = Some(WorkspaceManifests::load(manager));
+        json = parse();
+    }
 
     if let (Some(source), Some(json)) = (&source, &json) {
         find_dependencies_to_bundle(bundle, index, json, root_path)?;
 
-        if let Some(manifests) = manifests {
+        if is_own_package {
             let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
                 bundle.files.push(BundledFile {
                     path: entry_subpath(&subpath, file)?,
@@ -803,7 +805,7 @@ fn add_bundled_dep(
             let edited = if needs_workspace_manifests(*json) {
                 let indentation = JSON::guess_indentation(&source.contents);
                 Some(edit_root_package_json(
-                    Some(manifests),
+                    manifests.as_ref(),
                     &real_path,
                     *json,
                     source,
@@ -813,9 +815,7 @@ fn add_bundled_dep(
                 None
             };
             add_file(b"package.json", edited)?;
-            let is_workspace = manifests.contains_package_dir(&real_path);
-            let (published, _) =
-                published_files(&dir, &real_path, is_workspace, json, pack_bump(), log_level)?;
+            let (published, _) = published_files(&dir, &real_path, json, pack_bump(), log_level)?;
             for file in published.into_paths() {
                 add_file(file.as_bytes(), None)?;
             }
@@ -943,16 +943,15 @@ fn find_dependencies_to_bundle(
 }
 
 /// `files_excludes`: `"files"` includes the directory `root_dir`; these are its negated entries.
-/// `ignores`: [`IgnorePatterns::read_above_workspace`].
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
     files_excludes: Option<&[Pattern]>,
-    mut ignores: Vec<IgnorePatterns>,
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir.2;
+    let mut ignores: Vec<IgnorePatterns> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
         ignores.push(IgnorePatterns {
@@ -1367,11 +1366,10 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
-/// `root_path` is the path `root_dir` was opened from. `is_workspace`: it is a workspace of the manager's project.
+/// `root_path` is the path `root_dir` was opened from.
 pub(crate) fn published_files(
     root_dir: &Dir,
     root_path: &[u8],
-    is_workspace: bool,
     json_root: &Expr,
     bump: &bun_alloc::Arena,
     log_level: LogLevel,
@@ -1393,7 +1391,6 @@ pub(crate) fn published_files(
                         &mut pack_queue,
                         &[],
                         None,
-                        Vec::new(),
                         DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                         log_level,
                     )?;
@@ -1404,16 +1401,10 @@ pub(crate) fn published_files(
     }
 
     let Some(files) = json_root.get(b"files") else {
-        let ignores_above = if is_workspace {
-            IgnorePatterns::read_above_workspace(root_path)
-        } else {
-            Vec::new()
-        };
         iterate_project_tree(
             &mut pack_queue,
             &bins,
             None,
-            ignores_above,
             DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
             log_level,
         )?;
@@ -1724,14 +1715,8 @@ pub(crate) fn pack(
         .then(|| Publish::PublishCommand::find_workspace_readme(abs_workspace_path))
         .flatten();
 
-    let (mut pack_queue, bins) = published_files(
-        &root_dir,
-        abs_workspace_path,
-        true,
-        &json.root,
-        bump,
-        log_level,
-    )?;
+    let (mut pack_queue, bins) =
+        published_files(&root_dir, abs_workspace_path, &json.root, bump, log_level)?;
 
     let bundled_files = iterate_bundled_deps(
         &mut ctx.bundled_deps,
@@ -2917,31 +2902,6 @@ impl IgnorePatterns {
             Some(end) => &line[..end],
             None => line,
         }
-    }
-
-    /// Like npm, a workspace also goes by the ignore files of the project's root and of the directories
-    /// between the two, read as if they were in the workspace's own directory. Its own files come after them.
-    fn read_above_workspace(workspace_path: &[u8]) -> Vec<IgnorePatterns> {
-        let root = path::string_paths::without_trailing_slash_windows_path(
-            path::fs::FileSystem::instance().top_level_dir(),
-        );
-        let mut above: Vec<&[u8]> = Vec::new();
-        let mut dir_path = workspace_path;
-        while dir_path != root {
-            // A workspace that is a link to a folder outside of the project.
-            let Some(parent) = path::dirname(dir_path) else {
-                return Vec::new();
-            };
-            above.push(parent);
-            dir_path = parent;
-        }
-        // Depth 0: the walk, which starts at depth 1, never leaves these behind.
-        let read = |dir_path: &&[u8]| {
-            let dir = (Dir::cwd().open_dir(dir_path, ITERABLE))
-                .unwrap_or_else(|err| fail_open_dir(err.into(), dir_path));
-            Self::read_from_disk(&dir, 0)
-        };
-        above.iter().rev().filter_map(read).collect()
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice

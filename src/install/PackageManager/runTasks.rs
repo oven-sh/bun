@@ -613,7 +613,6 @@ fn run_tasks_erased(
         let task = unsafe { &mut *task_ptr };
         debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
-        let log_mark = manager.log_mut().msgs.len();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -711,7 +710,6 @@ fn run_tasks_erased(
                             DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(name),
                         );
-                        manager.hold_log_since(log_mark, HeldAbout::Task(task.task_id));
 
                         fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
@@ -777,6 +775,7 @@ fn run_tasks_erased(
                     }
 
                     let is_required = manager.is_network_task_required(task.task_id);
+                    let log_mark = manager.log_mut().msgs.len();
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -800,7 +799,10 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    manager.hold_log_since(log_mark, HeldAbout::Task(task.task_id));
+                    // "No such package" is the one status that says something about the package.
+                    if response.status_code == 404 {
+                        manager.hold_log_since(log_mark, HeldAbout::Task(task.task_id));
+                    }
                     fail_update_requests(manager, task.task_id, name, None, is_required && retry);
 
                     return_network_task(task_ptr);
@@ -1012,7 +1014,6 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
                         ),
                     );
-                    manager.hold_log_since(log_mark, manager.about_download(extract.dependency_id));
                     fail_update_requests(
                         manager,
                         task.task_id,
@@ -1073,13 +1074,13 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    manager.hold_log_since(log_mark, manager.about_download(extract.dependency_id));
                     fail_update_requests(
                         manager,
                         task.task_id,
                         extract.name.slice(),
                         Some(extract.dependency_id),
-                        is_required && retry,
+                        // The registry just offered this version: no status for its file says anything about another one.
+                        is_required,
                     );
 
                     let _ = manager.task_queue.remove(&task.task_id);
@@ -1137,7 +1138,6 @@ fn run_tasks_erased(
             task: task_ptr,
         };
         manager.decrement_pending_tasks();
-        let log_mark = manager.log_mut().msgs.len();
 
         if !task.log.msgs.is_empty() {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
@@ -1180,7 +1180,6 @@ fn run_tasks_erased(
                             err.name(),
                             bstr::BStr::new(name),
                         );
-                        manager.hold_log_since(log_mark, HeldAbout::Task(task.id));
                     }
 
                     continue;
@@ -1289,7 +1288,6 @@ fn run_tasks_erased(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
-                    manager.hold_log_since(log_mark, manager.about_download(dependency_id));
                     fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
 
                     // Void-callback fallback (resolve phase): drain the

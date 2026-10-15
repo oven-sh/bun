@@ -3676,23 +3676,82 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     expect(exitCode).toBe(0);
   });
 
-  test("the registry's manifest completes a package of another host only when it is the same tarball", async () => {
-    const same = { name: "same", version: "1.0.0", bin: { same: "cli.js" } };
-    using registry = await serve([same, { name: "c", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } }]);
-    using mirror = await serve([same, { name: "c", version: "1.0.0", from: "mirror" }]);
+  test("the registry's manifest completes the packages of a mirror, and no other tarball", async () => {
+    const published = (name: string) => ({ name, version: "1.0.0", os: ["sunos"], bin: { [name]: "cli.js" } });
+    const names = ["archive", "other-bytes", "sha1", "sha512", "unhashed"];
+    using registry = await serve(names.map(published));
+    using mirror = await serve([published("sha512"), { name: "other-bytes", version: "1.0.0" }]);
+    const sha1 = new Bun.CryptoHasher("sha1").update(await tarball(published("sha1"))).digest("hex");
+    const entry = (name: string, resolved: string) =>
+      `${name}@^1.0.0:\n  version "1.0.0"\n  resolved "${resolved}"\n\n`;
+    const urls = {
+      // Not the path that a registry gives this name and version.
+      archive: `${mirror.url}o/archive/tar.gz/${commit}`,
+      "other-bytes": `${mirror.url}other-bytes/-/other-bytes-1.0.0.tgz`,
+      sha1: `${mirror.url}sha1/-/sha1-1.0.0.tgz`,
+      sha512: `${mirror.url}sha512/-/sha512-1.0.0.tgz`,
+      unhashed: `${mirror.url}unhashed/-/unhashed-1.0.0.tgz`,
+    };
     using dir = tempDir("yarn-migration-another-host", {
-      "package.json": JSON.stringify({ name: "app", dependencies: { c: "^1.0.0", same: "^1.0.0" } }),
-      "yarn.lock": header + mirror.entry({ name: "c", version: "1.0.0" }, "^1.0.0") + mirror.entry(same, "^1.0.0"),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: Object.fromEntries(names.map(name => [name, "^1.0.0"])),
+      }),
+      "yarn.lock":
+        header +
+        entry("archive", urls.archive) +
+        mirror.entry({ name: "other-bytes", version: "1.0.0" }, "^1.0.0") +
+        entry("sha1", `${urls.sha1}#${sha1}`) +
+        mirror.entry(published("sha512"), "^1.0.0") +
+        entry("unhashed", urls.unhashed),
     });
 
     const { stderr, exitCode } = await bun(String(dir), registry.url, "pm", "migrate", "-f");
     expect(errors(stderr)).toEqual([]);
-    const { c, same: completed } = lockPackages(String(dir));
-    expect({ c: c.slice(0, 3), same: completed.slice(0, 3) }).toEqual({
-      c: ["c@1.0.0", `${mirror.url}c/-/c-1.0.0.tgz`, {}],
-      same: ["same@1.0.0", `${mirror.url}same/-/same-1.0.0.tgz`, { bin: { same: "cli.js" } }],
+    const completed = (name: string) => ({ os: "sunos", bin: { [name]: "cli.js" } });
+    expect(
+      Object.fromEntries(Object.entries(lockPackages(String(dir))).map(([name, row]) => [name, row.slice(0, 3)])),
+    ).toEqual({
+      archive: ["archive@1.0.0", urls.archive, {}],
+      "other-bytes": ["other-bytes@1.0.0", urls["other-bytes"], {}],
+      sha1: ["sha1@1.0.0", urls.sha1, completed("sha1")],
+      sha512: ["sha512@1.0.0", urls.sha512, completed("sha512")],
+      unhashed: ["unhashed@1.0.0", urls.unhashed, completed("unhashed")],
     });
     expect(exitCode).toBe(0);
+  });
+
+  const bins = (dir: string) =>
+    fs.existsSync(join(dir, "node_modules", ".bin"))
+      ? [...new Set(fs.readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, "")))]
+      : [];
+
+  test.each([
+    ["link:./vendor/t", '"t@link:./vendor/t":\n  version "0.0.0"\n  uid ""\n'],
+    ["file:./vendor/t", '"t@file:./vendor/t":\n  version "1.0.0"\n'],
+    ["./vendor/t", 't@./vendor/t:\n  version "1.0.0"\n'],
+  ])("the bins of %s are linked and recorded", async (range, entry) => {
+    using server = await serve([]);
+    const project = () =>
+      tempDir("yarn-migration-folder-bins", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { t: range } }),
+        "vendor/t/package.json": JSON.stringify({ name: "t", version: "1.0.0", bin: { t: "cli.js" } }),
+        "vendor/t/cli.js": "#!/usr/bin/env node\n",
+        "yarn.lock": header + entry,
+      });
+
+    using saved = project();
+    const install = await bun(String(saved), server.url, "install");
+    expect(errors(install.stderr)).toEqual([]);
+    expect(lockPackages(String(saved)).t[1]).toEqual({ bin: { t: "cli.js" } });
+    expect(bins(String(saved))).toEqual(["t"]);
+    expect(install.exitCode).toBe(0);
+
+    using frozen = project();
+    const ci = await bun(String(frozen), server.url, "install", "--frozen-lockfile");
+    expect(errors(ci.stderr)).toEqual([]);
+    expect(bins(String(frozen))).toEqual(["t"]);
+    expect(ci.exitCode).toBe(0);
   });
 
   test.each(["the root", "a workspace"])(

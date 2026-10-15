@@ -310,6 +310,33 @@ describe.each(linkers)("%s linker", linker => {
       });
     }
 
+    // Bun 1.4 and older left such a workspace out of bun.lock: the file they wrote is the one of a root without it.
+    test.concurrent("a range, in a bun.lock of Bun 1.4: it stays as it is until the dependencies change", async () => {
+      const dependencies = { "no-deps": "1.0.0" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      const older = await lockText(dir);
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      await ok(dir, "install", "--frozen-lockfile");
+      await ok(dir, "ci");
+      await ok(dir, "install");
+      await ok(dir, "install", "--lockfile-only");
+      expect(await lockText(dir)).toBe(older);
+      expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify(root({ dependencies: { ...dependencies, "a-dep": "1.0.2" } })),
+      );
+      await ok(dir, "install");
+      expect(await resolved(dir)).toEqual(unlinked);
+      await expectRoundTrip(dir, () => check(dir));
+    });
+
     test.concurrent("a range, and the install fails on what the workspace cannot get", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0" } }),

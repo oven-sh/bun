@@ -102,10 +102,12 @@ impl Tree {
         if self.parent == INVALID_ID {
             return false;
         }
-        (deps.get(self.dependency_id as usize)).is_some_and(|dep| dep.behavior.is_workspace())
-            && !(trees[self.parent as usize].dependencies)
-                .get(hoisted_dependencies)
-                .contains(&self.dependency_id)
+        (deps.get(self.dependency_id as usize)).is_some_and(|dep| {
+            dep.behavior.is_workspace()
+                && dep.version.tag == crate::dependency::VersionTag::Workspace
+        }) && !(trees[self.parent as usize].dependencies)
+            .get(hoisted_dependencies)
+            .contains(&self.dependency_id)
     }
 
     pub(crate) fn to_external(self) -> External {
@@ -262,6 +264,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             if top.parent == 0 {
                 return (self.dependencies.get(top.dependency_id as usize)).is_some_and(|member| {
                     member.behavior.is_workspace()
+                        && member.version.tag == crate::dependency::VersionTag::Workspace
                         && crate::bin::path_climbs_out(
                             member.version.workspace().slice(self.string_bytes),
                         )
@@ -499,6 +502,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Install-tree places that two groups of one package want for different packages. The first
     /// group the run links fills it, so no other package shares what is there.
     pub(crate) contested: bun_collections::HashMap<(Id, PackageNameHash), ()>,
+    /// The rows that did not get such a place. Each has one tree there, as a placed row has.
+    pub(crate) contested_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// Install-tree rows this run links, each with the edge the installer reads. `None`: all.
     pub(crate) kept: Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>>,
     pub(crate) linked: reachable::Linked,
@@ -1302,7 +1307,10 @@ impl Tree {
                 HoistDependencyResult::Contested { id } => {
                     builder.contested.insert((id, dependency.name_hash), ());
                     // No row, but a tree: what this package needs has places for when it is linked.
-                    if builder.resolution_lists[pkg_id as usize].len > 0 {
+                    // Its owner can be walked again from below that tree, so only the first time.
+                    if builder.contested_rows.insert((id, dep_id), ()).is_none()
+                        && builder.resolution_lists[pkg_id as usize].len > 0
+                    {
                         builder.queue.write_item(FillItem {
                             tree_id: id,
                             dependency_id: dep_id,
@@ -1553,6 +1561,10 @@ impl Tree {
                     && is_in_peer_range()
                 {
                     return HoistDependencyResult::Served(res_id); // 1
+                }
+                // The root's rows again, below a link to the project: this member has its tree.
+                if dependency.behavior.is_workspace() {
+                    return HoistDependencyResult::Hoisted; // 1
                 }
                 // same package lists this name in another dependency group
                 if METHOD == BuilderMethod::Filter {

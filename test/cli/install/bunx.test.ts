@@ -287,7 +287,15 @@ function addLocalPackage(dir: string, name: string, version: string, bin?: strin
   const packageDir = join(dir, "node_modules", name);
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name, version, bin: bin && { [bin]: "cli.js" } }));
-  if (bin) addLocalBin(dir, bin, `console.log(${JSON.stringify(`${bin} of ${name} ${version}`)});`);
+  if (!bin) return;
+  const script = `console.log(${JSON.stringify(`${bin} of ${name} ${version}`)});`;
+  if (isWindows) return addLocalBin(dir, bin, script);
+  writeFileSync(join(packageDir, "cli.js"), `#!/usr/bin/env node\n${script}\n`);
+  chmodSync(join(packageDir, "cli.js"), 0o755);
+  mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+  // Of two packages with a bin of one name, the first keeps the entry.
+  const entry = join(dir, "node_modules", ".bin", bin);
+  if (!existsSync(entry)) symlinkSync(join(packageDir, "cli.js"), entry);
 }
 
 /** Makes everything below `dir`, and what it shares with the install cache through hard links, `hours` old. */
@@ -1807,6 +1815,27 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
+  // The install that bunx spawns runs in the tree, and is told which directory that is.
+  it.concurrent("a relative temp directory is as good as an absolute one", async () => {
+    using registry = await localRegistry(...toolWithDep());
+    using box = sandbox(registry);
+    const tmp = "../tmp";
+    const env = {
+      ...box.env,
+      HOME: undefined,
+      USERPROFILE: undefined,
+      TMPDIR: tmp,
+      TMP: tmp,
+      TEMP: tmp,
+      BUN_TMPDIR: tmp,
+    };
+
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, exitCode: 0 });
+    age(join(box.tmp, `.bunx-${uid}`, "tool@latest"));
+    registry.down.set("/tool", 503);
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, exitCode: 0, requests: ["/tool"] });
+  });
+
   it.concurrent("refuses to install when no root can be made private", async () => {
     using registry = await localRegistry(...toolWithDep());
     // What any user can put into a shared temp directory.
@@ -2354,6 +2383,36 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
         expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 with dep 2.0.0\n", exitCode: 0 });
       },
     );
+
+    // As from a mirror that lists a version before it has the file. It says nothing about the version bunx has.
+    it.concurrent.each([404, 403, 401])(
+      "a day-old tree is used when the file of a newer version answers %d",
+      async status => {
+        using registry = await localRegistry(...release("1.0.0"), ...release("2.0.0"));
+        using box = sandbox(registry);
+        registry.tagLatest("tool", "1.0.0");
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+        age(box.tree("tool@latest"));
+
+        registry.tagLatest("tool", "2.0.0");
+        registry.down.set("/tool/-/tool-2.0.0.tgz", status);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: "tool 1.0.0 with dep 1.0.0\n",
+          stderr: usesItsTree,
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  it.concurrent("the bin of a package comes before one of a dependency that is named like the package", async () => {
+    using registry = await localRegistry(fixturePackage("lint", "1.0.0", "lint"), {
+      ...fixturePackage("@corp/lint", "1.0.0", "corp-lint"),
+      dependencies: { lint: "1.0.0" },
+    });
+    using box = sandbox(registry);
+    expect(await box.run(["@corp/lint"])).toMatchObject({ stdout: "corp-lint 1.0.0\n", exitCode: 0 });
+    expect(await box.run(["@corp/lint"])).toMatchObject({ stdout: "corp-lint 1.0.0\n", exitCode: 0, requests: [] });
   });
 
   // The linker skips an entry of `bin` whose value is not the path of a file in the package.
@@ -2381,7 +2440,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
   });
 });
 
-// `@scope/name`, `-p <package>` and `<package>@<version>` name a package, so bunx looks for the package.
+// `@scope/name` and `-p <package>` name a package, so bunx looks for the package. With a version it is not the project's.
 describe("a package in node_modules", () => {
   it.concurrent("the bin of `@scope/name` is the one that package has", async () => {
     using box = sandbox();
@@ -2426,7 +2485,7 @@ describe("a package in node_modules", () => {
   });
 
   it.concurrent("is found from a directory below the project", async () => {
-    using box = sandbox(undefined, { cwd: { src: { deep: {} } } });
+    using box = sandbox(undefined, { cwd: { "package.json": JSON.stringify({ name: "app" }), src: { deep: {} } } });
     addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
 
     expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "src", "deep") })).toMatchObject({
@@ -2471,7 +2530,6 @@ describe("a package in node_modules", () => {
       expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject(ran);
       expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject({ ...ran, stderr: "", requests: [] });
       expect(await box.run(["-p", "mypkg", "nowhere"], { env })).toMatchObject({
-        stdout: "",
         stderr: expect.stringContaining("error: Package mypkg does not provide a binary named nowhere"),
         exitCode: 1,
       });
@@ -2513,16 +2571,59 @@ describe("a package in node_modules", () => {
     },
   );
 
-  it.concurrent.each(["css@3.4.0", "css@3", "css@^3"])("the version that bunx %s asks for is used", async spec => {
-    using box = sandbox();
-    addLocalPackage(box.cwd, "css", "3.4.0", "css");
+  it.concurrent.each([[["css@3.4.0"]], [["css@3"]], [["css@^3"]], [["-p", "css@3.4.0", "css"]]])(
+    "bunx %j is not the copy in node_modules, whatever its version",
+    async args => {
+      using registry = await localRegistry(fixturePackage("css", "3.4.0", "css"));
+      using box = sandbox(registry, { cwd: { "package.json": JSON.stringify({ name: "app" }) } });
+      addLocalPackage(box.cwd, "css", "3.4.0", "css");
 
-    expect(await box.run(["--no-install", spec])).toMatchObject({
-      stdout: "css of css 3.4.0\n",
+      expect(await box.run(args)).toMatchObject({ stdout: "css 3.4.0\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent("is not looked for above the project", async () => {
+    using box = sandbox(undefined, { cwd: { project: { "package.json": JSON.stringify({ name: "project" }) } } });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "project") })).toMatchObject({
+      stdout: "",
+      stderr: expect.stringContaining("Could not find an existing 'cli' binary to run."),
+      exitCode: 1,
+    });
+  });
+
+  it.concurrent("is found in the workspace root from a member", async () => {
+    using box = sandbox(undefined, {
+      cwd: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/member/package.json": JSON.stringify({ name: "member" }),
+      },
+    });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
       stderr: "",
       exitCode: 0,
     });
   });
+
+  // On Windows the entry is no link, so it does not say whose it is.
+  it.concurrent.skipIf(isWindows).each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
+    "bunx %j runs the bin of that package where another one has the entry in .bin",
+    async args => {
+      using box = sandbox();
+      addLocalPackage(box.cwd, "another", "9.0.0", "tool");
+      addLocalPackage(box.cwd, "@corp/tool", "1.0.0", "tool");
+
+      expect(await box.run(["--no-install", ...args])).toMatchObject({
+        stdout: "tool of @corp/tool 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   it.concurrent("without a bin and without a version asked for, it is an error", async () => {
     using box = sandbox();
@@ -2533,6 +2634,27 @@ describe("a package in node_modules", () => {
       stderr: expect.stringContaining("error: could not determine executable to run for package css"),
       exitCode: 1,
     });
+  });
+});
+
+it.concurrent("a package without a bin is not installed again to say so", async () => {
+  using registry = await localRegistry({ name: "lib", version: "1.0.0", files: { "index.js": "" } });
+  using box = sandbox(registry);
+  const error = "error: could not determine executable to run for package lib\n";
+
+  expect(await box.run(["lib"])).toMatchObject({
+    stdout: "",
+    stderr: expect.stringContaining(error),
+    exitCode: 1,
+    requests: ["/lib", "/lib/-/lib-1.0.0.tgz"],
+  });
+  expect(await box.run(["lib"])).toEqual({ stdout: "", stderr: error, exitCode: 1, requests: [] });
+  // What the tag names by now may have one.
+  expect(await box.run(["lib@latest"])).toMatchObject({
+    stdout: "",
+    stderr: expect.stringContaining(error),
+    exitCode: 1,
+    requests: ["/lib"],
   });
 });
 

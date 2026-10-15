@@ -619,11 +619,6 @@ fn read_dir_tree(
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
-            // The package the command was run in: `init` has checked that it belongs to the project.
-            let is_workspace = as_published_by.as_ref().is_some_and(|pm| {
-                bun_paths::dirname(pm.original_package_json_path.as_bytes())
-                    == Some(strings::without_trailing_slash(root))
-            });
             // Before the parse below: this one parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
@@ -653,7 +648,6 @@ fn read_dir_tree(
                 let (queue, _bins) = crate::cli::pack_command::published_files(
                     &dir,
                     root,
-                    is_workspace,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,

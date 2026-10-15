@@ -295,9 +295,14 @@ it("bun add --only-missing should not install existing package", async () => {
 });
 
 // Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json.
-async function analyze(command: "add" | "install", source: string) {
-  setHandler(dummyRegistry([]));
-  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+// `urls` collects what it asks the registry for.
+async function analyze(
+  command: "add" | "install",
+  source: string,
+  { packageJson = { name: "foo" }, urls = [] }: { packageJson?: object; urls?: string[] } = {},
+) {
+  setHandler(dummyRegistry(urls));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ version: "0.0.1", ...packageJson }));
   await writeFile(join(package_dir, "entry-point.ts"), source);
   // The registry has no tarball for most of these names.
   await using proc = spawn({
@@ -365,6 +370,39 @@ it("bun add --analyze leaves out builtins, paths and aliases, with or without a 
       `,
     ),
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
+it.each([
+  ["billing", "billing"],
+  ["billing", "billing/sub"],
+  ["@corp/billing", "@corp/billing"],
+  ["@corp/billing", "@corp/billing/sub"],
+])("bun add --analyze in %s neither adds nor looks up %s", async (name, specifier) => {
+  const urls: string[] = [];
+  const packageJson = { name, exports: { ".": "./index.js", "./sub": "./sub.js" } };
+  expect(await analyze("add", `import "${specifier}"; import "bar/sub";`, { packageJson, urls })).toEqual({
+    added: ["bar"],
+    errors: [],
+    exitCode: 0,
+  });
+  expect(urls).toEqual([`${root_url}/bar`]);
+});
+
+it("bun add --analyze goes by the package.json with a name that is nearest to the importing file", async () => {
+  const urls: string[] = [];
+  const member = join(package_dir, "packages", "member");
+  await mkdir(join(member, "nested"), { recursive: true });
+  await writeFile(join(member, "package.json"), JSON.stringify({ name: "@corp/member", version: "0.0.1" }));
+  await writeFile(join(member, "index.ts"), `import "@corp/member/sub"; import "./nested/index.ts";`);
+  await writeFile(join(member, "nested", "package.json"), JSON.stringify({ type: "module" }));
+  await writeFile(join(member, "nested", "index.ts"), `import "@corp/member"; import "bar/sub";`);
+  expect(
+    await analyze("add", `import "./packages/member/index.ts";`, {
+      packageJson: { name: "root", workspaces: ["packages/*"] },
+      urls,
+    }),
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+  expect(urls).toEqual([`${root_url}/bar`]);
 });
 
 it("bun add --analyze should scan dependencies", async () => {
@@ -3882,6 +3920,15 @@ describe("should move existing dependency when an explicit group flag is given",
         });
       }
     });
+  });
+
+  it("installs the version it saves when the install leaves out one of three groups with the name", async () => {
+    const groups = ["dependencies", "devDependencies", "optionalDependencies"];
+    const declared = { ...root, ...Object.fromEntries(groups.map(group => [group, { baz: "0.0.3" }])) };
+    const saved = JSON.parse(await add(declared, ["baz@0.0.5", "--omit=dev"], { "0.0.3": {}, "0.0.5": {} }));
+    expect((await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version).toBe(
+      saved.optionalDependencies.baz,
+    );
   });
 
   it("does not move with --only-missing", async () => {

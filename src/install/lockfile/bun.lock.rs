@@ -2799,61 +2799,6 @@ pub(crate) fn parse_into_binary_lockfile(
                 )
             })
         };
-        // An older bun.lock lists no "unresolved" rows: the name binds one only to what it asks for.
-        let is_another_edges_package = |dep: &Dependency, id: PackageID, own_entry: bool| {
-            use DependencyVersionTag as Asked;
-            use ResolutionTag as Found;
-            use dependency::tarball::Uri;
-            if !dep.behavior.is_optional() || overrides.has_rule_for_name(dep.name_hash) {
-                return false;
-            }
-            let res = &pkg_resolutions[id as usize];
-            let asked = catalogs.resolve_range(string_buf, dep);
-            let found_name = pkg_name_hashes[id as usize];
-            let named = found_name == peer_candidate_name_hash(dep, asked, string_buf);
-            // As `takes_alias_target`: a range takes what an `npm:` alias of the project put under its name.
-            let named_or_aliased = named || (asked.tag == Asked::Npm && !asked.npm().is_alias);
-            let same = |a: String, b: &String| a.eql(*b, string_buf, string_buf);
-            !match (asked.tag, res.tag) {
-                // `*` can pin the prerelease that `latest` points at, which no range "satisfies".
-                (Asked::Npm, Found::Npm) => {
-                    named_or_aliased
-                        && (res.npm().version.tag.has_pre()
-                            || res.satisfies_dependency_version(asked, string_buf, string_buf))
-                }
-                // Any version: what the tag pointed at is not recorded.
-                (Asked::DistTag, Found::Npm) => named,
-                (Asked::Npm, Found::Workspace) => {
-                    named_or_aliased
-                        && super::linked_workspace_path(
-                            link_workspace_packages,
-                            workspace_paths,
-                            workspace_versions,
-                            found_name,
-                            &asked.npm().version,
-                            string_buf,
-                        )
-                        .is_some()
-                }
-                (Asked::DistTag | Asked::Workspace, Found::Workspace)
-                | (Asked::Folder | Asked::Symlink | Asked::Workspace, Found::Root)
-                | (Asked::Symlink, Found::Symlink)
-                | (Asked::Git | Asked::Github, Found::Git | Found::Github) => true,
-                // A migration can spell the path of the row's own tarball another way.
-                (Asked::Tarball, Found::LocalTarball) => {
-                    own_entry
-                        || matches!(asked.tarball().uri, Uri::Local(path) if same(path, res.local_tarball()))
-                }
-                (Asked::Tarball, Found::RemoteTarball) => {
-                    own_entry
-                        || matches!(asked.tarball().uri, Uri::Remote(url) if same(url, res.remote_tarball()))
-                }
-                // A folder never hoists; for the root, the member of that name wins over a `file:` folder.
-                (Asked::Npm | Asked::DistTag | Asked::Folder, Found::Folder)
-                | (Asked::Folder, Found::Workspace) => own_entry,
-                _ => false,
-            }
-        };
 
         {
             // first the root dependencies are resolved
@@ -2871,8 +2816,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 } else {
                     peer_by_version(dep).or(named)
                 };
-                let Some(res_id) = bound.filter(|&id| !is_another_edges_package(dep, id, true))
-                else {
+                let Some(res_id) = bound else {
                     if may_stay_unresolved(dep) {
                         continue;
                     }
@@ -2929,11 +2873,12 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let own_entry = pkg_map.get(workspace_node_modules);
-                    let Some(res_id) = peer_by_version(dep)
-                        .or_else(|| own_entry.or_else(|| pkg_map.get(dep_name)).copied())
-                        .filter(|&id| !is_another_edges_package(dep, id, own_entry.is_some()))
-                    else {
+                    let Some(res_id) = peer_by_version(dep).or_else(|| {
+                        pkg_map
+                            .get(workspace_node_modules)
+                            .or_else(|| pkg_map.get(dep_name))
+                            .copied()
+                    }) else {
                         // An older bun.lock has it only below a row of the member: those bind next.
                         if unlinked || may_stay_unresolved(dep) {
                             continue;
@@ -2968,10 +2913,11 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let res = &pkg_resolutions[pkg_id as usize];
 
-            if res.tag == ResolutionTag::Workspace
-                && pkg_map.get(pkg_names[pkg_id as usize].slice(string_buf)) == Some(&pkg_id)
+            if pkg_id == 0
+                || (res.tag == ResolutionTag::Workspace
+                    && pkg_map.get(pkg_names[pkg_id as usize].slice(string_buf)) == Some(&pkg_id))
             {
-                // we've already resolved the workspace dependencies above
+                // we've already resolved the root's and the workspace dependencies above
                 continue;
             }
 
@@ -3015,9 +2961,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                 {
                                     evidence = RowEvidence::Refused;
                                 }
-                                if bound_by[dep_id as usize] > evidence
-                                    || is_another_edges_package(dep, id, own_entry)
-                                {
+                                if bound_by[dep_id as usize] > evidence {
                                     continue 'deps;
                                 }
                                 bound_by[dep_id as usize] = evidence;

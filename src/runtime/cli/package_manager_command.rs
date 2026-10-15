@@ -711,10 +711,17 @@ impl PackageManagerCommand {
                 index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| {
                     cmp_dependency_names(lockfile, a, b)
                 });
+                // A member whose name the root gives to another package is listed next to that package.
                 let resolutions = lockfile.buffers.resolutions.as_slice();
+                let is_member_row = |dep_id: DependencyID| {
+                    lockfile.buffers.dependencies[dep_id as usize]
+                        .behavior
+                        .is_workspace()
+                };
                 sorted_dependencies.dedup_by(|a, b| {
                     cmp_dependency_names(lockfile, *a, *b) == Ordering::Equal
-                        && resolutions[*a as usize] == resolutions[*b as usize]
+                        && (resolutions[*a as usize] == resolutions[*b as usize]
+                            || !(is_member_row(*a) || is_member_row(*b)))
                 });
 
                 sorted_dependencies.retain(|&dep_id| {

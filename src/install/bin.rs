@@ -406,27 +406,6 @@ impl Bin {
         Ok(())
     }
 
-    /// Whether the linker names a link `name` for the package in `folder`. Never for `directories.bin`.
-    fn links_name(
-        &self,
-        folder: &[u8],
-        name: &[u8],
-        string_buf: &[u8],
-        extern_string_buf: &[ExternalString],
-    ) -> bool {
-        // A volume that ignores case keeps the spelling of the first link.
-        match self.tag {
-            Tag::None | Tag::Dir => false,
-            Tag::File => Dependency::unscoped_package_name(folder).eq_ignore_ascii_case(name),
-            Tag::NamedFile => normalized_bin_name(self.named_file()[0].slice(string_buf))
-                .eq_ignore_ascii_case(name),
-            Tag::Map => (self.map().begin()..self.map().end()).step_by(2).any(|i| {
-                normalized_bin_name(extern_string_buf[i as usize].slice(string_buf))
-                    .eq_ignore_ascii_case(name)
-            }),
-        }
-    }
-
     pub(crate) fn init() -> Bin {
         Bin::new(Tag::None, Value::init_none())
     }
@@ -867,6 +846,9 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
+    /// See `LinkedNodeModules`: a file or a directory of a bin's name stays, and the link fails.
+    pub is_behind_link: bool,
+
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 }
@@ -937,29 +919,17 @@ impl<'a> Linker<'a> {
     #[cfg(not(windows))]
     pub(crate) fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
         let mut resolved_buf = path::path_buffer_pool::get();
-        Self::link_target_in(
+        resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
-            link,
-            abs_dir,
             resolved_buf.as_mut_slice(),
+            &[link],
         )
-        .is_some()
-    }
-
-    /// The path from `abs_dir` to what `link`, a path from `abs_from`, leads to inside it. Lexical.
-    pub(crate) fn link_target_in<'b>(
-        abs_from: &'b [u8],
-        link: &[u8],
-        abs_dir: &[u8],
-        buf: &'b mut [u8],
-    ) -> Option<&'b [u8]> {
-        let resolved =
-            resolve_path::join_abs_string_buf_checked::<PlatformAuto>(abs_from, buf, &[link])?;
-        matches!(
-            resolve_path::is_parent_or_equal(abs_dir, resolved),
-            resolve_path::ParentEqual::Parent
-        )
-        .then(|| &resolved[strings::without_trailing_slash(abs_dir).len() + 1..])
+        .is_some_and(|resolved| {
+            matches!(
+                resolve_path::is_parent_or_equal(abs_dir, resolved),
+                resolve_path::ParentEqual::Parent
+            )
+        })
     }
 
     fn link_bin_or_create_shim(
@@ -1025,7 +995,10 @@ impl<'a> Linker<'a> {
         if let Err(err) = result {
             self.err.get_or_insert(err);
             #[cfg(windows)]
-            Self::unlink_bin_or_shim(abs_dest, global.then_some(&b""[..]));
+            Self::unlink_bin_or_shim(
+                abs_dest,
+                (global || self.is_behind_link).then_some(&b""[..]),
+            );
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
             }
@@ -1219,7 +1192,7 @@ impl<'a> Linker<'a> {
         let abs_dest_w_len = abs_dest_w.len();
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-        let global_exe_exists = global
+        let foreign_exe_exists = (global || self.is_behind_link)
             && sys::exists_os_path(
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len()),
                 false,
@@ -1233,7 +1206,7 @@ impl<'a> Linker<'a> {
             bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".bunx".len());
 
         // An `.exe` without its `.bunx` is a program, `bun.exe` for one.
-        if global_exe_exists && !sys::exists_os_path(abs_bunx_file, false) {
+        if foreign_exe_exists && !sys::exists_os_path(abs_bunx_file, false) {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
         }
 
@@ -1377,7 +1350,7 @@ impl<'a> Linker<'a> {
             }
             Err(readlink_err) => match readlink_err.get_errno() {
                 // A file or a directory.
-                sys::Errno::EINVAL if global => {
+                sys::Errno::EINVAL if global || self.is_behind_link => {
                     return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                 }
                 sys::Errno::EINVAL => {
@@ -1860,41 +1833,6 @@ impl<'a> Linker<'a> {
     }
 }
 
-/// A package in a `node_modules`.
-pub(crate) struct Placed<'a> {
-    pub(crate) folder: &'a [u8],
-    pub(crate) package_id: crate::PackageID,
-    /// This run put it in the place of what was in the folder.
-    pub(crate) replaced: bool,
-}
-
-/// Whether the bin link `name` is left from what one of `placed`, the packages of a `node_modules`,
-/// replaced: `target` (from there, with `/`) is in that package, and none of them has that bin.
-pub(crate) fn is_left_over(
-    lockfile: &Lockfile,
-    placed: &[Placed<'_>],
-    name: &[u8],
-    target: &[u8],
-) -> bool {
-    let bins = lockfile.packages.items_bin();
-    let Some(owner) = placed.iter().find(|package| {
-        package.replaced
-            && (target.strip_prefix(package.folder)).is_some_and(|rest| rest.first() == Some(&b'/'))
-    }) else {
-        return false;
-    };
-    // The names of `directories.bin` are the files of the folder.
-    bins[owner.package_id as usize].tag != Tag::Dir
-        && !placed.iter().any(|package| {
-            bins[package.package_id as usize].links_name(
-                package.folder,
-                name,
-                lockfile.buffers.string_bytes.as_slice(),
-                lockfile.buffers.extern_strings.as_slice(),
-            )
-        })
-}
-
 /// The installers link what the command names or installs. This links the bins of the other global packages, under free names only.
 pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
     let pkgs = lockfile.packages.slice();
@@ -1980,6 +1918,7 @@ pub(crate) fn link_free_bins(
             abs_target_buf: abs_target_buf.as_mut_slice(),
             abs_dest_buf: abs_dest_buf.as_mut_slice(),
             rel_buf: rel_buf.as_mut_slice(),
+            is_behind_link: false,
             err: None,
             skipped_due_to_missing_bin: false,
         }

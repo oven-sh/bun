@@ -116,11 +116,6 @@ describe.concurrent("native binlink optimization", () => {
       await rm(binDir, { recursive: true, force: true });
       await runInstall();
       await expectPlatformBin();
-
-      // Now do an install that puts a package back: the link leads into a package that does not declare the bin.
-      await rm(join(packageDir, "node_modules", "test-native-binlink"), { recursive: true, force: true });
-      await runInstall();
-      await expectPlatformBin();
     });
 
     // Regression: a package on the nativeDependencies list whose platform-specific

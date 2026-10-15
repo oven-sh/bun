@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, symlinkSync } from "fs";
 import { realpath, rm } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { basename, dirname, join } from "path";
@@ -509,5 +509,34 @@ test.concurrent("only the root package.json is read", async () => {
   const { err, exitCode } = await bun(packageDir, "install");
   expect(err).not.toContain("error:");
   expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("no-deps");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("what no key adds any more is unlinked from the extended package only", async () => {
+  const root = { name: "app", workspaces: ["packages/*"], dependencies: { "a-dep": "1.0.5" } };
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        ...root,
+        packageExtensions: { "a-dep": { dependencies: { "no-deps": "1.0.0" } } },
+      }),
+      "packages/member/package.json": JSON.stringify({ name: "member" }),
+      "mine/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }),
+    },
+  });
+  const added = join(packageDir, "node_modules", ".bun", "a-dep@1.0.5", "node_modules", "no-deps");
+  const own = [packageDir, join(packageDir, "packages", "member")].map(dir => join(dir, "node_modules", "no-deps"));
+  expect(await bun(packageDir, "install")).toMatchObject({ exitCode: 0 });
+  for (const link of own) {
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(join(packageDir, "mine"), link, "junction");
+  }
+  expect([added, ...own].map(link => existsSync(link))).toEqual([true, true, true]);
+
+  await write(packageJson, JSON.stringify(root));
+  const { err, exitCode } = await bun(packageDir, "install");
+  expect(err).not.toContain("error:");
+  expect([added, ...own].map(link => existsSync(link))).toEqual([false, true, true]);
   expect(exitCode).toBe(0);
 });

@@ -677,6 +677,59 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
     expect(exitCode).toBe(0);
   });
 
+  // The registry's copy is loaded, as without the rule.
+  describe.each(["overrides", "resolutions"])("%s with file: is passed over", field => {
+    const files = (bunfig: string) => ({
+      ...local,
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "one-range-dep": "1.0.0" },
+        [field]: { "no-deps": "file:./local" },
+      }),
+      "src/index.js": `console.log(require("one-range-dep").dependencies["no-deps"].version);\n`,
+      "bunfig.toml": bunfig,
+    });
+
+    test.each([
+      ["the project root", ".", "src/index.js"],
+      ["a folder of the project", "src", "index.js"],
+    ])("started in %s", async (_, cwd, file) => {
+      using registry = fixtureRegistry();
+      using dir = tempDir("autoinstall-override-folder", files(registry.bunfig));
+
+      const { stdout, exitCode } = await runAutoInstall(join(String(dir), cwd), file);
+      expect(stdout).toBe("1.1.0\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with the bun.lock that bun install writes", async () => {
+      using registry = fixtureRegistry();
+      using dir = tempDir("autoinstall-override-folder-lock", files(registry.bunfig));
+      expect((await runAutoInstall(String(dir), "install", "--lockfile-only")).exitCode).toBe(0);
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "src/index.js");
+      expect(stdout).toBe("1.1.0\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("overrides with link: is passed over", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-override-link", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "link:no-deps" },
+      }),
+      "index.js": `console.log(require("one-range-dep").dependencies["no-deps"].version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.1.0\n");
+    expect(exitCode).toBe(0);
+  });
+
   const app = { name: "app", dependencies: { "no-deps": "workspace:*" } };
   test.each([
     ["without a lockfile", {}],
@@ -2295,7 +2348,7 @@ describe.concurrent("--prefer-offline resolves an auto-installed package from th
 describe.concurrent("auto-install is off when a security scanner is configured", () => {
   const scanner = `[install.security]\nscanner = "./scanner.ts"\n`;
   const configured = `Cannot find package "no-deps": auto-install is off because a security scanner is configured. Run "bun install"`;
-  const unreadable = `Cannot find package "no-deps": auto-install is off because a bunfig.toml or .npmrc cannot be read or parsed. Run "bun install"`;
+  const unreadable = `Cannot find package "no-deps": auto-install is off because a package.json, bunfig.toml or .npmrc cannot be read or parsed. Run "bun install"`;
   const print = (expression: string) =>
     `try { console.log("loaded", ${expression}); } catch (e) { console.log(e.message); }\n`;
   const requireIt = print(`require("no-deps").version`);
@@ -2428,6 +2481,32 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "app/src" })).toEqual(refused(configured));
   });
 
+  describe.each([{ type: "commonjs" }, { private: true }, {}])(
+    "configured beside a package.json that is %j, with no project above",
+    packageJson => {
+      test.each([
+        ["a folder below it", { cwd: "app/src" }],
+        ["outside", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
+      ])("run from %s", async (_, options) => {
+        const files = {
+          "app/bunfig.toml": scanner,
+          "app/package.json": JSON.stringify(packageJson),
+          "app/src/index.js": requireIt,
+        };
+        expect(await run(files, options)).toEqual(refused(configured));
+      });
+    },
+  );
+
+  test("configured in a folder between the importing file and the project root, run from outside", async () => {
+    const files = {
+      "app/package.json": JSON.stringify({ name: "app" }),
+      "app/src/bunfig.toml": scanner,
+      "app/src/deep/index.js": requireIt,
+    };
+    expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(configured));
+  });
+
   test.each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
@@ -2481,6 +2560,28 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     test("above the project root is not read", async () => {
       expect(await run({ ...project, "bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(installed);
     });
+  });
+
+  describe.each([
+    ["cannot be read", {}],
+    ["cannot be parsed", "{"],
+  ])("a package.json that %s", (_, packageJson) => {
+    test("beside the importing file, below a project", async () => {
+      const result = await run({ ...project, "app/src/package.json": packageJson }, { cwd: "app/src" });
+      expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+    });
+
+    test("above the project, which may be a member of its workspace", async () => {
+      const result = await run({ ...project, "package.json": packageJson }, { cwd: "app/src" });
+      expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+    });
+  });
+
+  test("the error of an import statement names the package.json that cannot be parsed", async () => {
+    const files = { ...project, "app/src/package.json": "{", "app/src/index.js": `import "no-deps";\n` };
+    const result = await run(files, { cwd: "app/src" });
+    expect(result.stderr).toMatch(/src[\\/]package\.json/);
+    expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
   });
 
   test("the error of an import statement names the file that cannot be parsed", async () => {
@@ -2841,6 +2942,21 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
           "app/src/x.mjs": importIt,
         },
       ]),
+      ...[
+        ["app/src", ["x.mjs"]],
+        ["home", ["../app/src/x.mjs"]],
+      ].flatMap(([cwd, args]) =>
+        [{ type: "module" }, { private: true }, {}].map(root => [
+          `in ${cwd}, where the package.json of the root is ${JSON.stringify(root)}`,
+          cwd,
+          args,
+          {
+            "app/package.json": JSON.stringify(root),
+            "app/src/package.json": JSON.stringify({ type: "module" }),
+            "app/src/x.mjs": importIt,
+          },
+        ]),
+      ),
       [
         "in a member of the workspace",
         "app/packages/member",
@@ -2908,6 +3024,21 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     const result = await autoInstall({
       args: ["examples/x.mjs"],
       files: r => ({ "app/.npmrc": scopeAndToken(r), ...projectInProject }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("a .npmrc between the importing file and the project root counts beside the one of the root", async () => {
+    const result = await autoInstall({
+      args: ["../app/src/x.mjs"],
+      cwd: dir => join(dir, "home"),
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}/\n`,
+        "app/package.json": packageJson,
+        "app/src/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/src/package.json": JSON.stringify({ type: "module" }),
+        "app/src/x.mjs": importIt,
+      }),
     });
     expect(result).toEqual(fromPrivateRegistry);
   });

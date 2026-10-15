@@ -416,6 +416,7 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
+        manager.refuse_unreadable_config(ctx, "publish");
 
         if cli.positionals.len() > 1 {
             if Self::is_workspace_publish(manager) {

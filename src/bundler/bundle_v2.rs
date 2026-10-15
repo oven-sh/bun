@@ -4363,9 +4363,20 @@ pub mod bv2_impl {
                     || specifier == b"bun"
             };
 
+            let sources = self.graph.input_files.items_source();
+
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
+                // A package imports itself by its own name. The resolver has read this directory.
+                let own_name: &[u8] = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(
+                        sources[source_index.get() as usize].path.source_dir(),
+                    )
+                    .and_then(|dir| dir.enclosing_package_json)
+                    .map_or(&b""[..], |package_json| &*package_json.name);
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
@@ -4373,6 +4384,7 @@ pub mod bv2_impl {
                         let path: &[u8] = record.path.text;
                         // External dependency: `lodash/debounce` comes with `lodash`.
                         if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
+                            && name != own_name
                             && !is_builtin(path)
                             && !is_builtin(name)
                             // `@/x` is a tsconfig `paths` alias that matched nothing: no scope is empty.

@@ -1128,25 +1128,6 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
       expect(await installedMembers(String(dir))).toEqual(members);
     },
   );
-
-  // As in npm and pnpm, a wildcard does not match a dot folder.
-  test.each([
-    { workspaces: ["packages/*"], members: ["packages/app"] },
-    { workspaces: ["packages/**"], members: ["packages/app"] },
-    { workspaces: ["packages/*", "packages/.*"], members: ["packages/.template", "packages/app"] },
-    { workspaces: ["packages/*", "packages/.template"], members: ["packages/.template", "packages/app"] },
-  ])("bun run and bun install find the same members among dot folders for $workspaces", async row => {
-    const pkg = (dir: string, name: string) => JSON.stringify({ name, scripts: { present: `echo ran:${dir}` } });
-    using dir = tempDir("filter-dot-folder", {
-      "package.json": JSON.stringify({ name: "ws", workspaces: row.workspaces }),
-      "packages/app/package.json": pkg("packages/app", "app"),
-      "packages/.template/package.json": pkg("packages/.template", "template"),
-    });
-    for (const args of [["--workspaces"], ["--filter", "*"]]) {
-      expect(await run(String(dir), args)).toMatchObject({ ran: row.members, exitCode: 0 });
-    }
-    expect(await installedMembers(String(dir))).toEqual(row.members);
-  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

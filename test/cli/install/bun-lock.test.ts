@@ -3303,16 +3303,9 @@ describe.each(["hoisted", "isolated"] as const)("optional dependencies of every 
     ).toSorted();
 
   // Each of these has the name of a package that is in bun.lock for someone else:
-  // `<who has the name>-<how the row asks>`. bun.lock lists them as "unresolved". An older one does
-  // not, and reads the same whether or not a tag exists, so a tag takes the registry's package there.
-  it.concurrent.each([
-    ["bun.lock", true],
-    ["an older bun.lock", false],
-  ])("one that does not resolve is not handed the package that has its name by %s", async (_, listed) => {
-    const kinds = [
-      ...(["range", "alias", "catalog", "tarball", "url", "folder", "link", "workspace"] as const),
-      ...(listed ? (["tag"] as const) : []),
-    ];
+  // `<who has the name>-<how the row asks>`. bun.lock lists them as "unresolved".
+  it.concurrent("one that does not resolve is not handed the package that has its name", async () => {
+    const kinds = ["range", "alias", "catalog", "tarball", "url", "folder", "link", "workspace", "tag"] as const;
     const named = (holder: string) => kinds.map(kind => `${holder}-${kind}`);
     const each = <T>(names: string[], value: (name: string) => T) =>
       Object.fromEntries(names.map(name => [name, value(name)]));
@@ -3369,15 +3362,79 @@ describe.each(["hoisted", "isolated"] as const)("optional dependencies of every 
     const fresh = installedIn(String(dir));
     expect(fresh).toContain("node_modules/brings");
     expect(lockfile).toContain('"unresolved": [');
-    if (!listed) {
-      await write(lockfilePath, lockfile.replace(/,\s*"unresolved": \[[^\]]*\]/g, ""));
-    }
 
     await installWithOwnCache(String(dir), "--frozen-lockfile");
     expect(installedIn(String(dir))).toEqual(fresh);
 
     await installWithOwnCache(String(dir), "--lockfile-only");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // Up to Bun 1.4 the yarn.lock migration wrote a registry package whose `resolved` ends in .tgz this way.
+  it.concurrent("one that an older bun.lock has as a tarball entry is installed and kept", async () => {
+    using registry = await serveRegistry({
+      tool: { "1.0.0": { optionalDependencies: { "tool-native": "1.0.0" } } },
+      "tool-native": { "1.0.0": {} },
+      other: { "1.0.0": {} },
+    });
+    const entry = async (name: string, info: string) => {
+      const url = `${registry.url}${name}-1.0.0.tgz`;
+      const integrity = new Bun.CryptoHasher("sha512").update(await (await fetch(url)).bytes()).digest("base64");
+      return `    "${name}": ["${name}@${url}", ${info}, "sha512-${integrity}"],\n`;
+    };
+    using dir = tempDir("optional-older-tarball-entry-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { tool: "^1.0.0" } }),
+      "bun.lock": `{
+  "lockfileVersion": 2,
+  "configVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "app",
+      "dependencies": {
+        "tool": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+${await entry("tool", '{ "optionalDependencies": { "tool-native": "1.0.0" } }')}
+${await entry("tool-native", "{}")}  }
+}
+`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installedIn(String(dir)).filter(path => path.endsWith("/tool-native"))).not.toBeEmpty();
+
+    await installWithOwnCache(String(dir), "other@1.0.0");
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"tool-native": ["tool-native@');
+  });
+
+  // A trusted name that is not installed makes every plain install write bun.lock again.
+  it.concurrent("a plain install does not add the list to an older bun.lock", async () => {
+    using registry = await serveRegistry({
+      a: { "1.0.0": { optionalDependencies: { b: "^2.0.0" } } },
+      b: { "1.0.0": {} },
+    });
+    using dir = tempDir("optional-older-lockfile-bytes-", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { a: "^1.0.0", b: "^1.0.0" },
+        trustedDependencies: ["a", "gone"],
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toContain(', "unresolved": ["b"]');
+    const older = lockfile.replace(', "unresolved": ["b"]', "");
+    await write(lockfilePath, older);
+
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    await installWithOwnCache(String(dir));
+    expect(await file(lockfilePath).text()).toBe(older);
   });
 
   // `gone` needs no entry: nothing has its name, so no load can hand it anything.

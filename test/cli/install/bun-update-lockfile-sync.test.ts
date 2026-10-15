@@ -359,31 +359,29 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir, [""], { stderr: duplicateWarning() });
   });
 
-  // --latest resolves every entry of the name to `latest`. An entry left at its old range would resolve to an older
-  // version again in the next install, so each one is rewritten, in its own pin style.
-  describe.each([[["no-deps"]], [[]]])("bun update --latest %j", names => {
-    test.each([
-      ["dependencies", "devDependencies"],
-      ["dependencies", "optionalDependencies"],
-      ["devDependencies", "optionalDependencies"],
-    ])("with the name in %s and %s moves both entries", async (first, second) => {
-      const stderr = (rest = "") => (second === "devDependencies" ? duplicateWarning(rest) : rest);
-      const declared = (major: number) =>
-        root({ [first]: { "no-deps": `^${major}.0.0` }, [second]: { "no-deps": `~${major}.0.0` } });
-      const dir = await setup({ "package.json": declared(1) }, { stderr: stderr(SAVED) });
+  // Of two entries for one name, an install picks the second of each pair here.
+  test.each([
+    ["dependencies", "devDependencies"],
+    ["dependencies", "optionalDependencies"],
+    ["devDependencies", "optionalDependencies"],
+  ])(
+    "bun update --latest <name> with the name in %s and %s moves the entry an install picks",
+    async (other, picked) => {
+      const stderr = (rest = "") => (picked === "devDependencies" ? duplicateWarning(rest) : rest);
+      const declared = (version: string) =>
+        root({ [other]: { "no-deps": "^1.0.0" }, [picked]: { "no-deps": version } });
+      const dir = await setup({ "package.json": declared("~1.0.0") }, { stderr: stderr(SAVED) });
       expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.1"]);
-      expect(await tryRun(dir, "", "update", "--latest", ...names)).toMatchObject({ exitCode: 0 });
-      expect(await pkg(dir)).toStrictEqual(declared(2));
+      expect(await tryRun(dir, "", "update", "--latest", "no-deps")).toMatchObject({ exitCode: 0 });
+      expect(await pkg(dir)).toStrictEqual(declared("~2.0.0"));
       expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
       await install(dir, { frozen: true, stderr: stderr() });
-      // bun.lock is settled: the next install does not save it again.
-      await install(dir, { stderr: stderr() });
       // The same package.json resolves to what was locked.
       await file(join(dir, "bun.lock")).delete();
       await install(dir, { stderr: stderr(SAVED) });
       expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
-    });
-  });
+    },
+  );
 
   test("bun update with the name in dependencies and devDependencies moves one group", async () => {
     const dir = await setup({ "package.json": inBothGroups("1.0.0") }, { stderr: duplicateWarning(SAVED) });

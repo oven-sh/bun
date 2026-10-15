@@ -1525,9 +1525,20 @@ pub(crate) fn move_node_modules_aside(
     Some(OldModules(old_modules_name.into_boxed_slice()))
 }
 
-/// No package's name begins with a dot: what is not bun's is another tool's (`.vite`).
+/// No package's name begins with a dot: what is no package manager's is another tool's (`.vite`).
 fn is_a_linkers(name: &[u8]) -> bool {
-    name[0] != b'.' || name == b".bin" || name == b".bun" || crate::prune::is_leftover(name)
+    const OF_A_PACKAGE_MANAGER: [&[u8]; 6] = [
+        b".bin",
+        b".bun",
+        b".modules.yaml",
+        b".package-lock.json",
+        b".yarn-integrity",
+        b".yarn-state.yml",
+    ];
+    name[0] != b'.'
+        || OF_A_PACKAGE_MANAGER.contains(&name)
+        || name.starts_with(b".pnpm")
+        || crate::prune::is_leftover(name)
 }
 
 /// Whether `move_entries_aside` would take something out of `node_modules`.
@@ -2142,7 +2153,6 @@ pub(crate) fn install_isolated_packages(
                 relink: installer::Relink::Off,
                 newly_trusted: false,
                 blocked_scripts: 0,
-                relinked: Vec::new(),
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2600,7 +2610,6 @@ pub(crate) fn install_isolated_packages(
 
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
-        installer.prune_bins();
         installer.warn_left_out_links();
         installer.record_update_request_trust();
 

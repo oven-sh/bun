@@ -1554,11 +1554,9 @@ describe("the trusted set", () => {
 
     expect((await bun(ctx, ["pm", "untrusted"])).out).toContain("Found 0 untrusted dependencies with scripts");
     const trust = await bun(ctx, ["pm", "trust", "lifecycle-postinstall"]);
-    expect(trust.err).not.toContain("error:");
-    expect(trust.out).toContain("1 script ran across 1 package");
-    // What the script writes when it finds the file of an earlier run.
-    expect(await marker()).toBe("postinstall exists!");
-    expect(trust.exitCode).toBe(0);
+    expect(trust.err).toContain("0 scripts ran");
+    expect(await marker()).toBe("postinstall!");
+    expect(trust.exitCode).toBe(1);
   });
 
   describe("an npm: alias is trusted by the name of its package", () => {
@@ -1944,59 +1942,45 @@ describe("the trusted set", () => {
       expect(await runs(ctx)).toEqual(["own"]);
       expect(trust.exitCode).toBe(0);
 
-      const refused = await bun(ctx, ["pm", "trust", "native"], env);
-      expect(refused.err).toContain("error: 0 scripts ran");
-      expect(refused.err).toContain(`"native" ${cannot}`);
-      expect(await runs(ctx)).toEqual(["own"]);
-      expect(refused.exitCode).toBe(1);
-
-      // The one that is trusted runs again, the others still do not.
-      for (const [i, arg] of ["addon", "--all"].entries()) {
-        const again = await bun(ctx, ["pm", "trust", arg], env);
-        expect(again.err).not.toContain("error:");
-        expect(again.out).toContain("1 script ran across 1 package");
-        expect(again.out).toContain("2 packages with blocked scripts");
-        expect(await runs(ctx)).toEqual(Array(i + 2).fill("own"));
+      for (const args of [["native"], ["addon"], ["--all"]]) {
+        const refused = await bun(ctx, ["pm", "trust", ...args], env);
+        expect(refused.err).toContain("error: 0 scripts ran");
+        expect(refused.err).toContain(`"${args[0] === "--all" ? "native" : args[0]}" ${cannot}`);
+        expect(await runs(ctx)).toEqual(["own"]);
         expect(await recorded(ctx)).toEqual({ "package.json": ["addon"], "bun.lock": ["addon"] });
-        expect(again.exitCode).toBe(0);
+        expect(refused.exitCode).toBe(1);
       }
 
       await removeNodeModules(ctx);
       const install = await bun(ctx, ["install"], env);
       expect(install.err).not.toContain("error:");
-      expect(await runs(ctx)).toEqual(Array(4).fill("own"));
+      expect(await runs(ctx)).toEqual(["own", "own"]);
       expect(install.exitCode).toBe(0);
     });
 
-    test.concurrent.each(["lifecycle-postinstall", "--all"])(
-      "bun pm trust %s runs the scripts of a package that is trusted already",
-      async arg => {
-        const trusted = {
+    test.concurrent("bun pm trust --all runs what is blocked, and nothing of a trusted package", async () => {
+      using ctx = await project(linker, {
+        "package.json": {
           name: "foo",
-          dependencies: { "lifecycle-postinstall": "1.0.0", "no-deps": "1.0.0" },
-          trustedDependencies: ["lifecycle-postinstall"],
-        };
-        using ctx = await project(linker, { "package.json": trusted });
-        const marker = () => textOf(packageDirOf(ctx, linker, "lifecycle-postinstall"), "postinstall.txt");
+          dependencies: { addon: "file:./addon", built: "file:./built", off: "file:./off" },
+          trustedDependencies: ["built", "off"],
+          ignoreScripts: ["off"],
+        },
+        "addon/package.json": scripted("addon", "addon"),
+        "built/package.json": scripted("built", "built"),
+        "off/package.json": scripted("off", "off"),
+      });
+      const env = runsEnv(ctx);
+      expect((await bun(ctx, ["install"], env)).exitCode).toBe(0);
+      expect(await runs(ctx)).toEqual(["built"]);
 
-        // No later install runs them: the package is in place and the name is not new.
-        expect((await bun(ctx, ["install", "--ignore-scripts"])).exitCode).toBe(0);
-        expect((await bun(ctx, ["install"])).exitCode).toBe(0);
-        expect(await marker()).toBeNull();
-        const before = [await file(ctx.packageJson).json(), await file(join(ctx.packageDir, "bun.lock")).text()];
-
-        const trust = await bun(ctx, ["pm", "trust", arg]);
-        expect(trust.err).not.toContain("error:");
-        expect(trust.out).toContain("[postinstall]");
-        expect(trust.out).toContain("1 script ran across 1 package");
-        expect(trust.out).not.toContain("blocked scripts");
-        expect(await marker()).toBe("postinstall!");
-        expect([await file(ctx.packageJson).json(), await file(join(ctx.packageDir, "bun.lock")).text()]).toEqual(
-          before,
-        );
-        expect(trust.exitCode).toBe(0);
-      },
-    );
+      const trust = await bun(ctx, ["pm", "trust", "--all"], env);
+      expect(trust.err).not.toContain("error:");
+      expect(trust.out).toContain("1 script ran across 1 package");
+      expect(await runs(ctx)).toEqual(["addon", "built"]);
+      expect((await recorded(ctx))["package.json"]).toEqual(["addon", "built", "off"]);
+      expect(trust.exitCode).toBe(0);
+    });
 
     test.concurrent("bun add --trust runs what later installs run", async () => {
       using ctx = await project(linker, { "package.json": { name: "foo" }, ...hostFiles });

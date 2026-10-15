@@ -77,14 +77,7 @@ pub fn install_with_manager(
         }
     }
 
-    // Its settings say where packages come from and what checks them.
-    if let Some(path) = ctx.unreadable_config.as_deref() {
-        manager.log_mut().add_error(
-            Some(&bun_ast::Source::init_path_string(path, b"")),
-            bun_ast::Loc::EMPTY,
-            "This file cannot be read, and bun does not install packages without its settings",
-        );
-    }
+    manager.refuse_unreadable_config(ctx, "install");
 
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
@@ -216,9 +209,7 @@ pub fn install_with_manager(
                 if PackageJSONEditor::steers_catalogs_to_latest(manager) {
                     PackageJSONEditor::steer_used_catalogs_to_latest(manager, Some(&mut lockfile))?;
                 }
-                let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize]
-                    .into_boxed_slice();
-                // @memset already done via vec! init
+                let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize];
 
                 // `Diff::generate` (in lockfile_real::package) needs `manager`,
                 // `manager.log`, `manager.lockfile` and a
@@ -273,6 +264,20 @@ pub fn install_with_manager(
                         manager.summary.package_extensions_changed = true;
                         manager.summary.removed_extension_rows = removed;
                         extension_rows = rows;
+                    }
+                }
+
+                // They get their entries when the dependencies change. That they have none is no
+                // change: the lockfile of an older version stays valid, and as it is.
+                let left_out = core::mem::take(&mut manager.summary.members_left_out);
+                if manager.summary.changes_dependencies() {
+                    manager.summary.add += left_out.len() as u32;
+                } else {
+                    for &row in left_out.iter().rev() {
+                        let _ = (lockfile.buffers.dependencies)
+                            .remove((maybe_root.dependencies.off + row) as usize);
+                        let _ = mapping.remove(row as usize);
+                        maybe_root.dependencies.len -= 1;
                     }
                 }
 
@@ -1020,7 +1025,7 @@ pub fn install_with_manager(
 
     // A failed save exits above, with bun.lock and package.json still naming these folders.
     if removes_collapsed_copies && isolated {
-        crate::prune::unlink_dropped_dependencies(manager);
+        crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
@@ -2318,11 +2323,9 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .filter(|&(row, (dependency, &package_id))| {
             lockfile.overrides.has_rule_for_name(dependency.name_hash)
                 && !dependency.behavior.is_bundled()
-                // As in `locked_version_is_out_of_range`: only clear cases.
-                && !dependency.behavior.is_optional()
+                && !dependency.behavior.is_optional_peer()
                 && (package_id as usize) < resolutions.len()
                 && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                && !resolutions[package_id as usize].npm().version.tag.has_pre()
                 && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
                     .is_some()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
@@ -2330,6 +2333,8 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                         version.try_npm().is_some_and(|npm| {
                             // Under another name the row follows an `npm:` alias, not the rule.
                             npm.name.slice(buf) == names[package_id as usize].slice(buf)
+                                // A range without a comparator takes `latest`, prerelease or not.
+                                && !npm.version.is_empty()
                                 && !npm.version.satisfies(
                                     resolutions[package_id as usize].npm().version,
                                     buf,
@@ -2353,31 +2358,37 @@ fn reresolve_rows_outside_overrides(
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
-    // As in `enqueue_named_updates`: a peer with a provider only follows it.
-    let plannable_peers = plannable_peer_rows(&manager.lockfile, &DirectDependencies::default());
-    // So does a peer next to another peer that has no rule against the package they share.
-    let mut held = DynamicBitSet::init_empty(manager.lockfile.packages.len()).unwrap_or_oom();
-    let mut outside_rows = outside.iter().map(|&(row, _)| row as usize).peekable();
-    for (row, &package_id) in manager.lockfile.buffers.resolutions.iter().enumerate() {
-        if outside_rows.next_if_eq(&row).is_none() && (package_id as usize) < held.bit_length() {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let mut is_outside = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
+    for &(row, _) in &outside {
+        is_outside.set(row as usize);
+    }
+    // The packages that a row with no rule against them holds.
+    let mut held = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
+    for (row, &package_id) in lockfile.buffers.resolutions.iter().enumerate() {
+        if !is_outside.is_set(row) && (package_id as usize) < held.bit_length() {
             held.set(package_id as usize);
         }
     }
     outside.retain(|&(row, package_id)| {
-        let lockfile: &Lockfile = &manager.lockfile;
-        let dependencies = lockfile.buffers.dependencies.as_slice();
         let dependency = &dependencies[row as usize];
-        // An older bun.lock has one version for a name that its package lists in two groups.
-        let listed_once = lockfile
+        // A peer takes the version that is there. bun.lock binds an optional row that never resolved by name.
+        if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
+            return !held.is_set(package_id as usize);
+        }
+        // bun.lock has one version for a name in two groups, which only has to fit one of the ranges.
+        !lockfile
             .get_parent_pkg_of_dependency(row)
             .is_some_and(|owner| {
                 let rows = lockfile.packages.items_dependencies()[owner as usize];
-                let same_name = |other: &&Dependency| other.name_hash == dependency.name_hash;
-                rows.get(dependencies).iter().filter(same_name).count() == 1
-            });
-        listed_once
-            && (!dependency.behavior.is_peer()
-                || (plannable_peers.is_set(row as usize) && !held.is_set(package_id as usize)))
+                (rows.begin() as usize..rows.end() as usize).any(|other| {
+                    dependencies[other].name_hash == dependency.name_hash
+                        && !dependencies[other].behavior.is_peer()
+                        && !dependencies[other].behavior.is_workspace()
+                        && !is_outside.is_set(other)
+                })
+            })
     });
     let Some(&(first_row, first_package)) = outside.first() else {
         return Ok(Vec::new());

@@ -148,6 +148,12 @@ impl Version {
         }
         if !preid.is_empty() {
             Self::identifiers(preid)?;
+            // Only the current version is read loosely, where `01` is 1.
+            if strings::split(preid, b".")
+                .any(|it| it.len() > 1 && it[0] == b'0' && it.iter().all(u8::is_ascii_digit))
+            {
+                return None;
+            }
             let first = self.prerelease[0].as_slice();
             let is_same_name = match (Self::number(first), Self::number(preid)) {
                 (Some(first), Some(preid)) => first == preid,

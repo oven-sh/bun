@@ -603,63 +603,47 @@ describe.concurrent("a self-contained workspace", () => {
     }).toEqual({ top: null, "one-dep": "1.0.1" });
   });
 
-  // The tree in bun.lock has no self-contained workspaces: what was placed in one is elsewhere in it.
   test.each([
-    { title: "bun remove", dependencies: { big: "1.0.0", d: "1.0.0" }, command: ["remove", "big"], left: ["d"] },
-    {
-      title: "bun remove of its last dependency",
-      dependencies: { big: "1.0.0" },
-      command: ["remove", "big"],
-      left: [],
-    },
-    {
-      title: "bun add of a version that needs less",
-      dependencies: { big: "1.0.0" },
-      command: ["add", "big@2.0.0"],
-      left: ["a", "big"],
-    },
-    {
-      title: "bun remove in a member it depends on",
-      dependencies: { ui: "workspace:*" },
-      at: ["packages", "ui"],
-      command: ["remove", "c"],
-      left: ["d", "ui"],
-    },
-  ])("$title takes what left the tree out of its node_modules", async ({ dependencies, at, command, left }) => {
+    { at: [], command: ["add", "d"] },
+    { at: [], command: ["remove", "elsewhere"] },
+    { at: ["apps", "desktop"], command: ["add", "d"] },
+  ])("bun $command in $at leaves in its node_modules what bun did not put there", async ({ at, command }) => {
     using server = await serveGraph({
       a: { "1.0.0": {} },
-      c: { "1.0.0": {} },
       d: { "1.0.0": {} },
-      big: { "1.0.0": { dependencies: { a: "1.0.0", c: "1.0.0" } }, "2.0.0": { dependencies: { a: "1.0.0" } } },
+      big: { "1.0.0": { dependencies: { a: "1.0.0" } } },
       elsewhere: { "1.0.0": {} },
       linked: { "1.0.0": {} },
     });
-    using tmp = tempDir("self-contained-left", {
+    using tmp = tempDir("self-contained-by-hand", {
       "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
       "package.json": JSON.stringify({
         name: "root",
-        workspaces: { packages: ["apps/*", "packages/*"], selfContained: ["apps/desktop"] },
+        workspaces: { packages: ["apps/*"], selfContained: ["apps/desktop"] },
         dependencies: { elsewhere: "1.0.0", linked: "1.0.0" },
       }),
-      "apps/desktop/package.json": JSON.stringify({ name: "desktop", version: "1.0.0", dependencies }),
-      "packages/ui/package.json": JSON.stringify({
-        name: "ui",
+      "apps/desktop/package.json": JSON.stringify({
+        name: "desktop",
         version: "1.0.0",
-        dependencies: { c: "1.0.0", d: "1.0.0" },
+        dependencies: { big: "1.0.0" },
       }),
     });
     const dir = String(tmp);
     const nodeModules = join(dir, "apps", "desktop", "node_modules");
     await run(dir, "install");
-    // bun did not put these there. Two have the name of a package that only the root depends on.
+    // Two have the name of a package that only the root depends on.
     await write(join(nodeModules, "by-hand", "package.json"), JSON.stringify({ name: "by-hand", version: "1.0.0" }));
     await write(join(nodeModules, "elsewhere", "mine.txt"), "mine");
-    symlinkSync(join(dir, "packages"), join(nodeModules, "linked"), "junction");
+    symlinkSync(join(dir, "apps"), join(nodeModules, "linked"), "junction");
 
-    await run(join(dir, ...(at ?? ["apps", "desktop"])), ...command);
-    expect((await readdirSorted(nodeModules)).filter(name => !name.startsWith("."))).toEqual(
-      [...left, "by-hand", "elsewhere", "linked"].sort(),
-    );
+    await run(join(dir, ...at), ...command);
+    expect((await readdirSorted(nodeModules)).filter(name => !name.startsWith(".") && name !== "d")).toEqual([
+      "a",
+      "big",
+      "by-hand",
+      "elsewhere",
+      "linked",
+    ]);
   });
 });
 
@@ -1477,6 +1461,30 @@ describe.concurrent("where a package stands does not depend on the flags of the 
     expect(layout(dir, "pk/w1")).toEqual(some);
   });
 
+  // m's peer is bound to native@1.1.0, which stands below user. From m the name leads to the root's native@2.0.0.
+  test("nor for a workspace's peer that is bound to another version", async () => {
+    using server = await serveGraph({
+      native: { "1.1.0": {}, "2.0.0": { cpu: [process.arch === "arm64" ? "x64" : "arm64"] } },
+      user: { "3.0.0": { dependencies: { native: "1.1.0" } } },
+    });
+    using tmp = tempDir("hoist-left-out-peer", {
+      "bunfig.toml": bunfig(server),
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["pk/*"],
+        dependencies: { user: "*", native: "^2.0.0" },
+      }),
+      "pk/m/package.json": JSON.stringify({ name: "m", peerDependencies: { native: "~1.1.0" } }),
+    });
+    const dir = String(tmp);
+    const some = ["user@3.0.0", "user/native@1.1.0"];
+
+    await run(dir, "install");
+    expect(layout(dir, "pk/m")).toEqual(some);
+    await run(dir, "install");
+    expect(layout(dir, "pk/m")).toEqual(some);
+  });
+
   // The one place whose package depends on the run: the first of the two entries that the run links fills it.
   // So x does not share it, and what k@1.1.0 needs has a place too. bun.lockb records a package for each entry.
   test("a name in dependencies and devDependencies", async () => {
@@ -1924,6 +1932,18 @@ describe.concurrent(
           core: { name: "core", dependencies: { core: "~2.1.0" } },
           util: { name: "util", optionalDependencies: { "util-published": "npm:util@~2.0.0" } },
         },
+      ],
+      [
+        "the member depends on the project",
+        { lib: { "1.0.0": {} } },
+        { version: "1.0.0", dependencies: { lib: "^1.0.0" } },
+        { lib: { name: "lib", version: "5.0.0", dependencies: { root: "workspace:*" } } },
+      ],
+      [
+        "the member depends on the project, which uses the published package of its own name too",
+        { lib: { "1.0.0": {} }, d: { "2.0.0": {} } },
+        { name: "d", version: "9.0.0", dependencies: { lib: "^1.0.0", d: "^2.0.0" } },
+        { lib: { name: "lib", version: "5.0.0", dependencies: { d: "workspace:*" } } },
       ],
     ];
 

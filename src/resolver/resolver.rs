@@ -2930,9 +2930,9 @@ impl<'a> Resolver<'a> {
                             crate::Error::SecurityScannerConfigured => {
                                 Some("a security scanner is configured")
                             }
-                            crate::Error::UnreadableConfig => {
-                                Some("a bunfig.toml or .npmrc cannot be read or parsed")
-                            }
+                            crate::Error::UnreadableConfig => Some(
+                                "a package.json, bunfig.toml or .npmrc cannot be read or parsed",
+                            ),
                             _ => None,
                         };
                         let log = self.log_mut();

@@ -725,15 +725,17 @@ describe.concurrent("version-scoped targets", () => {
 
   // Both resolve the `latest` tag, which no selector matches, and write a range that one does.
   test.each([
-    ["bun add no-deps", { "a-dep": "1.0.1" }, ["add", "no-deps"]],
-    ["bun update --latest", { "no-deps": "^1.0.0" }, ["update", "--latest"]],
-  ])("%s installs what the rule gives the range it writes", async (_, dependencies, command) => {
+    ["bun add no-deps", { "a-dep": "1.0.1" }, ["add", "no-deps"], "dependencies"],
+    ["bun add --optional no-deps", { "a-dep": "1.0.1" }, ["add", "--optional", "no-deps"], "optionalDependencies"],
+    ["bun add --peer no-deps", { "a-dep": "1.0.1" }, ["add", "--peer", "no-deps"], "peerDependencies"],
+    ["bun update --latest", { "no-deps": "^1.0.0" }, ["update", "--latest"], "dependencies"],
+  ])("%s installs what the rule gives the range it writes", async (_, dependencies, command, group) => {
     const dir = await project({ dependencies, overrides: { "no-deps@2": "1.0.0" } });
     await installOk(dir);
     const { err, exitCode } = await run(dir, ...command);
     expect(diagnostics(err)).toEqual([]);
     expect(exitCode).toBe(0);
-    expect(JSON.parse(await packageJsonText(dir)).dependencies["no-deps"]).toBe("^2.0.0");
+    expect(JSON.parse(await packageJsonText(dir))[group]["no-deps"]).toBe("^2.0.0");
     expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
     expect(await lock(dir)).not.toContain("no-deps@2.0.0");
     await installNoChanges(dir, "--frozen-lockfile");

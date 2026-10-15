@@ -534,14 +534,13 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         let _ = node_modules.delete_tree(request.name);
     }
 
-    crate::prune::prune_bins(&node_modules, None);
+    crate::prune::prune_bins(&node_modules);
     if manager.options.global {
         let mut global_node_modules =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
-        let bin_path = manager.options.bin_path.as_bytes();
-        crate::prune::prune_global_bins(bin_path, &global_node_modules, None);
+        crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
         // What left may have taken a bin name from a package that stays.
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }

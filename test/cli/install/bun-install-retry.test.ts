@@ -844,6 +844,35 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("does not ask for a package's peers once a dependency of that package has failed", async () => {
+    const requested: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        requested.push(pathname);
+        if (pathname !== "/bar") return busy(503);
+        const version = {
+          name: "bar",
+          version: "1.0.0",
+          dependencies: { qux: "^1" },
+          peerDependencies: { baz: "^1" },
+          dist: { tarball: `${origin}/bar-1.0.0.tgz` },
+        };
+        return Response.json({ name: "bar", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+      },
+    });
+    using dir = tempDir("install-retry-peers-below", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href } }),
+    });
+    const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only");
+    expect(lines).toContain("error: GET " + server.url.href + "qux - 503");
+    expect(requested).toEqual(["/bar", ...Array(6).fill("/qux")]);
+    expect(exitCode).toBe(1);
+  });
+
   // yarn.lock and pnpm-lock.yaml do not record `bin`, so a migration asks the registry for it and goes on without an answer.
   describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests a migrated %s is completed from", name => {
     const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";

@@ -804,6 +804,34 @@ describe("a bun.lock written by Bun 1.4", () => {
       ],
       held: "no-deps@2.0.0",
     },
+    {
+      title: "the entry of a name in devDependencies and peerDependencies",
+      pkg: () => ({
+        devDependencies: { "no-deps": "^1.0.0" },
+        peerDependencies: { "no-deps": "^1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+      packages: () => [["no-deps", "no-deps@1.1.0"]],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the entry of the project's own peer",
+      pkg: () => ({ peerDependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
+      packages: () => [["no-deps", "no-deps@1.1.0"]],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the entry of an optional dependency",
+      pkg: () => ({ optionalDependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
+      packages: () => [["no-deps", "no-deps@1.1.0"]],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the entry is a prerelease",
+      pkg: () => ({ dependencies: { "no-deps-tags": "^1.0.0" }, overrides: { "no-deps-tags": "1.0.0" } }),
+      packages: () => [["no-deps-tags", "no-deps-tags@1.0.0-rc.1"]],
+      held: "no-deps-tags@1.0.0-rc.1",
+    },
   ])("$title", saved => {
     const held = async () => {
       const lock = savedBy14(saved);
@@ -825,7 +853,8 @@ describe("a bun.lock written by Bun 1.4", () => {
       const { stderr, exitCode } = await bun(dir, "install");
       expect(stderr).toBe("Saved lockfile");
       expect(exitCode).toBe(0);
-      expect(nodeModulesPackages(dir)).toContain("node_modules/no-deps/no-deps@1.0.0");
+      const name = saved.held.slice(0, saved.held.indexOf("@"));
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${name}@1.0.0`);
       const repaired = await lockfile(dir);
       expect(repaired).not.toContain(saved.held);
       await expectLockfileStable(dir, repaired);

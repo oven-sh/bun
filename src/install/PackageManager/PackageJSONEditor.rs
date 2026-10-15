@@ -453,20 +453,13 @@ pub(crate) fn edit_update_entries(
                 continue;
             }
 
-            // Only the first dependency group naming the package is rewritten. --latest moved the
-            // rows of all groups, so there each entry is, in its own pin style.
+            // Only the first dependency group naming the package is rewritten.
             let Some(entry) = updating_packages.get_mut(key_str) else {
                 continue;
             };
-            let is_peer = group.prop == DependencyGroup::PEER.prop;
-            if entry.written_back && (!update_to_latest || is_peer) {
+            if entry.written_back {
                 continue;
             }
-            let original: &[u8] = if entry.written_back {
-                value_literal
-            } else {
-                &entry.original_version_literal
-            };
             entry.written_back = true;
             let Some((workspace_dep, resolution)) = (workspace_deps.iter())
                 .zip(workspace_resolution_ids)
@@ -492,6 +485,7 @@ pub(crate) fn edit_update_entries(
             }
 
             // A peer range says what the package works with: never pinned, and --latest leaves one that allows the version.
+            let is_peer = group.prop == DependencyGroup::PEER.prop;
             let resolved = resolution.npm().version;
             let allowed = is_peer
                 && workspace_dep.version.try_npm().is_some_and(|npm_version| {
@@ -500,7 +494,7 @@ pub(crate) fn edit_update_entries(
                         .satisfies(resolved, string_buf, string_buf)
                 });
             let Some(new_version) = updated_version_literal(
-                original,
+                &entry.original_version_literal,
                 resolved,
                 string_buf,
                 options.exact_versions && !is_peer,
@@ -1600,59 +1594,22 @@ pub(crate) fn edit(
             );
         }
     }
-    // --latest moved the rows of all groups: the other entries move too, each in its own pin style.
-    if update_to_latest && !options.before_install {
-        let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-        for request in updates.iter() {
-            let Some(resolved) = resolutions
-                .get(request.package_id as usize)
-                .filter(|resolution| resolution.tag == resolution::Tag::Npm)
-            else {
-                continue;
-            };
-            for group in [
-                DependencyGroup::DEPENDENCIES,
-                DependencyGroup::DEV,
-                DependencyGroup::OPTIONAL,
-            ] {
-                let Some(mut other) = string_entry(current_package_json, group.prop, request.name)
-                else {
-                    continue;
-                };
-                if request.e_string == Some(other.as_ptr())
-                    || literal_tag(other.data.slice()) != dependency::Tag::Npm
-                    || split_npm_alias(other.data.slice()).is_some()
-                {
-                    continue;
-                }
-                if let Some(new_version) = updated_version_literal(
-                    other.data.slice(),
-                    resolved.npm().version,
-                    string_buf,
-                    options.exact_versions,
-                    true,
-                )
-                .filter(|new_version| new_version.as_slice() != other.data.slice())
-                {
-                    changed = true;
-                    other.data = arena_dup(arena, &new_version).into();
-                }
-            }
-        }
-    }
-    // Without a group flag the entries of all groups this install follows take the spec, as for a folder and --latest.
+    // Without a group flag all entries take the spec, as for a folder. All or none: not when this install leaves one out.
     if !move_to_target && manager.subcommand == Subcommand::Add {
         let features = manager.options.local_package_features;
         for request in updates.iter() {
             let name = request.get_resolved_name(&manager.lockfile);
-            let mut declared = [
+            let groups = [
                 (DependencyGroup::DEPENDENCIES, true),
                 (DependencyGroup::DEV, features.dev_dependencies),
                 (DependencyGroup::OPTIONAL, features.optional_dependencies),
-            ]
-            .into_iter()
-            .filter(|(_, followed)| *followed)
-            .filter_map(|(group, _)| string_entry(current_package_json, group.prop, name));
+            ];
+            let entry =
+                |group: &DependencyGroup| string_entry(current_package_json, group.prop, name);
+            if (groups.iter()).any(|(group, followed)| !*followed && entry(group).is_some()) {
+                continue;
+            }
+            let mut declared = groups.iter().filter_map(|(group, _)| entry(group));
             if let Some(slot) = declared
                 .next()
                 .filter(|slot| request.e_string == Some(slot.as_ptr()))

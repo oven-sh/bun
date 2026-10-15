@@ -46,6 +46,8 @@ impl GitEnv {
         // From `bunx`, for this command alone: git runs the user's hooks.
         map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
         map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+        // A commit holds what its hash names.
+        bun_core::handle_oom(map.put(b"GIT_NO_REPLACE_OBJECTS", b"1"));
 
         if let Some(configured) = configured {
             // No prompts by default: the install's own output would hide them.

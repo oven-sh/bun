@@ -5534,6 +5534,74 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // A request that failed says nothing about the package.
+  it.each([
+    { name: "tarball", failing: /\/short-[^/]+\.tgz$/ },
+    { name: "manifest", failing: /\/short$/ },
+  ])(
+    "an optional dependency stays in the lockfile when the $name of a package that it needs answers 503",
+    async ({ failing }) => {
+      await withContext(defaultOpts, async ctx => {
+        const registry: Record<string, Record<string, object>> = {
+          holder: { "1.0.0": { optionalDependencies: { kept: "^1.0.0" } } },
+          kept: { "1.0.0": { dependencies: { short: "^1.0.0" } } },
+          short: { "1.0.0": {} },
+        };
+        const answer = heldRegistry(ctx, [], registry);
+        let busy = true;
+        setContextHandler(ctx, request =>
+          busy && failing.test(request.url) ? new Response("busy", { status: 503 }) : answer(request),
+        );
+        await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } });
+        const lockfile = () =>
+          file(join(ctx.package_dir, "bun.lock"))
+            .text()
+            .catch(() => null);
+        const runWhileBusy = async (command: string) => {
+          busy = true;
+          await using proc = spawn({
+            cmd: [bunExe(), command],
+            cwd: ctx.package_dir,
+            stdout: "ignore",
+            stdin: "ignore",
+            stderr: "pipe",
+            env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+          });
+          const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          busy = false;
+          return {
+            failed: err.split(/\r?\n/).filter(line => / - 503$/.test(line)),
+            lockfile: await lockfile(),
+            exitCode,
+          };
+        };
+        const whole = { "holder": "holder@1.0.0", "kept": "kept@1.0.0", "short": "short@1.0.0" };
+
+        expect(await runWhileBusy("install")).toEqual({
+          failed: [expect.stringMatching(/^error: GET .*\/short/)],
+          lockfile: null,
+          exitCode: 1,
+        });
+        expect(await installAndReadLock(ctx)).toEqual(whole);
+
+        const saved = await lockfile();
+        registry.kept["1.1.0"] = { dependencies: { short: "^2.0.0" } };
+        registry.short["2.0.0"] = {};
+        expect(await runWhileBusy("update")).toEqual({
+          failed: [expect.stringContaining("/short")],
+          lockfile: saved,
+          exitCode: 1,
+        });
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
+          ".cache",
+          "holder",
+          "kept",
+          "short",
+        ]);
+      });
+    },
+  );
+
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

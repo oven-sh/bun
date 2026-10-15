@@ -5295,9 +5295,9 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml are not applied."],
   ];
 
-  /** The end of the stderr of a command that installs. */
-  const refusal = (path: string) =>
-    "error: This file cannot be read, and bun does not install packages without its settings\n" +
+  /** The end of the stderr of a command that installs, or publishes. */
+  const refusal = (path: string, verb = "install") =>
+    `error: This file cannot be read, and bun does not ${verb} packages without its settings\n` +
     `    at <dir>/${path}\n`;
   const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
 
@@ -5340,6 +5340,26 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     });
     const { stderr, exitCode } = await run(cmd.split(" "), unreadableBunfig, false, registry.url.href);
     expect(withoutDir(stderr)).toEndWith(refusal("project/bunfig.toml"));
+    expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+  });
+
+  test.each(files)("bun publish stops before it asks the registry: %s", async (_, path) => {
+    let requests = 0;
+    using registry = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response("{}");
+      },
+    });
+    const { stderr, exitCode } = await run(
+      ["publish"],
+      dir => mkdirSync(join(dir, path)),
+      path.startsWith("xdg"),
+      // The credentials that the settings which can be read have for it.
+      `http://user:password@localhost:${registry.port}/`,
+    );
+    expect(withoutDir(stderr)).toEndWith(refusal(path, "publish"));
     expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
   });
 

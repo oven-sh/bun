@@ -297,14 +297,13 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
-/// What a held message is about; see `PackageManager::log_held`.
+/// The rows the registry has nothing for; see `PackageManager::log_held`. A failed request is never held.
 #[derive(Clone, Copy)]
 pub(crate) enum HeldAbout {
-    /// A row of a package.
+    /// The manifest has no version for this row.
     Row(DependencyID),
-    /// The rows that wait for the task.
+    /// There is no such package: the rows that wait for its manifest.
     Task(Task::Id),
-    Package(PackageID),
 }
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
@@ -477,7 +476,7 @@ pub struct PackageManager {
     // Newly resolved deprecated versions no package.json of the project names: one summary line.
     pub(crate) deprecated_transitive: u32,
 
-    // Some while `bun install` resolves: messages about packages that dedupe may still drop, until log_held.
+    // Some while `bun install` resolves: the registry's "no" to rows that dedupe may still drop, until log_held.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
@@ -748,6 +747,24 @@ impl PackageManager {
         // outlives every `'a` a caller can name. Exclusive access is upheld by
         // single-threaded use; see doc comment.
         unsafe { &mut *p }
+    }
+
+    /// The settings of a bunfig.toml or .npmrc say where packages come from and go to, and what checks them.
+    /// `verb`: what the command does to packages.
+    pub fn refuse_unreadable_config(&self, ctx: &Command::ContextData, verb: &str) {
+        let Some(path) = ctx.unreadable_config.as_deref() else {
+            return;
+        };
+        let log = self.log_mut();
+        log.add_error_fmt(
+            Some(&bun_ast::Source::init_path_string(path, b"")),
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "This file cannot be read, and bun does not {verb} packages without its settings"
+            ),
+        );
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        Global::crash();
     }
 
     /// Reborrow the active progress download node (`self.progress.root`-rooted).
@@ -2113,6 +2130,74 @@ fn is_shared_directory(_: &[u8]) -> bool {
     false
 }
 
+/// The directory of the project that `dir` is in, as `init` finds it: of the nearest package.json, then of the
+/// workspace root it is a member of. One that only says how to read the files beside it, such as
+/// `{ "type": "commonjs" }`, is part of the project above it. With no project above, the topmost such is the project's.
+/// `unreadable` gets the path of a package.json that may be the project's and cannot be read or parsed.
+fn find_project<'a>(
+    dir: &'a [u8],
+    workspace_package_json_cache: &mut WorkspacePackageJSONCache,
+    unreadable: &mut Option<Box<[u8]>>,
+) -> Option<&'a [u8]> {
+    let mut walk = PackageJsonWalk::new(dir);
+    let mut project = None;
+    let mut topmost = None;
+    while let Some((dir, opened)) = walk.next(bun_sys::O::RDONLY) {
+        const OF_A_PROJECT: [&[u8]; 6] = [
+            b"name",
+            b"workspaces",
+            b"dependencies",
+            b"devDependencies",
+            b"optionalDependencies",
+            b"peerDependencies",
+        ];
+        if opened.is_err_and(|err| !err.is_unreadable_file(&walk.path)) {
+            continue;
+        }
+        match workspace_package_json_cache
+            .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
+            .unwrap()
+        {
+            Ok(json) if OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()) => {
+                project = Some(dir);
+            }
+            Ok(_) => {
+                topmost = Some(dir);
+                continue;
+            }
+            // It may be the project's.
+            Err(_) => *unreadable = Some(walk.path.as_slice().into()),
+        }
+        break;
+    }
+    if let Some(member) = project {
+        match find_workspace_root(
+            &mut walk,
+            without_trailing_slash_windows_path(member),
+            &mut bun_ast::Log::init(),
+            &mut Package::WorkspaceMap::WorkspaceMap::init(),
+            workspace_package_json_cache,
+            None,
+        ) {
+            Ok(Some((root, _, _))) => project = Some(root),
+            Ok(None) => {}
+            // It may be the workspace root's.
+            Err(_) => *unreadable = Some(walk.path.as_slice().into()),
+        }
+    }
+    project.or(topmost)
+}
+
+/// [`find_project`] for `bunx`, which has no manager.
+pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
+    initialize_store();
+    find_project(
+        without_trailing_slash_windows_path(cwd),
+        &mut WorkspacePackageJSONCache::default(),
+        &mut None,
+    )
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -2797,57 +2882,39 @@ fn init_with_runtime_once(
         None => importer_dir,
     };
     let importer_dir = without_trailing_slash_windows_path(importer_dir);
-    // The project, as `init` finds it: the nearest package.json, then the workspace root it is a
-    // member of. One that only says how to read the files beside it, such as
-    // `{ "type": "commonjs" }`, is part of the project above it.
     let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
-    let mut walk = PackageJsonWalk::new(importer_dir);
-    let mut project = None;
-    while let Some((dir, opened)) = walk.next(bun_sys::O::RDONLY) {
-        const OF_A_PROJECT: [&[u8]; 6] = [
-            b"name",
-            b"workspaces",
-            b"dependencies",
-            b"devDependencies",
-            b"optionalDependencies",
-            b"peerDependencies",
-        ];
-        if opened.is_ok()
-            && workspace_package_json_cache
-                .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
-                .unwrap()
-                .is_ok_and(|json| OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()))
-        {
-            project = Some(dir);
-            break;
-        }
-    }
-    if let Some(member) = project
-        && let Ok(Some((root, _, _))) = find_workspace_root(
-            &mut walk,
-            without_trailing_slash_windows_path(member),
-            &mut bun_ast::Log::init(),
-            &mut Package::WorkspaceMap::WorkspaceMap::init(),
-            &mut workspace_package_json_cache,
-            None,
-        )
-    {
-        project = Some(root);
-    }
+    let mut unreadable = None;
+    let project = find_project(
+        importer_dir,
+        &mut workspace_package_json_cache,
+        &mut unreadable,
+    );
     // Its bunfig.toml, .npmrc and lockfile say where packages come from. None above it is read.
     let project_dir = project.unwrap_or(importer_dir);
+    // A bunfig.toml or .npmrc in a folder between the two counts as well, over the ones above it.
+    let mut settings_dirs: Vec<&[u8]> = core::iter::successors(Some(importer_dir), |&dir| {
+        bun_core::dirname(dir).filter(|_| dir != project_dir)
+    })
+    .collect();
+    settings_dirs.reverse();
 
     // `bun_install` came from the start directory; `process.chdir()` moves `top_level_dir`.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
-    let mut unreadable = None;
-    let root_bunfig_dir =
-        Some(project_dir).filter(|&dir| dir != without_trailing_slash_windows_path(start_dir));
-    let root_bunfig = root_bunfig_dir.and_then(|dir| {
-        ::bun_bunfig::arguments::load_install_section(dir).unwrap_or_else(|path| {
-            unreadable = Some(path);
-            None
-        })
-    });
+    let start_dir_trimmed = without_trailing_slash_windows_path(start_dir);
+    let mut root_bunfig: Option<Box<Api::BunInstall>> = None;
+    for &dir in settings_dirs
+        .iter()
+        .filter(|&&dir| dir != start_dir_trimmed)
+    {
+        match ::bun_bunfig::arguments::load_install_section(dir) {
+            Ok(Some(nearer)) => match root_bunfig.as_deref_mut() {
+                Some(above) => overlay_bunfig_install(above, *nearer),
+                None => root_bunfig = Some(nearer),
+            },
+            Ok(None) => {}
+            Err(path) => unreadable = Some(path),
+        }
+    }
     // Also one in a folder between the two, which `bun install` does not read: in doubt it counts.
     let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner is shown what `bun install` is about to install, and nothing else.
@@ -2863,29 +2930,25 @@ fn init_with_runtime_once(
         return Err(bun_resolver::Error::SecurityScannerConfigured.into());
     }
     // The start directory's own counts too, as its bunfig.toml does.
-    let mut npmrc_bufs = [
-        bun_paths::path_buffer_pool::get(),
-        bun_paths::path_buffer_pool::get(),
-    ];
-    let npmrc_dirs = [
-        root_bunfig_dir.is_some().then_some(start_dir),
-        Some(project_dir),
-    ];
+    let mut npmrc_buf = bun_paths::path_buffer_pool::get();
+    let npmrcs: Vec<ZBox> = (Some(start_dir_trimmed).into_iter())
+        .filter(|dir| !settings_dirs.contains(dir))
+        .chain(settings_dirs.iter().copied())
+        .filter_map(|dir| {
+            resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                dir,
+                &mut npmrc_buf,
+                &[b".npmrc".as_slice()],
+            )
+            .map(|path| ZBox::from_bytes(path.as_bytes()))
+        })
+        .collect();
     let no_bunfig = Api::BunInstall::default();
     let npmrc = load_npmrc_files(
         bun_install.unwrap_or(&no_bunfig),
         env,
         start_dir,
-        &mut npmrc_dirs
-            .into_iter()
-            .zip(&mut npmrc_bufs)
-            .filter_map(|(dir, buf)| {
-                resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-                    dir?,
-                    buf,
-                    &[b".npmrc".as_slice()],
-                )
-            }),
+        &mut npmrcs.iter().map(|path| &**path),
         ini::NpmrcDiagnostics::Discard,
         &mut unreadable,
     );
@@ -2973,6 +3036,22 @@ fn init_with_runtime_once(
         // directory, `parse_with_json` from the working directory.
         if manager.lockfile.packages.len() > 0 {
             manager.root_dir = &mut **entries;
+            // Auto-install passes over a rule that leads away from the registry, so also what it gave.
+            let lockfile = &mut *manager.lockfile;
+            let resolved_as = lockfile.packages.items_resolution();
+            for (row, package_id) in
+                (lockfile.buffers.dependencies.iter()).zip(lockfile.buffers.resolutions.iter_mut())
+            {
+                use crate::dependency::version::Tag as Declared;
+                use crate::resolution::Tag;
+                if matches!(row.version.tag, Declared::Npm | Declared::DistTag)
+                    && resolved_as
+                        .get(*package_id as usize)
+                        .is_some_and(|it| !matches!(it.tag, Tag::Npm | Tag::Workspace | Tag::Root))
+                {
+                    *package_id = bun_install::INVALID_PACKAGE_ID;
+                }
+            }
             return Ok(());
         }
     }

@@ -17,7 +17,6 @@ use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
-use bun_semver::{SlicedString, Version};
 use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
@@ -29,8 +28,12 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
-/// The range of `pkg@<range>`, and the buffer its strings are in.
-type Range<'a> = (&'a bun_semver::query::Group, &'a [u8]);
+/// An entry of `bin` in a package.json.
+struct PackageBin {
+    name: Box<[u8]>,
+    /// Its file, from the directory of the package.
+    file: Box<[u8]>,
+}
 
 /// `flock` on `<bunx cache dir>.lock`, next to the tree. CLOEXEC: exec'ing the target releases it.
 struct InstallLock {
@@ -294,14 +297,16 @@ impl BunxCommand {
     }
 
     /// The bin called `preferred` if the package has it, else its first one.
-    /// `NeedToInstall`: the version of the package is outside `range`.
-    fn get_bin_name_from_subpath(
+    fn get_bin_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
         preferred: &[u8],
-        range: Option<Range<'_>>,
-    ) -> crate::Result<Box<[u8]>> {
+    ) -> crate::Result<PackageBin> {
+        let package_bin = |name: &[u8], file: &[u8]| PackageBin {
+            name: name.into(),
+            file: file.into(),
+        };
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
         let package_json_bytes = target_package_json.read_to_end()?;
@@ -313,38 +318,29 @@ impl BunxCommand {
         let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut())?;
         let expr = parsed.root;
 
-        if let Some((range, range_buf)) = range
-            && !expr.get(b"version").is_some_and(|version| {
-                version.as_utf8_string_literal().is_some_and(|literal| {
-                    Version::parse_exact(SlicedString::init(literal, literal))
-                        .is_some_and(|version| range.satisfies(version, range_buf, literal))
-                })
-            })
-        {
-            return Err(crate::Error::NeedToInstall);
-        }
-
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
-                    let mut first: Option<Box<[u8]>> = None;
+                    let mut first: Option<PackageBin> = None;
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         // Same values the bin linker does not link (`bin.rs`).
-                        let is_linked = prop.value.as_str().is_some_and(|target| {
+                        let Some(target) = prop.value.as_str().filter(|target| {
                             !target.is_empty()
                                 && !bun_install::bin::bin_target_escapes_package_dir(target)
-                        });
-                        if !is_linked || !Self::is_safe_bin_name(bin_name) {
+                        }) else {
+                            continue;
+                        };
+                        if !Self::is_safe_bin_name(bin_name) {
                             continue;
                         }
                         if bin_name == preferred {
-                            return Ok(Box::<[u8]>::from(bin_name));
+                            return Ok(package_bin(bin_name, target));
                         }
-                        first.get_or_insert_with(|| Box::<[u8]>::from(bin_name));
+                        first.get_or_insert_with(|| package_bin(bin_name, target));
                     }
-                    if let Some(bin_name) = first {
-                        return Ok(bin_name);
+                    if let Some(bin) = first {
+                        return Ok(bin);
                     }
                 }
                 ExprData::EString(_) => {
@@ -352,10 +348,11 @@ impl BunxCommand {
                     if let Some(name_expr) = expr.get(b"name")
                         && let Some(name) = name_expr.as_utf8_string_literal()
                         && !name.is_empty()
+                        && let Some(target) = bin_expr.as_utf8_string_literal()
                     {
                         let bin_name = bun_install::dependency::unscoped_package_name(name);
                         if Self::is_safe_bin_name(bin_name) {
-                            return Ok(Box::<[u8]>::from(bin_name));
+                            return Ok(package_bin(bin_name, target));
                         }
                     }
                 }
@@ -376,60 +373,83 @@ impl BunxCommand {
             let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
             let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
             let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
-            let mut first: Option<Box<[u8]>> = None;
+            let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
+            let mut first: Option<PackageBin> = None;
             while let Ok(Some(current)) = iterator.next() {
                 if current.kind == bun_sys::EntryKind::File && !current.name.slice().is_empty() {
                     if current.name.slice_u8() == preferred {
-                        return Ok(Box::<[u8]>::from(preferred));
+                        return Ok(bin_in_dir(preferred));
                     }
-                    first.get_or_insert_with(|| Box::<[u8]>::from(current.name.slice_u8()));
+                    first.get_or_insert_with(|| bin_in_dir(current.name.slice_u8()));
                 }
             }
-            if let Some(bin_name) = first {
-                return Ok(bin_name);
+            if let Some(bin) = first {
+                return Ok(bin);
             }
         }
 
         Err(crate::Error::NoBinFound)
     }
 
-    /// The copy of `package_name` that node would load from `cwd`: the nearest `node_modules/<package_name>` at or above
-    /// it. Returns its bin in the `node_modules/.bin` beside it, and nothing when its version is outside `range`.
+    /// The bin of the project's copy of `package_name`: of the nearest `node_modules/<package_name>` from `cwd` up to
+    /// `project`, the directory of the project. The entry in the `node_modules/.bin` beside it if that leads into the
+    /// copy, else the file of the bin in the copy: two packages can have a bin of one name.
     /// `NoBinFound`: the copy has no bin at all or, with `only_that_bin`, none called `bin_name`.
     fn find_in_project(
         transpiler: &mut Transpiler,
         cwd: &[u8],
+        project: &[u8],
         package_name: &[u8],
-        range: Option<Range<'_>>,
         bin_name: &[u8],
         only_that_bin: bool,
     ) -> crate::Result<Option<ZBox>> {
         const SEP: &[u8] = &[bun_paths::SEP];
+        let project = strings::without_trailing_slash(project);
         let mut next_dir = Some(cwd);
-        while let Some(dir) = next_dir {
+        while let Some(dir) = next_dir.map(strings::without_trailing_slash) {
+            if !dir.starts_with(project) {
+                break;
+            }
             next_dir = bun_paths::dirname(dir);
-            let dir = strings::without_trailing_slash(dir);
             let node_modules = [dir, SEP, b"node_modules", SEP].concat();
-            let package_json = [node_modules.as_slice(), package_name, SEP, b"package.json"];
-            let found = match Self::get_bin_name_from_subpath(
+            let package_dir = [node_modules.as_slice(), package_name].concat();
+            let package_json = [package_dir.as_slice(), SEP, b"package.json"].concat();
+            let bin = match Self::get_bin_from_subpath(
                 transpiler,
                 Fd::cwd(),
-                &ZBox::from_vec(package_json.concat()),
+                &ZBox::from_vec(package_json),
                 bin_name,
-                range,
             ) {
-                Ok(found) => found,
+                Ok(bin) => bin,
                 Err(err @ crate::Error::NoBinFound) => return Err(err),
-                Err(crate::Error::NeedToInstall) => return Ok(None),
                 Err(_) => continue,
             };
-            if only_that_bin && *found != *bin_name {
+            if only_that_bin && *bin.name != *bin_name {
                 return Err(crate::Error::NoBinFound);
             }
-            let bin_dir = [node_modules.as_slice(), b".bin"].concat();
+
             let mut buf = bun_paths::path_buffer_pool::get();
-            return Ok(bun_which::which(&mut buf, &bin_dir, b"", &found)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes())));
+            let bin_dir = [node_modules.as_slice(), b".bin"].concat();
+            let entry = bun_which::which(&mut buf, &bin_dir, b"", &bin.name)
+                .map(|entry| ZBox::from_bytes(entry.as_bytes()));
+            // There the entry is a program of its own, not a link, and a script cannot be started without it.
+            if cfg!(windows) {
+                return Ok(entry);
+            }
+            let file = [package_dir.as_slice(), SEP, &*bin.file].concat();
+            let file = bun_which::which(&mut buf, b"", b"", &file)
+                .map(|file| ZBox::from_bytes(file.as_bytes()));
+
+            let mut real_dir = bun_paths::path_buffer_pool::get();
+            let Ok(real_dir) = bun_sys::realpath(&ZBox::from_vec(package_dir), &mut real_dir)
+            else {
+                return Ok(None);
+            };
+            return Ok([entry, file].into_iter().flatten().find(|candidate| {
+                bun_sys::realpath(candidate, &mut buf).is_ok_and(|real| {
+                    (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
+                })
+            }));
         }
         Ok(None)
     }
@@ -454,6 +474,7 @@ impl BunxCommand {
         transpiler: &mut Transpiler,
         bunx_cache_dir: &[u8],
         package_name: &[u8],
+        preferred: &[u8],
     ) -> crate::Result<Box<[u8]>> {
         let mut subpath = bun_paths::path_buffer_pool::get();
         let subpath_z = bun_core::fmt::buf_print_z(
@@ -466,7 +487,7 @@ impl BunxCommand {
             ),
         )
         .map_err(|_| crate::Error::PathTooLong)?;
-        Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z, b"", None)
+        Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), subpath_z, preferred)?.name)
     }
 
     /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
@@ -484,9 +505,13 @@ impl BunxCommand {
             bun_install::package_manager_real::fetch_cache_directory_path(env, configured)
                 .ok()
                 .filter(|dir| !dir.is_cwd_fallback);
+        // `$TMPDIR` can be relative, and the install runs in another directory than this command.
+        let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
+        let temp_dir = bun_resolver::fs::FileSystem::instance()
+            .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),
-            Some(RealFS::platform_temp_dir()),
+            temp_dir,
         ];
         for (base, is_shared) in bases.into_iter().zip([false, true]) {
             let Some(base) = base.map(strings::without_trailing_slash) else {
@@ -569,7 +594,20 @@ impl BunxCommand {
         ))
     }
 
+    /// Another install does not give a package a bin.
+    fn exit_if_no_bin<T>(found: crate::Result<T>, package_name: &[u8]) -> crate::Result<T> {
+        if matches!(found, Err(crate::Error::NoBinFound)) {
+            Output::err_generic(
+                "could not determine executable to run for package <b>{}<r>",
+                format_args!("{}", BStr::new(package_name)),
+            );
+            Global::exit(1);
+        }
+        found
+    }
+
     /// `package_name` is `None` with `--package`. Like npx, that runs any command: the bins of the tree come before `path`.
+    /// `NoBinFound`: the package is there and has no bin.
     fn find_in_cache(
         transpiler: &mut Transpiler,
         bunx_cache_dir: &[u8],
@@ -578,26 +616,25 @@ impl BunxCommand {
         package_name: Option<&[u8]>,
         path: &[u8],
     ) -> crate::Result<Option<ZBox>> {
+        // The package says what its bin is called: a dependency of it can have one of the name that was typed.
+        let own_bin_name = package_name.map(|name| {
+            let dir = bunx_cache_dir;
+            Self::get_bin_name_from_cache_directory(transpiler, dir, name, initial_bin_name)
+        });
+        let bin_name = match &own_bin_name {
+            Some(Ok(own_bin_name)) => &**own_bin_name,
+            _ => initial_bin_name,
+        };
         let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(bin) = Self::which_in_cache(&mut buf, bunx_cache_dir, cwd, initial_bin_name)? {
+        if let Some(bin) = Self::which_in_cache(&mut buf, bunx_cache_dir, cwd, bin_name)? {
             return Ok(Some(ZBox::from_bytes(bin.as_bytes())));
         }
-        let Some(package_name) = package_name else {
-            return Ok(bun_which::which(&mut buf, path, cwd, initial_bin_name)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes())));
-        };
-        let Ok(bin_name) =
-            Self::get_bin_name_from_cache_directory(transpiler, bunx_cache_dir, package_name)
-        else {
-            return Ok(None);
-        };
-        if strings::eql_long(&bin_name, initial_bin_name, true) {
-            return Ok(None);
+        match own_bin_name {
+            Some(Err(err @ crate::Error::NoBinFound)) => Err(err),
+            Some(_) => Ok(None),
+            None => Ok(bun_which::which(&mut buf, path, cwd, initial_bin_name)
+                .map(|bin| ZBox::from_bytes(bin.as_bytes()))),
         }
-        Ok(
-            Self::which_in_cache(&mut buf, bunx_cache_dir, cwd, &bin_name)?
-                .map(|bin| ZBox::from_bytes(bin.as_bytes())),
-        )
     }
 
     fn exit_with_usage() -> ! {
@@ -849,30 +886,20 @@ impl BunxCommand {
             }
         }
 
-        // 2. The project's copy of the package. Whether it is what a tag, a URL or an alias names cannot be told.
-        let range: Option<Range<'_>> = (update_request.version.try_npm())
-            .filter(|npm| is_versioned && !npm.is_alias)
-            .map(|npm| (&npm.version, update_request.version_buf()));
-        if !is_versioned || range.is_some() {
+        // 2. The project's copy of the package. With a version, a tag or a URL the package comes from there, not from here.
+        if !is_versioned {
+            let project = bun_install::package_manager_real::project_directory(top_level_dir);
             let found = match Self::find_in_project(
                 this_transpiler,
                 top_level_dir,
+                project.unwrap_or(top_level_dir),
                 result_package_name,
-                range,
                 initial_bin_name,
                 opts.binary_name.is_some(),
             ) {
-                Ok(found) => found,
                 // Like npx: `--package` runs any command once the package is there.
                 Err(crate::Error::NoBinFound) if opts.binary_name.is_some() => find_on_path(),
-                Err(crate::Error::NoBinFound) if !is_versioned => {
-                    Output::err_generic(
-                        "could not determine executable to run for package <b>{}<r>",
-                        format_args!("{}", BStr::new(&update_request.name)),
-                    );
-                    Global::exit(1);
-                }
-                Err(_) => None,
+                found => Self::exit_if_no_bin(found, update_request.name).unwrap_or(None),
             };
             if let Some(bin) = found {
                 Run::run_binary(
@@ -902,13 +929,16 @@ impl BunxCommand {
             let tree = Self::tree_state(&bunx_cache_dir);
             let is_fresh = tree == Tree::Fresh;
             if (is_fresh || (opts.no_install && tree != Tree::Missing))
-                && let Some(bin) = Self::find_in_cache(
-                    this_transpiler,
-                    &bunx_cache_dir,
-                    which_cwd,
-                    initial_bin_name,
-                    package_with_bin,
-                    &path_for_bin_dirs,
+                && let Some(bin) = Self::exit_if_no_bin(
+                    Self::find_in_cache(
+                        this_transpiler,
+                        &bunx_cache_dir,
+                        which_cwd,
+                        initial_bin_name,
+                        package_with_bin,
+                        &path_for_bin_dirs,
+                    ),
+                    update_request.name,
                 )?
             {
                 if !is_fresh {
@@ -958,14 +988,18 @@ impl BunxCommand {
         // Looked at under the lock: the holder this run queued behind may just have installed the tree.
         let tree = Self::tree_state(bunx_cache_dir);
         let installed = if tree == Tree::Fresh {
-            Self::find_in_cache(
+            match Self::find_in_cache(
                 this_transpiler,
                 bunx_cache_dir,
                 which_cwd,
                 initial_bin_name,
                 package_with_bin,
                 &path_for_bin_dirs,
-            )?
+            ) {
+                // What the tag names by now may have one.
+                Err(crate::Error::NoBinFound) if !look_for_existing_bin => None,
+                found => Self::exit_if_no_bin(found, update_request.name)?,
+            }
         } else {
             None
         };
@@ -1154,13 +1188,16 @@ impl BunxCommand {
             _ => {}
         }
 
-        if let Some(bin) = Self::find_in_cache(
-            this_transpiler,
-            bunx_cache_dir,
-            which_cwd,
-            initial_bin_name,
-            package_with_bin,
-            &path_for_bin_dirs,
+        if let Some(bin) = Self::exit_if_no_bin(
+            Self::find_in_cache(
+                this_transpiler,
+                bunx_cache_dir,
+                which_cwd,
+                initial_bin_name,
+                package_with_bin,
+                &path_for_bin_dirs,
+            ),
+            update_request.name,
         )? {
             drop(install_lock.take());
             Run::run_binary(

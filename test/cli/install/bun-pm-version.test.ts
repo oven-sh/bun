@@ -392,7 +392,7 @@ describe.concurrent("bun pm version", () => {
       },
     );
 
-    it.each(["be ta", "beta!", "a..b", ".a"])("rejects %j as the --preid", async preid => {
+    it.each(["be ta", "beta!", "a..b", ".a", "01", "00", "beta.007"])("rejects %j as the --preid", async preid => {
       const testDir = setupTest();
 
       const { output, error, code } = await runCommand(
@@ -878,6 +878,9 @@ describe.concurrent("bun pm version", () => {
       ["1.2.3-beta", "prerelease --preid beta", "1.2.3-beta.0"],
       ["1.0.0-beta.x", "prerelease --preid beta", "1.0.0-beta.0"],
       ["1.0.0-5", "prerelease --preid 5", "1.0.0-5.0"],
+      ["1.0.0", "prerelease --preid 0", "1.0.1-0.0"],
+      ["1.0.0", "prerelease --preid 01a", "1.0.1-01a.0"],
+      ["1.0.0", "prerelease --preid 0-1", "1.0.1-0-1.0"],
       ["1.2.3", "prerelease --preid a.b", "1.2.4-a.b.0"],
       // The last number is the one that counts, wherever it is, and the other fields stay.
       ["1.0.0-x.7.z.92", "prerelease", "1.0.0-x.7.z.93"],

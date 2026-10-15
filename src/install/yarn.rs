@@ -761,7 +761,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
         *package_id = appended_id;
 
-        this.packages.append(LockfilePackage {
+        let mut package = LockfilePackage {
             name: pkg_name,
             name_hash,
             resolution,
@@ -779,7 +779,23 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             },
             bin: Bin::init(),
             scripts: Default::default(),
-        })?;
+        };
+        // yarn.lock records no bins. A folder of the project has its package.json at hand.
+        if matches!(
+            resolution.tag,
+            crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
+        ) && let Some(folder) = entry.file.or(entry.link.as_deref())
+            && let Some(path) = lockfile::join_top_level_dir(&[folder, b"package.json"])
+            && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
+                log,
+                path.slice(),
+                Default::default(),
+            )
+        {
+            let manifest = json.root;
+            crate::migration::parse_manifest_bin(this, &mut package, &manifest)?;
+        }
+        this.packages.append(package)?;
         this.get_or_put_id(appended_id, name_hash)?;
     }
 

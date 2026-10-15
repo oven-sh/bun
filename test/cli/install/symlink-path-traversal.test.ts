@@ -2126,4 +2126,25 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     expect(stderr).toContain("EEXIST");
     expect(exitCode).toBe(1);
   });
+
+  // `dep` has a command of its name.
+  it.each(
+    ["hoisted", "isolated"].flatMap(linker =>
+      ["node_modules", "packages/app/node_modules"].flatMap(folder =>
+        [".bin/dep", ".bin/dep/x"].map(path => [linker, folder, path]),
+      ),
+    ),
+  )("is in the way of the link to a command (%s, %s): %s", async (linker, folder, path) => {
+    using root = tempDir("nm-outside-bin", {});
+    const files = { ...MINE, [path]: KEEP };
+    const outside = await plant(String(root), files);
+    const repo = await workspace(String(root));
+    await symlink(relative(dirname(join(repo, folder)), outside), join(repo, folder));
+
+    const { stderr, exitCode } = await runBun(repo, ["install", "--ignore-scripts", "--linker", linker]);
+
+    expect(await read(outside, files)).toEqual(files);
+    expect(stderr).toContain("EEXIST");
+    expect(exitCode).toBe(1);
+  });
 });

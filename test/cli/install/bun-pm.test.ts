@@ -952,6 +952,34 @@ it.each([
   expect(urls).toEqual([]);
 });
 
+// bun.lockb keeps a package for each of the two entries. node_modules has one of them.
+it.each([
+  { lockfile: "bun.lock", saveTextLockfile: true },
+  { lockfile: "bun.lockb", saveTextLockfile: false },
+])("should list a name in two dependency groups once ($lockfile)", async ({ lockfile, saveTextLockfile }) => {
+  setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: false, registry: `${root_url}/`, saveTextLockfile } }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { baz: "0.0.3" }, devDependencies: { baz: "~0.0.3" } }),
+  );
+  const [, err, installed] = await spawnAndCollect("install");
+  expect(err).toContain("Saved lockfile");
+  expect(installed).toBe(0);
+  expect(await exists(join(package_dir, lockfile))).toBeTrue();
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (1 installed)
+    └── baz@0.0.5"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 // bun.lockb stores only the hashes of trustedDependencies and bun does not trust
 // a hash alone, so --trusted lists nothing from a bun.lockb. Use bun.lock here.
 it("should list a trusted workspace the root also depends on once with --trusted", async () => {

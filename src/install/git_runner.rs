@@ -603,7 +603,9 @@ fn clone_urls(url: &[u8]) -> Vec<Vec<u8>> {
 }
 
 /// All that the `config` of a clone in the cache says. `url` is the form that could be cloned.
-fn clone_config(url: &[u8], is_sha256: bool) -> Vec<u8> {
+/// How git stores the objects and the refs is kept from `old`, what it said before: with the
+/// wrong answer git cannot read them, and no more.
+fn clone_config(url: &[u8], old: &[u8]) -> Vec<u8> {
     let mut quoted: Vec<u8> = Vec::with_capacity(url.len());
     for &byte in url {
         match byte {
@@ -612,14 +614,24 @@ fn clone_config(url: &[u8], is_sha256: bool) -> Vec<u8> {
             _ => quoted.push(byte),
         }
     }
-    let format: &[u8] = if is_sha256 {
-        b"1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n"
-    } else {
+    let mut extensions: Vec<u8> = Vec::new();
+    for line in [
+        b"\tobjectformat = sha256\n".as_slice(),
+        b"\trefstorage = reftable\n",
+    ] {
+        if strings::contains(old, line) {
+            extensions.extend_from_slice(line);
+        }
+    }
+    let version: &[u8] = if extensions.is_empty() {
         b"0\n\tbare = true\n"
+    } else {
+        b"1\n\tbare = true\n[extensions]\n"
     };
     [
         b"[core]\n\trepositoryformatversion = ".as_slice(),
-        format,
+        version,
+        &extensions,
         b"[remote \"origin\"]\n\turl = \"",
         &quoted,
         b"\"\n",
@@ -642,8 +654,7 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
 /// Makes `clone_config` the `config` of the clone in `repo`, whatever that said before.
 fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     let old = read_clone_config(repo)?;
-    // With the wrong answer git cannot read the objects, and no more.
-    let config = clone_config(url, strings::contains(&old, b"objectformat = sha256"));
+    let config = clone_config(url, &old);
     if config == old {
         return Ok(());
     }
@@ -661,7 +672,7 @@ fn try_last_url_first(repo: &bun_sys::Dir, urls: &mut Vec<Vec<u8>>) {
     let config = read_clone_config(repo).unwrap_or_default();
     let last = urls
         .iter()
-        .position(|url| clone_config(url, false) == config || clone_config(url, true) == config);
+        .position(|url| clone_config(url, &config) == config);
     if let Some(last) = last {
         let url = urls.remove(last);
         urls.push(url);
@@ -677,6 +688,8 @@ fn is_own_clone(repo: &bun_sys::Dir) -> bool {
         && has(bun_core::zstr!("objects"))
         && has(bun_core::zstr!("refs"))
         && !has(bun_core::zstr!("commondir"))
+        && !has(bun_core::zstr!("modules"))
+        && !has(bun_core::zstr!("worktrees"))
         && !has(bun_core::zstr!("objects/info/alternates"))
         && !has(bun_core::zstr!("objects/info/http-alternates"))
         && has_no_links(repo)
@@ -685,34 +698,46 @@ fn is_own_clone(repo: &bun_sys::Dir) -> bool {
 /// `dir` is a handle that nothing was listed through: a listing goes on where the last one stopped.
 fn has_no_links(dir: &bun_sys::Dir) -> bool {
     use bun_sys::{EntryKind, O};
-    let mut folders: Vec<Vec<u8>> = Vec::new();
-    let mut entries = bun_sys::iterate_dir(dir.fd());
-    loop {
-        let entry = match entries.next() {
-            Ok(Some(entry)) => entry,
-            Ok(None) => break,
-            Err(_) => return false,
-        };
-        let name = entry.name.slice_u8();
-        let kind = match entry.kind {
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(dir.fd(), &bun_core::ZBox::from_bytes(name)) {
-                    Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-                    Err(_) => return false,
-                }
+    // The folders still to list, as paths from `dir`. A list, not recursion: they can be nested deep.
+    let mut folders: Vec<Vec<u8>> = vec![Vec::new()];
+    while let Some(folder) = folders.pop() {
+        let opened = if folder.is_empty() {
+            None
+        } else {
+            match dir.open_at_with(&folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
+                Ok(opened) => Some(opened),
+                // The git of another install removes folders that it has emptied.
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => continue,
+                Err(_) => return false,
             }
-            known => known,
         };
-        match kind {
-            EntryKind::SymLink => return false,
-            EntryKind::Directory => folders.push(name.to_vec()),
-            _ => {}
+        let fd = opened.as_ref().unwrap_or(dir).fd();
+        let mut entries = bun_sys::iterate_dir(fd);
+        loop {
+            let entry = match entries.next() {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(_) => return false,
+            };
+            let name = entry.name.slice_u8();
+            let kind = match entry.kind {
+                EntryKind::Unknown => {
+                    match bun_sys::lstatat(fd, &bun_core::ZBox::from_bytes(name)) {
+                        Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+                        Err(_) => return false,
+                    }
+                }
+                known => known,
+            };
+            match kind {
+                EntryKind::SymLink => return false,
+                EntryKind::Directory if folder.is_empty() => folders.push(name.to_vec()),
+                EntryKind::Directory => folders.push([&folder[..], b"/", name].concat()),
+                _ => {}
+            }
         }
     }
-    folders.iter().all(|folder| {
-        dir.open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
-            .is_ok_and(|folder| has_no_links(&folder))
-    })
+    true
 }
 
 /// Moves the clone of `url` in `staging` into the cache. One that is there already stays, unless
@@ -980,6 +1005,8 @@ impl GitSubprocess {
             this,
             &[
                 &git_dir,
+                b"-c",
+                b"core.longpaths=true",
                 b"fetch",
                 b"--quiet",
                 b"--prune",
@@ -1005,9 +1032,6 @@ impl GitSubprocess {
         Self::spawn(
             this,
             &[
-                // `clone_config` has no word for another one.
-                b"-c",
-                b"init.defaultRefFormat=files",
                 b"clone",
                 b"-c",
                 b"core.longpaths=true",
@@ -1162,12 +1186,17 @@ impl GitSubprocess {
             ));
             return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
-        let mut argv: Vec<CString> = Vec::with_capacity(args.len() + 3);
+        let mut argv: Vec<CString> = Vec::with_capacity(args.len() + 5);
         argv.push(CString::new(git.as_bytes()).map_err(|_| Error::InvalidCharacter)?);
-        // No git of the install runs a hook.
-        for arg in [b"-c".as_slice(), b"core.hooksPath=/dev/null"]
-            .iter()
-            .chain(args)
+        // No git of the install runs a hook, or goes on into a submodule.
+        for arg in [
+            b"-c".as_slice(),
+            b"core.hooksPath=/dev/null",
+            b"-c",
+            b"submodule.recurse=false",
+        ]
+        .iter()
+        .chain(args)
         {
             argv.push(CString::new(*arg).map_err(|_| Error::InvalidCharacter)?);
         }
@@ -1376,8 +1405,10 @@ impl GitSubprocess {
                 if !lost_a_ref {
                     this.hold_output(stderr);
                 }
-                // git names the clone's own folder: the fault is in there, not at the remote.
-                let is_damaged = strings::contains(stderr, &bare_repo_folder_name(this.task().id));
+                // Twice no ref could be written, or git names the clone's own folder: the fault is
+                // in there, not at the remote.
+                let is_damaged = matches!(status, Status::Exited(exit) if exit.code == 1)
+                    || strings::contains(stderr, &bare_repo_folder_name(this.task().id));
                 let next = if lost_a_ref {
                     Self::spawn_fetch(this, repo, &url, true)
                 } else if is_damaged {

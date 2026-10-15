@@ -398,6 +398,8 @@ const messages: Record<string, Message> = {
     command: ["install"],
     printed: value => `error: Workspace not found "${value}"\n`,
     exitCode: 1,
+    // With a `[` it is a pattern, and one that matches nothing is no error.
+    except: "ESC [ 2 K",
   },
   "an override that is not a string": {
     files: value => ({ "package.json": JSON.stringify({ ...app, overrides: { [value]: 1 } }) }),

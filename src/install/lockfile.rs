@@ -1068,7 +1068,6 @@ impl Lockfile {
     }
 
     /// The `node_modules` of the project or of a workspace, which can be a link to a volume or a store.
-    #[cfg(unix)]
     pub(crate) fn is_importer_tree_id(&self, id: tree::Id) -> bool {
         id == 0 || self.tree_owner_tag(id) == Some(ResolutionTag::Workspace)
     }
@@ -1630,6 +1629,7 @@ impl Lockfile {
             shipped_rows: Default::default(),
             in_shipped_folder: false,
             contested: Default::default(),
+            contested_rows: Default::default(),
             kept: None,
             linked: Default::default(),
         };
@@ -1669,6 +1669,25 @@ pub(crate) type PendingResolutions = Vec<PendingResolution>;
 // ────────────────────────────────────────────────────────────────────────────
 // fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration
 // ────────────────────────────────────────────────────────────────────────────
+
+/// `<registry>/<name>/-/<name without its scope>-<version>.tgz`
+fn registry_tarball_url(
+    registry: &[u8],
+    name: &[u8],
+    version: Semver::Version,
+    buf: &[u8],
+) -> Vec<u8> {
+    let mut url = Vec::new();
+    // Writing to a `Vec` does not fail.
+    let _ = crate::extract_tarball::build_url_with_printer(
+        registry,
+        &strings::StringOrTinyString::init(name),
+        version,
+        buf,
+        |args| url.write_fmt(args),
+    );
+    url
+}
 
 impl Lockfile {
     /// `fill_integrity`: yarn berry records a checksum of its own zip archive, not of the tarball.
@@ -1747,20 +1766,24 @@ impl Lockfile {
             };
 
             // Only when the tarball is the one the manifest describes.
-            let url = pkg_res
-                .npm()
-                .url
-                .slice(self.buffers.string_bytes.as_slice());
+            let buf = self.buffers.string_bytes.as_slice();
+            let url = pkg_res.npm().url.slice(buf);
             let locked_integrity = pkg_metas[i].integrity;
-            if !url.is_empty()
-                && !bun_lock::url_is_under_registry(
+            let is_described = url.is_empty()
+                || bun_lock::url_is_under_registry(
                     url,
                     &crate::yarn_berry::registry_without_auth(scope.url.href()),
                 )
-                && url != pkg.package.tarball_url.slice(&manifest.string_buf)
-                && !(locked_integrity.tag.is_supported()
-                    && locked_integrity == pkg.package.integrity)
-            {
+                || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                || if locked_integrity.tag.is_supported()
+                    && locked_integrity.tag == pkg.package.integrity.tag
+                {
+                    locked_integrity == pkg.package.integrity
+                } else {
+                    // No two hashes to compare: a mirror has the registry's path on its own host.
+                    url.ends_with(&registry_tarball_url(b"", pkg_name_str, npm_ver, buf))
+                };
+            if !is_described {
                 continue;
             }
 
@@ -3400,20 +3423,7 @@ impl Lockfile {
             .scope_for_package_name(pkg_name)
             .url
             .href();
-        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
-            registry,
-            &strings::StringOrTinyString::init(pkg_name),
-            npm.version,
-            buf,
-            |args| -> Result<Vec<u8>, std::io::Error> {
-                let mut out: Vec<u8> = Vec::new();
-                out.write_fmt(args)?;
-                Ok(out)
-            },
-        ) else {
-            return false;
-        };
-        url == canonical_url.as_slice()
+        url == registry_tarball_url(registry, pkg_name, npm.version, buf).as_slice()
     }
 
     /// Whether a `trustedDependencies` entry can make `has_trusted_dependency` say yes.

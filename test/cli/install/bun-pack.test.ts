@@ -4137,138 +4137,25 @@ describe.concurrent(".gitignore/.npmignore", () => {
     });
   });
 
-  // Every list is what `npm pack` 11.16 packs in `packages/m` of the same tree.
-  describe("above a workspace", () => {
-    const rules = ".env\nsecrets/\n*.key\ndist\n";
-    const workspaces = { workspaces: ["packages/*"] };
-    const everything = [
-      ".env",
-      "README.md",
-      "cli.js",
-      "dist/in.key",
-      "dist/out.js",
-      "index.js",
-      "package.json",
-      "prod.key",
-      "secrets/a.txt",
-      "src/dist/deep.js",
-      "src/x.key",
-    ];
-
-    /** `tree` is relative to the root. `root` and `member` are fields of the two package.json files. */
-    async function packedInMember(tree: Record<string, string>, root: object = workspaces, member: object = {}) {
-      using dir = tempDir("pack-ignore-above", {
-        "package.json": JSON.stringify({ name: "root", private: true, ...root }),
-        "packages/m/package.json": JSON.stringify({ name: "m", version: "1.0.0", ...member }),
-        ...Object.fromEntries(everything.filter(f => f !== "package.json").map(f => [`packages/m/${f}`, "x"])),
-        ...tree,
-      });
-      const { err, exitCode } = await runPack(join(dir, "packages", "m"));
-      // Not empty where `packages/m` is a project of its own: bun names the `.env` it loaded.
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      return tarballEntries(join(dir, "packages", "m", "m-1.0.0.tgz"))
-        .map(entry => entry.slice("package/".length))
-        .sort();
-    }
-
-    test.each([
-      ["the root's .gitignore", { ".gitignore": rules }, ["README.md", "cli.js", "index.js", "package.json"]],
-      ["the root's .npmignore", { ".npmignore": rules }, ["README.md", "cli.js", "index.js", "package.json"]],
-      [
-        "the root's .npmignore, not its .gitignore",
-        { ".gitignore": rules, ".npmignore": "*.key\n" },
-        [".env", "README.md", "cli.js", "dist/out.js", "index.js", "package.json", "secrets/a.txt", "src/dist/deep.js"],
-      ],
-      [
-        "a directory between the two",
-        { "packages/.gitignore": rules },
-        ["README.md", "cli.js", "index.js", "package.json"],
-      ],
-      [
-        "the root and a directory between the two",
-        { ".gitignore": ".env\n", "packages/.gitignore": "*.key\n" },
-        ["README.md", "cli.js", "dist/out.js", "index.js", "package.json", "secrets/a.txt", "src/dist/deep.js"],
-      ],
-      [
-        "beside an empty .npmignore of the workspace",
-        { ".gitignore": rules, "packages/m/.npmignore": "" },
-        ["README.md", "cli.js", "index.js", "package.json"],
-      ],
-      [
-        "beside a .gitignore of the workspace",
-        { ".gitignore": rules, "packages/m/.gitignore": "cli.js\n" },
-        ["README.md", "index.js", "package.json"],
-      ],
-      [
-        "which the workspace's own file overrides",
-        { ".gitignore": rules, "packages/m/.npmignore": "!dist\n" },
-        ["README.md", "cli.js", "dist/out.js", "index.js", "package.json", "src/dist/deep.js"],
-      ],
-      [
-        "with paths that count from the workspace",
-        { ".gitignore": "/dist\npackages/m/prod.key\n/packages/m/.env\nsrc/dist\n" },
-        [".env", "README.md", "cli.js", "index.js", "package.json", "prod.key", "secrets/a.txt", "src/x.key"],
-      ],
-      [
-        "with a negation",
-        { ".gitignore": "*.key\n!prod.key\n" },
-        everything.filter(f => f === "prod.key" || !f.endsWith(".key")),
-      ],
-      ["which does not reach the README", { ".npmignore": "*\n" }, ["README.md", "package.json"]],
-    ] as [string, Record<string, string>, string[]][])("are read: %s", async (_, tree, expected) => {
-      expect(await packedInMember(tree)).toEqual(expected);
+  // The usual monorepo: one .gitignore, at the root, that names the folder its packages build into.
+  test.each([".gitignore", ".npmignore"])("the %s of the workspace root does not count for a workspace", async name => {
+    using dir = tempDir("pack-ignore-root", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      [name]: "node_modules\ndist\n",
+      "packages/m/package.json": JSON.stringify({ name: "m", version: "1.0.0", main: "dist/index.js" }),
+      "packages/m/dist/index.js": indexJs,
+      "packages/m/src/index.ts": indexJs,
     });
+    const member = join(dir, "packages", "m");
 
-    test.each([
-      ['"files" wins', workspaces, { files: ["dist"] }, ["README.md", "dist/in.key", "dist/out.js", "package.json"]],
-      ['"files" wins, for everything', workspaces, { files: ["*"] }, everything],
-      ["the folder above has no workspaces", {}, {}, everything],
-      ["the folder above has other workspaces", { workspaces: ["other/*"] }, {}, everything],
-    ] as [string, object, object, string[]][])("are not read: %s", async (_, root, member, expected) => {
-      expect(await packedInMember({ ".gitignore": rules }, root, member)).toEqual(expected);
-    });
-
-    test("one that cannot be read is an error", async () => {
-      using dir = tempDir("pack-ignore-above-unreadable", {
-        "package.json": JSON.stringify({ name: "root", private: true, ...workspaces }),
-        // a directory where the ignore file is expected: opening it succeeds, reading it fails
-        ".gitignore": {},
-        "packages/m/package.json": JSON.stringify({ name: "m", version: "1.0.0" }),
-      });
-
-      const { err, exitCode } = await runPack(dir, [], join(dir, "packages", "m"));
-      expect(err).toBe(`EISDIR: failed to read .gitignore at: "<dir>/.gitignore"`);
-      expect(exitCode).toBe(1);
-    });
-
-    test("count for a workspace that is bundled", async () => {
-      using dir = tempDir("pack-ignore-above-bundled", {
-        "package.json": JSON.stringify({ name: "root", private: true, ...workspaces }),
-        ".gitignore": "*.key\n",
-        "packages/app/package.json": JSON.stringify({
-          name: "app",
-          version: "1.0.0",
-          dependencies: { lib: "workspace:*" },
-          bundledDependencies: ["lib"],
-        }),
-        "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
-        "packages/lib/index.js": indexJs,
-        "packages/lib/prod.key": "x",
-        "node_modules": {},
-      });
-      await symlink(join("..", "packages", "lib"), join(dir, "node_modules", "lib"));
-      const app = join(dir, "packages", "app");
-
-      const { err, exitCode } = await runPack(app);
-      expect(err).toBe("");
-      expect(tarballEntries(join(app, "app-1.0.0.tgz"))).toEqual([
-        "package/package.json",
-        "package/node_modules/lib/index.js",
-        "package/node_modules/lib/package.json",
-      ]);
-      expect(exitCode).toBe(0);
-    });
+    const { err, exitCode } = await runPack(member);
+    expect(err).toBe("");
+    expect(tarballEntries(join(member, "m-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/dist/index.js",
+      "package/src/index.ts",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

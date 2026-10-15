@@ -562,7 +562,7 @@ new file mode 100644
 
   /** What is printed about line `line` of `patch`: the line, a caret, the message and the place. */
   const diagnostic = (kind: "warn" | "error", patch: string, line: number, message: string) =>
-    `${line} | ${patch.split("\n")[line - 1]}\n` +
+    `${line} | ${patch.split("\n")[line - 1].replaceAll("\x1b", "\\x1b")}\n` +
     `${Buffer.alloc(`${line} | `.length, " ")}^\n` +
     `${kind}: ${message}\n` +
     `${Buffer.alloc(kind.length - 1, " ")}at patches/is-even@1.0.0.patch:${line}:1`;

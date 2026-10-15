@@ -14,6 +14,7 @@ use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::isolated_install::installer::is_link;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -520,7 +521,7 @@ pub(crate) fn remove_placed_package(
         }
         let _ = node_modules.delete_tree(alias);
     }
-    crate::prune::prune_bins(&node_modules, None);
+    crate::prune::prune_bins(&node_modules);
 }
 
 /// The path rules alone, for the own name of the project, a workspace or a folder.
@@ -684,6 +685,8 @@ impl<'a> PackageInstaller<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut node_modules_path: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        let is_behind_link = lockfile.is_importer_tree_id(tree_id)
+            && is_link(node_modules_path.slice_z()) == Some(true);
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
@@ -851,6 +854,7 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
@@ -970,42 +974,6 @@ impl<'a> PackageInstaller<'a> {
             }
         }
         self.link_remaining_bins();
-    }
-
-    /// What was replaced may have had other bins. After the scripts, which can write a bin's file.
-    pub(crate) fn prune_bins(&self) {
-        let lockfile = self.lockfile();
-        let options = &self.manager().options;
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-        // `--force` looks at no package, so it fills no `replaced`.
-        let replaced_all = self.skip_verify_installed_version_number && !self.skip_delete;
-        for (tree, context) in lockfile.buffers.trees.iter().zip(self.trees.iter()) {
-            if context.replaced.is_empty() && !replaced_all {
-                continue;
-            }
-            let placed: Vec<bin::Placed<'_>> = (tree.dependencies)
-                .get(lockfile.buffers.hoisted_dependencies.as_slice())
-                .iter()
-                .map(|&dep_id| bin::Placed {
-                    folder: dependencies[dep_id as usize].name.slice(string_buf),
-                    package_id: resolutions[dep_id as usize],
-                    replaced: replaced_all || context.replaced.contains(&dep_id),
-                })
-                .filter(|package| (package.package_id as usize) < lockfile.packages.len())
-                .collect();
-            let is_left_over =
-                |name: &[u8], target: &[u8]| bin::is_left_over(lockfile, &placed, name, target);
-            let path = abs_node_modules_path(lockfile, string_buf, tree.id);
-            if let Ok(node_modules) = Dir::open(path.slice()) {
-                crate::prune::prune_bins(&node_modules, Some(&is_left_over));
-            }
-            if tree.id == 0 && options.global {
-                let bin_path = options.bin_path.as_bytes();
-                crate::prune::prune_global_bins(bin_path, path.slice(), Some(&is_left_over));
-            }
-        }
     }
 
     pub(crate) fn run_available_scripts(&mut self, log_level: Options::LogLevel) {

@@ -1636,10 +1636,10 @@ describe("Bun.Image", () => {
       });
 
       // The table's hash is fixed: the top bits of key * 0x9E3779B1. Every
-      // colour below hashes to the same few slots at every table size. A
-      // probe gives up after 256 slots and the colours are counted by
-      // sorting. Without that limit each colour walks all the others: about
-      // 2 billion steps for this image.
+      // colour below hashes to the same few slots at every table size, so
+      // each one walks past all the others: about 2 billion slots for this
+      // image. Probes may pass 4 slots per pixel in all. Past that budget
+      // the colours are counted by sorting.
       test("colours that collide in the table do not stall the encode", async () => {
         // 0x9E3779B1 * inverse == 1 (mod 2^32)
         let inverse = 1;

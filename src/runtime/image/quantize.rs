@@ -74,8 +74,14 @@ pub(crate) fn quantize(
                 for slot in slots.iter_mut().filter(|slot| slot.val != 0) {
                     slot.val = u32::from(nearest(&palette, k, slot.key)) + 1;
                 }
+                // Past the probe budget a search gives the same answer.
+                let mut budget = PROBE_BUDGET * pixels.len();
                 map_runs(pixels, &mut indices, |key| {
-                    let slot = slot_for(&mut slots, key).expect("every colour was counted");
+                    if budget == 0 {
+                        return nearest(&palette, k, key);
+                    }
+                    let (slot, passed) = slot_for(&mut slots, key);
+                    budget = budget.saturating_sub(passed);
                     u8::try_from(slot.val - 1).expect("int cast")
                 });
             } else {
@@ -114,22 +120,22 @@ struct Slot {
     val: u32,
 }
 
-/// Probe limit. The hash is fixed: without it, colours built to collide each walk all the others.
-const MAX_PROBE: usize = 256;
+/// Slots that probes may pass, per pixel. The hash is fixed: colours built to collide pass more.
+const PROBE_BUDGET: usize = 4;
 
-/// The slot of `key`, or the empty slot for it. `None` past `MAX_PROBE`. `slots.len()` is 2^n.
+/// The slot of `key`, or the empty slot for it, and how many slots the probe passed.
+/// `slots.len()` is 2^n and at least one slot is empty.
 #[inline]
-fn slot_for(slots: &mut [Slot], key: u32) -> Option<&mut Slot> {
+fn slot_for(slots: &mut [Slot], key: u32) -> (&mut Slot, usize) {
     let mask = slots.len() - 1;
     // Multiplicative hash: the top bits depend on every byte of the key.
     let mut i = (key.wrapping_mul(0x9E37_79B1) >> (32 - slots.len().trailing_zeros())) as usize;
-    for _ in 0..=MAX_PROBE {
-        if slots[i].val == 0 || slots[i].key == key {
-            return Some(&mut slots[i]);
-        }
+    let mut passed: usize = 0;
+    while slots[i].val != 0 && slots[i].key != key {
         i = (i + 1) & mask;
+        passed += 1;
     }
-    None
+    (&mut slots[i], passed)
 }
 
 /// What the first pass over the pixels found.
@@ -151,7 +157,7 @@ fn scan(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Scan {
         *out = match last {
             Some((last_key, idx)) if last_key == key => idx,
             _ => {
-                let slot = slot_for(&mut slots, key).expect("at most 256 keys");
+                let (slot, _) = slot_for(&mut slots, key);
                 if slot.val == 0 {
                     if seen.len() == want * 4 {
                         return Scan::Over { seen, at };
@@ -195,6 +201,8 @@ struct Counts {
     distinct: usize,
     /// Pixels counted so far.
     pixels: usize,
+    /// Slots that probes passed so far.
+    passed: usize,
     /// `table_room` of the palette size.
     room: usize,
     /// Colours it takes at most.
@@ -202,12 +210,14 @@ struct Counts {
 }
 
 impl Counts {
-    /// False when `key` is new and not taken, or has no slot within `MAX_PROBE`.
+    /// False when `key` is new and not taken, or the probes passed more slots than the budget.
     fn add(&mut self, key: u32, count: u32) -> Result<bool, AllocError> {
         self.pixels += count as usize;
-        let Some(slot) = slot_for(&mut self.slots, key) else {
+        let (slot, passed) = slot_for(&mut self.slots, key);
+        self.passed += passed;
+        if self.passed > PROBE_BUDGET * self.pixels {
             return Ok(false);
-        };
+        }
         if slot.val != 0 {
             slot.val += count;
             return Ok(true);
@@ -221,10 +231,9 @@ impl Counts {
         if self.distinct * 2 > self.slots.len() {
             let mut grown: Vec<Slot> = try_filled(self.slots.len() * 2)?;
             for slot in self.slots.iter().filter(|slot| slot.val != 0) {
-                let Some(moved) = slot_for(&mut grown, slot.key) else {
-                    return Ok(false);
-                };
+                let (moved, passed) = slot_for(&mut grown, slot.key);
                 *moved = *slot;
+                self.passed += passed;
             }
             self.slots = grown;
         }
@@ -251,6 +260,7 @@ fn count_colors(
         slots: try_filled(1024)?,
         distinct: 0,
         pixels: 0,
+        passed: 0,
         room: table_room(want),
         most,
     };

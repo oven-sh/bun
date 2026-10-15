@@ -2565,6 +2565,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       port += new TextDecoder().decode(chunk);
       if (port.includes("\n")) break;
     }
+    expect(port).toMatch(/^\d+\n$/);
     await using proc = await spawnFetch(`
       const get = () =>
         fetch("https://127.0.0.1:${port.trim()}", { tls: { rejectUnauthorized: false } }).then(() => "unexpected-ok", e => e.code);

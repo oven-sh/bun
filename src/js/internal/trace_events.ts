@@ -571,6 +571,7 @@ function installFsInstrumentation() {
     realpathNativeSync: ["realpath"],
     realpathSync: ["realpath"],
     renameSync: ["rename"],
+    rmSync: ["lstat"], // one native call. Node's rmSync starts with an lstat.
     rmdirSync: ["rmdir"],
     statSync: ["stat"],
     symlinkSync: ["symlink"],
@@ -610,6 +611,7 @@ function installFsInstrumentation() {
     realpath: ["realpath"],
     realpathNative: ["realpath"],
     rename: ["rename"],
+    rm: ["lstat"], // one native call. Node's rm starts with an lstat.
     rmdir: ["rmdir"],
     stat: ["stat"],
     symlink: ["symlink"],

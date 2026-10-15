@@ -34,8 +34,15 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+namespace JSC {
+class JSArray;
+class JSObject;
+class VM;
+}
+
 namespace WebCore {
 
+class JSPerformanceObserver;
 class Performance;
 class ScriptExecutionContext;
 
@@ -44,9 +51,13 @@ class PerformanceObserver : public ScriptWrappable, public RefCounted<Performanc
 
 public:
     struct Init {
+        // Not set for a member that is undefined or null.
         std::optional<Vector<String>> entryTypes;
         std::optional<String> type;
-        bool buffered;
+        // The member is not undefined. Node tells a null member from a missing one.
+        bool hasEntryTypes { false };
+        bool hasType { false };
+        bool buffered { false };
     };
 
     static Ref<PerformanceObserver> create(ScriptExecutionContext& context, Ref<PerformanceObserverCallback>&& callback)
@@ -54,19 +65,28 @@ public:
         return adoptRef(*new PerformanceObserver(context, WTF::move(callback)));
     }
 
-    static Vector<String> supportedEntryTypes(ScriptExecutionContext&);
+    static Vector<String> supportedEntryTypes();
 
     void disassociate();
 
-    ExceptionOr<void> observe(Init&&);
+    ExceptionOr<void> observe(JSDOMGlobalObject&, Init&&);
     void disconnect();
     // The context of the script that made it.
     ScriptExecutionContext* scriptExecutionContext() const;
-    Vector<RefPtr<PerformanceEntry>> takeRecords();
+    // The entries queued since the last delivery, in the order they were queued, and no longer
+    // queued. Null when there is none.
+    JSC::JSArray* takeRecords();
 
     OptionSet<PerformanceEntry::Type> typeFilter() const { return m_typeFilter; }
+    // Node delivers from a setImmediate(). An observer of one of Node's entry types is delivered
+    // like that, whatever else it observes; an observer of web types only, from a task.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L117-L127
+    bool deliversOnImmediate() const { return m_typeFilter.containsAny(PerformanceEntry::nodeTypes()); }
 
-    void queueEntry(PerformanceEntry&);
+    // Adds `entry` to the queue, which is a JS array that the wrapper owns
+    // (JSPerformanceObserver::m_pendingEntries): an entry of one of Node's types is a JS object
+    // with no PerformanceEntry behind it. In JSPerformanceObserver.h.
+    inline void queueEntry(JSC::VM&, JSC::JSObject& entry);
     void deliver();
 
     bool isRegistered() const { return m_registered; }
@@ -75,12 +95,20 @@ public:
 private:
     PerformanceObserver(ScriptExecutionContext&, Ref<PerformanceObserverCallback>&&);
 
+    // Whether observe() was first called with `type` or with `entryTypes`: the other is refused
+    // until disconnect().
+    enum class Mode : uint8_t { Unset,
+        Type,
+        EntryTypes };
+
+    JSC::JSArray* pendingEntries() const;
+    static void queueEntrySlow(JSC::VM&, JSPerformanceObserver&, JSC::JSObject& entry);
+
     RefPtr<Performance> m_performance;
-    Vector<RefPtr<PerformanceEntry>> m_entriesToDeliver;
     Ref<PerformanceObserverCallback> m_callback;
     OptionSet<PerformanceEntry::Type> m_typeFilter;
+    Mode m_mode { Mode::Unset };
     bool m_registered { false };
-    bool m_isTypeObserver { false };
 };
 
 } // namespace WebCore

@@ -465,7 +465,11 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_markBody(JSC::J
     RETURN_IF_EXCEPTION(throwScope, {});
     auto result = impl.mark(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(markName), WTF::move(markOptions));
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result))));
+    JSValue mark = toJS<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    // The observers get the wrapper that the caller gets.
+    impl.queueEntry(vm, *asObject(mark), PerformanceEntry::Type::Mark);
+    return JSValue::encode(mark);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_mark, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -513,7 +517,10 @@ static inline JSC::EncodedJSValue jsPerformancePrototypeFunction_measureBody(JSC
     RETURN_IF_EXCEPTION(throwScope, {});
     auto result = impl.measure(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(measureName), WTF::move(startOrMeasureOptions), WTF::move(endMark));
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result))));
+    JSValue measure = toJS<IDLInterface<PerformanceMeasure>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(result));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    impl.queueEntry(vm, *asObject(measure), PerformanceEntry::Type::Measure);
+    return JSValue::encode(measure);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

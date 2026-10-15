@@ -4527,6 +4527,136 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       expect(buf.toString("hex")).toBe(untouched);
     });
 
+    // Node's native writers start with THROW_AND_RETURN_IF_NOT_STRING: they reject a value
+    // that is not a primitive string and never coerce it.
+    describe("with a value that is not a string", () => {
+      const NOT_A_STRING = expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "argument must be a string",
+      });
+      const nonStrings = () => [
+        123,
+        null,
+        undefined,
+        true,
+        1n,
+        Symbol("s"),
+        {},
+        [],
+        new String("ab"),
+        Buffer.from("ab"),
+        () => {},
+      ];
+
+      it.each([...strict, ...clamping])("%s throws ERR_INVALID_ARG_TYPE", method => {
+        const buf = dest();
+        for (const value of nonStrings()) {
+          expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+          expect(() => buf[method](value, 0, 1)).toThrow(NOT_A_STRING);
+        }
+        expect(() => buf[method]()).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123)).toThrow(TypeError);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s does not coerce an object value", method => {
+        const calls = [];
+        const value = {
+          toString() {
+            calls.push("toString");
+            return source[method];
+          },
+          valueOf() {
+            calls.push("valueOf");
+            return source[method];
+          },
+          [Symbol.toPrimitive]() {
+            calls.push("toPrimitive");
+            return source[method];
+          },
+        };
+        // The handler is a Proxy too, so a lookup of any trap is recorded. A message built
+        // from the value would show up here as a `get` of "constructor".
+        const proxy = new Proxy(value, new Proxy({}, { get: (_, trap) => void calls.push(`trap ${trap}`) }));
+        const buf = dest();
+        expect(() => buf[method](value)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](proxy)).toThrow(NOT_A_STRING);
+        expect(calls).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+
+      it.each([...strict, ...clamping])("%s throws on an empty, a detached and a plain Uint8Array receiver", method => {
+        const detached = Buffer.from(new ArrayBuffer(9));
+        structuredClone(detached.buffer, { transfer: [detached.buffer] });
+        expect(() => Buffer.alloc(0)[method](123)).toThrow(NOT_A_STRING);
+        expect(() => detached[method](123)).toThrow(NOT_A_STRING);
+        expect(() => Buffer.prototype[method].call(new Uint8Array(9), 123)).toThrow(NOT_A_STRING);
+      });
+
+      // utf8Write/latin1Write/asciiWrite check the bounds in a JS wrapper first. The native
+      // writer sees the value only after that, so a bounds error wins.
+      it.each(strict)("%s reports an out-of-bounds offset or length first", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, Infinity)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, -1)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 0, 10)).toThrow(OUT_OF_BOUNDS);
+        expect(() => buf[method](123, 6, 4)).toThrow(OUT_OF_BOUNDS);
+        // In bounds, including the ranges that leave nothing to write.
+        expect(() => buf[method](123, 9)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, "abc")).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 1.5)).toThrow(NOT_A_STRING);
+      });
+
+      it.each(strict)("%s converts offset and length before it rejects the value", method => {
+        const converted = [];
+        const arg = (name, result) => ({
+          valueOf() {
+            if (!converted.includes(name)) converted.push(name);
+            return result;
+          },
+        });
+        expect(() => dest()[method](123, arg("offset", 0), arg("length", 1))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual(["offset", "length"]);
+
+        const throwing = message => ({
+          valueOf() {
+            throw new Error(message);
+          },
+        });
+        expect(() => dest()[method](123, throwing("offset valueOf"))).toThrow("offset valueOf");
+        expect(() => dest()[method](123, 0, throwing("length valueOf"))).toThrow("length valueOf");
+      });
+
+      // base64/base64url/hex/ucs2 are the raw binding. It rejects the value before it reads
+      // offset or length, so the value error wins and neither argument is converted.
+      it.each(clamping)("%s rejects the value before it reads offset and length", method => {
+        const buf = dest();
+        expect(() => buf[method](123, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 10)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, Infinity)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, -1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 9, 1)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, 0, 0)).toThrow(NOT_A_STRING);
+        expect(() => buf[method](123, NaN, NaN)).toThrow(NOT_A_STRING);
+
+        const converted = [];
+        const arg = name => ({
+          valueOf() {
+            converted.push(name);
+            throw new Error(`${name} valueOf`);
+          },
+        });
+        expect(() => buf[method](123, arg("offset"), arg("length"))).toThrow(NOT_A_STRING);
+        expect(converted).toEqual([]);
+        expect(buf.toString("hex")).toBe(untouched);
+      });
+    });
+
     it("the documented write() wrapper is unchanged", () => {
       const buf = dest();
       expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));

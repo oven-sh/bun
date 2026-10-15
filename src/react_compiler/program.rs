@@ -61,6 +61,36 @@ pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
     fn import_records(&self) -> &[ImportRecord];
+
+    /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
+    fn type_casts(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The `x` of each `x = d` in a pattern with the whole, in the order of the `x`. The parser has no node for it.
+    fn targets_with_defaults(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// What is in parentheses with the outermost of them, in the order of what is in them. The parser drops them, and so
+    /// does upstream's. For a tree that has a node for them.
+    fn parentheses(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
+    /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
+    fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
+        None
+    }
+
+    /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
+    /// in the scope of the module.
+    fn is_module_level(&self, ref_: Ref) -> bool {
+        self.symbols()
+            .get(ref_.inner_index() as usize)
+            .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
+            .is_some_and(|member| member.ref_ == ref_)
+    }
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 
@@ -683,6 +713,10 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 }
 
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
+    if !crate::lowering::thread_has_stack() {
+        return;
+    }
+
     match &stmt.data {
         StmtData::SReturn(ret) => {
             // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
@@ -743,6 +777,10 @@ fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool 
 }
 
 fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &stmt.data {
         StmtData::SExpr(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
         StmtData::SReturn(ret) => ret
@@ -830,6 +868,10 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
 }
 
 fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &expr.data {
         ExprData::EJsxElement(_) => true,
         ExprData::ECall(call) => {

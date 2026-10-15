@@ -1,0 +1,250 @@
+---
+title: "Linter"
+description: "Bun's fast, built-in linter for JavaScript, TypeScript, and JSX"
+---
+
+import Lint from "/snippets/cli/lint.mdx";
+
+Bun ships with a fast, built-in linter. There's nothing to install and nothing to configure.
+
+- 1,000+ rules from ESLint, typescript-eslint, React, import, unicorn, jsx-a11y, Jest, Vitest, and more
+- Type-aware rules, without the `typescript` package
+- Auto-fix with `--fix`
+- Works with your existing ESLint or oxlint config
+
+## Run the linter
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+1 | export function total(prices: number[]) {
+2 |   let sum = 0;
+3 |   for (let i = 0; i < prices.length; i--) {
+      ^
+error: The update clause in this loop moves the variable in the wrong direction.  for-direction
+    at src/cart.ts:3:3
+
+5 |   }
+6 |
+7 |   let tax = 0.2;
+          ^
+warn: 'tax' is never reassigned. Use 'const' instead.  prefer-const
+   at src/cart.ts:7:7
+
+2 problems (1 error, 1 warning)
+1 can be fixed with --fix
+Linted 1 file [5.17ms]
+```
+
+`bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore`.
+
+To lint specific files, pass paths or globs.
+
+```bash terminal icon="terminal"
+bun lint src "test/**/*.test.ts"
+```
+
+The exit code is `1` if there are errors and `0` if there are only warnings.
+
+## Fix problems
+
+Many rules can fix what they report. `--fix` applies those fixes and writes the files.
+
+```bash terminal icon="terminal"
+bun lint --fix
+```
+
+## Default rules
+
+With no config, `bun lint` turns on the rules that catch real bugs:
+
+- **Every file**: ESLint's recommended rules
+- **TypeScript**: typescript-eslint's recommended rules
+- **React**: `rules-of-hooks`, `exhaustive-deps`, and `jsx-key`, if `react` is in your `package.json`
+- **Tests**: leftover `test.only`, `expect()` without a matcher, un-awaited `.resolves`, and a few more, in files that import from `bun:test`
+
+Likely bugs are errors. Unused code, style suggestions, and code that people often write on purpose, like `while (match = re.exec(text))`, are warnings. A warning doesn't fail the run.
+
+A few defaults differ from ESLint's, so that ordinary code isn't reported:
+
+- `require()` is allowed in TypeScript files. Bun runs `import` and `require()` in the same file.
+- A name that starts with `_` may be unused.
+- `done && done();` and `ok ? resolve() : reject();` are fine as statements.
+- A no-break space or a full-width space is only reported in code, not in text, comments or JSX.
+- `process.exit()` ends a `case`, and `// fall-through` or `// no break` marks one that goes on.
+- `{false && <Debug />}` is a fine way to switch something off for a while.
+- An array of JSX elements needs keys only where React renders it as a list.
+- `import React` counts as used in a file with JSX.
+
+Each rule's page says what differs and how to change it.
+
+- In `.d.ts` files only the errors run.
+- An `eslint-disable` comment for a rule that is off is left alone.
+
+## Configure rules
+
+Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install.
+
+```toml bunfig.toml icon="settings"
+[lint.rules]
+"no-console" = "warn"
+"prefer-const" = "off"
+"eqeqeq" = ["error", "smart"] # with options
+"unicorn/prefer-node-protocol" = "error"
+"@typescript-eslint/no-explicit-any" = "off"
+```
+
+An option you don't set keeps its default.
+
+To create the section, run `bun lint --init`.
+
+A typo is an error, not a silent no-op:
+
+```txt
+2 | "no-consle" = "warn"
+    ^
+error: Unknown rule "no-consle"
+  Did you mean "no-console"?
+    at bunfig.toml:2:1
+```
+
+### Find a rule
+
+Browse [all rules](/lint/rules), or look one up from the terminal. In most terminals you can also click the rule name in a report.
+
+```bash terminal icon="terminal"
+bun lint --rules                 # list every rule
+bun lint --explain prefer-const  # what it does, examples, options
+```
+
+### Add an ESLint plugin
+
+Need a rule that isn't built in? Load any [ESLint plugin](/lint/plugins), from npm or your own. The default rules stay on.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["eslint-plugin-perfectionist", "./lint/plugin.js"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+"local/no-todo" = "warn"
+```
+
+### Turn on a group of rules
+
+Categories switch on many rules at once: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
+
+```toml bunfig.toml icon="settings"
+[lint.categories]
+suspicious = "warn"
+perf = "warn"
+```
+
+## Ignore files
+
+```toml bunfig.toml icon="settings"
+[lint]
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+## Disable a rule in code
+
+`bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same, except next to an ESLint config, where they are ordinary comments as in ESLint.
+
+```ts
+// eslint-disable-next-line no-console -- the CLI prints its version
+console.log(version);
+
+/* eslint-disable no-console */
+console.log("off until the end of the file");
+```
+
+A comment that no longer disables anything gets a warning, and `--fix` removes it.
+
+## Type-aware rules
+
+Some bugs only show up with types, like a promise nobody awaits. `--type-aware` turns on the recommended rules that use them.
+
+```bash terminal icon="terminal"
+bun lint --type-aware
+```
+
+```txt
+5 | export function onClick() {
+6 |   save("hello");
+      ^
+error: Promises must be awaited, end with a call to .catch, ...  @typescript-eslint/no-floating-promises
+    at src/save.ts:6:3
+```
+
+Types come from [`bun check`](/runtime/check), Bun's built-in type checker. It's slower than a plain run, because your code is type checked first. To make it the default:
+
+```toml bunfig.toml icon="settings"
+[lint]
+typeAware = true
+```
+
+Only want one of them? Turn it on like any other rule. You don't need `typeAware`.
+
+```toml bunfig.toml icon="settings"
+[lint.rules]
+"@typescript-eslint/no-floating-promises" = "error"
+```
+
+To report type errors too, like `bun check` does, set `typeCheck = true` or pass `--type-check`.
+
+## Git hooks
+
+`--staged` lints only the files you're about to commit, so you don't need `lint-staged`.
+
+```sh .git/hooks/pre-commit icon="terminal"
+#!/bin/sh
+bun lint --staged --fix
+```
+
+`--changed` lints the files that differ from your default branch. Pass a ref to compare with something else.
+
+```bash terminal icon="terminal"
+bun lint --changed
+bun lint --changed=origin/dev
+```
+
+## CI
+
+In GitHub Actions, `bun lint` annotates the pull request diff automatically.
+
+```yaml .github/workflows/lint.yml icon="file-code"
+steps:
+  - uses: actions/checkout@v4
+  - uses: oven-sh/setup-bun@v2
+  - run: bun lint --max-warnings 0 # fail on warnings too
+```
+
+For other systems, pick a report format with `--format`: `json`, `junit`, `checkstyle`, `gitlab`, `sarif`, `unix`.
+
+## Migrate from ESLint or oxlint
+
+Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint` reads it and reports what that tool reports. Change the script and you're done.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "eslint ." // [!code --]
+    "lint": "bun lint" // [!code ++]
+  }
+}
+```
+
+If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter.
+
+Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:
+
+```bash terminal icon="terminal"
+bun lint --doctor
+```
+
+See the guides: [Migrate from ESLint](/guides/lint/migrate-from-eslint) and [Migrate from oxlint](/guides/lint/migrate-from-oxlint). For custom rules, see [ESLint plugins](/lint/plugins).
+
+<Lint />

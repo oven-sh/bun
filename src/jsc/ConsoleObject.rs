@@ -1606,6 +1606,8 @@ pub mod formatter {
         pub(crate) always_newline_scope: bool,
         pub single_line: bool,
         pub ordered_properties: bool,
+        /// An Error inside the value prints as `[name: message]`. Set for a `%s` value.
+        pub(crate) nested_errors_on_one_line: bool,
         pub(crate) custom_formatted_object: CustomFormattedObject,
         pub(crate) disable_inspect_custom: bool,
         pub(crate) stack_check: StackCheck,
@@ -1637,6 +1639,7 @@ pub mod formatter {
                 always_newline_scope: false,
                 single_line: false,
                 ordered_properties: false,
+                nested_errors_on_one_line: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
                 // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
@@ -1676,6 +1679,7 @@ pub mod formatter {
                 always_newline_scope: self.always_newline_scope,
                 single_line: self.single_line,
                 ordered_properties: self.ordered_properties,
+                nested_errors_on_one_line: self.nested_errors_on_one_line,
                 custom_formatted_object: self.custom_formatted_object,
                 disable_inspect_custom: self.disable_inspect_custom,
                 stack_check: self.stack_check,
@@ -2419,12 +2423,23 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                // `String(value)` is what Node prints for a string, a number
+                                // other than -0, a boolean, null and undefined.
+                                let is_plain = if next_value.is_cell() {
+                                    next_value.js_type().is_string()
+                                } else {
+                                    next_value != JSValue::js_double_number(-0.0)
+                                };
+                                if is_plain {
+                                    self.print_as::<ENABLE_ANSI_COLORS>(
+                                        Tag::String,
+                                        writer_,
+                                        next_value,
+                                        next_value.js_type(),
+                                    )?;
+                                } else {
+                                    self.print_string_substitution(writer_, next_value)?;
+                                }
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3176,6 +3191,20 @@ pub mod formatter {
         }
     }
 
+    /// What a chain of proxies stands for: its innermost target, or the first
+    /// revoked Proxy in it. However long, it costs no native stack and no trap runs.
+    fn through_proxies(mut value: JSValue) -> JSValue {
+        while value.is_cell()
+            && value.js_type() == jsc::JSType::ProxyObject
+            && value
+                .get_proxy_internal_field(jsc::ProxyField::Handler)
+                .is_cell()
+        {
+            value = value.get_proxy_internal_field(jsc::ProxyField::Target);
+        }
+        value
+    }
+
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -3203,6 +3232,15 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        /// `UtilInspect.cpp`. Whether `%s` inspects `object`, which is an object and not a
+        /// Proxy. Otherwise `%s` prints `String(object)`. Runs no user code.
+        safe fn Bun__isInspectedByStringSpecifier(object: JSValue, global: &JSGlobalObject)
+        -> bool;
+        /// The primitive inside a `String`, `Number`, `Boolean`, `Symbol` or `BigInt` object.
+        /// Any other value as it is.
+        safe fn Bun__wrappedPrimitive(value: JSValue) -> JSValue;
+        /// `/source/flags` of a RegExp, from its internal slots.
+        safe fn Bun__regExpSource(value: JSValue) -> BunString;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3384,6 +3422,17 @@ pub mod formatter {
             opts
         }
 
+        /// Classifies a value that stands in for the one being printed (a
+        /// Proxy target, the result of `toJSON`), so the global object prints
+        /// in full as it does at the top level.
+        fn tag_of_stand_in(&self, value: JSValue) -> JsResult<TagResult> {
+            Tag::get_advanced(
+                value,
+                self.global_this,
+                self.tag_opts() - TagOptions::HIDE_GLOBAL,
+            )
+        }
+
         #[inline(never)]
         fn print_undefined<const C: bool>(
             &mut self,
@@ -3498,14 +3547,12 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
-            // Proxy does not allow non-objects here.
-            debug_assert!(target.is_cell());
+            let target = through_proxies(value);
             // TODO: if (options.showProxy), print like
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
             self.format::<C>(
-                Tag::get(target, self.global_this)?,
+                self.tag_of_stand_in(target)?,
                 writer_,
                 target,
                 self.global_this,
@@ -3522,6 +3569,89 @@ pub mod formatter {
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
+        }
+
+        /// `%s` of -0, a BigInt, a Symbol or an object. An object with a string conversion
+        /// of its own prints `String(object)`. `Bun__isInspectedByStringSpecifier` has the
+        /// rule for the other objects, which this formatter prints on one line, one level deep.
+        #[cold]
+        #[inline(never)]
+        fn print_string_substitution(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            use jsc::JSType as T;
+            let global = self.global_this;
+
+            // Node reads the target of a Proxy.
+            let mut target = through_proxies(value);
+            let target_type = target.js_type();
+            if target_type == T::ProxyObject {
+                return self.print_as::<false>(Tag::RevokedProxy, writer_, target, target_type);
+            }
+
+            if target_type.is_object() {
+                if target.is_callable() || !Bun__isInspectedByStringSpecifier(target, global) {
+                    let string = value.to_js_string(global)?;
+                    return self.print_as::<false>(Tag::String, writer_, string.to_js(), T::String);
+                }
+                if target_type == T::RegExpObject {
+                    let source = Bun__regExpSource(target);
+                    self.add_for_new_line(source.length());
+                    if write!(writer_, "{source}").is_err() {
+                        self.failed = true;
+                    }
+                    return Ok(());
+                }
+                // `new Number(1)` prints the value it wraps, as `String(object)` did.
+                target = Bun__wrappedPrimitive(target);
+            }
+
+            // -0, a BigInt, a Symbol, or the primitive from a wrapper object.
+            let primitive = if !target.is_cell() {
+                let tag = if target.is_boolean() {
+                    Tag::Boolean
+                } else {
+                    Tag::Double
+                };
+                Some((tag, T::Cell))
+            } else {
+                match target.js_type() {
+                    T::HeapBigInt => Some((Tag::BigInt, T::Cell)),
+                    T::Symbol => Some((Tag::Symbol, T::Cell)),
+                    // `[String: "text"]`, as a String object printed before.
+                    T::String => Some((Tag::String, T::StringObject)),
+                    _ => None,
+                }
+            };
+            if let Some((tag, js_type)) = primitive {
+                return self.print_as::<false>(tag, writer_, target, js_type);
+            }
+
+            let prev_quote_strings = self.quote_strings;
+            let prev_single_line = self.single_line;
+            let prev_max_depth = self.max_depth;
+            let prev_disable_inspect_custom = self.disable_inspect_custom;
+            let prev_nested_errors_on_one_line = self.nested_errors_on_one_line;
+            let prev_indent = self.indent;
+            let _restore_quote_strings = defer_restore!(self.quote_strings, prev_quote_strings);
+            let _restore_single_line = defer_restore!(self.single_line, prev_single_line);
+            let _restore_max_depth = defer_restore!(self.max_depth, prev_max_depth);
+            let _restore_disable_inspect_custom =
+                defer_restore!(self.disable_inspect_custom, prev_disable_inspect_custom);
+            let _restore_nested_errors_on_one_line = defer_restore!(
+                self.nested_errors_on_one_line,
+                prev_nested_errors_on_one_line
+            );
+            let _restore_indent = defer_restore!(self.indent, prev_indent);
+            self.quote_strings = true;
+            self.single_line = true;
+            self.max_depth = self.depth;
+            self.disable_inspect_custom = true;
+            self.nested_errors_on_one_line = true;
+            let tag = Tag::get_advanced(target, global, TagOptions::DISABLE_INSPECT_CUSTOM)?;
+            self.format::<false>(tag, writer_, target, global)
         }
 
         #[inline(never)]
@@ -3855,6 +3985,11 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.nested_errors_on_one_line && self.depth > 0 {
+                let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
+                return Ok(());
+            }
+
             // Temporarily remove from the visited map to allow
             // printErrorlikeObject to process it. The circular reference
             // check is already done in print_as, so we know it's safe.
@@ -4168,7 +4303,7 @@ pub mod formatter {
                 let prev_quote_keys = self.quote_keys;
                 self.quote_keys = true;
                 let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                let tag = Tag::get(result, self.global_this)?;
+                let tag = self.tag_of_stand_in(result)?;
                 return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
@@ -4344,9 +4479,13 @@ pub mod formatter {
                     }
                     if nonempty_count >= 100 {
                         writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        if self.single_line {
+                            writer.space();
+                        } else {
+                            writer.write_all(b"\n");
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
@@ -5420,9 +5559,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();

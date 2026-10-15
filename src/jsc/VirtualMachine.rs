@@ -4274,12 +4274,15 @@ impl VirtualMachine {
         bun_http::MimeType::by_name_static(str_)
     }
 
-    /// Applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
+    /// Closes the default `.env` files of this VM's loader, applies env-derived runtime settings, claims the per-thread source code printer, and adopts `NODE_CHANNEL_FD` for IPC.
     pub fn load_extra_env_and_source_code_printer(&mut self) {
         // `Transpiler::env_mut()` encapsulates the raw-ptr deref; the returned
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
+        // This VM's own `configure_defines` has read the default `.env` files its options allow.
+        // A `Bun.build`, a macro VM, a dev server or a Worker that gets this loader reads no more.
+        env.close_default_files();
         let map = &mut env.map;
 
         ensure_source_code_printer();

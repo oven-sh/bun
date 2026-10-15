@@ -642,6 +642,13 @@ impl<'a> Transpiler<'a> {
         // for the duration of this call.
         let env: &mut dot_env::Loader = self.env_mut();
 
+        // A VM closes the default files of its loader when it has booted. `bun build` and the
+        // script runners boot none: there, options that exclude the default files close them,
+        // for a macro VM on this loader and for what a macro starts.
+        if !self.options.env.loads_default_files() {
+            env.close_default_files();
+        }
+
         match self.options.env.behavior {
             DotEnvBehavior::prefix
             | DotEnvBehavior::load_all
@@ -678,37 +685,42 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
-                // Copy the listing's basenames out under `entries_mutex`,
-                // refreshing it at our generation in the same critical
-                // section: concurrent resolvers rewrite the `DirEntry` map in
-                // place under that lock, and `dot_env::Loader::load` does
-                // file I/O between probes.
-                let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
-                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
-                        ),
-                        None => return Ok(()),
-                    }
-                };
+                // With no file to read, `load` does nothing: skip the copy of the cwd listing.
+                let reads_default_files = !skip_default_env && !env.default_files_closed();
+                if reads_default_files || !self.options.env.files.is_empty() {
+                    // Copy the listing's basenames out under `entries_mutex`,
+                    // refreshing it at our generation in the same critical
+                    // section: concurrent resolvers rewrite the `DirEntry` map in
+                    // place under that lock, and `dot_env::Loader::load` does
+                    // file I/O between probes.
+                    let dir = {
+                        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                            .fs
+                            .entries_mutex
+                            .lock_guard();
+                        match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                            Some(entries) => dot_env::DirEntryKeys(
+                                entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
+                            ),
+                            None => return Ok(()),
+                        }
+                    };
 
-                // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
-                // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
-                // `--env-file` list is bounded (CLI args), not hot-path.
-                let env_files: Vec<&[u8]> = self.options.env.files.iter().map(|f| &**f).collect();
+                    // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
+                    // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
+                    // `--env-file` list is bounded (CLI args), not hot-path.
+                    let env_files: Vec<&[u8]> =
+                        self.options.env.files.iter().map(|f| &**f).collect();
 
-                let suffix = if self.options.is_test() || env.is_test() {
-                    dot_env::DotEnvFileSuffix::Test
-                } else if self.options.production {
-                    dot_env::DotEnvFileSuffix::Production
-                } else {
-                    dot_env::DotEnvFileSuffix::Development
-                };
-                env.load(&dir, &env_files, suffix, skip_default_env)?;
+                    let suffix = if self.options.is_test() || env.is_test() {
+                        dot_env::DotEnvFileSuffix::Test
+                    } else if self.options.production {
+                        dot_env::DotEnvFileSuffix::Production
+                    } else {
+                        dot_env::DotEnvFileSuffix::Development
+                    };
+                    env.load(&dir, &env_files, suffix, skip_default_env)?;
+                }
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;

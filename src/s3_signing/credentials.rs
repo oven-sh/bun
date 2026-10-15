@@ -607,6 +607,8 @@ impl S3Credentials {
             }
             let mut sha_digest = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST];
             canonical.finish().r#final(&mut sha_digest);
+            let mut sha_hex = [0u8; bun_sha_hmac::sha::hashers::SHA256::DIGEST * 2];
+            bun_core::fmt::bytes_to_hex_lower(&sha_digest, &mut sha_hex);
 
             let mut string_to_sign = HashWriter::new(
                 bun_sha_hmac::hmac::HMAC::init(
@@ -618,13 +620,13 @@ impl S3Credentials {
             );
             write!(
                 string_to_sign,
-                "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n",
                 BStr::new(&amz_date),
                 BStr::new(amz_day),
                 BStr::new(region),
-                service_name,
-                HexLower(&sha_digest)
+                service_name
             );
+            string_to_sign.update(&sha_hex);
             let signature = string_to_sign
                 .finish()
                 .r#final(&mut hmac_sig_service)
@@ -1062,20 +1064,34 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 // URI encoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Whether `c` goes into a URI component as one byte: the RFC 3986 unreserved
-/// characters and, without `ENCODE_SLASH`, the two path separators.
-#[inline]
-fn is_kept<const ENCODE_SLASH: bool>(c: u8) -> bool {
-    matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~')
-        || (!ENCODE_SLASH && matches!(c, b'/' | b'\\'))
+/// The bytes that go into a URI component as one byte: the RFC 3986 unreserved
+/// characters and, in the second table, the two path separators.
+static KEPT: [[bool; 256]; 2] = [kept_bytes(false), kept_bytes(true)];
+
+const fn kept_bytes(keep_slash: bool) -> [bool; 256] {
+    let mut table = [false; 256];
+    let mut c = 0;
+    while c < table.len() {
+        table[c] = matches!(c as u8, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~')
+            || (keep_slash && matches!(c as u8, b'/' | b'\\'));
+        c += 1;
+    }
+    table
 }
 
 /// Appends `input` to `out` percent-encoded, in uppercase hex. Without
 /// `ENCODE_SLASH`, `/` is kept and `\` becomes `/`.
 pub fn encode_uri_component_into<const ENCODE_SLASH: bool>(input: &[u8], out: &mut Vec<u8>) {
-    for &c in input {
-        if is_kept::<ENCODE_SLASH>(c) {
-            out.push(if c == b'\\' { b'/' } else { c });
+    let kept = &KEPT[usize::from(!ENCODE_SLASH)];
+    let mut run_start = 0;
+    for (i, &c) in input.iter().enumerate() {
+        if kept[usize::from(c)] && c != b'\\' {
+            continue;
+        }
+        out.extend_from_slice(&input[run_start..i]);
+        run_start = i + 1;
+        if kept[usize::from(c)] {
+            out.push(b'/');
         } else {
             out.extend_from_slice(&[
                 b'%',
@@ -1084,19 +1100,20 @@ pub fn encode_uri_component_into<const ENCODE_SLASH: bool>(input: &[u8], out: &m
             ]);
         }
     }
+    out.extend_from_slice(&input[run_start..]);
 }
 
 /// The number of bytes [`encode_uri_component_into`] appends for `input`.
 fn encoded_len<const ENCODE_SLASH: bool>(input: &[u8]) -> usize {
-    input
-        .iter()
-        .map(|&c| if is_kept::<ENCODE_SLASH>(c) { 1 } else { 3 })
-        .sum()
+    let kept = &KEPT[usize::from(!ENCODE_SLASH)];
+    let encoded = input.iter().filter(|&&c| !kept[usize::from(c)]).count();
+    input.len() + encoded * 2
 }
 
 /// One query parameter with its value percent-encoded. `name` ends in `=`.
 fn encoded_param(name: &[u8], value: &[u8]) -> Vec<u8> {
-    let mut param = Vec::with_capacity(name.len() + encoded_len::<true>(value));
+    // Three bytes for each byte is the most that the encoding makes.
+    let mut param = Vec::with_capacity(name.len() + value.len() * 3);
     param.extend_from_slice(name);
     encode_uri_component_into::<true>(value, &mut param);
     param
@@ -1341,6 +1358,7 @@ impl<'a, H: Absorb> HashWriter<'a, H> {
         }
     }
 
+    #[inline]
     fn update(&mut self, bytes: &[u8]) {
         if bytes.len() > HASH_BLOCK_LEN - self.len {
             self.flush();

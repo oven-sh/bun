@@ -1053,9 +1053,16 @@ impl<'l> Loader<'l> {
         let is_empty =
             |it: &Override| it.rules.is_empty() && it.globals.is_empty() && it.wildcards.is_empty();
         let last = last.filter(|it| !is_empty(it));
-        (self.options.overrides.iter().chain(&last))
-            .map(write)
-            .collect()
+        let all = self.options.overrides.iter().chain(&last);
+        let mut written: Vec<Json> = all.map(write).collect();
+        // The last one matches every file, also outside the directory of bunfig.toml. The built-in config's base path is `/`.
+        if shape == Shape::Native
+            && last.is_some()
+            && let Some(Json::Object(entries)) = written.last_mut()
+        {
+            entries.retain(|it| it.0 != b"basePath");
+        }
+        written
     }
 
     /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line. `shape` is [`Shape::Flat`] or

@@ -1315,6 +1315,18 @@ describe.concurrent(`"plugin/*" = "off" turns off every rule of a plugin`, () =>
     ).toEqual([[], [], altText, altText, altText, altText, altText, altText, []]);
   });
 
+  test("a flag also wins for files outside the directory of bunfig.toml", async () => {
+    const files = {
+      "app/bunfig.toml": `[lint.rules]\n"unicorn/no-null" = "warn"\n`,
+      "app/a.js": "export const a = null;\n",
+      "shared/x.js": "export const x = null;\n",
+    };
+    const run = async (args: string[]) => problems((await lint(files, ["..", ...args, "-f", "json"], "app")).stdout);
+    expect(await run([])).toEqual(["a.js:1 unicorn/no-null", "x.js:1 unicorn/no-null"]);
+    expect(await run(["--rule", "unicorn/*: off"])).toEqual([]);
+    expect(await run(["-A", "unicorn/*"])).toEqual([]);
+  });
+
   test("--rule, -A and [[lint.overrides]] accept it", async () => {
     const withoutNext = sorted(general, react, jest, vitest);
     const override = `[[lint.overrides]]\nfiles = ["*.jsx"]\nrules = { "nextjs/*" = "off" }\n`;

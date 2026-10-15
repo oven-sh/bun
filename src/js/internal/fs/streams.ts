@@ -453,6 +453,7 @@ function WriteStream(this: FSStream, path: string | null | undefined, options?: 
   this.pos = undefined;
   this.bytesWritten = 0;
   this[kIsPerformingIO] = false;
+  this[kDrainedWrite] = undefined;
 
   if (start !== undefined) {
     validateInteger(start, "start", 0);

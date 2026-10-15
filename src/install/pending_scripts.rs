@@ -47,7 +47,7 @@ impl PendingScripts {
     /// Once per linker pass, before the first package. `writes == false` leaves the file as it is.
     /// `may_exist == false`: this pass made `node_modules`, so there is no file to look for.
     pub(crate) fn load(&mut self, writes: bool, may_exist: bool) {
-        // What an earlier pass of this process left is in the file, and its tree ids are not this pass's.
+        // An earlier pass of this process has its own tree ids. What it left is in the file.
         self.unfinished.clear();
         self.file = None;
         self.stale.clear();
@@ -94,7 +94,7 @@ impl PendingScripts {
         }
     }
 
-    /// Before a package is placed, if its scripts are to run. `key` is called if the file is written.
+    /// Before a package is placed, if its scripts are to run. `key`: its path, for the file.
     pub(crate) fn begin(&mut self, id: u32, folder: &[u8], key: impl FnOnce() -> Vec<u8>) {
         if self.position(id, folder).is_some() {
             return;

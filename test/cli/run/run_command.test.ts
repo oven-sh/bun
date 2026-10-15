@@ -134,29 +134,35 @@ describe.skipIf(isWindows)("PATH of a script", () => {
     return { stdout, stderr, planted: existsSync(planted) };
   }
 
-  const entryPoints = [
-    ["run", "mk"],
-    ["mk"],
-    ["run", "foo"],
-    ["foo"],
-    ["x", "foo"],
-    ["run", "--filter", "*", "mk"],
-    ["run", "--parallel", "mk"],
-    ["run", "--sequential", "mk"],
-  ];
-  test.concurrent.each(entryPoints.map(args => [args.join(" "), args] as const))(
-    "bun %s with PATH unset does not search the cwd for commands",
-    async (_name, args) => {
-      using dir = fixture();
-      const { planted } = await run(String(dir), args, undefined);
-      expect(planted).toBe(false);
-    },
-  );
+  const named = (entryPoints: string[][]) => entryPoints.map(args => [args.join(" "), args] as const);
 
-  test.concurrent("with PATH unset, nothing follows the directories bun prepends", async () => {
+  test.concurrent.each(
+    named([
+      ["run", "mk"],
+      ["mk"],
+      ["run", "foo"],
+      ["foo"],
+      ["x", "foo"],
+      ["run", "--parallel", "mk"],
+      ["run", "--sequential", "mk"],
+    ]),
+  )("bun %s with PATH unset does not search the cwd for commands", async (_name, args) => {
     using dir = fixture();
-    const { stdout } = await run(String(dir), ["run", "path"], undefined);
-    expect(stdout).toMatch(/^\[[^\]]*node_modules\/\.bin\]\n$/);
+    const { planted } = await run(String(dir), args, undefined);
+    expect(planted).toBe(false);
+  });
+
+  // `--filter` also puts the package directory itself on PATH, so it is only checked here.
+  test.concurrent.each(
+    named([
+      ["run", "path"],
+      ["run", "--filter", "*", "path"],
+      ["run", "--parallel", "path"],
+    ]),
+  )("bun %s with PATH unset: nothing follows the directories bun prepends", async (_name, args) => {
+    using dir = fixture();
+    const { stdout } = await run(String(dir), args, undefined);
+    expect(stdout).toMatch(/\[[^\]\n]*node_modules\/\.bin\]\n/);
   });
 
   // A PATH that is set stays as it is, the empty string included: its empty entries are

@@ -239,10 +239,7 @@ impl PosixLoop {
         NonNull::new(p)
     }
 
-    /// Why the last [`create`](Self::create) on this thread returned `None`:
-    /// the call that failed (epoll/kqueue, the wakeup source, or its
-    /// registration) and its errno (0 for a `mach_port_*` call, which has
-    /// none). `None` if that `create` did not fail.
+    /// The call that failed the last [`create`](Self::create) on this thread, and its errno or 0.
     pub fn create_error() -> Option<(&'static core::ffi::CStr, c_int)> {
         let mut syscall: *const core::ffi::c_char = core::ptr::null();
         // SAFETY: `syscall` is a valid out-pointer for the call.

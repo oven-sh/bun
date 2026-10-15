@@ -587,8 +587,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(us_loop_r loop),
     void (*pre_cb)(us_loop_r loop), void (*post_cb)(us_loop_r loop), unsigned int ext_size);
 
 #ifndef _WIN32
-/* Why the last us_create_loop on this thread returned NULL: the call that failed in *syscall (NULL if
- * it did not fail), and its errno as the result (0 for a mach_port_* call, which has none). */
+/* The call that failed the last us_create_loop on this thread (*syscall, or NULL), and its errno or 0. */
 int us_loop_create_error(const char **syscall);
 #endif
 

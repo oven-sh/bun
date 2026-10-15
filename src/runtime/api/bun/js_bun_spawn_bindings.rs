@@ -2048,8 +2048,7 @@ fn spawn_maybe_sync(
 }
 
 fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
-    // Windows has no errno for a NULL us_create_loop, and neither does a
-    // mach_port_* failure on macOS; EMFILE is the common cause.
+    // The fallback when the cause has no errno (Windows, a mach_port_* call on macOS).
     #[cfg_attr(windows, allow(unused_mut))]
     let mut err = SystemError {
         message: BunString::static_(

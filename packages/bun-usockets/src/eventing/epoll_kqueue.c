@@ -218,8 +218,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 
 #endif
 
-/* Every path that makes us_create_loop return NULL writes this first. us_create_loop clears it
- * on entry, so a path that does not write it reads as unknown, not as an earlier failure. */
+/* Why us_create_loop returned NULL. It clears this on entry, and each failing path writes it. */
 static _Thread_local struct {
     const char *syscall;
     int err;
@@ -862,8 +861,7 @@ int us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_inte
     /* Edge-triggered, so that a wakeup does not have to read the eventfd */
     if (us_poll_start_rc(p, internal_cb->loop, (int) (LIBUS_SOCKET_READABLE | EPOLLET)) != 0) {
         loop_create_failed("epoll_ctl", errno);
-        /* Not us_internal_async_close: the fd is in no epoll set, and
-         * num_polls never counted this fallthrough poll. */
+        /* Not us_internal_async_close: nothing is registered, and num_polls never counted this poll. */
         close(us_poll_fd(p));
         us_free(p);
         return -1;
@@ -986,8 +984,7 @@ int us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_inte
     /* A refused change is one EV_ERROR entry with the errno in .data, not -1 (see kqueue_change). */
     if (UNLIKELY(ret != 0)) {
         loop_create_failed("kevent64", ret > 0 ? (int) event.data : errno);
-        /* What us_internal_create_async acquired. us_internal_async_close
-         * would keep the receive right. */
+        /* Release what us_internal_create_async acquired: us_internal_async_close keeps the receive right. */
         mach_port_t self = mach_task_self();
         mach_port_mod_refs(self, internal_cb->port, MACH_PORT_RIGHT_RECEIVE, -1);
         mach_port_deallocate(self, internal_cb->port);

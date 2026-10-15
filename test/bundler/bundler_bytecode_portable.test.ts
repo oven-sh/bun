@@ -555,10 +555,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode undici/index.js": {
-          "js": "e1c4f1494711ecaae57a6d63dfb8ac6096629582f55cc42530ff5a156b70c9de",
+          "js": "4240682e6f5b59c188c3474ee7c340aa74926212b54a08fb4f4b5f0bff8f9a0f",
           "jsc": {
-            "bytes": 852600,
-            "sha256": "5ee6a96a6645573a6567c190cc8f68106c9c3fed4ad7970a766974816a28fb7c",
+            "bytes": 852576,
+            "sha256": "001d58d43f44cd916a2885997357189b511d94fd2d3c497293a83f0c8bf7a5b4",
           },
         },
         "vm.Script big.js": {

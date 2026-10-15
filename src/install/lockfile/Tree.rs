@@ -834,7 +834,8 @@ impl LinkedRows<'_> {
                 any_left_out |= out && self.resolutions[dep_id as usize] != invalid_package_id;
             }
         }
-        if !any_left_out {
+        // A contested place has a tree for each group, and a run links one of them.
+        if !any_left_out && self.contested.is_empty() {
             return None;
         }
 

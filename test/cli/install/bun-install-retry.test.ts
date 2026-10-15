@@ -768,8 +768,9 @@ describe.concurrent("backoff", () => {
       using dir = project(closed.url.href);
       await writeFile(join(String(dir), name), lockfile);
       const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only", "--verbose");
+      // macOS refuses a closed loopback port in connect(2) itself, which has its own name.
       expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
-        "warn: ConnectionRefused downloading package manifest bar",
+        expect.stringMatching(/^warn: (ConnectionRefused|FailedToOpenSocket) downloading package manifest bar$/),
       ]);
       expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"bar": ["bar@0.0.2", `);
       expect(exitCode).toBe(0);

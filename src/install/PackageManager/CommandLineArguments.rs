@@ -1374,13 +1374,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
         // are parsed twice by `update`, `link` and `unlink`: the first `Args` stays.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
+        static REWRITES: OnceLock<Vec<(&'static [u8], &'static [u8])>> = OnceLock::new();
         let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
             clap::ParseOptions {
                 diagnostic: Some(&mut diag),
                 stop_after_positional_at: 0,
-                short_aliases: rewrites.leak(),
+                short_aliases: REWRITES.get_or_init(|| rewrites),
                 unknown_long_flags_are_errors: true,
                 ..Default::default()
             },
@@ -1717,8 +1718,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         // The first call wins: `initial_top_level_dir()` is where the command was typed. `init` leaves it.
-        let start_dir = bun_paths::fs::FileSystem::init(bun_sys::getcwd_alloc()?.as_bytes())
-            .initial_top_level_dir();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd = bun_core::getcwd(&mut cwd_buf)?.as_bytes();
+        let start_dir = bun_paths::fs::FileSystem::init(cwd).initial_top_level_dir();
         let typed = |path: &[u8]| -> &'static [u8] {
             bun_core::heap::release(BunInstall::resolve_path(start_dir, path))
         };

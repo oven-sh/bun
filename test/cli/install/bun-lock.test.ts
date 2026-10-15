@@ -3298,7 +3298,9 @@ describe.each(["hoisted", "isolated"] as const)("optional dependencies of every 
       await new Bun.Archive({ "package/package.json": packageJson(name, version) }, { compress: "gzip" }).bytes(),
     );
   const installedIn = (dir: string) =>
-    Array.from(new Bun.Glob("**/node_modules/*").scanSync({ cwd: dir, onlyFiles: false, dot: true })).toSorted();
+    Array.from(new Bun.Glob("**/node_modules/*").scanSync({ cwd: dir, onlyFiles: false, dot: true }), path =>
+      path.replaceAll("\\", "/"),
+    ).toSorted();
 
   // Each of these has the name of a package that is in bun.lock for someone else:
   // `<who has the name>-<how the row asks>`. bun.lock lists them as "unresolved". An older one does

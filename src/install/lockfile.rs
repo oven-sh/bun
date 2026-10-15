@@ -1233,8 +1233,7 @@ impl Lockfile {
                 let written = workspace_deps.iter().position(|dep| {
                     !dep.behavior.is_workspace()
                         && update.matches(dep, string_buf)
-                        && dep.version.literal.slice(string_buf)
-                            == update.version.literal.slice(update.version_buf())
+                        && dep.version.literal.slice(string_buf) == update.asked
                 });
                 for (i, (&package_id, dep)) in
                     resolved_ids.iter().zip(workspace_deps.iter()).enumerate()

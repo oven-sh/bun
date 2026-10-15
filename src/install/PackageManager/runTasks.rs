@@ -1852,9 +1852,14 @@ fn manifest_retry_count(
         return 0;
     }
     // Best effort, no dependency waits for it (the bins of a migrated lockfile): offline it gives up at once.
+    // `FailedToOpenSocket`: `connect(2)` itself failed, as on macOS for a closed loopback port.
     if matches!(
         fail,
-        Some(http::Error::ConnectionRefused | http::Error::DNSResolveFailed)
+        Some(
+            http::Error::ConnectionRefused
+                | http::Error::DNSResolveFailed
+                | http::Error::FailedToOpenSocket
+        )
     ) && !manager.is_network_task_required(task_id)
         && !manager.task_queue.contains_key(&task_id)
     {

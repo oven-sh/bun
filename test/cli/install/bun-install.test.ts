@@ -9549,7 +9549,9 @@ describe.concurrent("bun-install", () => {
     // Starts from an empty node_modules and returns the version of baz that code in `from` loads, null if none.
     async function install(ctx: TestContext, args: string[], from = "") {
       await Promise.all(
-        [from, ""].map(dir => rm(join(ctx.package_dir, dir, "node_modules"), { recursive: true, force: true })),
+        [...new Set([from, ""])].map(dir =>
+          rm(join(ctx.package_dir, dir, "node_modules"), { recursive: true, force: true }),
+        ),
       );
       await using proc = spawn({
         cmd: [bunExe(), "install", ...args],

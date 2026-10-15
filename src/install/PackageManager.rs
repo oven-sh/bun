@@ -2618,6 +2618,15 @@ pub fn init(
     }
 
     let abs_ca_file_name = ZBox::from_bytes(mgr_ref.options.ca_file_name);
+    // Joined to its directory it did not fit a path buffer.
+    if !abs_ca_file_name.is_empty() && !bun_paths::is_absolute(abs_ca_file_name.as_bytes()) {
+        Output::err(
+            "HTTPThread",
+            "could not find CA file: '{s}'",
+            &[&bstr::BStr::new(abs_ca_file_name.as_bytes())],
+        );
+        Global::crash();
+    }
 
     // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
     // thread reads these asynchronously after `init` returns, so park the

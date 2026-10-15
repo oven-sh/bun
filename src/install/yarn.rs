@@ -904,6 +904,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, true,  // update_os_cpu
         false, // fill_integrity
+        None,
     )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {

@@ -156,7 +156,7 @@ struct Migrator<'a> {
     url: Vec<u8>,
     patched: String,
     /// Entries without an integrity whose tarball is on a host bun is not configured with.
-    unverifiable: Vec<u32>,
+    unverifiable: Vec<(u32, PackageID)>,
     silent: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
@@ -219,7 +219,26 @@ pub(super) fn migrate_packages(
 
     migrator.warn_unreachable();
 
-    if let Some((&first, more)) = migrator.unverifiable.split_first() {
+    if let Some((&(first, _), more)) = migrator.unverifiable.split_first() {
+        // The registry they now come from says what its tarballs have to be.
+        let ids: Vec<PackageID> = migrator.unverifiable.iter().map(|&(_, id)| id).collect();
+        (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+            migrator.manager,
+            false, // update_os_cpu
+            true,  // fill_integrity
+            Some(&ids),
+        )?;
+        let metas = migrator.this.packages.items_meta();
+        if let Some(&(refused, _)) = (migrator.unverifiable.iter())
+            .find(|&&(_, id)| !metas[id as usize].integrity.tag.is_supported())
+        {
+            log.add_error_fmt(
+                Some(source),
+                packages_properties[refused as usize].key_loc,
+                format_args!("no integrity, and the configured registry has none for this version"),
+            );
+            return Err(Error::InvalidNPMLockfile);
+        }
         let entry = &packages_properties[first as usize];
         let resolved = entry_object(entry).get(b"resolved");
         let url = resolved.and_then(|url| url.as_str()).unwrap_or_default();
@@ -428,6 +447,9 @@ impl<'a> Migrator<'a> {
                 if folder_in_dependent.is_none() {
                     self.entry_package_ids[j as usize] = existing;
                 }
+                if is_unverifiable {
+                    self.unverifiable.push((j, existing));
+                }
                 self.shadow(j);
                 return Ok(existing);
             }
@@ -449,6 +471,9 @@ impl<'a> Migrator<'a> {
         })?;
         self.this.get_or_put_id(id, name_hash)?;
         self.queue.push((j, id));
+        if is_unverifiable {
+            self.unverifiable.push((j, id));
+        }
         // `build_or_get` must keep handing other dependents the entry-key build.
         match folder_in_dependent {
             None => self.entry_package_ids[j as usize] = id,

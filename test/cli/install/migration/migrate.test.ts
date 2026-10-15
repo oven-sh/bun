@@ -629,46 +629,85 @@ test.concurrent(
 );
 
 // The bun.lock parser fails closed on a tarball URL outside the configured registry that has no `integrity`.
-// The migration does not import such a URL either: the pinned version comes from the configured registry.
-test.concurrent("a package-lock.json entry of another host without an integrity keeps every version", async () => {
-  using registry = localRegistry();
-  let otherHostRequests = 0;
-  using otherHost = Bun.serve({
-    port: 0,
-    fetch() {
-      otherHostRequests++;
-      return new Response("not found", { status: 404 });
-    },
-  });
+// The migration does not import such a URL either: the pinned version, and its integrity, come from the configured registry.
+describe.concurrent("a package-lock.json entry of another host without an integrity", () => {
+  function otherHost() {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response("not found", { status: 404 });
+      },
+    });
+    return { requests, url: server.url.href, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
   // The registry also has newer versions in both ranges.
   const root = { name: "one-off-registry-entry", dependencies: { "a-dep": "^1.0.1", "no-deps": "^1.0.0" } };
-  const url = `http://localhost:${otherHost.port}/no-deps-1.0.0.tgz`;
-  using dir = synthetic(
-    "migrate-one-off-registry-entry",
-    {
-      "package.json": JSON.stringify(root),
-      "package-lock.json": npmLock(root.name, {
-        "": root,
-        "node_modules/a-dep": {
-          version: "1.0.1",
-          resolved: registry.tarball("a-dep", "1.0.1"),
-          integrity: registry.integrity("a-dep", "1.0.1"),
-        },
-        "node_modules/no-deps": { version: "1.0.0", resolved: url },
-      }),
-    },
-    registry.url,
-  );
+  const project = (registry: ReturnType<typeof localRegistry>, version: string, resolved: string) =>
+    synthetic(
+      "migrate-one-off-registry-entry",
+      {
+        "package.json": JSON.stringify(root),
+        "package-lock.json": npmLock(root.name, {
+          "": root,
+          "node_modules/a-dep": {
+            version: "1.0.1",
+            resolved: registry.tarball("a-dep", "1.0.1"),
+            integrity: registry.integrity("a-dep", "1.0.1"),
+          },
+          "node_modules/no-deps": { version, resolved },
+        }),
+      },
+      registry.url,
+    );
 
-  const { stderr, exitCode } = await install(dir);
-  expect(stderr).toContain(`warn: no integrity: downloaded from the configured registry, not from ${url}\n`);
-  expect(stderr).toContain("package-lock.json:1:");
-  expect(stderr).toContain("migrated lockfile from package-lock.json");
-  expect(nodeModules(dir)).toEqual({ "a-dep": "1.0.1", "no-deps": "1.0.0" });
-  expect(otherHostRequests).toBe(0);
-  expect(registry.requests.sort()).toEqual(["/a-dep/-/a-dep-1.0.1.tgz", "/no-deps/-/no-deps-1.0.0.tgz"]);
-  expect((await readLock(dir)).lock.packages["no-deps"]).toEqual(["no-deps@1.0.0", "", {}, ""]);
-  expect(exitCode).toBe(0);
+  test("keeps every version", async () => {
+    using registry = localRegistry();
+    using other = otherHost();
+    const url = `${other.url}no-deps-1.0.0.tgz`;
+    using dir = project(registry, "1.0.0", url);
+
+    const { stderr, exitCode } = await install(dir);
+    expect(stderr).toContain(`warn: no integrity: downloaded from the configured registry, not from ${url}\n`);
+    expect(stderr).toContain("package-lock.json:1:");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(nodeModules(dir)).toEqual({ "a-dep": "1.0.1", "no-deps": "1.0.0" });
+    expect(other.requests).toEqual([]);
+    expect(registry.requests.sort()).toEqual(["/a-dep/-/a-dep-1.0.1.tgz", "/no-deps", "/no-deps/-/no-deps-1.0.0.tgz"]);
+    expect((await readLock(dir)).lock.packages["no-deps"]).toEqual([
+      "no-deps@1.0.0",
+      "",
+      {},
+      registry.integrity("no-deps", "1.0.0"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("is not migrated when the registry does not have that version", async () => {
+    using registry = localRegistry();
+    using other = otherHost();
+    const refused = "error: no integrity, and the configured registry has none for this version\n";
+
+    using migrated = project(registry, "1.0.5", `${other.url}no-deps-1.0.5.tgz`);
+    const migrate = await run(migrated, "pm", "migrate");
+    expect(migrate.stderr).toContain(refused);
+    expect(fs.existsSync(join(String(migrated), "bun.lock"))).toBeFalse();
+    expect(migrate.exitCode).toBe(1);
+
+    using installed = project(registry, "1.0.5", `${other.url}no-deps-1.0.5.tgz`);
+    const { stderr, exitCode } = await install(installed);
+    expect(stderr).toContain(refused);
+    expect(stderr).toContain("InvalidNPMLockfile: failed to migrate lockfile: 'package-lock.json'");
+    expect(other.requests).toEqual([]);
+    const { packages } = (await readLock(installed)).lock;
+    expect(Object.values(packages).map(row => (row as string[])[3])).toEqual([
+      registry.integrity("a-dep", "1.0.10"),
+      registry.integrity("no-deps", "1.1.0"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("a lockfile that cannot be migrated does not hide the one next to it", () => {

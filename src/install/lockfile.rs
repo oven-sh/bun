@@ -1701,11 +1701,13 @@ fn registry_tarball_url(
 
 impl Lockfile {
     /// `fill_integrity`: yarn berry records a checksum of its own zip archive, not of the tarball.
+    /// `only`: package-lock.json records the rest, so just these packages are completed.
     pub(crate) fn fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         &mut self,
         manager: &mut PackageManager,
         update_os_cpu: bool,
         fill_integrity: bool,
+        only: Option<&[PackageID]>,
     ) -> Result<(), AllocError> {
         // Manifests are fetched for `manager.lockfile`; `bun why`, `bun pm diff` load into another.
         let detached =
@@ -1715,7 +1717,10 @@ impl Lockfile {
         }
         let populated = populate_manifest_cache::populate_manifest_cache(
             manager,
-            populate_manifest_cache::Packages::All,
+            only.map_or(
+                populate_manifest_cache::Packages::All,
+                populate_manifest_cache::Packages::Exact,
+            ),
         );
         if detached {
             core::mem::swap(self, &mut *manager.lockfile);
@@ -1750,7 +1755,9 @@ impl Lockfile {
             let pkg_res = pkg_resolutions[i];
             let pkg_bin = &mut pkg_bins[i];
 
-            if pkg_res.tag != ResolutionTag::Npm {
+            if pkg_res.tag != ResolutionTag::Npm
+                || only.is_some_and(|only| !only.contains(&(i as PackageID)))
+            {
                 continue;
             }
             let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());

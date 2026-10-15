@@ -1375,6 +1375,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, true, // update_os_cpu
         true, // fill_integrity
+        None,
     )?;
     // Without an integrity, a tarball that an edge reaches would be installed unverified.
     let reached = reachable::packages(this, &this.buffers.resolutions, reachable::Options::all(0));

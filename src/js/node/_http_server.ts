@@ -1702,6 +1702,7 @@ function getNodeHTTPServerSocket() {
       decodeStrings: boolean;
       writecb: Function;
       bufferedRequestCount: number;
+      length: number;
     };
     declare _readableState: { emitClose: boolean };
     constructor(server: Server, handle, encrypted, listenerGeneration) {

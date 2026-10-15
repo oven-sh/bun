@@ -328,7 +328,6 @@ fn read_package_json_from_disk(
         }
     }
 
-    manager.lockfile.note_project_packages();
     if let Some(existing_id) =
         manager
             .lockfile

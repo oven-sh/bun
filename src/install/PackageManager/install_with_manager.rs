@@ -38,12 +38,12 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
-use crate::package_manager_real::enqueue::add_dependency_error;
+use crate::package_manager_real::enqueue::queue_rows;
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    UpdateRequest, enqueue_dependency_list, enqueue_patch_task_pre, save_lockfile,
+    setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -555,14 +555,13 @@ pub fn install_with_manager(
                         for (i, _) in (mapping.iter().enumerate())
                             .filter(|&(_, &mapped)| mapped == invalid_package_id)
                         {
-                            let row = off + i as DependencyID;
-                            let resolution = manager.lockfile.buffers.resolutions[row as usize];
-                            enqueue_row(manager, row, resolution);
+                            enqueue_row(manager, off + i as DependencyID);
                         }
                     }
 
                     for row in extension_rows {
-                        enqueue_row(manager, row, invalid_package_id);
+                        manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
+                        enqueue_row(manager, row);
                     }
 
                     if manager.summary.update > 0 {
@@ -1140,7 +1139,7 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
             // new async task (e.g. its tarball is already extracted). With zero
             // pending tasks nothing wakes this loop again, so drain the peer
             // queue now instead of sleeping on a wakeup that never comes.
-            if CHECK_PEERS && this.peer_dependencies.readable_length() > 0 {
+            if CHECK_PEERS && this.has_peers_to_process() {
                 continue;
             }
             break;
@@ -1697,16 +1696,14 @@ fn reresolve_owned_rows(
                 continue;
             }
             manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-            enqueue_row(manager, dep_id, invalid_package_id);
+            enqueue_row(manager, dep_id);
         }
     }
 }
 
-fn enqueue_row(manager: &mut PackageManager, row: DependencyID, resolution: PackageID) {
-    let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
-    if let Err(err) = enqueue_dependency_with_main(manager, row, &dependency, resolution, false) {
-        add_dependency_error(manager, &dependency, err);
-    }
+/// `drain_dependency_list` resolves the row, from the resolution that the lockfile has for it then.
+fn enqueue_row(manager: &mut PackageManager, row: DependencyID) {
+    queue_rows(manager, lockfile::DependencySlice::new(row, 1));
 }
 
 /// Runs when all else is resolved: a row that `clean` discards must not ask the registry.
@@ -1753,7 +1750,7 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
         }
         any = true;
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
-        enqueue_row(manager, row, invalid_package_id);
+        enqueue_row(manager, row);
     }
     if any {
         manager.drain_dependency_list();
@@ -1812,7 +1809,7 @@ fn enqueue_named_updates(
         }
         manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
         named.moved.push((dependency_i as DependencyID, package_id));
-        enqueue_row(manager, dependency_i as DependencyID, invalid_package_id);
+        enqueue_row(manager, dependency_i as DependencyID);
     }
 
     reject_unknown_update_requests(
@@ -2282,7 +2279,7 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
     // queue iteratively here — entering the event loop (`waitForPeers`)
     // with zero pending I/O would block forever.
-    while manager.peer_dependencies.readable_length() > 0 {
+    while manager.has_peers_to_process() {
         manager.process_peer_dependency_list()?;
         manager.drain_dependency_list();
     }
@@ -2447,7 +2444,7 @@ fn reresolve_rows_outside_overrides(
         }
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
         moved.push((row, package_id));
-        enqueue_row(manager, row, invalid_package_id);
+        enqueue_row(manager, row);
     }
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     manager.drain_dependency_list();

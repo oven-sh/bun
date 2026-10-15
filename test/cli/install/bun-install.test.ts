@@ -5475,8 +5475,8 @@ describe.concurrent("bun-install", () => {
       },
     },
     {
-      // kept@2.1.0 is the first pick of `wide`. Nothing needs it once `wide` shares kept@1.0.0.
-      name: "a version that cannot be completed and that nothing needs in the end",
+      // `narrow` is resolved before `wide`, so `wide` shares kept@1.0.0 and never picks kept@2.1.0.
+      name: "a range that admits a version that cannot be completed, after a pin",
       files: { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } },
       registry: {
         wide: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
@@ -5486,19 +5486,33 @@ describe.concurrent("bun-install", () => {
       },
       holds: [{ wide: "kept" }, { narrow: "gone" }],
       packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
-      // What the registry answered is not kept quiet: with another answer `wide` might have kept its pick.
+    },
+    {
+      // `early` is resolved before `narrow`, so it picks kept@2.1.0 first. Nothing needs that version
+      // once `early` shares kept@1.0.0.
+      name: "a version that cannot be completed and that nothing needs in the end",
+      files: { "package.json": { name: "foo", dependencies: { early: "1.0.0", narrow: "1.0.0" } } },
+      registry: {
+        early: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
+        kept: { "1.0.0": {}, "2.1.0": { dependencies: { gone: "^3.0.0", short: "^2.0.0" } } },
+        short,
+      },
+      holds: [{ early: "kept" }, { narrow: "gone" }],
+      packages: { "early": "early@1.0.0", "kept": "kept@1.0.0", "narrow": "narrow@1.0.0" },
+      // What the registry answered is still printed: with another answer `early` might have kept its pick.
       warnings: [/^warn: GET .*\/gone - 404$/, /^warn: No version matching "\^2\.0\.0" found for specifier "short"/],
     },
     {
       name: "a version that nothing needs in the end and that has an optional dependency the registry does not have",
-      files: { "package.json": { name: "foo", dependencies: { wide: "1.0.0", narrow: "1.0.0" } } },
+      files: { "package.json": { name: "foo", dependencies: { early: "1.0.0", narrow: "1.0.0" } } },
       registry: {
-        wide: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
+        early: { "1.0.0": { dependencies: { kept: ">=1.0.0" } } },
         narrow: { "1.0.0": { dependencies: { kept: "1.0.0" } } },
         kept: { "1.0.0": {}, "2.1.0": { optionalDependencies: { gone: "^3.0.0" } } },
       },
-      holds: [{ wide: "kept" }, { narrow: "gone" }],
-      packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
+      holds: [{ early: "kept" }, { narrow: "gone" }],
+      packages: { "early": "early@1.0.0", "kept": "kept@1.0.0", "narrow": "narrow@1.0.0" },
       warnings: [/^warn: GET .*\/gone - 404$/],
     },
     {
@@ -5544,6 +5558,32 @@ describe.concurrent("bun-install", () => {
       }).toEqual({
         packages: { "kept": "kept@1.0.0", "narrow": "narrow@1.0.0", "wide": "wide@1.0.0" },
         tarballs: ["kept-1.0.0.tgz", "narrow-1.0.0.tgz", "wide-1.0.0.tgz"],
+      });
+    });
+  });
+
+  it("--lockfile-only does not download a patched package whose manifest is in the cache", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, heldRegistry(ctx, urls, { kept }));
+      await writeProject(
+        ctx,
+        {
+          "package.json": {
+            name: "foo",
+            dependencies: { kept: "1.0.0" },
+            patchedDependencies: { "kept@1.0.0": "kept.patch" },
+          },
+          "kept.patch": {},
+        },
+        { cache: { dir: join(ctx.package_dir, ".cache") } },
+      );
+      await installAndReadLock(ctx, "--lockfile-only");
+      await rm(join(ctx.package_dir, "bun.lock"));
+      // This time `kept` is resolved before the patch file has been hashed.
+      expect({ packages: await installAndReadLock(ctx, "--lockfile-only"), requests: urls }).toEqual({
+        packages: { "kept": "kept@1.0.0" },
+        requests: ["kept"],
       });
     });
   });

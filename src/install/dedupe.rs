@@ -338,10 +338,11 @@ impl<'a> Pass<'a> {
                 if !self.movable.is_set(e) {
                     continue;
                 }
-                // `collapse_appended`: a new package's row took its own pick of the manifest.
-                let placed_alone = self.frozen_below.is_some_and(|below| owner >= below)
+                // `collapse_appended`: when a new package's dependency was resolved, it could only
+                // share the versions that the dependencies ahead of it in the queue had brought in.
+                let placed_early = self.frozen_below.is_some_and(|below| owner >= below)
                     && !deps[dep_id as usize].behavior.is_peer();
-                let placement = if placed_alone {
+                let placement = if placed_early {
                     self.anchored_placement(e)
                 } else if self.survivors.is_set(self.cur_c[e]) {
                     continue;

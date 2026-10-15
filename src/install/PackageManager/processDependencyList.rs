@@ -8,7 +8,7 @@ use bun_semver::{ExternalString, String as SemverString};
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
-use crate::lockfile_real::{DependencySlice, PackageIDSlice, StringBuilder};
+use crate::lockfile_real::{DependencySlice, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{PackageManager, enqueue};
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
@@ -181,14 +181,13 @@ impl PackageManager {
             *package_id = package.meta.id;
         }
 
-        if package.dependencies.len > 0 {
-            bun_core::handle_oom(
-                self.lockfile
-                    .scratch
-                    .dependency_list_queue
-                    .write_item(package.dependencies),
-            );
-        }
+        bun_core::handle_oom(
+            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                rows: package.dependencies,
+                install_peer: false,
+                logs_errors: false,
+            }),
+        );
 
         package
     }
@@ -460,7 +459,7 @@ impl PackageManager {
                 let dependency = self.lockfile.buffers.dependencies[dependency_id as usize].clone();
                 let resolution = self.lockfile.buffers.resolutions[dependency_id as usize];
 
-                enqueue::enqueue_dependency_with_main_and_success_fn(
+                let row = enqueue::bind_row(
                     self,
                     dependency_id,
                     &dependency,
@@ -473,6 +472,14 @@ impl PackageManager {
                     },
                     is_root,
                 )?;
+                // An import of the runtime has put itself on the list of the task it waits for.
+                if row == enqueue::Row::Waiting && !is_root {
+                    (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                        rows: DependencySlice::new(dependency_id, 1),
+                        install_peer,
+                        logs_errors: false,
+                    })?;
+                }
                 if is_root
                     && let Some(any_root) = any_root
                     && self.lockfile.buffers.resolutions[dependency_id as usize] != resolution
@@ -489,28 +496,30 @@ impl PackageManager {
         Ok(())
     }
 
-    /// In `peer_batch_order`: the first row of a name to resolve decides what the others bind to.
-    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
-        while self.peer_dependencies.readable_length() > 0 {
-            let mut batch: Vec<DependencyID> =
-                Vec::with_capacity(self.peer_dependencies.readable_length());
-            while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-                batch.push(peer_dependency_id);
-            }
-            for i in self.peer_batch_order(&mut batch) {
-                let peer_dependency_id = batch[i as usize];
-                let id = peer_dependency_id as usize;
-                let dependency = self.lockfile.buffers.dependencies[id].clone();
-                let resolution = self.lockfile.buffers.resolutions[id];
+    /// Whether `process_peer_dependency_list` has something to do. The peers that were found while
+    /// the queue was being resolved wait until it is empty, so that they all see the same tree.
+    pub(crate) fn has_peers_to_process(&self) -> bool {
+        self.peer_dependencies.readable_length() > 0
+            && self.lockfile.scratch.dependency_list_queue.is_empty()
+    }
 
-                enqueue::enqueue_dependency_with_main(
-                    self,
-                    peer_dependency_id,
-                    &dependency,
-                    resolution,
-                    true,
-                )?;
-            }
+    /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`: the first row
+    /// of a name to resolve decides what the others bind to.
+    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
+        if !self.has_peers_to_process() {
+            return Ok(());
+        }
+        let mut batch: Vec<DependencyID> =
+            Vec::with_capacity(self.peer_dependencies.readable_length());
+        while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
+            batch.push(peer_dependency_id);
+        }
+        for i in self.peer_batch_order(&mut batch) {
+            (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
+                rows: DependencySlice::new(batch[i as usize], 1),
+                install_peer: true,
+                logs_errors: true,
+            })?;
         }
         Ok(())
     }

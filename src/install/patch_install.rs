@@ -374,6 +374,11 @@ impl PatchTask {
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
+                // `--lockfile-only` downloads no tarball, whether or not the package has a patch.
+                PreinstallState::Extract
+                    if !(manager.options.do_).contains(
+                        crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS,
+                    ) => {}
                 PreinstallState::Extract => {
                     // SAFETY: every `Resolution` `Value` payload is `Copy`
                     // POD and the union is zero-initialized (see the union

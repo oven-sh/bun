@@ -177,8 +177,8 @@ pub struct Lockfile {
     /// migration) finished. Packages with `id < this` were carried in from a
     /// lockfile and represent a user-pinned resolution; packages with
     /// `id >= this` were appended by manifest fetches in the current
-    /// resolve session. See `find_package_id` for which of them a range shares
-    /// while it resolves. Set by `mark_loaded_packages`; 0 without a lockfile.
+    /// resolve session. See `find_package_id` for when a range shares one of
+    /// them. Set by `mark_loaded_packages`; 0 without a lockfile.
     ///
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
@@ -186,12 +186,13 @@ pub struct Lockfile {
     /// Packages that a row other than a weak peer (`is_weak_peer`) resolved to at load.
     pub(crate) held_at_load: DynamicBitSet,
 
+    /// Packages that were appended for a dependency on one exact version. A wider range may share
+    /// such a package even when the range would pick a higher major version on its own.
+    /// Runtime-only, sized lazily.
+    pub(crate) exact_pinned: DynamicBitSet,
+
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
-
-    /// The root and the workspaces among the first `project_packages_of` packages. Runtime-only.
-    project_packages: Vec<PackageID>,
-    project_packages_of: usize,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1258,9 +1259,7 @@ impl Lockfile {
         new.patched_dependencies
             .ensure_total_capacity(old.patched_dependencies.count())?;
 
-        // Reset the FIFO read cursor without discarding capacity.
-        let queued = old.scratch.dependency_list_queue.readable_length();
-        old.scratch.dependency_list_queue.discard(queued);
+        old.scratch.dependency_list_queue.clear();
 
         {
             let old_buf = old.buffers.string_bytes.as_slice();
@@ -2243,9 +2242,8 @@ impl Lockfile {
             saved_config_version: None,
             loaded_package_count: 0,
             held_at_load: DynamicBitSet::default(),
+            exact_pinned: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
-            project_packages: Vec::new(),
-            project_packages_of: 0,
         }
     }
 
@@ -2416,6 +2414,15 @@ impl Lockfile {
         core::mem::replace(bound, id as PackageID) != id as PackageID
     }
 
+    #[inline]
+    pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
+        let i = id as usize;
+        if self.exact_pinned.bit_length() <= i {
+            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
+        }
+        self.exact_pinned.set(i);
+    }
+
     pub(crate) fn mark_only_bundled(&mut self, id: PackageID) {
         let i = id as usize;
         if self.only_bundled.bit_length() <= i {
@@ -2462,7 +2469,7 @@ impl Lockfile {
         &self,
         name_hash: u64,
         // If non-null, attempt to use an existing package
-        // that satisfies this version range. Call `note_project_packages` first.
+        // that satisfies this version range.
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
@@ -2485,84 +2492,6 @@ impl Lockfile {
         Some(id)
     }
 
-    /// Brings `project_packages` up to date. Each package is looked at once.
-    #[inline]
-    pub(crate) fn note_project_packages(&mut self) {
-        if self.project_packages_of != self.packages.len() {
-            self.note_new_project_packages();
-        }
-    }
-
-    fn note_new_project_packages(&mut self) {
-        let resolutions = self.packages.items_resolution();
-        for (id, owner) in (resolutions.iter().enumerate()).skip(self.project_packages_of) {
-            if matches!(owner.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
-                self.project_packages.push(id as PackageID);
-            }
-        }
-        self.project_packages_of = resolutions.len();
-    }
-
-    /// `is_workspace_dependency` without the walk over every package, after `note_project_packages`.
-    pub(crate) fn is_row_of_project(&self, id: DependencyID) -> bool {
-        let rows = self.packages.items_dependencies();
-        (self.project_packages.iter()).any(|&owner| rows[owner as usize].contains(id))
-    }
-
-    /// Does a row of the root or of a workspace resolve to `id`? `pinned`: one with an exact version.
-    fn is_picked_by_project(&self, id: PackageID, pinned: bool) -> bool {
-        debug_assert_eq!(self.project_packages_of, self.packages.len());
-        let resolutions = self.buffers.resolutions.as_slice();
-        let picks = |rows: core::ops::Range<usize>| {
-            resolutions[rows.clone()].contains(&id)
-                && (!pinned
-                    || rows.into_iter().any(|row| {
-                        resolutions[row] == id
-                            && crate::dedupe::effective_npm_range(
-                                self,
-                                row as DependencyID,
-                                &self.buffers.dependencies[row],
-                            )
-                            .is_some_and(|range| range.npm().version.is_exact())
-                    }))
-        };
-        // Workspaces are read one after the other: in a fresh install these rows are one stretch.
-        let mut stretch = 0..0;
-        let lists = self.packages.items_dependencies();
-        for &owner in &self.project_packages {
-            let rows = lists[owner as usize];
-            if rows.len == 0 {
-                continue;
-            }
-            if rows.begin() as usize != stretch.end {
-                if picks(stretch) {
-                    return true;
-                }
-                stretch = rows.begin() as usize..rows.begin() as usize;
-            }
-            stretch.end = rows.end() as usize;
-        }
-        picks(stretch)
-    }
-
-    /// Does a version that this run appended, other than `own_pick`, satisfy `version`?
-    /// `collapse_appended` is then likely to move the row there.
-    pub(crate) fn has_appended_match(
-        &self,
-        name_hash: PackageNameHash,
-        version: &DependencyVersion,
-        own_pick: PackageID,
-    ) -> bool {
-        self.package_satisfying(name_hash, version, |id| {
-            id >= self.loaded_package_count
-                && id != own_pick
-                && !self
-                    .only_bundled
-                    .is_set_allow_out_of_bound(id as usize, false)
-        })
-        .is_some()
-    }
-
     fn find_package_id(
         &self,
         name_hash: u64,
@@ -2575,9 +2504,9 @@ impl Lockfile {
         let npm_version = version.and_then(|v| v.try_npm()).map(|npm| &npm.version);
         let buf = self.buffers.string_bytes.as_slice();
 
-        // Which versions other packages have brought in so far depends on which manifest arrived
-        // first. A range shares what the lockfile had and what the project's own rows picked, which
-        // are the first of their name to resolve. `collapse_appended` shares the rest.
+        // A range shares a version that is already in the lockfile. Dependencies are resolved in
+        // queue order, so which versions one finds here does not depend on which manifest arrived
+        // first.
         let try_satisfies_dedupe = |id: PackageID| -> bool {
             let existing = &resolutions[id as usize];
             if existing.tag != ResolutionTag::Npm
@@ -2586,10 +2515,14 @@ impl Lockfile {
             {
                 return false;
             }
-            // Only an exact version takes a range down from the major it would pick itself.
-            let pinned = resolution.tag == ResolutionTag::Npm
-                && existing.npm().version.major < resolution.npm().version.major;
-            id < self.loaded_package_count || self.is_picked_by_project(id, pinned)
+            // A range only moves down from the major version it would pick itself onto a version
+            // that bun.lock already had, or that some dependency asks for exactly.
+            id < self.loaded_package_count
+                || self
+                    .exact_pinned
+                    .is_set_allow_out_of_bound(id as usize, false)
+                || resolution.tag != ResolutionTag::Npm
+                || existing.npm().version.major >= resolution.npm().version.major
         };
         let skipped = |id: PackageID| -> bool {
             skip_only_bundled
@@ -2744,7 +2677,85 @@ pub struct Scratch {
 
 pub(crate) type DuplicateCheckerMap =
     BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
-pub(crate) type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
+
+/// Dependencies of one package, or a single dependency, that wait for their turn to be resolved.
+#[derive(Clone, Copy)]
+pub(crate) struct QueuedRows {
+    pub(crate) rows: DependencySlice,
+    /// True in the peer pass, where a peer dependency may install a package of its own.
+    pub(crate) install_peer: bool,
+    /// True for dependencies that a command queued itself, whose resolve errors are logged.
+    pub(crate) logs_errors: bool,
+}
+
+/// The dependencies that are not resolved yet, in the order in which they will be. Only the one at
+/// the front is ever resolved, so bun.lock does not depend on which manifest arrives first.
+pub(crate) struct DependencyQueue {
+    items: LinearFifo<QueuedRows, DynamicBuffer<QueuedRows>>,
+    /// How many items have left the queue so far.
+    finished: usize,
+    /// Counted like `finished`: every item before this one has started its downloads.
+    requested: usize,
+}
+
+impl DependencyQueue {
+    fn init() -> DependencyQueue {
+        DependencyQueue {
+            items: LinearFifo::<QueuedRows, DynamicBuffer<QueuedRows>>::init(),
+            finished: 0,
+            requested: 0,
+        }
+    }
+
+    pub(crate) fn push(&mut self, item: QueuedRows) -> Result<(), AllocError> {
+        if item.rows.len == 0 {
+            return Ok(());
+        }
+        self.items.write_item(item)
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.items.readable_length() == 0
+    }
+
+    /// The item at the front. Its first row is the next one to resolve.
+    #[inline]
+    pub(crate) fn head(&self) -> Option<QueuedRows> {
+        (!self.is_empty()).then(|| self.items.peek_item(0))
+    }
+
+    /// Removes the first row of `head`.
+    #[inline]
+    pub(crate) fn finish_head_row(&mut self) {
+        let head = self.items.peek_item_mut(0);
+        head.rows = DependencySlice::new(head.rows.off + 1, head.rows.len - 1);
+        if head.rows.len == 0 {
+            self.items.discard(1);
+            self.finished += 1;
+        }
+    }
+
+    /// Each call returns rows behind the head row that have not started their downloads yet.
+    pub(crate) fn next_unrequested(&mut self) -> Option<QueuedRows> {
+        let index = self.requested.max(self.finished) - self.finished;
+        if index >= self.items.readable_length() {
+            return None;
+        }
+        self.requested = self.finished + index + 1;
+        let mut item = self.items.peek_item(index);
+        if index == 0 {
+            item.rows = DependencySlice::new(item.rows.off + 1, item.rows.len - 1);
+        }
+        Some(item)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        let queued = self.items.readable_length();
+        self.items.discard(queued);
+        self.finished += queued;
+    }
+}
 
 impl Scratch {
     fn init() -> Scratch {

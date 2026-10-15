@@ -242,10 +242,10 @@ pub use directories::{
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
     enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
-    enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
-    enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
-    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
-    enqueue_tarball_for_download, enqueue_tarball_for_reading,
+    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
+    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
+    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
+    enqueue_tarball_for_reading,
 };
 
 pub use self::progress_strings::ProgressStrings;
@@ -302,8 +302,70 @@ pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 pub(crate) enum HeldAbout {
     /// The manifest has no version for this row.
     Row(DependencyID),
-    /// There is no such package: the rows that wait for its manifest.
+    /// There is no such package. The rows that needed its manifest are in the task's list.
     Task(Task::Id),
+}
+
+/// A manifest request that ended without a manifest. The message is logged by the first dependency
+/// that needs the manifest when it is resolved, not when the answer arrives: `LookAhead` requests
+/// manifests on a guess, and a failure that no dependency runs into must not fail the install.
+pub(crate) struct ManifestFailure {
+    /// The messages to log, stored as errors.
+    pub(crate) msgs: Vec<bun_ast::Msg>,
+    /// The registry answered 404, so it has no package of this name.
+    pub(crate) is_missing: bool,
+    /// No attempt got an answer about the package, as `fail_update_requests` wants to know.
+    pub(crate) is_unanswered: bool,
+    /// An optional dependency that needs the manifest only logs a warning.
+    pub(crate) spares_optional: bool,
+    pub(crate) reported: FailureReport,
+}
+
+impl Default for ManifestFailure {
+    fn default() -> Self {
+        ManifestFailure {
+            msgs: Vec::new(),
+            is_missing: false,
+            is_unanswered: false,
+            spares_optional: true,
+            reported: FailureReport::NotYet,
+        }
+    }
+}
+
+/// How far the messages of a `ManifestFailure` have gotten.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureReport {
+    NotYet,
+    /// In `held_messages`, where `log_held` decides between a warning and an error.
+    Held,
+    Warned,
+    Errored,
+}
+
+/// A dependency that `LookAhead` follows.
+pub(crate) struct Wanted {
+    /// The name in package.json followed by the version range, in one buffer so that one parsed
+    /// `dependency::Version` can point at both.
+    pub(crate) text: Box<[u8]>,
+    pub(crate) name_len: usize,
+}
+
+/// While the dependency at the front of the queue waits for its manifest, nothing behind it can be
+/// resolved, so nothing new would be requested either. To keep the network busy, `look_ahead`
+/// guesses which versions the waiting dependencies will resolve to and requests the manifests that
+/// those versions depend on. It only fills `PackageManager::manifests`, never the lockfile.
+#[derive(Default)]
+pub(crate) struct LookAhead {
+    /// Hashes of the dependencies and of the versions that were already followed.
+    pub(crate) seen: HashMap<u64, (), bun_collections::IdentityContext<u64>>,
+    /// The versions guessed so far, by package name. A later dependency on the same package is
+    /// expected to share one of them if its range allows, as it would share a resolved version.
+    pub(crate) guessed: HashMap<PackageNameHash, Vec<Semver::Version>>,
+    /// The dependencies to follow once a manifest arrives, by the task that fetches it.
+    pub(crate) waiting: HashMap<Task::Id, Vec<Wanted>>,
+    /// The manifest tasks that have finished since `request_ahead` last ran.
+    pub(crate) arrived: Vec<Task::Id>,
 }
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
@@ -482,6 +544,8 @@ pub struct PackageManager {
 
     // Some while `bun install` resolves: the registry's "no" to rows that dedupe may still drop, until log_held.
     pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
+    pub(crate) manifest_failures: HashMap<Task::Id, ManifestFailure>,
+    pub(crate) look_ahead: LookAhead,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -1633,6 +1697,8 @@ fn allocate_package_manager(
         wr!(kept_patched_text, Vec::new());
         wr!(deprecated_transitive, 0);
         wr!(held_messages, None);
+        wr!(manifest_failures, HashMap::default());
+        wr!(look_ahead, LookAhead::default());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);

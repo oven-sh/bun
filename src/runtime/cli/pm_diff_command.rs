@@ -2154,7 +2154,7 @@ struct Manifest {
 impl Manifest {
     fn get(&self, field: &[u8]) -> Option<bun_ast::Expr> {
         match &self.entry {
-            Some(entry) if self.overridden.iter().any(|f| *f == field) => entry.get(field),
+            Some(entry) if self.overridden.contains(&field) => entry.get(field),
             _ => self.file.get(field),
         }
     }

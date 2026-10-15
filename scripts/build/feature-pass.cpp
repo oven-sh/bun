@@ -159,6 +159,8 @@ struct IslandPass : PassInfoMixin<IslandPass> {
         // An inline function or a template is in every unit that uses it, and the linker keeps one copy for all of them, by name.
         // Which copy is called makes no difference, only which one an address is of. So one of the island's that is only
         // called gets a name that it has in this island alone, and the island a copy of its own.
+        if (!directoryOption.empty() && module.debug_compile_units().empty())
+            report_fatal_error("without debug information nothing says where an inline function is written");
         DenseMap<const Comdat*, unsigned> membersOf;
         for (const GlobalObject& global : module.global_objects())
             membersOf[global.getComdat()]++;

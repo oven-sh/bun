@@ -74,8 +74,14 @@ JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject
 bool isProcessEnvClassInfo(const JSC::ClassInfo*);
 
 // SHARE_ENV store for a worker spawned from `globalObject`: the spawner's existing store,
-// else a fresh one seeded from its `process.env` (then swapped to a write-through view).
+// else a fresh one seeded from its `process.env`, which no thread has joined yet.
 // Returns null if seeding threw.
-RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject);
+RefPtr<SharedEnvStore> sharedEnvStoreForNewWorker(Zig::GlobalObject* globalObject);
+
+// The `env` property of `process` as it is now, for joinSharedEnvTree(). Empty if the property is not reified.
+JSC::JSValue processEnvProperty(Zig::GlobalObject* globalObject);
+
+// Publishes the store and swaps `process.env` to a write-through view of it, unless the thread is in a tree already. Runs no JS and cannot throw.
+void joinSharedEnvTree(Zig::GlobalObject* globalObject, SharedEnvStore&, JSC::JSValue processEnvPropertyBefore);
 
 }

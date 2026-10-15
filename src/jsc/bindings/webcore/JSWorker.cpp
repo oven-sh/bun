@@ -71,6 +71,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/Scope.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
@@ -165,8 +166,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};
-    // Founding an env tree swaps the parent's process.env, so it is deferred until
-    // every option has validated (below).
+    // Joining an env tree swaps the parent's process.env for good, so it waits until the worker has a thread (joinSharedEnvTree below).
     bool shareEnv = false;
     JSValue nodeWorkerObject {};
     if (callFrame->argumentCount() == 3) {
@@ -358,14 +358,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     setSubclassStructureIfNeeded<Worker>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // Resolve the spawning thread's env tree (founding one if needed) so disjoint
-    // SHARE_ENV chains stay isolated. Runs only after Worker::create() validated the options,
-    // because founding a tree swaps this thread's process.env.
+    // The spawning thread's env store, or an unpublished seed. Read after serialization (a getter's write is in it) and before the transfer (the read can throw).
     RefPtr<Bun::SharedEnvStore> sharedEnvStore;
-    if (shareEnv) {
-        sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    auto resolveSharedEnvStore = [&] {
+        sharedEnvStore = Bun::sharedEnvStoreForNewWorker(globalObject);
+    };
+    const ScopedLambda<void()> beforeTransfer = resolveSharedEnvStore;
+    EnsureStillAliveScope processEnvPropertyBefore = shareEnv ? Bun::processEnvProperty(globalObject) : JSValue();
 
     // A worker made by script of a Bun.ModuleGraph that was already disposed is terminated at birth
     // and reports nothing (Worker::create), so nothing is sent to it. The ports node:worker_threads
@@ -389,13 +388,18 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     // Reports a DataCloneError through ExceptionOr, but a getter or toJSON that throws during serialization
     // leaves that exception on the VM and returns normally.
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage, SerializationForCrossProcessTransfer::No, shareEnv ? &beforeTransfer : nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+    // create() runs beforeTransfer only for a non-empty transfer list. A worker stopped at birth gets no thread, so no store.
+    if (shareEnv && !sharedEnvStore && !worker->hasExited()) {
+        resolveSharedEnvStore();
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     Vector<TransferredMessagePort> transferredPorts;
 
@@ -408,11 +412,16 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         transferredPorts = disentangleResult.releaseReturnValue();
     }
 
-    auto started = worker->start(serialized.releaseReturnValue(), WTF::move(transferredPorts), WTF::move(sharedEnvStore));
+    auto started = worker->start(serialized.releaseReturnValue(), WTF::move(transferredPorts), sharedEnvStore.copyRef());
     discardUnstarted.release();
     if (started.hasException()) [[unlikely]] {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, started.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
+    }
+    // start() spawns no thread for a worker that was stopped first: hasExited() is true for that one.
+    if (sharedEnvStore && !worker->hasExited()) {
+        Bun::joinSharedEnvTree(globalObject, *sharedEnvStore, processEnvPropertyBefore.value());
+        throwScope.assertNoExceptionExceptTermination();
     }
 
     // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`

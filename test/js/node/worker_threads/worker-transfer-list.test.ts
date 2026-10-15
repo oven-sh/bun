@@ -1,5 +1,7 @@
+import { structuredCloneAdvanced } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { once } from "events";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 import { Worker } from "worker_threads";
 import { echoAnswer, echoEntry, owned, transferable } from "./worker-transfer-list-fixture.ts";
@@ -137,19 +139,150 @@ test("a context stopped while workerData is serialized: the Worker starts nothin
   expect({ stopped, threadId: worker.threadId }).toEqual({ stopped: true, threadId: -1 });
 });
 
-describe.concurrent("in a process of its own", () => {
-  async function run(script: string, entry = neverLoaded) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script, entry],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+// The constructor reads process.env in this step when `env: SHARE_ENV` starts the first such worker of a thread.
+describe("SerializedScriptValue::create runs beforeTransfer", () => {
+  const clone = (value: unknown, transferList: object[], beforeTransfer: () => void) =>
+    structuredCloneAdvanced(value, transferList, false, false, "worker", beforeTransfer);
+
+  test("once, after the getters of the value and before the transfer list is detached", () => {
+    const buf = new ArrayBuffer(8);
+    const order: string[] = [];
+    const value = {
+      buf,
+      get getter() {
+        order.push("getter");
+        return true;
+      },
+    };
+    const cloned = clone(value, [buf], () => void order.push(`beforeTransfer, ${buf.byteLength} bytes`));
+    expect({ order, bytes: buf.byteLength, clonedBytes: cloned.buf.byteLength }).toEqual({
+      order: ["getter", "beforeTransfer, 8 bytes"],
+      bytes: 0,
+      clonedBytes: 8,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout: stdout.trim(), stderr, exitCode };
+  });
+
+  test("a throw leaves the transfer list with the caller", () => {
+    const { buf, port1, port2, stillOwned } = transferable();
+    expect(() =>
+      clone({ buf, port2 }, [buf, port2], () => {
+        throw new RangeError("beforeTransfer");
+      }),
+    ).toThrow(new RangeError("beforeTransfer"));
+    expect(stillOwned()).toEqual(owned);
+    port1.close();
+  });
+
+  test("a buffer that it detaches fails the clone", () => {
+    const buf = new ArrayBuffer(8);
+    expect(() => clone(buf, [buf], () => void structuredClone(buf, { transfer: [buf] }))).toThrow(
+      "ArrayBuffer in transfer list was detached during serialization",
+    );
+  });
+
+  test("not for an empty transfer list", () => {
+    let calls = 0;
+    clone({ a: 1 }, [], () => void calls++);
+    expect(calls).toBe(0);
+  });
+});
+
+async function run(script: string, entry = neverLoaded, env = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script, entry],
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode };
+}
+
+// The thread that founds the env tree is a worker in these two, so they need no process of their own.
+describe("env: SHARE_ENV in a worker that has an env of its own", () => {
+  async function inAWorker(script: string) {
+    const worker = new Worker(
+      `const { Worker, SHARE_ENV, parentPort } = require("node:worker_threads"); const env = process.env; ${script}`,
+      { eval: true, env: { ONLY_IN_THE_WORKER: "yes" } },
+    );
+    const [message] = await once(worker, "message");
+    return message;
   }
 
-  // Founding an env tree swaps process.env for a shared view, and that cannot be undone.
+  test("does not swap process.env when the constructor throws", async () => {
+    const message = await inAWorker(`
+      let threw = "did not throw";
+      try {
+        new Worker("", { eval: true, env: SHARE_ENV, workerData: () => {} });
+      } catch (e) {
+        threw = e.name;
+      }
+      parentPort.postMessage({ threw, processEnv: process.env === env, bunEnv: Bun.env === env });
+    `);
+    expect(message).toEqual({ threw: "DataCloneError", processEnv: true, bunEnv: true });
+  });
+
+  // Passes without the fix too. On POSIX only a value that an indexed write stores as it is makes the
+  // read run script. When that write coerces, the assignment below throws: this row then needs another such value.
+  test("reads process.env before it consumes the transfer list", async () => {
+    const message = await inAWorker(`
+      if (process.platform === "win32") {
+        Object.defineProperty(env, "THROWS", { enumerable: true, get() { throw new RangeError("env read"); } });
+      } else {
+        env[5] = "string";
+        env[5] = { toString() { throw new RangeError("env read"); } };
+      }
+      const buf = new ArrayBuffer(8);
+      let threw = "did not throw";
+      try {
+        new Worker("", { eval: true, env: SHARE_ENV, workerData: buf, transferList: [buf] });
+      } catch (e) {
+        threw = e.name + ": " + e.message;
+      }
+      parentPort.postMessage({ threw, bytes: buf.byteLength, processEnv: process.env === env });
+    `);
+    expect(message).toEqual({ threw: "RangeError: env read", bytes: 8, processEnv: true });
+  });
+});
+
+// The global Worker reads process.env after SerializedScriptValue::create returns when it has no transfer list.
+test("env: SHARE_ENV on the global Worker: a process.env write and delete that a data getter makes reach the parent and the worker", async () => {
+  const result = await run(`
+    const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+    const fromBefore = process.env;
+    fromBefore.DELETED_BY_THE_GETTER = "not deleted";
+    const data = {
+      get getter() {
+        fromBefore.WRITTEN_BY_THE_GETTER = "yes";
+        delete fromBefore.DELETED_BY_THE_GETTER;
+        return true;
+      },
+    };
+    function sees() {
+      return [process.env.WRITTEN_BY_THE_GETTER ?? null, process.env.DELETED_BY_THE_GETTER ?? null, process.env.WRITTEN_AFTER_THE_CONSTRUCTOR ?? null];
+    }
+    const worker = new Worker("data:text/javascript," + encodeURIComponent(sees + "; self.onmessage = () => postMessage(sees());"), { env: SHARE_ENV, data });
+    process.env.WRITTEN_AFTER_THE_CONSTRUCTOR = "yes";
+    const env = process.env;
+    new Worker("data:text/javascript,", { env: SHARE_ENV });
+    const second = { processEnv: process.env === env, bunEnv: Bun.env === env };
+    worker.onmessage = event => {
+      console.log(JSON.stringify({ parentSees: sees(), workerSees: event.data, second }));
+      process.exit(0);
+    };
+    worker.postMessage("read");
+  `);
+  const sees = ["yes", null, "yes"];
+  expect(result).toEqual({
+    stdout: JSON.stringify({ parentSees: sees, workerSees: sees, second: { processEnv: true, bunEnv: true } }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent("in a process of its own", () => {
+  // Joining an env tree swaps process.env for a shared view, and that cannot be undone. So the thread
+  // joins only when its worker has a thread.
   test("env: SHARE_ENV does not swap process.env when execArgv is rejected", async () => {
     const result = await run(`
       const { Worker: ThreadWorker, SHARE_ENV } = require("node:worker_threads");
@@ -171,6 +304,110 @@ describe.concurrent("in a process of its own", () => {
       exitCode: 0,
     });
   });
+
+  // The rows of node:worker_threads are in worker-transfer-list-node.test.ts.
+  test("env: SHARE_ENV does not swap process.env when the global Worker throws while it serializes data", async () => {
+    const result = await run(`
+      const { MessageChannel } = require("node:worker_threads");
+      const env = process.env;
+      const { port1, port2 } = new MessageChannel();
+      const shapes = {
+        "data that cannot be cloned": () => ({ data: () => {} }),
+        "a data getter that throws": () => ({ data: { get thrower() { throw new RangeError("data getter"); } } }),
+        "a port that is not in transferList": () => ({ data: port2 }),
+        "a data getter that detaches a buffer of transferList": () => {
+          const buf = new ArrayBuffer(8);
+          return { data: { buf, get detach() { return structuredClone(buf, { transfer: [buf] }); } }, transferList: [buf] };
+        },
+      };
+      const threw = {};
+      for (const [spelling, share] of [["env: SHARE_ENV", { env: Symbol.for("nodejs.worker_threads.SHARE_ENV") }], ["shareEnv: true", { shareEnv: true }]]) {
+        threw[spelling] = {};
+        for (const [shape, options] of Object.entries(shapes)) {
+          try {
+            new Worker(process.argv.at(-1), { ...share, ...options() });
+            threw[spelling][shape] = "did not throw";
+          } catch (e) {
+            threw[spelling][shape] = e.name;
+          }
+        }
+      }
+      port1.close();
+      console.log(JSON.stringify({ threw, processEnv: process.env === env, bunEnv: Bun.env === env }));
+    `);
+    const threw = {
+      "data that cannot be cloned": "DataCloneError",
+      "a data getter that throws": "RangeError",
+      "a port that is not in transferList": "DataCloneError",
+      "a data getter that detaches a buffer of transferList": "DataCloneError",
+    };
+    expect(result).toEqual({
+      stdout: JSON.stringify({
+        threw: { "env: SHARE_ENV": threw, "shareEnv: true": threw },
+        processEnv: true,
+        bunEnv: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `expect().resolves` runs the loop of the host in place (see above), so these are tests of their own.
+  test.each(["at birth", "while data is serialized"])(
+    "env: SHARE_ENV does not swap process.env when the context of the Worker is stopped %s",
+    async when => {
+      using dir = tempDir("worker-stopped-context", {
+        "stopped.test.ts": `
+          import { AsyncLocalStorage } from "node:async_hooks";
+          import { expect, test } from "bun:test";
+
+          const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+          const neverLoaded = ${JSON.stringify(neverLoaded)};
+          const env = process.env;
+          const print = worker =>
+            console.log(JSON.stringify({ threadId: worker.threadId, processEnv: process.env === env, bunEnv: Bun.env === env }));
+
+          test("at birth", async () => {
+            const graph = new Bun.ModuleGraph();
+            const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+            graph.dispose();
+            await new Promise(resolve => setImmediate(resolve));
+            print(inGraph(() => new Worker(neverLoaded, { env: SHARE_ENV })));
+          });
+
+          test("while data is serialized", () => {
+            const graph = new Bun.ModuleGraph();
+            const hostTurn = new Promise(resolve => setImmediate(resolve));
+            const data = {
+              get stop() {
+                graph.dispose();
+                expect(hostTurn).resolves.toBeUndefined();
+                return 1;
+              },
+            };
+            print(graph.run(() => new Worker(neverLoaded, { env: SHARE_ENV, data })));
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "stopped.test.ts", "-t", when],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        printed: stdout.split("\n").filter(line => line.startsWith("{")),
+        exitCode,
+        stderr: exitCode ? stderr : "",
+      }).toEqual({
+        printed: [JSON.stringify({ threadId: -1, processEnv: true, bunEnv: true })],
+        exitCode: 0,
+        stderr: "",
+      });
+    },
+  );
 
   // Without the fix this passes too: workerData was serialized before there was a Worker to release.
   test("a constructor that throws while it serializes workerData leaves no Worker, no 'worker' event and no open handle", async () => {
@@ -230,5 +467,83 @@ describe.concurrent("in a process of its own", () => {
       join(String(dir), "entry.js"),
     );
     expect(result).toEqual({ stdout: "prototype getter", stderr: "", exitCode: 0 });
+  });
+});
+
+// Runs alone: it compiles a shim first, and beside the other children a debug build comes close to the default timeout.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+test.skipIf(!isLinux || !cc)("env: SHARE_ENV does not swap process.env when the OS refuses the thread", async () => {
+  using dir = tempDir("worker-refused-thread", {
+    "entry.js": "",
+    "refuse.c": /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+/* Refuses every thread while the file that REFUSE_THREADS names exists. */
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
+  static int (*real)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
+  if (!real) real = dlsym(RTLD_NEXT, "pthread_create");
+  const char *flag = getenv("REFUSE_THREADS");
+  if (flag && access(flag, F_OK) == 0) return EAGAIN;
+  return real(thread, attr, start, arg);
+}
+`,
+  });
+  const shim = join(String(dir), "refuse.so");
+  {
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(String(dir), "refuse.c"), "-ldl", "-lpthread"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      compile.stdout.text(),
+      compile.stderr.text(),
+      compile.exited,
+    ]);
+    if (exitCode !== 0) throw new Error(`shim compile failed: ${stdout}${stderr}`);
+  }
+
+  const result = await run(
+    `
+    const { Worker: ThreadWorker, SHARE_ENV } = require("node:worker_threads");
+    const { writeFileSync, rmSync } = require("node:fs");
+    const env = process.env;
+    const flag = env.REFUSE_THREADS;
+    const refused = {};
+    for (const [kind, WorkerCtor] of [["node:worker_threads", ThreadWorker], ["the global Worker", Worker]]) {
+      writeFileSync(flag, "");
+      try {
+        new WorkerCtor(process.argv.at(-1), { env: SHARE_ENV });
+        refused[kind] = "did not throw";
+      } catch (e) {
+        refused[kind] = e.message;
+      }
+      rmSync(flag);
+    }
+    console.log(JSON.stringify({ refused, processEnv: process.env === env, bunEnv: Bun.env === env }));
+  `,
+    join(String(dir), "entry.js"),
+    {
+      LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+      REFUSE_THREADS: join(String(dir), "refuse"),
+      // Or JSC can start its helper thread for MarkedBlocks while the shim refuses, and abort.
+      BUN_JSC_useWarmUpMarkedBlocks: "0",
+    },
+  );
+  const refused = "Failed to spawn worker thread";
+  expect(result).toEqual({
+    stdout: JSON.stringify({
+      refused: { "node:worker_threads": refused, "the global Worker": refused },
+      processEnv: true,
+      bunEnv: true,
+    }),
+    stderr: "",
+    exitCode: 0,
   });
 });

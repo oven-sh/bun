@@ -33,6 +33,7 @@
 #include "SerializedScriptValue.h"
 #include "MessagePort.h"
 #include "JSStructuredSerializeOptions.h"
+#include <wtf/ScopedLambda.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -90,6 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
     bool isForTransfer = callFrame->argument(2).toBoolean(globalObject);
     bool isForStorage = callFrame->argument(3).toBoolean(globalObject);
     JSC::JSValue serializationContextValue = callFrame->argument(4);
+    JSC::JSValue beforeTransferValue = callFrame->argument(5);
 
     SerializationContext serializationContext = SerializationContext::Default;
     if (serializationContextValue.isString()) {
@@ -127,8 +129,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
         }
     }
 
+    auto callBeforeTransfer = [&] {
+        JSC::call(globalObject, beforeTransferValue, JSC::ArgList(), "beforeTransfer is not a function"_s);
+    };
+    const ScopedLambda<void()> beforeTransfer = callBeforeTransfer;
+
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, forStorage, serializationContext, forTransfer);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, forStorage, serializationContext, forTransfer, beforeTransferValue.isUndefined() ? nullptr : &beforeTransfer);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());

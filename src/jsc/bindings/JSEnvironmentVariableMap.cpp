@@ -904,7 +904,7 @@ bool isProcessEnvClassInfo(const JSC::ClassInfo* classInfo)
     return classInfo == JSEnvironmentVariableMap::info() || classInfo == JSSharedEnvMap::info();
 }
 
-RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject)
+RefPtr<SharedEnvStore> sharedEnvStoreForNewWorker(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -914,8 +914,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     if (auto* existing = sharedEnvStoreFor(globalObject))
         return existing;
 
-    // Founding a new tree. processEnvObject() forces the lazy init so the OS
-    // environment is captured before the swap below.
+    // Seeding a new tree. processEnvObject() forces the lazy init so the OS environment is captured.
     JSObject* envObject = globalObject->processEnvObject();
     if (!envObject->staticPropertiesReified()) {
         envObject->reifyAllStaticProperties(globalObject);
@@ -941,12 +940,35 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
 
     // Enumerating or reading process.env can run user JS (an accessor, or Windows'
     // Proxy traps) that spawns a SHARE_ENV worker and founds the tree first. Defer
-    // to it instead of overwriting its store and re-swapping process.env.
+    // to it instead of handing the new worker a store this thread will never join.
     if (auto* existing = sharedEnvStoreFor(globalObject))
         return existing;
 
+    return store;
+}
+
+JSValue processEnvProperty(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasProcessObject())
+        return {};
+    VM& vm = globalObject->vm();
+    return globalObject->processObject()->getDirect(vm, JSC::Identifier::fromString(vm, "env"_s));
+}
+
+void joinSharedEnvTree(Zig::GlobalObject* globalObject, SharedEnvStore& store, JSValue processEnvPropertyBefore)
+{
+    if (auto* existing = sharedEnvStoreFor(globalObject)) {
+        ASSERT_UNUSED(existing, existing == &store);
+        return;
+    }
+
+    VM& vm = globalObject->vm();
+    // sharedEnvStoreForNewWorker() read it to seed the store, so this runs no lazy initializer.
+    ASSERT(globalObject->m_processEnvObject.isInitialized());
+    JSObject* previous = globalObject->processEnvObject();
+
     // Publish before creating the view, which resolves its store via the context.
-    globalObject->scriptExecutionContext()->setSharedEnvStore(store.get());
+    globalObject->scriptExecutionContext()->setSharedEnvStore(store);
 
     // Swap this global's process.env to the shared, write-through variant.
     auto* shared = createSharedEnvironmentVariablesMap(globalObject).getObject();
@@ -958,7 +980,10 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     // overwrite it so it resolves to the shared variant.
     if (globalObject->hasProcessObject()) {
         JSObject* processObject = globalObject->processObject();
-        processObject->putDirect(vm, envIdentifier, shared, 0);
+        JSValue current = processObject->getDirect(vm, envIdentifier);
+        // What script assigned or deleted during the constructor stays, as it did when the swap ran before serialization.
+        if (current && (current == previous || current == processEnvPropertyBefore))
+            processObject->putDirect(vm, envIdentifier, shared, 0);
     }
 
     // Bun.env reifies to the same object at startup; repoint it too, or it keeps
@@ -968,8 +993,6 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
         if (bunObject->getDirect(vm, envIdentifier))
             bunObject->putDirect(vm, envIdentifier, shared, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
     }
-
-    return store;
 }
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)

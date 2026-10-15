@@ -335,23 +335,27 @@ describe("SQL adapter environment variable precedence", () => {
         { password: "secret" },
         { database: "app" },
         { tls: true },
+        { tls: false },
+        { ssl: false },
       ];
 
       const adapters: Record<string, unknown> = {};
       for (const serverOption of serverOptions) {
         await using sql = new SQL({ filename: "dev.db", ...serverOption } as SQL.Options);
-        adapters[Object.keys(serverOption)[0]] = sql.options.adapter;
+        adapters[JSON.stringify(serverOption)] = sql.options.adapter;
       }
 
       expect(adapters).toEqual({
-        hostname: "postgres",
-        host: "postgres",
-        path: "postgres",
-        port: "postgres",
-        username: "postgres",
-        password: "postgres",
-        database: "postgres",
-        tls: "postgres",
+        '{"hostname":"db.example"}': "postgres",
+        '{"host":"db.example"}': "postgres",
+        '{"path":"/run/postgresql"}': "postgres",
+        '{"port":5433}': "postgres",
+        '{"username":"app"}': "postgres",
+        '{"password":"secret"}': "postgres",
+        '{"database":"app"}': "postgres",
+        '{"tls":true}': "postgres",
+        '{"tls":false}': "postgres",
+        '{"ssl":false}': "postgres",
       });
     });
   });

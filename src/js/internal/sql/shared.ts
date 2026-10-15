@@ -1699,6 +1699,7 @@ function hasProtocol(url: string | URL): boolean {
 /** True when the options configure a connection to a Postgres or MySQL server. */
 function hasServerOption(options: Bun.SQL.Options): boolean {
   const o = options as Bun.SQL.PostgresOrMySQLOptions;
+  const { tls, ssl } = o;
   return !!(
     o.hostname ||
     o.host ||
@@ -1710,8 +1711,10 @@ function hasServerOption(options: Bun.SQL.Options): boolean {
     o.pass ||
     o.database ||
     o.db ||
-    o.tls ||
-    o.ssl
+    tls ||
+    tls === false ||
+    ssl ||
+    ssl === false
   );
 }
 

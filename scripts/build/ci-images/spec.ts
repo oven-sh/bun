@@ -1022,7 +1022,8 @@ function llvm(image: Image): Tool {
         ...llvmPrograms.map(name => `bin/${name}`),
         `lib/clang/${major}`,
         // What a plugin of clang's or rustc's is compiled against.
-        ...(image.role === "build" ? ["include/llvm", "include/llvm-c"] : []),
+        "include/llvm",
+        "include/llvm-c",
       ]),
       ...installedDeb({
         url: ubuntuDebUrl(pins.llvm.icu, image.arch),

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { gcTick } from "harness";
 
 test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   // 8 MB is the threshold for copy-on-write without --smol.
@@ -68,4 +69,113 @@ test("Response.bytes from a Blob body is not shared with text previously read fr
   buf.fill(120);
   expect(text).toBe("hello world");
   expect(await blob.text()).toBe("hello world");
+});
+
+// On Linux a Blob of 8 MB or more keeps its bytes in a memfd, and a read that
+// must not share them is a copy-on-write map of that memfd. A body that is the
+// last owner of the Blob hands the Blob's own map to JS instead. A write into
+// it must not reach the memfd: the pages of an earlier copy that nobody has
+// written yet still read the memfd.
+describe("two reads of one large Blob body are not shared with each other", () => {
+  // Above the 8 MB threshold for copy-on-write without --smol.
+  const size = (1024 * 1024 * 8 * 1.5) | 0;
+  const original = 97;
+  const written = 90;
+  const source = () => new Uint8Array(size).fill(original);
+
+  // `kept` was read first. Only `mine` is written.
+  function expectKeptAfterWrite(kept: Uint8Array, mine: Uint8Array) {
+    expect([kept[0], kept.at(-1), mine[0], mine.at(-1)]).toEqual([original, original, original, original]);
+    mine.fill(written);
+    expect(kept.indexOf(written)).toBe(-1);
+    expect(mine.indexOf(original)).toBe(-1);
+  }
+
+  type Body = Response | Request;
+  const reads: [string, (body: Body) => Promise<Uint8Array>][] = [
+    ["arrayBuffer()", async body => new Uint8Array(await body.arrayBuffer())],
+    ["bytes()", body => body.bytes()],
+  ];
+
+  // Bun reads an array body as the parts of a Blob. No Blob object refers to
+  // those bytes, so the body and its clone are their only owners.
+  const parts = () => [source()] as unknown as BodyInit;
+  const bodies: [string, () => Body][] = [
+    ["new Response([bytes])", () => new Response(parts())],
+    ["new Request(url, { body: [bytes] })", () => new Request("http://localhost/", { method: "POST", body: parts() })],
+  ];
+
+  describe.each(bodies)("%s", (_, makeBody) => {
+    describe.each(reads)("clone().%s", (_, readFirst) => {
+      test.each(reads)("then %s", async (_, readSecond) => {
+        const body = makeBody();
+        const kept = await readFirst(body.clone());
+        const mine = await readSecond(body);
+        expect(mine.length).toBe(size);
+        expectKeptAfterWrite(kept, mine);
+      });
+    });
+  });
+
+  // A transfer moves the memory of the second copy to another ArrayBuffer.
+  const transfers: [string, (buffer: ArrayBuffer) => ArrayBuffer][] = [
+    ["buffer.transfer()", buffer => buffer.transfer()],
+    ["structuredClone(buffer, { transfer: [buffer] })", buffer => structuredClone(buffer, { transfer: [buffer] })],
+  ];
+
+  test.each(transfers)("a write after %s", async (_, transfer) => {
+    const response = new Response(parts());
+    const kept = new Uint8Array(await response.clone().arrayBuffer());
+    const mine = new Uint8Array(transfer(await response.arrayBuffer()));
+    expect(mine.length).toBe(size);
+    expectKeptAfterWrite(kept, mine);
+  });
+
+  // A body made from a Blob object becomes the last owner once that object has
+  // been collected.
+  describe("after the Blob object was collected", () => {
+    type Track = <T extends Blob>(blob: T) => T;
+
+    // Resolves once every Blob passed to `track` has been finalized, which is
+    // when it releases its reference on the bytes.
+    async function afterBlobsAreCollected<T>(make: (track: Track) => T | Promise<T>): Promise<T> {
+      let tracked = 0;
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => collected++);
+      const result = await make(blob => {
+        tracked++;
+        registry.register(blob, undefined);
+        return blob;
+      });
+      while (collected < tracked) await gcTick();
+      return result;
+    }
+
+    const firstReads: [string, (blob: Blob, track: Track) => Promise<Uint8Array>][] = [
+      ["blob.arrayBuffer()", async blob => new Uint8Array(await blob.arrayBuffer())],
+      ["blob.bytes()", blob => blob.bytes()],
+      ["blob.slice(0, n).bytes()", (blob, track) => track(blob.slice(0, size - 4096)).bytes()],
+      ["new Response(blob).bytes()", blob => new Response(blob).bytes()],
+    ];
+
+    test.each(firstReads)("%s, then new Response(blob).bytes()", async (_, readFirst) => {
+      let kept!: Uint8Array;
+      const response = await afterBlobsAreCollected(async track => {
+        const blob = track(new Blob([source()]));
+        kept = await readFirst(blob, track);
+        return new Response(blob);
+      });
+      const mine = await response.bytes();
+      expect(mine.length).toBe(size);
+      expectKeptAfterWrite(kept, mine);
+    });
+
+    test("response.clone().arrayBuffer(), then response.arrayBuffer()", async () => {
+      const response = await afterBlobsAreCollected(track => new Response(track(new Blob([source()]))));
+      const kept = new Uint8Array(await response.clone().arrayBuffer());
+      const mine = new Uint8Array(await response.arrayBuffer());
+      expect(mine.length).toBe(size);
+      expectKeptAfterWrite(kept, mine);
+    });
+  });
 });

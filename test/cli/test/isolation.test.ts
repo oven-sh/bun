@@ -1515,11 +1515,18 @@ describe.concurrent("bun test --isolate=modules", () => {
       "c.test.js": hot("c"),
     };
     expect(await passes(files, 3)).toContain("a false false\nc true true\n");
-    // But not forever, or every test file's own code would pile up.
-    const { "c.test.js": last, ...many }: Record<string, string> = files;
+    // But not forever, or every test file's own code would pile up: the last 8 files' graphs and the running one's.
+    const { "c.test.js": _, ...many }: Record<string, string> = files;
     for (let i = 0; i < 10; i++) many[`b${i}.test.js`] = files["b.test.js"];
-    many["c.test.js"] = last;
-    expect(await passes(many, 13)).toContain("a false false\nc false false\n");
+    many["count.test.ts"] = `
+      import { generateHeapSnapshotForDebugging } from "bun:jsc";
+      ${Heap}
+      test("count", () => {
+        const held = new Heap().pathsTo("ModuleGraph").filter(path => path === "root(StrongHandles) ModuleGraph");
+        console.log("graphs", held.length);
+      });
+    `;
+    expect(await passes(many, 13)).toContain("graphs 9\n");
     using dir = tempDir("isolate-global-code", files);
     const { stdout } = await runTests(String(dir), ["--isolate"], ["./a.test.js", "./b.test.js", "./c.test.js"]);
     expect(stdout).toContain("a false false\nc false false\n");

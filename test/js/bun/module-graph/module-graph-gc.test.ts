@@ -413,8 +413,8 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
   });
 
   test("the compiled code of a CommonJS module goes with the last graph that ran it", async () => {
-    // Many, because the count also has the code of whatever else ran since the baseline.
-    const files = 80;
+    // Many, because the count also has the code of whatever else ran before: up to 30 of those go away during this test.
+    const files = 160;
     let all = "";
     for (let i = 0; i < files; i++) {
       writeFileSync(file(`only-in-graphs-${i}.cjs`), `module.exports = function f${i}() { return ${i}; };`);
@@ -435,7 +435,7 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
       held[0].dispose();
       // The wrapper functions' code, once for both graphs, while either is held.
       const { FunctionCodeBlock: whileHeld } = await baselineOf("FunctionCodeBlock");
-      expect(whileHeld - baseline).toBeWithin(files, files * 2);
+      expect(whileHeld - baseline).toBeWithin(files / 2 + 1, files * 2);
       expect(held.length).toBe(2);
     })();
     const limit = baseline + files / 2;

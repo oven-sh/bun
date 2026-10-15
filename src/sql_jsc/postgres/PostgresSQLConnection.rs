@@ -598,7 +598,7 @@ impl PostgresSQLConnection {
         );
     }
 
-    fn start(&self) {
+    pub(crate) fn start(&self) {
         self.setup_max_lifetime_timer_if_necessary();
         self.reset_connection_timeout();
         self.send_startup_message();
@@ -624,11 +624,9 @@ impl PostgresSQLConnection {
         let b: u32 = match self.status.get() {
             // Terminal states: nothing more will happen on this connection, so
             // allow GC to collect the JS wrapper (and ultimately call deinit()).
-            // We must still outlive the socket's onClose callback — for SSL
-            // sockets `close(.normal)` defers the actual close until the peer's
-            // close_notify arrives, so the struct must stay alive until then.
-            // The socket's onClose re-enters here (via failWithJSValue's defer)
-            // with isClosed() == true, at which point GC can proceed.
+            // We must still outlive the socket's onClose callback, which
+            // re-enters here (via failWithJSValue's defer) with
+            // isClosed() == true, at which point GC can proceed.
             Status::Disconnected | Status::Failed => (!self.socket.get().is_closed()) as u32,
             _ => 1,
         };
@@ -1492,25 +1490,12 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        let socket = self.socket.get();
+        let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            if js_reason.is_none() {
-                socket.close(uws::CloseKind::Normal);
-            } else {
-                // A failed connection does not wait for its peer, which `Normal` does over TLS
-                // (for a close_notify): a peer gone silent is one way connections fail. It still
-                // sends its own: an idle or expired connection has a healthy peer, which logs a
-                // close without one as an error.
-                socket.shutdown();
-                socket.close(uws::CloseKind::FastShutdown);
-                // Parked behind ciphertext the kernel would not take.
-                if !socket.is_closed() {
-                    socket.close(uws::CloseKind::Failure);
-                }
-            }
+            socket.close_now();
         }
 
         // cleanup requests

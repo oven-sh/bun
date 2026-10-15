@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { BlockList } from "node:net";
 import { constants } from "node:os";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint } from "node:quic";
+import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -28,17 +28,17 @@ describe("QuicEndpoint client-engine mode", () => {
     );
 
     const endpoint = new QuicEndpoint();
-    const raw = await connect(server.address, {
+    const raw = await connect(server.address!, {
       endpoint,
       alpn: "quic-test",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     await raw.opened;
     raw.close();
 
     // The engine is raw now; an h3 (default-ALPN) connect cannot reuse it.
-    expect(() => connect(server.address, { endpoint, verifyPeer: "manual" })).toThrow(
+    expect(() => connect(server.address!, { endpoint, verifyPeer: "manual" } as SessionOptions)).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_STATE" }),
     );
     await endpoint.close();
@@ -61,27 +61,27 @@ describe("endpoint blockList", () => {
     await using filtered = await listen(onSession, {
       sni: sniOpt,
       transportParams: tp,
-      endpoint: { blockList, blockListPolicy: "deny" },
+      endpoint: { blockList, blockListPolicy: "deny" } as EndpointOptions,
     });
 
     const stray = Buffer.alloc(64, 0x41);
     const sock = createSocket("udp4");
     await new Promise<void>((resolve, reject) => {
-      sock.send(stray, receiver.address.port, "127.0.0.1", err => (err ? reject(err) : resolve()));
+      sock.send(stray, receiver.address!.port, "127.0.0.1", err => (err ? reject(err) : resolve()));
     });
     sock.close();
 
-    const client = await connect(receiver.address, {
+    const client = await connect(receiver.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: tp,
-    });
+    } as SessionOptions);
     await client.opened;
     client.close();
 
     expect({
-      receiver: receiver.stats.packetsBlocked,
-      filtered: filtered.stats.packetsBlocked,
+      receiver: (receiver.stats as any).packetsBlocked,
+      filtered: (filtered.stats as any).packetsBlocked,
     }).toEqual({ receiver: 0n, filtered: 1n });
   });
 });
@@ -109,7 +109,7 @@ describe("server ALPN list", () => {
     // Uniform lists on either side of the split are still accepted.
     await using h3 = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["h3", "h3-29"] });
     await using raw = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["a", "b"] });
-    expect([typeof h3.address.port, typeof raw.address.port]).toEqual(["number", "number"]);
+    expect([typeof h3.address!.port, typeof raw.address!.port]).toEqual(["number", "number"]);
   });
 });
 
@@ -198,12 +198,12 @@ describe("dual-mode endpoint", () => {
     });
     await using dual = await listen(onstream, { sni: sniOpt, transportParams: tp });
 
-    const client = await connect(peer.address, {
+    const client = await connect(peer.address!, {
       endpoint: dual,
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: tp,
-    });
+    } as SessionOptions);
     await client.opened;
 
     const answered = Promise.withResolvers<void>();
@@ -239,14 +239,14 @@ describe("transportParams.maxIdleTimeout", () => {
     const advertised = async (maxIdleTimeout: number) => {
       await using server = await listen(onSession, { sni: sniOpt, transportParams: { maxIdleTimeout } });
       await using endpoint = new QuicEndpoint();
-      const client = await connect(server.address, {
+      const client = await connect(server.address!, {
         endpoint,
         servername: "localhost",
         verifyPeer: "manual",
         transportParams: { maxIdleTimeout: 3 },
-      });
+      } as SessionOptions);
       await client.opened;
-      const remote = client.remoteTransportParams.maxIdleTimeout;
+      const remote = (client as any).remoteTransportParams.maxIdleTimeout;
       client.close();
       return remote;
     };
@@ -274,7 +274,7 @@ describe("endpoint.close() while a session is live", () => {
     );
 
     // close() clears `address`, so hold on to it for the late connect below.
-    const address = server.address;
+    const address = server.address!;
 
     // Hold one session open so close() has to drain instead of finishing now.
     await using holdEndpoint = new QuicEndpoint();
@@ -283,7 +283,7 @@ describe("endpoint.close() while a session is live", () => {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: tp,
-    });
+    } as SessionOptions);
     await held.opened;
 
     server.close();
@@ -300,7 +300,7 @@ describe("endpoint.close() while a session is live", () => {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: tp,
-    });
+    } as SessionOptions);
     // `closed` rejects with the same CONNECTION_REFUSED transport error, and
     // does so while `opened` is being awaited -- handle it first.
     const lateClosed = late.closed.catch(() => "rejected");

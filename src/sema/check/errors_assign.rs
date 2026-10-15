@@ -250,9 +250,17 @@ impl Checker<'_, '_> {
         if decl.init.is_none() || stmt.is_none() {
             return;
         }
+        // `checkDeclarationInitializer`: a name whose initializer `getQuickTypeOfExpression` answers
+        // from a signature may have a type that is not the widened type of the cached initializer.
+        let is_quick_type_of_signature = matches!(hir[decl.pat].kind, PatKind::Ident(_))
+            && matches!(
+                hir[decl.init].kind,
+                ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
+            );
         // FOR SPEED: without an annotation the type of the variable is the widened type of the
         // initializer, except in a `for`-`of`, where it is the type of the elements.
         if decl.ty.is_none()
+            && !is_quick_type_of_signature
             && !matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(p) if p.is_some() && matches!(hir[p].kind, StmtKind::ForOf { left, .. } if left == stmt))
         {
             return;
@@ -654,9 +662,9 @@ impl Checker<'_, '_> {
             return;
         };
         // A rest element accepts any property.
-        if members
-            .shape()
-            .index
+        if self
+            .structured(members)
+            .index_infos()
             .iter()
             .any(|info| info.key == TypeId::STRING)
         {
@@ -1043,18 +1051,19 @@ impl Checker<'_, '_> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         // `GetErrorRangeForNode`: the keyword.
         let node = (file, hir[s].start, hir[s].start + b"return".len() as u32);
-        if e.is_none() && !self.p.files.options.strict_null_checks {
-            let returned = self.return_type_of_fn(file, container);
-            if !returned.is_never() {
-                if hir[container].kind != FnKind::Constructor
-                    && self.p.files.options.no_implicit_returns
-                    && !self
-                        .is_unwrapped_return_type_undefined_void_or_any(file, container, returned)
-                {
-                    self.error_at(node, 7030, &[]);
-                }
-                return;
+        let return_type = self.return_type_of_fn(file, container);
+        if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
+            if hir[container].kind != FnKind::Constructor
+                && self.p.files.options.no_implicit_returns
+                && !self.is_unwrapped_return_type_undefined_void_or_any(
+                    file,
+                    container,
+                    return_type,
+                )
+            {
+                self.error_at(node, 7030, &[]);
             }
+            return;
         }
         match hir[container].kind {
             FnKind::Setter => {
@@ -1085,13 +1094,10 @@ impl Checker<'_, '_> {
                 }
             }
             _ => {
-                let Some(declared) = self.return_type_from_annotation(file, container) else {
-                    return;
-                };
-                // `undefined`, which without strictNullChecks is assignable to everything but
-                // `never`.
-                if e.is_some() || self.p.files.options.strict_null_checks || declared.is_never() {
-                    let expected = self.unwrap_return_type(file, container, declared);
+                // `getReturnTypeFromAnnotation` is only the test: the target is the resolved return
+                // type, which is `any` after a circular annotation.
+                if self.return_type_from_annotation(file, container).is_some() {
+                    let expected = self.unwrap_return_type(file, container, return_type);
                     self.check_return_expression(
                         file,
                         container,

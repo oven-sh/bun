@@ -177,6 +177,7 @@ impl ScopeFunctions {
         Ok(frame.this())
     }
 
+    #[optimize(size)]
     fn define_fixtures(
         &self,
         global: &JSGlobalObject,
@@ -239,6 +240,7 @@ impl ScopeFunctions {
         create_bound(global, ScopeFunctions::new(Mode::Describe, cfg), "describe")
     }
 
+    #[optimize(size)]
     fn with_rows(
         &self,
         global: &JSGlobalObject,

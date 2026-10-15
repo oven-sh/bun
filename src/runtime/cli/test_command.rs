@@ -1605,6 +1605,7 @@ impl CommandLineReporter {
 /// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
 /// runner passes this process's reports; the `--parallel` coordinator passes
 /// reports merged from every worker. Errors only from writing `lcov.info`.
+#[optimize(size)]
 pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
@@ -1719,6 +1720,7 @@ fn print_coverage_table<const COLORS: bool>(
 
 /// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
 /// `lcov.info`, so an interrupted run never leaves a truncated report.
+#[optimize(size)]
 fn write_lcov_report(
     opts: &CodeCoverageOptions,
     relative_dir: &[u8],
@@ -1835,6 +1837,7 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
+    #[optimize(size)]
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),

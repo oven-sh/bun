@@ -148,6 +148,7 @@ impl ViWait {
         )
     }
 
+    #[optimize(size)]
     fn begin(
         global: &JSGlobalObject,
         frame: &CallFrame,

@@ -50,6 +50,7 @@ pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
+#[optimize(size)]
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,

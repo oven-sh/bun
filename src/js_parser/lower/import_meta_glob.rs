@@ -233,6 +233,7 @@ fn without_extglobs(pattern: &[u8]) -> Cow<'_, [u8]> {
 }
 
 impl Pattern {
+    #[optimize(size)]
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let text = &*without_extglobs(text);
         let mut buf = vec![0u8; text.len() + 1];
@@ -391,6 +392,7 @@ impl<'a> Arguments<'a, '_> {
         })
     }
 
+    #[optimize(size)]
     fn read(&mut self, call: &E::Call, loc: Loc) -> Result<Literals<'a>, Invalid<'a>> {
         let args = call.args.slice();
         if args.is_empty() || args.len() > 2 {
@@ -442,6 +444,7 @@ impl<'a> Arguments<'a, '_> {
         })
     }
 
+    #[optimize(size)]
     fn expand(
         &mut self,
         &Literals { globs, options }: &Literals<'a>,

@@ -3253,6 +3253,7 @@ impl ExpectMatcherUtils {
         Ok(())
     }
 
+    #[optimize(size)]
     fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let argument = |i: usize| arguments.get(i).copied().filter(|value| !value.is_undefined());

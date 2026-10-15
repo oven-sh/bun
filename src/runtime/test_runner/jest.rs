@@ -390,6 +390,7 @@ pub(crate) mod Jest {
         }
     }
 
+    #[optimize(size)]
     fn create_test_module(global_object: &JSGlobalObject, flavor: Flavor) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 32);
 
@@ -1033,6 +1034,7 @@ fn get_vitest_attribute(global: &JSGlobalObject, source: JSValue, path: &[u8], d
 }
 
 /// Vitest's `formatAttribute(text)`
+#[optimize(size)]
 fn write_vitest_attributes(
     global: &JSGlobalObject,
     text: &[u8],
@@ -1087,6 +1089,7 @@ pub(crate) fn format_vitest_name(global: &JSGlobalObject, name: JSValue) -> JsRe
 
 #[cold]
 #[inline(never)]
+#[optimize(size)]
 pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], items: &[JSValue], index: usize) -> JsResult<Vec<u8>> {
     use bun_core::strings;
     let mut template = std::borrow::Cow::Borrowed(template);

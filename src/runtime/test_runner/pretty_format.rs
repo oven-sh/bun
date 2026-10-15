@@ -3172,6 +3172,7 @@ pub(crate) fn is_object_but_no_array(global: &JSGlobalObject, value: JSValue) ->
 
 /// jest-snapshot's `deepMerge` and Vitest's `deepMergeSnapshot`. `source` is the property matchers.
 #[cold]
+#[optimize(size)]
 fn deep_merge(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return Err(global.throw_stack_overflow());
@@ -3297,6 +3298,7 @@ pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out
     Ok(true)
 }
 
+#[optimize(size)]
 fn deep_merge_array(global: &JSGlobalObject, target: JSValue, source: JSValue, format: SnapshotFormat) -> JsResult<JSValue> {
     let is_vitest = format == SnapshotFormat::Vitest;
     let merged = JSValue::create_empty_array(global, 0)?;
@@ -4144,6 +4146,7 @@ impl Formatter<'_> {
         })
     }
 
+    #[optimize(size)]
     fn print_mock_function(&mut self, out: &mut Vec<u8>, mock_function: JSValue) -> JsResult<()> {
         let global = self.global_this;
         let is_vitest = self.snapshot_format == SnapshotFormat::Vitest;
@@ -4178,6 +4181,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_asymmetric_matcher_like_pretty_format(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         use std::io::Write as _;
         let global = self.global_this;
@@ -4268,6 +4272,7 @@ impl Formatter<'_> {
     }
 
     #[cold]
+    #[optimize(size)]
     fn print_foreign_asymmetric_matcher(&mut self, out: &mut Vec<u8>, matcher: JSValue) -> JsResult<()> {
         let global = self.global_this;
         let name = call_method(global, matcher, "toString", &[])?;
@@ -4356,6 +4361,7 @@ impl Formatter<'_> {
         Ok(true)
     }
 
+    #[optimize(size)]
     fn print_immutable_record(&mut self, out: &mut Vec<u8>, record: JSValue) -> JsResult<()> {
         let global = self.global_this;
         let is_leaf = self.is_at_max_depth();
@@ -4396,6 +4402,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_markup(
         &mut self,
         out: &mut Vec<u8>,
@@ -4722,6 +4729,7 @@ impl JestPrettyFormat {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &indented)
     }
 
+    #[optimize(size)]
     fn print_for_serializer(
         global: &JSGlobalObject,
         value: JSValue,
@@ -4794,6 +4802,7 @@ impl Formatter<'_> {
         Ok(false)
     }
 
+    #[optimize(size)]
     fn call_serializer(&mut self, plugin: JSValue, value: JSValue) -> JsResult<JSValue> {
         let global = self.global_this;
         let text = |text: &'static str| bun_core::String::static_(text).to_js(global);

@@ -181,6 +181,7 @@ impl TestFixtures {
     }
 
     /// `test.override()` mutates `parent` for `active_scope` only, or for every file in a preload or without a scope.
+    #[optimize(size)]
     pub(crate) fn define(
         global: &JSGlobalObject,
         frame: &CallFrame,

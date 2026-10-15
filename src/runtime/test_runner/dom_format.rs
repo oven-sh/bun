@@ -407,6 +407,7 @@ impl Printer<'_> {
         Ok(())
     }
 
+    #[optimize(size)]
     fn print_element(
         &mut self,
         node: JSValue,

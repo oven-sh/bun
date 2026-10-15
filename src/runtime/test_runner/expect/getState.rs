@@ -109,6 +109,7 @@ impl Expect {
         Self::set_state_in(global, frame, None)
     }
 
+    #[optimize(size)]
     pub(crate) fn set_state_in(global: &JSGlobalObject, frame: &CallFrame, test: Test) -> JsResult<JSValue> {
         let [partial] = frame.arguments_as_array::<1>();
         let Some(partial_object) = partial.get_object() else {

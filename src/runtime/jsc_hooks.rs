@@ -3810,6 +3810,7 @@ bun_core::declare_scope!(CssModule, hidden);
 /// Builds the same object `Bun.build` emits as the CSS module's default export.
 #[cold]
 #[inline(never)]
+#[optimize(size)]
 fn css_module_exports(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,

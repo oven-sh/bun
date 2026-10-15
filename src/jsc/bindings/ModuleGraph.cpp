@@ -124,7 +124,7 @@ static void setOverlaySlot(VM& vm, JSLexicalEnvironment* overlay, const Identifi
 }
 
 // The new graph's loader, over a new overlay holding `globals`.
-static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
+__attribute__((minsize)) static JSModuleLoader* createModuleGraphLoader(Zig::GlobalObject* globalObject, JSObject* globals, unsigned& overlayShape)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

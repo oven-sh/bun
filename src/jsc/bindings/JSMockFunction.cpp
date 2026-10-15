@@ -2420,7 +2420,7 @@ struct Automocker {
 };
 
 // JSC inlines all 5 KB of objectPrototypeToString() into every caller.
-NEVER_INLINE JSString* objectPrototypeToStringOutOfLine(JSGlobalObject* globalObject, JSValue value)
+__attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine(JSGlobalObject* globalObject, JSValue value)
 {
     return JSC::objectPrototypeToString(globalObject, value);
 }
@@ -2461,7 +2461,7 @@ AutomockKind Automocker::kindOf(JSValue value)
     return AutomockKind::Keep;
 }
 
-JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
+__attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2653,7 +2653,7 @@ void Automocker::mockMembers(JSObject* original, JSObject* replacement, Automock
     }
 }
 
-static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone)
+__attribute__((minsize)) static JSValue automock(Zig::GlobalObject* globalObject, JSValue value, AutomockRole role, bool spy, bool leaveOriginalAlone)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2796,7 +2796,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
-static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, JSString* name = nullptr)
+__attribute__((minsize)) static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, JSString* name = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2856,7 +2856,7 @@ enum class SpyAccess : uint8_t {
     Set,
 };
 
-static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
+__attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool isVitest)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

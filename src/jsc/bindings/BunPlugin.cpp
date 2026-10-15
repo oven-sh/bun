@@ -850,7 +850,7 @@ static JSObject* esmExportsOfCommonJSExports(Zig::GlobalObject* globalObject, JS
     RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
 
-static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+__attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1323,7 +1323,7 @@ static String fileOfFunction(JSValue function)
     return url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String();
 }
 
-JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
+__attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1402,7 +1402,7 @@ static void appendImportsOf(JSC::AbstractModuleRecord* record, Vector<UniquedStr
 }
 
 // `fetches`[0] is a JSSet of the registry entries visited so far. The rest are the visited entries whose fetch is still awaited.
-static bool comesBy(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* entry, bool remembers = true)
+__attribute__((minsize)) static bool comesBy(Zig::GlobalObject* globalObject, JSC::JSArray* fetches, JSC::ModuleRegistryEntry* entry, bool remembers = true)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto* comeBy = uncheckedDowncast<JSC::JSSet>(fetches->getIndexQuickly(0).asCell());
@@ -1498,7 +1498,7 @@ static bool isFetchingAnythingElse(Zig::GlobalObject* globalObject, JSC::JSArray
     return false;
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunModuleMockLater, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionRunModuleMockLater, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1662,7 +1662,7 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
-static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
+__attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1830,7 +1830,7 @@ static void giveLoadedModuleBackToPreloadModuleMock(Zig::GlobalObject* globalObj
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 
-static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from, const String& to)
+__attribute__((minsize)) static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from, const String& to)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1871,7 +1871,7 @@ static void setLoadedPackageAside(Zig::GlobalObject* globalObject, const String&
 // Importers stay linked to the record they imported, so they're evicted too, except preload modules, which nothing would load again.
 // The loader looks up the entries of a loading module's imports more than once and expects the same ones, so an entry that is
 // loading, or that a loading module has requested, stays until that load settles (modulesToEvictOnceLoaded).
-static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, ModulesToEvict&& evict)
+__attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, ModulesToEvict&& evict)
 {
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
@@ -2162,7 +2162,7 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
     }
 }
 
-static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier, ModulesToEvict& evict)
+__attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier, ModulesToEvict& evict)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2218,7 +2218,7 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
 }
 
 // Returns true if importers can only reach the mock through resolveVirtualModule()'s relative lookup.
-static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists)
+__attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, JSC::JSString*& specifierString, WTF::String& specifier, bool& exists)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2304,7 +2304,7 @@ static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* global
 
 extern "C" JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject*);
 
-static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, const String& from, const String& written, const String& specifier)
+__attribute__((minsize)) static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, const String& from, const String& written, const String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2374,7 +2374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
+__attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -2742,7 +2742,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateMockFromModule, (JSC::JSGlobalObject * 
 }
 
 // Jest calls every mock's factory again after resetModules(), and loads packages again. Vitest keeps the exports and the packages.
-static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool callFactoriesAgain)
+__attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool callFactoriesAgain)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2878,7 +2878,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__forgetPendingModulePatches(Zig::
     forEachPendingModulePatch(globalObject, [](JSModuleMock* mock) { mock->hasPendingPatch = false; });
 }
 
-static void giveBackPreloadModules(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) static void giveBackPreloadModules(Zig::GlobalObject* globalObject)
 {
     auto& plugins = globalObject->onLoadPlugins;
     if (plugins.evictedPreloadModules.isEmpty() && plugins.evictedPreloadCommonJSModules.isEmpty()) [[likely]]
@@ -3172,7 +3172,7 @@ static JSValue evaluateModuleMock(Zig::GlobalObject* globalObject, JSC::Abstract
 
 // Whether `start` can't finish evaluating until `target`, the module `running` mocks, has. If it can, `unfinished` gets the modules that must
 // finish first and aren't in the import chain yet. A waiting module keeps waiting while the factory runs, so waitingModules caches the answer.
-static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& start, const String& target, Vector<String>& unfinished)
+__attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& start, const String& target, Vector<String>& unfinished)
 {
     if (running.waitingModules.contains(start))
         return true;
@@ -3821,7 +3821,7 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     return isOfVitest ? Zig::originalModuleKey(key) : key;
 }
 
-String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
+__attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.

@@ -768,6 +768,7 @@ impl FakeTimers {
     }
 
     /// Runs no JS with `Restore::Always`, but settling the returned drives does.
+    #[optimize(size)]
     fn uninstall(global: &JSGlobalObject, restore: Restore) -> Vec<AsyncDrive> {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let mut deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
@@ -1495,6 +1496,7 @@ fn vitest_use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     use_fake_timers_with_default(global, frame, Flavor::Vi, faked)
 }
 
+#[optimize(size)]
 fn use_fake_timers_with_default(
     global: &JSGlobalObject,
     frame: &CallFrame,

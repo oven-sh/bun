@@ -331,6 +331,7 @@ impl Snapshots {
     }
 
     /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
+    #[optimize(size)]
     pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
         let buntest_strong = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let buntest = buntest_strong.get();
@@ -728,6 +729,7 @@ impl Snapshots {
         Ok(())
     }
 
+    #[optimize(size)]
     pub(crate) fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.

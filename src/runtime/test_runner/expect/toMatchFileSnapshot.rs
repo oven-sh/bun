@@ -9,6 +9,7 @@ use super::Expect;
 use super::get_signature;
 use super::throw;
 
+#[optimize(size)]
 pub(crate) fn to_match_file_snapshot(
     this: &Expect,
     global: &JSGlobalObject,

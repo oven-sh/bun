@@ -172,7 +172,7 @@ describe("css tests", () => {
   width: calc(infinity * -1px);
   height: infinity;
 }`,
-      indoc`.rounded-full{width:-3.40282e38px;height:infinity;border-radius:3.40282e38px}`,
+      indoc`.rounded-full{width:0;height:infinity;border-radius:3.40282e38px}`,
     );
 
     // NaN is valid inside calc() (CSS Values 4 "Infinities, NaN, and Signed Zero").
@@ -208,7 +208,7 @@ describe("css tests", () => {
     // compared with the center after the maximum has replaced it.
     minify_test(`a { width: clamp(20px, 15px, 10px) }`, `a{width:20px}`);
     minify_test(`a { width: clamp(30px, 100px, 20px) }`, `a{width:30px}`);
-    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:-10px}`);
+    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:0}`);
     // A lower bound that cannot be compared at parse time is kept, whether or not the center
     // was above the maximum.
     minify_test(`a { width: clamp(10vw, 5px, 20px) }`, `a{width:max(10vw,5px)}`);

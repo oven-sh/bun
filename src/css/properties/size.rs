@@ -10,7 +10,9 @@ use crate::properties::{Property, PropertyId, PropertyIdTag};
 use css::logical::PropertyCategory;
 
 use css::css_values::length::LengthPercentage;
+use css::css_values::number::NonNegative;
 use css::css_values::ratio::Ratio;
+use css::generic::Parse as _;
 
 use css::DeclarationList;
 use css::PropertyHandlerContext;
@@ -53,7 +55,7 @@ pub enum Size {
     /// The `auto` keyworda
     Auto,
     /// An explicit length or percentage.
-    LengthPercentage(LengthPercentage),
+    LengthPercentage(NonNegative<LengthPercentage>),
     /// The `min-content` keyword.
     MinContent(VendorPrefix),
     /// The `max-content` keyword.
@@ -61,7 +63,7 @@ pub enum Size {
     /// The `fit-content` keyword.
     FitContent(VendorPrefix),
     /// The `fit-content()` function.
-    FitContentFunction(LengthPercentage),
+    FitContentFunction(NonNegative<LengthPercentage>),
     /// The `stretch` keyword, or the `-webkit-fill-available` or `-moz-available` prefixed keywords.
     Stretch(VendorPrefix),
     /// The `contain` keyword.
@@ -110,7 +112,7 @@ impl Size {
             return Ok(Size::FitContentFunction(v));
         }
 
-        let lp = input.try_parse(LengthPercentage::parse)?;
+        let lp = input.try_parse(NonNegative::<LengthPercentage>::parse)?;
         Ok(Size::LengthPercentage(lp))
     }
 
@@ -143,10 +145,10 @@ impl Size {
             }
             Size::FitContentFunction(l) => {
                 dest.write_str("fit-content(")?;
-                l.to_css(dest)?;
+                l.0.to_css(dest)?;
                 dest.write_char(b')')
             }
-            Size::LengthPercentage(l) => l.to_css(dest),
+            Size::LengthPercentage(l) => l.0.to_css(dest),
         }
     }
 }
@@ -157,12 +159,12 @@ impl Size {
     fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
-            Size::LengthPercentage(l) => l.is_compatible(browsers),
+            Size::LengthPercentage(l) => l.0.is_compatible(browsers),
             Size::MinContent(_) => F::MinContentSize.is_compatible(browsers),
             Size::MaxContent(_) => F::MaxContentSize.is_compatible(browsers),
             Size::FitContent(_) => F::FitContentSize.is_compatible(browsers),
             Size::FitContentFunction(l) => {
-                F::FitContentFunctionSize.is_compatible(browsers) && l.is_compatible(browsers)
+                F::FitContentFunctionSize.is_compatible(browsers) && l.0.is_compatible(browsers)
             }
             Size::Stretch(vp) => {
                 let feature = if *vp == VendorPrefix::NONE {
@@ -199,7 +201,7 @@ pub enum MaxSize {
     /// The `none` keyword.
     None,
     /// An explicit length or percentage.
-    LengthPercentage(LengthPercentage),
+    LengthPercentage(NonNegative<LengthPercentage>),
     /// The `min-content` keyword.
     MinContent(VendorPrefix),
     /// The `max-content` keyword.
@@ -207,7 +209,7 @@ pub enum MaxSize {
     /// The `fit-content` keyword.
     FitContent(VendorPrefix),
     /// The `fit-content()` function.
-    FitContentFunction(LengthPercentage),
+    FitContentFunction(NonNegative<LengthPercentage>),
     /// The `stretch` keyword, or the `-webkit-fill-available` or `-moz-available` prefixed keywords.
     Stretch(VendorPrefix),
     /// The `contain` keyword.
@@ -244,7 +246,7 @@ impl MaxSize {
             return Ok(MaxSize::FitContentFunction(v));
         }
 
-        match input.try_parse(LengthPercentage::parse) {
+        match input.try_parse(NonNegative::<LengthPercentage>::parse) {
             Ok(v) => Ok(MaxSize::LengthPercentage(v)),
             Err(e) => Err(e),
         }
@@ -279,10 +281,10 @@ impl MaxSize {
             }
             MaxSize::FitContentFunction(l) => {
                 dest.write_str("fit-content(")?;
-                l.to_css(dest)?;
+                l.0.to_css(dest)?;
                 dest.write_char(b')')
             }
-            MaxSize::LengthPercentage(l) => l.to_css(dest),
+            MaxSize::LengthPercentage(l) => l.0.to_css(dest),
         }
     }
 }
@@ -293,12 +295,12 @@ impl MaxSize {
     fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
-            MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
+            MaxSize::LengthPercentage(l) => l.0.is_compatible(browsers),
             MaxSize::MinContent(_) => F::MinContentSize.is_compatible(browsers),
             MaxSize::MaxContent(_) => F::MaxContentSize.is_compatible(browsers),
             MaxSize::FitContent(_) => F::FitContentSize.is_compatible(browsers),
             MaxSize::FitContentFunction(l) => {
-                F::FitContentFunctionSize.is_compatible(browsers) && l.is_compatible(browsers)
+                F::FitContentFunctionSize.is_compatible(browsers) && l.0.is_compatible(browsers)
             }
             MaxSize::Stretch(vp) => {
                 let feature = if *vp == VendorPrefix::NONE {
@@ -379,9 +381,9 @@ impl AspectRatio {
     }
 }
 
-fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
+fn parse_fit_content(input: &mut css::Parser) -> css::Result<NonNegative<LengthPercentage>> {
     input.expect_function_matching(b"fit-content")?;
-    input.parse_nested_block(LengthPercentage::parse)
+    input.parse_nested_block(NonNegative::<LengthPercentage>::parse)
 }
 
 bitflags::bitflags! {

@@ -2657,7 +2657,10 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
   // Where `held` comes from: the project's package.json and the directory `held` is in, if any.
   const sources = {
     "the registry": { manifest: { dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] }, dir: undefined },
-    "a file: folder": { manifest: { dependencies: { held: "file:./held" }, trustedDependencies: ["held"] }, dir: "held" },
+    "a file: folder": {
+      manifest: { dependencies: { held: "file:./held" }, trustedDependencies: ["held"] },
+      dir: "held",
+    },
     "a workspace": {
       manifest: { workspaces: ["packages/*"], dependencies: { held: "workspace:*" } },
       dir: join("packages", "held"),

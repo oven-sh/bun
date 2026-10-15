@@ -704,15 +704,127 @@ process.on('message', (m, sock) => {
     });
     expect(exitCode).toBe(0);
   });
+});
+
+// The first two tests send the handle and disconnect in the same tick, with nothing queued ahead of the
+// handle. A Windows pipe write completes later, so there the handle is still queued when disconnect() runs.
+describe("process.send(message, handle) followed by disconnect()", () => {
+  // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
+  // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
+  // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
+  test.concurrent(
+    "handoff detaches the sender's socket; disconnect() reports disconnected at once but flushes messages queued behind the handle",
+    async () => {
+      using dir = tempDir("ipc-handle-detach-flush", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const senderEvents = [];
+let client, connectedAfterDisconnect, secondDisconnect = 'no error';
+child.on('error', e => { secondDisconnect = e.code; });
+const server = net.createServer(sock => {
+  sock.on('end', () => senderEvents.push('end'));
+  sock.on('close', () => senderEvents.push('close'));
+  child.send('sock', sock);
+  child.send({ type: 'after-handle' });
+  child.disconnect();
+  // While the queue behind the handle drains, the channel already reports disconnected.
+  connectedAfterDisconnect = child.connected;
+  child.disconnect();
+});
+child.on('exit', code => {
+  client.destroy();
+  server.close(() => console.log(JSON.stringify({ childSawQueuedMessage: code === 0, senderEvents, connectedAfterDisconnect, secondDisconnect })));
+});
+server.listen(0, '127.0.0.1', () => {
+  client = net.connect(server.address().port, '127.0.0.1');
+  client.on('error', () => {});
+});
+`,
+        "child.js": `
+let sawQueued = false;
+process.on('message', (m, sock) => { if (sock) sock.destroy(); else sawQueued = m.type === 'after-handle'; });
+process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          childSawQueuedMessage: true,
+          senderEvents: [],
+          connectedAfterDisconnect: false,
+          secondDisconnect: "ERR_IPC_DISCONNECTED",
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The child sends a server and disconnects at once. node: process.connected drops immediately, a
+  // second disconnect() errors, and the parent receives the server, then the message queued behind
+  // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on
+  // 'close', which a fork()ed child reaches only after 'exit', the IPC 'disconnect' and the end of
+  // the stderr pipe; 'exit' alone can run before the other two.
+  test.concurrent("a handle sent right before the child's disconnect() is delivered, in send order", async () => {
+    using dir = tempDir("ipc-handle-then-disconnect", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
+const got = [];
+let childReport = '';
+child.stderr.on('data', d => { childReport += d; });
+child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
+child.on('disconnect', () => got.push('disconnect'));
+child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
+`,
+      "child.js": `
+const net = require('node:net');
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  process.send('srv', server);
+  process.send('after-handle');
+  process.disconnect();
+  const connectedAfterDisconnect = process.connected;
+  let secondDisconnect = 'no error';
+  process.once('error', e => { secondDisconnect = e.code; });
+  process.disconnect();
+  process.on('disconnect', () => { process.stderr.write(JSON.stringify({ connectedAfterDisconnect, secondDisconnect })); server.close(); });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: {
+        got: ["handle:srv", "after-handle", "disconnect"],
+        code: 0,
+        child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // node holds a disconnect() back from the moment it submits a handle until that handle is acked:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
-  // Every fixture here sends a 2 MiB message first. It does not fit in the IPC socket buffer, so the
-  // sends behind it are still unwritten when disconnect() runs in the same tick.
-  // Not on Windows: a pipe write there completes later whatever its size, so the same-tick order in the
-  // last describe of this file is the Windows form of this case. A close there also waits for the write
-  // in progress, so the no-handle test cannot finish against a peer that never reads.
-  describe.skipIf(isWindows)("disconnect() with sends still queued behind an unfinished write", () => {
+  // Every fixture here sends a 2 MiB message first, so the sends behind it are still unwritten when
+  // disconnect() runs in the same tick: the message does not fit in a POSIX IPC socket buffer, and a
+  // Windows pipe write completes later whatever its size.
+  describe("disconnect() with sends still queued behind an unfinished write", () => {
     const disconnectedState = {
       connected: false,
       secondDisconnect: "ERR_IPC_DISCONNECTED",
@@ -897,13 +1009,16 @@ server.listen(0, '127.0.0.1', () => {
       expect(exitCode).toBe(0);
     });
 
-    // Only a handle postpones the close. This peer never reads, so a disconnect() that waited for the
-    // queue would never finish.
-    test.concurrent("subprocess.disconnect() does not wait for queued sends that carry no handle", async () => {
-      using dir = tempDir("ipc-plain-queued-disconnect", {
-        "parent.js": `
+    // Only a handle postpones the close. This peer blocks on its stdin pipe until the parent kills it, so
+    // it never reads the channel, and a disconnect() that waited for the queue would never finish.
+    // Not on Windows: a close there waits for the write in progress, which this peer never lets complete.
+    test.concurrent.skipIf(isWindows)(
+      "subprocess.disconnect() does not wait for queued sends that carry no handle",
+      async () => {
+        using dir = tempDir("ipc-plain-queued-disconnect", {
+          "parent.js": `
 const { fork } = require('node:child_process');
-const child = fork('child.js');
+const child = fork('child.js', { stdio: ['pipe', 'inherit', 'inherit', 'ipc'] });
 let disconnects = 0;
 child.send({ pad: Buffer.alloc(2 * 1024 * 1024, 'x').toString() });
 child.send('after');
@@ -911,135 +1026,22 @@ child.disconnect();
 child.on('disconnect', () => { disconnects++; child.kill('SIGKILL'); });
 child.on('close', (code, signal) => console.log(JSON.stringify({ disconnects, signal })));
 `,
-        "child.js": `const end = Date.now() + 30_000; while (Date.now() < end) {}`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "parent.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-        out: { disconnects: 1, signal: "SIGKILL" },
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    });
-  });
-});
-
-// These two send the handle and disconnect in the same tick, with nothing queued ahead of the handle.
-// A Windows pipe write completes later, so there the handle is still queued when disconnect() runs.
-describe("process.send(message, handle) followed by disconnect()", () => {
-  // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
-  // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
-  // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
-  test.concurrent(
-    "handoff detaches the sender's socket; disconnect() reports disconnected at once but flushes messages queued behind the handle",
-    async () => {
-      using dir = tempDir("ipc-handle-detach-flush", {
-        "parent.js": `
-const { fork } = require('node:child_process');
-const net = require('node:net');
-const child = fork('child.js');
-const senderEvents = [];
-let client, connectedAfterDisconnect, secondDisconnect = 'no error';
-child.on('error', e => { secondDisconnect = e.code; });
-const server = net.createServer(sock => {
-  sock.on('end', () => senderEvents.push('end'));
-  sock.on('close', () => senderEvents.push('close'));
-  child.send('sock', sock);
-  child.send({ type: 'after-handle' });
-  child.disconnect();
-  // While the queue behind the handle drains, the channel already reports disconnected.
-  connectedAfterDisconnect = child.connected;
-  child.disconnect();
-});
-child.on('exit', code => {
-  client.destroy();
-  server.close(() => console.log(JSON.stringify({ childSawQueuedMessage: code === 0, senderEvents, connectedAfterDisconnect, secondDisconnect })));
-});
-server.listen(0, '127.0.0.1', () => {
-  client = net.connect(server.address().port, '127.0.0.1');
-  client.on('error', () => {});
-});
-`,
-        "child.js": `
-let sawQueued = false;
-process.on('message', (m, sock) => { if (sock) sock.destroy(); else sawQueued = m.type === 'after-handle'; });
-process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
-`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "parent.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-        out: {
-          childSawQueuedMessage: true,
-          senderEvents: [],
-          connectedAfterDisconnect: false,
-          secondDisconnect: "ERR_IPC_DISCONNECTED",
-        },
-        stderr: "",
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
-
-  // The child sends a server and disconnects at once. node: process.connected drops immediately, a
-  // second disconnect() errors, and the parent receives the server, then the message queued behind
-  // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on
-  // 'close', which a fork()ed child reaches only after 'exit', the IPC 'disconnect' and the end of
-  // the stderr pipe; 'exit' alone can run before the other two.
-  test.concurrent("a handle sent right before the child's disconnect() is delivered, in send order", async () => {
-    using dir = tempDir("ipc-handle-then-disconnect", {
-      "parent.js": `
-const { fork } = require('node:child_process');
-const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
-const got = [];
-let childReport = '';
-child.stderr.on('data', d => { childReport += d; });
-child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
-child.on('disconnect', () => got.push('disconnect'));
-child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
-`,
-      "child.js": `
-const net = require('node:net');
-const server = net.createServer().listen(0, '127.0.0.1', () => {
-  process.send('srv', server);
-  process.send('after-handle');
-  process.disconnect();
-  const connectedAfterDisconnect = process.connected;
-  let secondDisconnect = 'no error';
-  process.once('error', e => { secondDisconnect = e.code; });
-  process.disconnect();
-  process.on('disconnect', () => { process.stderr.write(JSON.stringify({ connectedAfterDisconnect, secondDisconnect })); server.close(); });
-});
-`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
-      out: {
-        got: ["handle:srv", "after-handle", "disconnect"],
-        code: 0,
-        child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
+          "child.js": `require('node:fs').readSync(0, Buffer.alloc(1));`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "parent.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+          out: { disconnects: 1, signal: "SIGKILL" },
+          stderr: "",
+        });
+        expect(exitCode).toBe(0);
       },
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
+    );
   });
 });

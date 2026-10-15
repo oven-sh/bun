@@ -186,8 +186,13 @@ function integersThatNeedRounding(prefixes: [string, string, number][]) {
   const cases: [string, bigint][] = [];
   const add = (prefix: string, digits: string) =>
     cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
-  let seed = 12345;
-  const random = (below: number) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % below;
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
   for (let i = 0; i < 600; i++) {
     const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
     let digits = "";
@@ -216,7 +221,7 @@ function integersThatNeedRounding(prefixes: [string, string, number][]) {
     const radix = new Set(alphabet.toLowerCase()).size;
     for (const edge of edges) add(prefix, edge.toString(radix));
   }
-  add("0x", "0".repeat(100) + "b3c8bf81fdf2247");
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
   add("0x", "b3c8_bf81_fdf2_247");
   return cases;
 }

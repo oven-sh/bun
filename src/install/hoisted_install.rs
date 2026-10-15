@@ -193,7 +193,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    let leaves_out = {
+    let older_layout_can_differ = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -214,7 +214,7 @@ pub(crate) fn install_hoisted_packages(
                     workspace_filters,
                     packages_to_install,
                 )?
-                .leaves_out
+                .older_layout_can_differ
         }
     };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
@@ -328,7 +328,7 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
-        leaves_out,
+        older_layout_can_differ,
         ..Default::default()
     };
 

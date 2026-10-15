@@ -65,8 +65,8 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
-    /// Hoisted linker: `tree::Hoisted::leaves_out`.
-    pub(crate) leaves_out: bool,
+    /// Hoisted linker: `tree::Builder::older_layout_can_differ`.
+    pub(crate) older_layout_can_differ: bool,
 
     pub(crate) offline_misses: OfflineMisses,
 }

@@ -1637,6 +1637,7 @@ impl Lockfile {
             contested_rows: Default::default(),
             kept: None,
             older_layout: layout == tree::Layout::Older,
+            older_layout_can_differ: false,
             linked: Default::default(),
         };
 
@@ -1659,7 +1660,7 @@ impl Lockfile {
         let cleaned = builder.clean()?;
         let hoisted = tree::Hoisted {
             late_bound_peer: builder.late_bound_peer,
-            leaves_out: builder.kept.is_some(),
+            older_layout_can_differ: builder.older_layout_can_differ,
         };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;

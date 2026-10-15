@@ -1030,17 +1030,15 @@ pub fn install_with_manager(
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
     // `skipped`: something of an earlier install is still there.
-    if install_summary.leaves_out
+    if install_summary.older_layout_can_differ
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
-        && let Some(laid) = &install_summary.successfully_installed
     {
         crate::prune::remove_copies_of_the_older_layout(
             manager,
             install_root_dependencies,
             &workspace_filters,
-            laid,
         );
     }
     if manager.options.global && manager.options.do_.install_packages() {

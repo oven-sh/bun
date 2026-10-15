@@ -1612,14 +1612,16 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 /// `--production`, `--omit`, `--filter` or a package for another platform it nested copies where no
 /// bun.lock has a key, and replaced whatever else it found there. Nothing is laid in such a place
 /// now, nor below it, so the folder goes: it hides the package further up, which has what it needs.
-/// For an install that leaves something out and laid something, as the first one over such a tree
-/// does. `laid`: the packages. bun.lock is saved.
+/// What the owner's tarball or scripts can have put there stays. For an install that laid something,
+/// as the first one over such a tree does. bun.lock is saved.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
-    laid: &DynamicBitSet,
 ) {
+    let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
+        return;
+    };
     // A hoist can bind a peer.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
     let Ok(saved) = hoist_install_tree(manager, true) else {
@@ -1644,19 +1646,65 @@ pub(crate) fn remove_copies_of_the_older_layout(
     )
     .is_ok()
     {
-        remove_from_older_places(manager, &places, laid);
+        remove_from_older_places(manager, &places, cache);
     }
     restore_tree(&mut manager.lockfile, saved);
     manager.lockfile.buffers.resolutions = resolutions;
+}
+
+/// Whether scripts of the package in the folder `alias` can have run. They lay what they like.
+fn can_have_run_scripts(lockfile: &Lockfile, alias: &[u8], pkg_id: PackageID) -> bool {
+    let Some(res) = lockfile.packages.items_resolution().get(pkg_id as usize) else {
+        return true;
+    };
+    if res.tag == ResolutionTag::Workspace {
+        return lockfile.packages.items_scripts()[pkg_id as usize].has_any();
+    }
+    // A bun.lock that 1.4.3 wrote does not say which packages have scripts.
+    let name = lockfile.packages.items_name()[pkg_id as usize];
+    lockfile.has_trusted_dependency(alias, name.slice(&lockfile.buffers.string_bytes), res)
+}
+
+/// Whether `node_modules/<alias>` came with the package. `None`: its cache entry is not there to say.
+fn tarball_has(
+    manager: &PackageManager,
+    cache: sys::Fd,
+    pkg_id: PackageID,
+    alias: &[u8],
+) -> Option<bool> {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let res = &lockfile.packages.items_resolution()[pkg_id as usize];
+    match res.tag {
+        ResolutionTag::Workspace => return Some(false),
+        ResolutionTag::Npm => {}
+        _ => return None,
+    }
+    let name = lockfile.packages.items_name()[pkg_id as usize];
+    let entry: Box<[u8]> = crate::package_manager::cached_npm_package_folder_name(
+        manager,
+        name.slice(&lockfile.buffers.string_bytes),
+        res.npm().version,
+        None,
+    )
+    .as_bytes()
+    .into();
+    let is_folder =
+        |path: &[u8]| sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&zname(path))).ok();
+    if is_folder(&join(&join(&entry, b"node_modules"), alias))? {
+        return Some(true);
+    }
+    is_folder(&entry)?.then_some(false)
 }
 
 /// `manager.lockfile` carries the older layout. `places`: those of today's and what is there, sorted.
 fn remove_from_older_places(
     manager: &PackageManager,
     places: &[(Box<[u8]>, PackageID)],
-    laid: &DynamicBitSet,
+    cache: sys::Fd,
 ) {
     let lockfile: &Lockfile = &manager.lockfile;
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
     let older = HoistedTree::init(lockfile, true);
     let today = |place: &[u8]| {
         let found = places.binary_search_by(|(path, _)| (**path).cmp(place));
@@ -1677,14 +1725,12 @@ fn remove_from_older_places(
         {
             continue;
         }
-        // A tarball ships folders at any depth below the package that bundles. Below a package that
-        // this run laid there is nothing of an earlier one: its tarball and its scripts put it there.
+        // A tarball ships folders at any depth below the package that bundles.
         let mut above = id;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            if has_bundled_deps(lockfile, owner)
-                || laid.is_set_allow_out_of_bound(owner as usize, true)
-            {
+            let folder = older.trees[above].folder_name(deps, buf);
+            if has_bundled_deps(lockfile, owner) || can_have_run_scripts(lockfile, folder, owner) {
                 break;
             }
             above = older.trees[above].parent as usize;
@@ -1696,6 +1742,7 @@ fn remove_from_older_places(
         let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
             continue;
         };
+        let owner = tree_owner(lockfile, id);
         scan_folder(
             dir,
             path,
@@ -1704,6 +1751,7 @@ fn remove_from_older_places(
                 entry.kind != EntryKind::Directory
                     || older.expected_in(tree_id, entry.alias).is_none()
                     || !only_older(entry.alias)
+                    || tarball_has(manager, cache, owner, entry.alias) != Some(false)
             },
             &mut plan,
         );

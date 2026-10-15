@@ -473,8 +473,8 @@ pub(crate) enum Layout {
 pub(crate) struct Hoisted {
     /// `Builder::late_bound_peer`.
     pub(crate) late_bound_peer: bool,
-    /// The run links less than the tree places. If not, the two layouts are one.
-    pub(crate) leaves_out: bool,
+    /// `Builder::older_layout_can_differ`.
+    pub(crate) older_layout_can_differ: bool,
 }
 
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
@@ -526,6 +526,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// The install tree of bun 1.4.3 and before: what the run leaves out takes no place, so the
     /// rest moves up. `prune::remove_copies_of_the_older_layout` asks where that put a package.
     pub(crate) older_layout: bool,
+    /// False: `older_layout` would give the rows of this run the places they have.
+    pub(crate) older_layout_can_differ: bool,
     pub(crate) linked: reachable::Linked,
 }
 
@@ -836,14 +838,21 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         })
     }
 
-    /// Fills `kept`.
+    /// Fills `kept` and `older_layout_can_differ`.
     pub(crate) fn keep_linked_rows(&mut self) {
-        if !self.older_layout {
-            let kept = self.linked_rows().and_then(|mut rows| rows.walk());
-            self.kept = kept;
+        if self.older_layout {
+            return;
         }
+        let Some(mut rows) = self.linked_rows() else {
+            return;
+        };
+        let (kept, older_layout_can_differ) = rows.walk();
+        self.kept = kept;
+        self.older_layout_can_differ = older_layout_can_differ;
     }
 }
+
+type KeptRows = bun_collections::HashMap<(Id, DependencyID), DependencyID>;
 
 /// What `Builder::keep_linked_rows` reads of a finished install tree.
 struct LinkedRows<'b> {
@@ -897,7 +906,8 @@ impl LinkedRows<'_> {
 
     /// The rows this run's importers reach, each name looked up as node does. `None`: all.
     /// A pass of its own: an edge the run follows can lead to a row that one it leaves out placed.
-    fn walk(&mut self) -> Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>> {
+    /// And `Builder::older_layout_can_differ`.
+    fn walk(&mut self) -> (Option<KeptRows>, bool) {
         use bun_collections::HashMap;
 
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
@@ -914,7 +924,7 @@ impl LinkedRows<'_> {
         }
         // A contested place has a tree for each group, and a run links one of them.
         if !any_left_out && self.contested.is_empty() {
-            return None;
+            return (None, false);
         }
 
         let mut kept: HashMap<(Id, DependencyID), DependencyID> =
@@ -932,7 +942,9 @@ impl LinkedRows<'_> {
         if !trees.is_empty() {
             todo.push((0, 0, false));
         }
+        let mut walked = vec![false; lists.len()];
         while let Some((from, pkg_id, shipped)) = todo.pop() {
+            walked[pkg_id as usize] = true;
             let list = self.resolution_lists[pkg_id as usize];
             'dep: for dep_id in list.begin()..list.end() {
                 let dep = &dependencies[dep_id as usize];
@@ -1003,7 +1015,34 @@ impl LinkedRows<'_> {
             }
         }
 
-        Some(kept)
+        // Where a row stands depends on the rows of its name, on where its owner stands and, for one
+        // with a peer, on the rows of that name. So without the edges that the run does not follow
+        // a kept row can stand elsewhere only if one of them has its name, leads to a package that
+        // the run links too (whose rows it then placed from another folder), or is a peer's.
+        let mut idle_names: Vec<PackageNameHash> = Vec::new();
+        let mut can_differ = false;
+        for (pkg_id, list) in lists.iter().enumerate() {
+            for dep_id in list.begin()..list.end() {
+                let target = self.resolutions[dep_id as usize];
+                if target == invalid_package_id || (walked[pkg_id] && !left_out[dep_id as usize]) {
+                    continue;
+                }
+                let dep = &dependencies[dep_id as usize];
+                can_differ |= walked.get(target as usize) == Some(&true)
+                    || (walked[pkg_id] && dep.behavior.is_peer());
+                idle_names.push(dep.name_hash);
+            }
+        }
+        if !can_differ && !idle_names.is_empty() {
+            idle_names.sort_unstable();
+            can_differ = kept.keys().any(|&(_, row)| {
+                idle_names
+                    .binary_search(&dependencies[row as usize].name_hash)
+                    .is_ok()
+            });
+        }
+
+        (Some(kept), can_differ)
     }
 }
 

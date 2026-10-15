@@ -1925,36 +1925,47 @@ describe.concurrent("a folder that no bun.lock placed stays", () => {
     }
   });
 
-  // Without the root's own b, an older bun gave m's b@1.0.0 the root and n a b of its own.
-  test("from the script of a package that this run lays, where an older bun nested a copy", async () => {
-    const own = JSON.stringify({ name: "b", version: "2.0.0", from: "the script" });
+  // Without the root's own b, an older bun gave m's b@1.0.0 the root, and `ships` and `runs` a b of their own.
+  test("below a package, from its tarball or its script, where an older bun nested a copy", async () => {
+    const own = (from: string) => JSON.stringify({ name: "b", version: "2.0.0", from });
+    const dependencies = { b: "^2.0.0" };
     using server = await serveGraph(
       {
         m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
-        n: { "1.0.0": { dependencies: { b: "^2.0.0" }, scripts: { postinstall: `${bunExe()} build.js` } } },
+        ships: { "1.0.0": { dependencies } },
+        runs: { "1.0.0": { dependencies, scripts: { postinstall: `${bunExe()} build.js` } } },
         b: { "1.0.0": {}, "2.0.0": {} },
+        other: { "1.0.0": {} },
       },
       {
-        "n-1.0.0": {
+        "ships-1.0.0": { "node_modules/b/package.json": own("the tarball") },
+        "runs-1.0.0": {
           "build.js": `require("fs").rmSync("node_modules/b", { recursive: true, force: true });
             require("fs").mkdirSync("node_modules/b", { recursive: true });
-            require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own)});`,
+            require("fs").writeFileSync("node_modules/b/package.json", ${JSON.stringify(own("the script"))});`,
         },
       },
     );
-    using tmp = tempDir("hoist-script-older-place", {
+    using tmp = tempDir("hoist-own-older-place", {
       "bunfig.toml": bunfig(server),
       "package.json": JSON.stringify({
         name: "root",
         dependencies: { m: "1.0.0" },
         devDependencies: { b: "^2.0.0" },
-        trustedDependencies: ["n"],
+        trustedDependencies: ["runs"],
       }),
     });
     const dir = String(tmp);
+    const seen = () =>
+      ["ships", "runs"].map(owner =>
+        readFileSync(join(dir, "node_modules", owner, "node_modules", "b", "package.json"), "utf8"),
+      );
     await run(dir, "install", "--omit=dev");
-    await run(dir, "add", "n", "--omit=dev");
-    expect(await file(join(dir, "node_modules", "n", "node_modules", "b", "package.json")).text()).toBe(own);
+    // The run that lays them keeps m, and the next one keeps them.
+    for (const added of [["ships", "runs"], ["other"]]) {
+      await run(dir, "add", ...added, "--omit=dev");
+      expect(seen()).toEqual([own("the tarball"), own("the script")]);
+    }
   });
 
   test("in a member's node_modules and below a package, by hand", async () => {

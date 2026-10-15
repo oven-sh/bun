@@ -3033,6 +3033,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The `#private` field that decorator lowering adds for the value of an `accessor`.
+        IsAccessorStorage,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

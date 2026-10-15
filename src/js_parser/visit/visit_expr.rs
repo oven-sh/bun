@@ -117,6 +117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.suspend_count += 1;
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
@@ -124,6 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
+            p.fn_or_arrow_data_visit.suspend_count += 1;
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
             }
@@ -2784,11 +2786,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
+        let suspend_count = p.fn_or_arrow_data_visit.suspend_count;
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE, true);
 
         // Lower standard decorators for class expressions
         if e_.should_lower_standard_decorators {
-            *e = p.lower_standard_decorators_expr(expr, &mut e_, decorator_name_from_context);
+            // An `await` or a `yield` in a key, a decorator or the `extends` clause.
+            let suspends = p.fn_or_arrow_data_visit.suspend_count != suspend_count;
+            *e = p.lower_standard_decorators_expr(
+                expr,
+                &mut e_,
+                decorator_name_from_context,
+                suspends,
+            );
             return;
         }
 

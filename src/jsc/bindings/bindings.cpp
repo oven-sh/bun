@@ -6809,7 +6809,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         JSC::SourceTaintedOrigin::Untainted,
         filename,
         WTF::TextPosition(),
-        JSC::SourceProviderSourceType::Program);
+        JSC::SourceProviderSourceType::Program,
+        // What was typed at the terminal, or Bun's own text (`bun lint`): never a JavaScript value.
+        JSC::SourceProvenance::Static);
 
     WTF::NakedPtr<JSC::Exception> evalException;
     JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);

@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -70,28 +70,66 @@ describe("FormData", () => {
       return { isFile: value instanceof File, name: value.name, type: value.type, text: await value.text() };
     }
 
-    it("filename argument replaces the File's own name", async () => {
-      const file = new File(["abc"], "orig.txt", { type: "text/plain" });
-      const form = new FormData();
-      form.append("appended", file, "appended.txt");
-      form.set("set", file, "set.txt");
+    it("append/set honor the filename argument when value is already a File", async () => {
+      const origA = new File(["x"], "orig-a.txt", { type: "text/plain" });
+      const origB = new File(["x"], "orig-b.txt");
+      const origC = new File([], "orig-c.txt");
+      const fd = new FormData();
 
-      expect(await entry(form, "appended")).toEqual({
-        isFile: true,
-        name: "appended.txt",
-        type: "text/plain;charset=utf-8",
-        text: "abc",
+      fd.append("a", origA, "over-a.txt");
+      fd.set("b", origB, "over-b.txt");
+      fd.append("c", origC, "over-c.txt");
+      fd.append("shared1", origA, "shared-1.txt");
+      fd.append("shared2", origA, "shared-2.txt");
+      fd.append("emptyblob", new Blob([]), "empty-blob.txt");
+
+      expect({
+        a: (fd.get("a") as File).name,
+        b: (fd.get("b") as File).name,
+        c: (fd.get("c") as File).name,
+        shared1: (fd.get("shared1") as File).name,
+        shared2: (fd.get("shared2") as File).name,
+        emptyblob: (fd.get("emptyblob") as File).name,
+        getAllA: (fd.getAll("a") as File[]).map(f => f.name),
+        iter: [...fd].map(([k, v]) => [k, (v as File).name]),
+      }).toEqual({
+        a: "over-a.txt",
+        b: "over-b.txt",
+        c: "over-c.txt",
+        shared1: "shared-1.txt",
+        shared2: "shared-2.txt",
+        emptyblob: "empty-blob.txt",
+        getAllA: ["over-a.txt"],
+        iter: [
+          ["a", "over-a.txt"],
+          ["b", "over-b.txt"],
+          ["c", "over-c.txt"],
+          ["shared1", "shared-1.txt"],
+          ["shared2", "shared-2.txt"],
+          ["emptyblob", "empty-blob.txt"],
+        ],
       });
-      expect(await entry(form, "set")).toEqual({
+
+      // The caller's original File must not be mutated.
+      expect([origA.name, origB.name, origC.name]).toEqual(["orig-a.txt", "orig-b.txt", "orig-c.txt"]);
+      expect(await entry(fd, "a")).toEqual({
         isFile: true,
-        name: "set.txt",
+        name: "over-a.txt",
         type: "text/plain;charset=utf-8",
-        text: "abc",
+        text: "x",
       });
-      expect(form.getAll("appended").map(v => (v as File).name)).toEqual(["appended.txt"]);
-      expect([...form.entries()].map(([, v]) => (v as File).name)).toEqual(["appended.txt", "set.txt"]);
-      // The File passed in keeps its own name.
-      expect(file.name).toBe("orig.txt");
+      expect(fd.get("a")).not.toBe(origA);
+      expect(fd.get("emptyblob") instanceof File).toBe(true);
+
+      const filenames = [...(await new Response(fd).text()).matchAll(/filename="([^"]*)"/g)].map(m => m[1]);
+      expect(filenames).toEqual([
+        "over-a.txt",
+        "over-b.txt",
+        "over-c.txt",
+        "shared-1.txt",
+        "shared-2.txt",
+        "empty-blob.txt",
+      ]);
     });
 
     it("a Blob without a filename argument becomes a File named 'blob'", async () => {
@@ -121,6 +159,34 @@ describe("FormData", () => {
       form.append("empty", new File(["x"], ""), undefined);
       expect((form.get("named") as File).name).toBe("orig.txt");
       expect((form.get("empty") as File).name).toBe("");
+    });
+
+    it("append/set without a filename keep the File's own name", async () => {
+      using dir = tempDir("formdata-file-name", { "payload.bin": "payload" });
+      const onDisk = join(String(dir), "payload.bin");
+
+      const fileBacked = new File([Bun.file(onDisk)], "display.txt");
+      expect(fileBacked.name).toBe("display.txt");
+
+      const renamed = new File(["abc"], "one.txt") as File & { name: string };
+      renamed.name = "two.txt";
+      expect(renamed.name).toBe("two.txt");
+
+      const fd = new FormData();
+      fd.append("file", fileBacked);
+      fd.set("renamed", renamed);
+
+      expect({
+        file: (fd.get("file") as File).name,
+        renamed: (fd.get("renamed") as File).name,
+      }).toEqual({
+        file: "display.txt",
+        renamed: "two.txt",
+      });
+
+      const body = await new Response(fd).text();
+      expect(body).toContain('Content-Disposition: form-data; name="file"; filename="display.txt"\r\n');
+      expect(body).toContain('Content-Disposition: form-data; name="renamed"; filename="two.txt"\r\n');
     });
 
     it("append() and set() both replace a lone surrogate in the File's own name", () => {

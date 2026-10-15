@@ -109,12 +109,12 @@ export const read = b.overloads(
 Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.
 
-The candidates are the signatures that do not require more arguments than were
-passed, or, if every one requires more, those that require the fewest. Then, argument by argument, those that take a value of its
-[kind](#unions-and-kinds) stay; a signature that has no such argument ignores it.
-If several are left when the arguments run out, or none takes the kind, the call goes
-to the one that requires the most arguments, then to the one written first, and its
-conversion reports what is wrong. Choosing converts nothing and runs no JavaScript. A
+Argument by argument, the signatures that take a value of its [kind](#unions-and-kinds)
+stay. An argument that was not passed is `undefined`, which a required argument does not
+take, so `f(x)` and `f(x, undefined)` are the same call. A signature that has no such
+argument ignores it, and an argument that none of them takes rules nothing out. If
+several are left when the arguments run out, the call goes to the one that requires the
+most arguments, then to the one written first, and its conversion reports what is wrong. Choosing converts nothing and runs no JavaScript. A
 signature that no call can reach is an error when the schema is loaded.
 
 ## Types
@@ -123,7 +123,8 @@ Conversions are strict unless the schema says otherwise: `b.i32` takes a number
 or BigInt that is an integer in range, and nothing else. A failed strict, `.loose` or
 `.validateInteger` conversion throws `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE`
 naming the argument or the dictionary member; `.wrap` and `.enforceRange` throw
-what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
+what WebIDL does. An argument that was not passed is `undefined` and is converted like
+any other: nothing looks at how many there are.
 
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |

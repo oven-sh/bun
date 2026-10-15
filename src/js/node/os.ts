@@ -122,7 +122,7 @@ function bound(binding) {
     },
     release: binding.release,
     setPriority: function (pid, priority) {
-      return priority === undefined ? binding.setPriority(pid) : binding.setPriority(pid, priority);
+      return binding.setPriority(pid, priority);
     },
     get tmpdir() {
       return tmpdir;

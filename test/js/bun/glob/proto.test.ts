@@ -48,15 +48,10 @@ test("Object prototype followSymlinks", async () => {
 test("arguments of the wrong type throw a TypeError", () => {
   const invalid = (message: string) =>
     expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
-  const missing = expect.objectContaining({
-    name: "TypeError",
-    code: "ERR_MISSING_ARGS",
-    message: "Not enough arguments",
-  });
   const glob = new Bun.Glob("*");
-  expect(() => new (Bun.Glob as any)()).toThrow(missing);
+  expect(() => new (Bun.Glob as any)()).toThrow(invalid("pattern must be a string"));
   expect(() => new Bun.Glob(5 as any)).toThrow(invalid("pattern must be a string"));
-  expect(() => (glob.match as any)()).toThrow(missing);
+  expect(() => (glob.match as any)()).toThrow(invalid("str must be a string"));
   expect(() => glob.match(5 as any)).toThrow(invalid("str must be a string"));
   expect(() => glob.scanSync(5 as any)).toThrow(invalid("GlobScanOptions must be an object"));
   expect(() => glob.scan(5 as any)).toThrow(invalid("GlobScanOptions must be an object"));

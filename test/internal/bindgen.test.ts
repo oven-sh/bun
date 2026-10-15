@@ -157,10 +157,13 @@ describe("strings", () => {
     expect(bindgen.utf8Optional("")).toBe("");
   });
 
-  it("checks the argument count", () => {
-    expect(() => bindgen.utf8Echo()).toThrow(
-      expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
-    );
+  it("an argument that was not passed is undefined", () => {
+    for (const args of [[], [undefined]]) {
+      expect(() => bindgen.utf8Echo(...args)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "text must be a string" }),
+      );
+      expect(bindgen.utf8EchoLoose(...args)).toBe("undefined");
+    }
   });
 
   it("keeps the characters of a substring while its base is swapped for an atom", () => {
@@ -617,6 +620,7 @@ describe("overloads", () => {
       [["ab", true], "text upper AB"],
       [[new String("ab"), false], "text upper ab"],
       [[1], "number 1"],
+      [[1, undefined], "number 1"],
       [[1, 2], "two numbers 1 2"],
       [[1, 2, 3], "two numbers 1 2"],
       [[[1]], "list [1.0]"],
@@ -632,9 +636,9 @@ describe("overloads", () => {
   });
 
   it("what fits none is reported by the one that requires the most arguments", () => {
-    expect(() => bindgen.overloaded()).toThrow(expect.objectContaining({ code: "ERR_MISSING_ARGS" }));
+    expect(() => bindgen.overloaded()).toThrow("text must be a string");
     expect(() => bindgen.overloaded({})).toThrow("text must be a string");
-    expect(() => bindgen.overloaded(null, 1)).toThrow("text must be a string");
+    expect(() => bindgen.overloaded(null, 1)).toThrow("a must be a number");
     expect(() => bindgen.overloaded("ab", "x")).toThrow("upper must be a boolean");
   });
 
@@ -648,7 +652,7 @@ describe("overloads", () => {
     expect(() => b.overloads({ args: { a: b.i32, b: b.bool } }, { args: { a: b.f64, b: b.bool } })).toThrow(
       "overload 2 is never chosen",
     );
-    // With one argument the second is undefined, and with two the last signature takes everything.
+    // The first takes an undefined second argument, and the last takes everything else.
     expect(() =>
       b.overloads(
         { args: { a: b.string, b: b.f64.optional } },

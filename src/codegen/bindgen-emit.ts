@@ -522,14 +522,9 @@ function cppDeclareConverted(type: Type, variable: string, value: string, ctx: s
 /** Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns. */
 function cppCallBody(signature: Signature, symbol: string, leading: readonly string[] = []): string {
   const lines: string[] = [];
-  if (signature.requiredCount > 0) {
-    lines.push(`if (callFrame->argumentCount() < ${signature.requiredCount}) [[unlikely]]
-        return JSC::throwVMError(globalObject, scope, WebCore::createNotEnoughArgumentsErrorBun(globalObject));`);
-  }
   const rereads: string[] = [];
   signature.args.forEach(({ name, type }, i) => {
-    const argument = i < signature.requiredCount ? "uncheckedArgument" : "argument";
-    lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->${argument}(${i});`);
+    lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = ::Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
     // Converting a later argument can run JavaScript that detaches or resizes the buffer.
     if (type.borrowsHeap && i < signature.args.length - 1)
@@ -807,16 +802,11 @@ switch (choice) {
 ${[...cases.slice(1), cases[0]].join("\n")}
 }`;
     };
-    const dispatch = fn.dispatchByArgumentCount.map(({ atLeast, dispatch }, index) =>
-      index === fn.dispatchByArgumentCount.length - 1
-        ? indent(cppDispatch(dispatch), 4)
-        : `    if (callFrame->argumentCount() >= ${atLeast}) {\n${indent(cppDispatch(dispatch), 8)}\n    }`,
-    );
     definition = `${overloads.join("\n")}
 JSC_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 ${cppPrologue}
-${dispatch.join("\n")}
+${indent(cppDispatch(fn.dispatch), 4)}
 }`;
   }
   return `

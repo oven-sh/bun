@@ -1361,24 +1361,14 @@ export type OverloadDispatch = Signature | { argument: number; byKind: Map<Value
 
 export class FunctionDefinition {
   readonly signatures: readonly Signature[];
-  /** Most arguments first. The last entry is for any number of them. */
-  readonly dispatchByArgumentCount: readonly { atLeast: number; dispatch: OverloadDispatch }[];
+  readonly dispatch: OverloadDispatch;
   name = "";
   origin: Origin | null = null;
   constructor(signatures: readonly SignatureOptions[]) {
     assert(signatures.length > 0, "b.overloads needs at least one signature");
     this.signatures = signatures.map(options => new Signature(options));
-    const counts = [...new Set(this.signatures.map(signature => signature.requiredCount))].sort((a, b) => b - a);
     const nodes = new Map<string, OverloadDispatch>();
-    this.dispatchByArgumentCount = counts.map((atLeast, i) => ({
-      atLeast,
-      dispatch: this.dispatchOn(
-        this.signatures.filter(signature => signature.requiredCount <= atLeast),
-        0,
-        i === 0 ? Infinity : counts[i - 1] - 1,
-        nodes,
-      ),
-    }));
+    this.dispatch = this.dispatchOn(this.signatures, 0, nodes);
     const chosen = new Set(nodes.values());
     this.signatures.forEach((signature, i) =>
       assert(
@@ -1387,31 +1377,28 @@ export class FunctionDefinition {
       ),
     );
   }
-  /** "Overloads" in the docs, for a call with at most `passed` arguments. Equal inputs give the same object of `nodes`: nodes are compared by identity. */
+  /** "Overloads" in the docs. Equal inputs give the same object of `nodes`: nodes are compared by identity. */
   private dispatchOn(
     candidates: readonly Signature[],
     argument: number,
-    passed: number,
     nodes: Map<string, OverloadDispatch>,
   ): OverloadDispatch {
-    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument} ${passed}`;
+    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument}`;
     const existing = nodes.get(key);
     if (existing) return existing;
-    const best = candidates.reduce((a, b) => (b.requiredCount > a.requiredCount ? b : a));
-    let dispatch: OverloadDispatch = best;
+    let dispatch: OverloadDispatch = candidates.reduce((a, b) => (b.requiredCount > a.requiredCount ? b : a));
     if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
-      const typeOf = (signature: Signature) => signature.args[argument]?.type;
+      const types = candidates.map(signature => signature.args[argument]?.type);
       const next = (kind: ValueKind | "other") => {
-        const takers = candidates.filter(signature => !typeOf(signature) || takes(typeOf(signature), kind));
-        return this.dispatchOn(takers.length > 0 ? takers : [best], argument + 1, passed, nodes);
+        const takers = candidates.filter((signature, i) => {
+          if (!types[i]) return true;
+          return kind === "undefined" ? types[i].permitsUndefined : takes(types[i], kind);
+        });
+        return this.dispatchOn(takers.length > 0 ? takers : candidates, argument + 1, nodes);
       };
-      if (argument >= passed) {
-        dispatch = next("undefined");
-      } else {
-        const kinds = distinguishingKinds(candidates.flatMap(signature => typeOf(signature) ?? []));
-        const byKind = new Map(kinds.map(kind => [kind, next(kind)]));
-        dispatch = new Set(byKind.values()).size === 1 ? byKind.get("other")! : { argument, byKind };
-      }
+      const kinds = new Set(["undefined" as const, ...distinguishingKinds(types.filter(type => type !== undefined))]);
+      const byKind = new Map([...kinds].map(kind => [kind, next(kind)]));
+      dispatch = new Set(byKind.values()).size === 1 ? byKind.get("other")! : { argument, byKind };
     }
     nodes.set(key, dispatch);
     return dispatch;

@@ -359,9 +359,8 @@ describe("$.braces arguments", () => {
     }
   });
 
-  test("without arguments throws ERR_MISSING_ARGS", () => {
-    expect(() => ($.braces as any)()).toThrow(
-      expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
-    );
+  test("an argument that was not passed is undefined", () => {
+    expect(($.braces as any)()).toEqual(["undefined"]);
+    expect($.braces(undefined as any)).toEqual(["undefined"]);
   });
 });

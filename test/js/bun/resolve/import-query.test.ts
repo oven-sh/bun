@@ -381,6 +381,26 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
     },
   );
 
+  test.each(["caf\u00e9?", "\u65e5\u672c?"])("a query is read after a path that is not ASCII (%s)", async folder => {
+    using dir = tempDir("import-query-question-mark-unicode", {
+      [`${folder}/entry.mjs`]: `
+        import esm from "./dep.mjs?v=1";
+        console.log(esm, require("./dep.cjs?v=2"));
+      `,
+      [`${folder}/dep.mjs`]: `export default import.meta.file + new URL(import.meta.url).search;`,
+      [`${folder}/dep.cjs`]: `module.exports = import.meta.file + new URL(import.meta.url).search;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `./${folder}/entry.mjs`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "dep.mjs?v=1 dep.cjs?v=2\n", stderr: "", exitCode: 0 });
+  });
+
   // As in node: require() takes a path. A query is bun's addition to it, for a name that is not there.
   test("require() reads a `?` as part of a name that exists", async () => {
     const source = `

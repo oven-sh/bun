@@ -1645,6 +1645,12 @@ declare module "bun" {
        * Configure heading IDs and autolink headings. Pass `true` to enable both
        * heading IDs and autolink headings, or an object to configure individually.
        *
+       * A heading ID is the text of the heading in lowercase. Letters, digits,
+       * and combining marks of every script stay, a run of spaces and hyphens
+       * becomes one hyphen, and every other character is dropped. Each ID is
+       * unique in its document: when an ID is taken, the heading gets `-1` after
+       * it, or the next number that gives a free ID.
+       *
        * @example
        * ```ts
        * // Enable both heading IDs and autolink headings

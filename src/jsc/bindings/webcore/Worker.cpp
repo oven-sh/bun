@@ -33,7 +33,6 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
-#include <JavaScriptCore/DeferTermination.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -166,14 +165,11 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     // can't observe it and shutdown reports it either way.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CLEAR_IF_EXCEPTION(scope);
-    if (vm.hasPendingTerminationException())
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm))
         return;
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
-    // A 'workerMessage' listener can stop the worker. The start sequence that calls this has no script beneath it, so
-    // this is the frame that takes the termination.
-    if (!scope.tryClearException())
-        Bun::takeTerminationOutsideScript(vm, scope);
+    (void)Bun::clearExceptionOrTakeTermination(vm, scope);
 }
 
 extern "C" void WebWorker__workerThreadStarted(WorkerMessagingProxy* proxy)
@@ -209,12 +205,10 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.cancelable = false;
     init.bubbles = false;
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    // A listener can stop the worker. Beneath script its termination stays pending for the script above, and nothing
-    // can be cloned with an exception pending. The stop does not cancel the report, so it is deferred for the clone.
+    // A worker that its own 'error' listeners stopped reports nothing more: its exit code stands.
     auto& vm = JSC::getVM(globalObject);
-    std::optional<JSC::DeferTermination<>> deferredStop;
-    if (vm.hasPendingTerminationException()) [[unlikely]]
-        deferredStop.emplace(vm);
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return;
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 

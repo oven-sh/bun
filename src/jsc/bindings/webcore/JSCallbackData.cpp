@@ -46,7 +46,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 {
     ASSERT(callback);
 
-    // A termination that unwinds beneath script while the gate is open (a node:vm timeout): no callback is entered on top of it.
+    // A termination that unwinds beneath script (a node:vm timeout): no callback is entered over it.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return JSValue();
 
@@ -62,14 +62,6 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // (JSEventListener::handleEvent, Bun__JSValue__call).
     if (!context || context->isJSExecutionForbidden())
         return JSValue();
-
-    // The caller reports what the callback threw. The VM's stop is not the callback's error: beneath script it stays
-    // pending and unwinds the script above; with no script beneath, this is the frame that takes it.
-    auto takeThrown = [&] {
-        returnedException = scope.exception();
-        if (!scope.tryClearException())
-            Bun::takeTerminationOutsideScript(vm, scope);
-    };
 
     JSValue function;
     CallData callData;
@@ -87,7 +79,8 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
         ASSERT(!functionName.isNull());
         function = callback->get(lexicalGlobalObject, functionName);
         if (scope.exception()) [[unlikely]] {
-            takeThrown();
+            returnedException = scope.exception();
+            (void)scope.tryClearException();
             return JSValue();
         }
 
@@ -111,7 +104,8 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // InspectorInstrumentation::didCallFunction(context);
 
     if (scope.exception()) [[unlikely]] {
-        takeThrown();
+        returnedException = scope.exception();
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
         return jsUndefined();
     }
 

@@ -157,9 +157,11 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     VM& vm = scriptExecutionContext.vm();
     JSLockHolder lock(vm);
-    // A termination that unwinds beneath script while the gate is open (a node:vm timeout): no listener is entered on top of it.
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    // A termination that unwinds beneath script (a node:vm timeout): the dispatch enters and unregisters no more listeners.
+    if (vm.hasPendingTerminationException()) [[unlikely]] {
+        event.stopImmediatePropagation();
         return;
+    }
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // See https://dom.spec.whatwg.org/#dispatching-events spec on calling handleEvent.
@@ -179,12 +181,10 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
 
-    // The VM's stop is not the listener's error. Beneath script it stays pending and unwinds the caller of
-    // dispatchEvent(); with no script beneath, this is the frame that takes it.
     auto reportThrown = [&] {
         auto* exception = scope.exception();
-        if (!scope.tryClearException()) {
-            Bun::takeTerminationOutsideScript(vm, scope);
+        if (!Bun::clearExceptionOrTakeTermination(vm, scope)) {
+            event.stopImmediatePropagation();
             return;
         }
         event.target()->uncaughtExceptionInEventHandler();

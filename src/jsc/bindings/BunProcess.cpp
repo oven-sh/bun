@@ -1338,18 +1338,12 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // Node exits with code 6 (InvalidFatalExceptionMonkeyPatching) when process._fatalException
     // is replaced with a non-callable. Top exception scope: no caller declares a ThrowScope
     // around this call (Rust FFI and Process_functionFatalException).
-    //
-    // Script that this function runs can stop the VM (process.exit() in a worker, or its parent's terminate()). The
-    // error then counts as handled. The termination stays pending only beneath script, where it unwinds the caller;
-    // with no script beneath, each arm takes it, and what tells the caller is the gate.
     {
         auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (fatalScope.exception()) [[unlikely]] {
-            if (!fatalScope.tryClearException()) {
-                Bun::takeTerminationOutsideScript(vm, fatalScope);
+            if (!Bun::clearExceptionOrTakeTermination(vm, fatalScope))
                 return true;
-            }
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
             // Bun__Process__exit returns in a worker (only requests termination); don't
@@ -1384,10 +1378,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            if (!scope.tryClearException()) {
-                Bun::takeTerminationOutsideScript(vm, scope);
+            if (!Bun::clearExceptionOrTakeTermination(vm, scope))
                 return true;
-            }
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -1451,7 +1443,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
         return;
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
@@ -1494,7 +1486,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
     // As in Bun__handleUncaughtException.
@@ -1521,7 +1513,7 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
         return true;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* process = globalObject->processObject();

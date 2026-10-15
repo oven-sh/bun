@@ -192,10 +192,9 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
     ErrorHandlerContextScope inMakersContext(globalObject, graph->maker());
     JSC::call(globalObject, onError, getCallData(onError), jsUndefined(), args);
     if (scope.exception()) [[unlikely]] {
-        if (vm.hasPendingTerminationException())
-            return true;
         auto* thrown = scope.exception();
-        (void)scope.tryClearException();
+        if (!Bun::clearExceptionOrTakeTermination(vm, scope))
+            return true;
         // What the handler lets escape is its own error, wherever inside it that was thrown: it goes on
         // to the handler's owner and does not come back here (an onError that re-enters its graph with
         // `run()` and throws there would otherwise be handed its own throw, without end).

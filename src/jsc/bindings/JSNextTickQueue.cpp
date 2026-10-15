@@ -105,8 +105,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
             return;
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         asyncContextData->putInternalField(vm, 0, asyncContextBetweenTicks);
-        // The report can stop the VM (process.exit() in a worker's 'uncaughtException' listener) and leave nothing
-        // pending. No tick is entered after that: the stop becomes the termination that this loop and its callers end on.
+        // The report can stop the VM and leave nothing pending: the stop becomes the termination this loop and its callers end on.
         if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
             JSC__JSGlobalObject__throwTerminationException(globalObject);
     }

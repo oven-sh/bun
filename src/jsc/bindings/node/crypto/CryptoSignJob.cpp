@@ -324,9 +324,10 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         signatureData.append(std::span { signatureView->data(), signatureView->size() });
     }
 
-    KeyObject keyObject = mode == Mode::Verify
-        ? KeyObject::getPublicOrPrivateKeyFromJS(globalObject, scope, keyValue)
-        : KeyObject::getPrivateKeyFromJS(globalObject, scope, keyValue);
+    auto keyMode = mode == Mode::Verify
+        ? KeyObject::PrepareAsymmetricKeyMode::ConsumePublic
+        : KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate;
+    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(globalObject, scope, keyValue, keyMode, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     ClearErrorOnReturn clearError;

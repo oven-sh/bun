@@ -88,6 +88,14 @@ public:
         WTF_FORBID_HEAP_ALLOCATION;
 
     public:
+        ~PreparedAsymmetricKey()
+        {
+            JSC::ensureStillAliveHere(keyDataOwner);
+            JSC::ensureStillAliveHere(passphraseOwner);
+            JSC::ensureStillAliveHere(namedCurve);
+        }
+
+        PrepareAsymmetricKeyMode mode;
         std::optional<RefPtr<KeyObjectData>> keyData { std::nullopt };
         JSC::JSValue keyDataOwner {};
         ncrypto::EVPKeyPointer::PKFormatType formatType { ncrypto::EVPKeyPointer::PKFormatType::PEM };
@@ -102,15 +110,15 @@ public:
     // The two steps that turn the key argument of a node:crypto function into a key. The argument is
     // what node's prepareAsymmetricKey() takes: a KeyObject, a CryptoKey, PEM in a string or a buffer,
     // or a { key, format, type, passphrase, encoding } object. `name` is the name of the argument in
-    // error messages. A public mode labels the key public, a private mode labels it private. Pass the
-    // same `mode` to both steps. A function that takes more than one key prepares every key before it
-    // imports any of them, as node does.
+    // error messages. A public mode labels the key public, a private mode labels it private. A function
+    // validates all of its arguments before it imports a key, as node does.
     static PreparedAsymmetricKey prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name);
-    static KeyObject importPreparedKey(JSC::JSGlobalObject*, JSC::ThrowScope&, PreparedAsymmetricKey&&, PrepareAsymmetricKeyMode mode);
+    static KeyObject importPreparedKey(JSC::JSGlobalObject*, JSC::ThrowScope&, PreparedAsymmetricKey&&);
 
-    // Both steps, for a function that takes one key. ALWAYS_INLINE keeps a call site as cheap as it
-    // was with the two steps written out. An out-of-line frame costs 28 instructions for each key.
-    ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name = "key"_s)
+    // Both steps, for a function that validates nothing else in between. ALWAYS_INLINE keeps a call
+    // site as cheap as it was with the two steps written out. An out-of-line frame costs 28
+    // instructions for each key.
+    ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name)
     {
         auto prepared = prepareAsymmetricKey(globalObject, scope, keyValue, mode, name);
         RETURN_IF_EXCEPTION(scope, {});
@@ -118,15 +126,7 @@ public:
         if (prepared.keyData) {
             return create(keyTypeForMode(mode), WTF::move(*prepared.keyData));
         }
-        return importPreparedKey(globalObject, scope, WTF::move(prepared), mode);
-    }
-    ALWAYS_INLINE static KeyObject getPrivateKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s)
-    {
-        return getAsymmetricKeyFromJS(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePrivate, name);
-    }
-    ALWAYS_INLINE static KeyObject getPublicOrPrivateKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, WTF::ASCIILiteral name = "key"_s)
-    {
-        return getAsymmetricKeyFromJS(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePublic, name);
+        return importPreparedKey(globalObject, scope, WTF::move(prepared));
     }
 
     static KeyObject prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);

@@ -1836,7 +1836,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
         auto& handle = keyObject->handle();
         checkKeyObject(handle, keyValue);
         RETURN_IF_EXCEPTION(scope, {});
-        return { .keyData = handle.data() };
+        return { .mode = mode, .keyData = handle.data() };
     }
 
     if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
@@ -1854,7 +1854,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
         }
         KeyObject handle = keyObject.releaseReturnValue();
         RETURN_IF_EXCEPTION(scope, {});
-        return { .keyData = handle.data() };
+        return { .mode = mode, .keyData = handle.data() };
     }
 
     { // pem format
@@ -1874,6 +1874,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
             }
 
             return {
+                .mode = mode,
                 .keyDataOwner = decodedBuf,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
@@ -1881,6 +1882,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
             return {
+                .mode = mode,
                 .keyDataOwner = view,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
@@ -1888,6 +1890,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
 
         if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
             return {
+                .mode = mode,
                 .keyDataOwner = arrayBuffer,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
@@ -1907,7 +1910,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
             auto& handle = keyObject->handle();
             checkKeyObject(handle, dataValue);
             RETURN_IF_EXCEPTION(scope, {});
-            return { .keyData = handle.data() };
+            return { .mode = mode, .keyData = handle.data() };
         }
 
         if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(dataValue)) {
@@ -1924,7 +1927,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
                 RELEASE_AND_RETURN(scope, {});
             }
             KeyObject handle = keyObject.releaseReturnValue();
-            return { .keyData = handle.data() };
+            return { .mode = mode, .keyData = handle.data() };
         }
 
         // format === 'jwk': a format that is not a string is never converted to one.
@@ -1935,14 +1938,10 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
         }
 
         if (formatView == "jwk"_s) {
-            // V::validateObject, with the property name built only when the check fails.
-            bool isArray = JSC::isArray(globalObject, dataValue);
+            V::validateObject(scope, globalObject, dataValue, name, "key"_s);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!dataValue.isObject() || isArray || dataValue.isCallable()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("key"_s), "object"_s, dataValue);
-                return {};
-            }
             return {
+                .mode = mode,
                 .keyDataOwner = dataValue,
                 .formatType = EVPKeyPointer::PKFormatType::JWK,
             };
@@ -1961,10 +1960,8 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
 
             JSValue typeValue = keyObj->get(globalObject, Identifier::fromString(vm, "asymmetricKeyType"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            if (!typeValue.isString()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("asymmetricKeyType"_s), "string"_s, typeValue);
-                return {};
-            }
+            V::validateString(scope, globalObject, typeValue, name, "asymmetricKeyType"_s);
+            RETURN_IF_EXCEPTION(scope, {});
             auto typeStr = typeValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1972,10 +1969,8 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
             if (typeStr == "ec"_s) {
                 namedCurveValue = keyObj->get(globalObject, Identifier::fromString(vm, "namedCurve"_s));
                 RETURN_IF_EXCEPTION(scope, {});
-                if (!namedCurveValue.isString()) {
-                    ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("namedCurve"_s), "string"_s, namedCurveValue);
-                    return {};
-                }
+                V::validateString(scope, globalObject, namedCurveValue, name, "namedCurve"_s);
+                RETURN_IF_EXCEPTION(scope, {});
             }
 
             ncrypto::EVPKeyPointer::PKFormatType rawFormat = formatView == "raw-public"_s
@@ -1985,6 +1980,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
                           : ncrypto::EVPKeyPointer::PKFormatType::RawSeed);
 
             return {
+                .mode = mode,
                 .keyDataOwner = dataValue,
                 .formatType = rawFormat,
                 .asymmetricKeyType = WTF::move(typeStr),
@@ -2023,6 +2019,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
                 RETURN_IF_EXCEPTION(scope, {});
 
                 return {
+                    .mode = mode,
                     .keyDataOwner = decodedView,
                     .formatType = config.format,
                     .encodingType = config.type,
@@ -2039,6 +2036,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
             RETURN_IF_EXCEPTION(scope, {});
 
             return {
+                .mode = mode,
                 .keyDataOwner = view,
                 .formatType = config.format,
                 .encodingType = config.type,
@@ -2054,6 +2052,7 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
             RETURN_IF_EXCEPTION(scope, {});
 
             return {
+                .mode = mode,
                 .keyDataOwner = arrayBuffer,
                 .formatType = config.format,
                 .encodingType = config.type,
@@ -2080,18 +2079,16 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
 }
 
 // The only reader of key material: node's KeyObjectData::GetPrivateKeyFromJs / GetPublicOrPrivateKeyFromJs.
-KeyObject KeyObject::importPreparedKey(JSGlobalObject* globalObject, ThrowScope& scope, PreparedAsymmetricKey&& prepared, PrepareAsymmetricKeyMode mode)
+KeyObject KeyObject::importPreparedKey(JSGlobalObject* globalObject, ThrowScope& scope, PreparedAsymmetricKey&& prepared)
 {
-    CryptoKeyType keyType = keyTypeForMode(mode);
+    CryptoKeyType keyType = keyTypeForMode(prepared.mode);
 
     if (prepared.keyData) {
         return create(keyType, WTF::move(*prepared.keyData));
     }
 
-    EnsureStillAliveScope keyDataOwner { prepared.keyDataOwner };
-
     if (prepared.formatType == EVPKeyPointer::PKFormatType::JWK) {
-        return getKeyObjectHandleFromJwk(globalObject, scope, asObject(prepared.keyDataOwner), mode);
+        return getKeyObjectHandleFromJwk(globalObject, scope, asObject(prepared.keyDataOwner), prepared.mode);
     }
 
     // Read the bytes now, after the last getter of every key the caller prepared: a buffer that

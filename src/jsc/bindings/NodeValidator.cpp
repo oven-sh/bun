@@ -148,6 +148,14 @@ JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
+JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral argument, ASCIILiteral property)
+{
+    if (!value.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString(argument, '.', property), "string"_s, value);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFiniteNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -627,16 +635,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsUndefined());
 }
 
-JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+// node's validateObject with no option flags: null, an array and a function are not objects.
+static bool isObjectForValidateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
 {
     bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return value.isObject() && !isArray && !value.isCallable();
+}
+
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    bool isObject = isObjectForValidateObject(scope, globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (value.isNull() || isArray || value.isCallable()) {
+    if (!isObject) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
-    if (!value.isObject()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral argument, ASCIILiteral property)
+{
+    bool isObject = isObjectForValidateObject(scope, globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isObject) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString(argument, '.', property), "object"_s, value);
     }
 
     return JSValue::encode(jsUndefined());

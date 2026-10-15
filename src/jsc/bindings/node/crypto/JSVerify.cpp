@@ -330,7 +330,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    KeyObject keyObject = KeyObject::getPublicOrPrivateKeyFromJS(globalObject, scope, options);
+    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(globalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     const auto& keyPtr = keyObject.asymmetricKey();

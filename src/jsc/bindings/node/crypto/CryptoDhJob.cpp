@@ -112,9 +112,9 @@ static NEVER_INLINE std::optional<DhJobCtx> dhJobCtxFromKeyData(JSGlobalObject* 
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     // Key data of a type that cannot derive, or of two types that differ, fails in the derive.
-    KeyObject publicKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPublicKey), Mode::ConsumePublic);
+    KeyObject publicKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPublicKey));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    KeyObject privateKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPrivateKey), Mode::ConsumePrivate);
+    KeyObject privateKey = KeyObject::importPreparedKey(globalObject, scope, WTF::move(preparedPrivateKey));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     return DhJobCtx(privateKey.data(), publicKey.data());

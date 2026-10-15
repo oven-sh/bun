@@ -444,7 +444,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     DSASigEnc dsaSigEnc = getDSASigEnc(lexicalGlobalObject, scope, options);
     RETURN_IF_EXCEPTION(scope, {});
 
-    KeyObject keyObject = KeyObject::getPrivateKeyFromJS(lexicalGlobalObject, scope, options, "privateKey"_s);
+    KeyObject keyObject = KeyObject::getAsymmetricKeyFromJS(lexicalGlobalObject, scope, options, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     const ncrypto::EVPKeyPointer& keyPtr = keyObject.asymmetricKey();

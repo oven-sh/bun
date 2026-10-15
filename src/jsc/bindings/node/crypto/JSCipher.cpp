@@ -123,8 +123,8 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
         keyObject = keyType == KeyType::Private
-            ? KeyObject::getPrivateKeyFromJS(globalObject, scope, optionsValue, "privateKey"_s)
-            : KeyObject::getPublicOrPrivateKeyFromJS(globalObject, scope, optionsValue);
+            ? KeyObject::getAsymmetricKeyFromJS(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePrivate, "privateKey"_s)
+            : KeyObject::getAsymmetricKeyFromJS(globalObject, scope, optionsValue, KeyObject::PrepareAsymmetricKeyMode::ConsumePublic, "key"_s);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -6133,18 +6133,17 @@ impl VirtualMachine {
     }
 
     /// `--isolate=modules`: creates the graph for the test file that's about to run.
-    pub fn enter_module_graph_for_test_isolation(&mut self) {
+    pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<()> {
         let state = &self.test_isolation_state;
         if state.shares_global && state.file_context == crate::ContextId::NONE {
             // The first call snapshots the globals. Later calls restore them.
             let global = self.global();
-            if let Ok(undo) = crate::cpp::Bun__TestGlobals__getRestoreFunction(global) {
-                let _ = undo.call(global, JSValue::UNDEFINED, &[]);
-            }
-            global.clear_exception();
+            let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
+            restore_globals.call(global, JSValue::UNDEFINED, &[])?;
             self.test_isolation_state.file_context =
                 crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(global));
         }
+        Ok(())
     }
 
     /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.

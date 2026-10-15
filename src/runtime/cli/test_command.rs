@@ -3012,7 +3012,7 @@ impl TestCommand {
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point()?;
-        vm.enter_module_graph_for_test_isolation();
+        vm.enter_module_graph_for_test_isolation()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.

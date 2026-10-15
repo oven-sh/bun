@@ -4,6 +4,7 @@ import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
 
 const skip = !fault.available() || isWindows;
 
@@ -309,6 +310,63 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
     }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
     expect(await proc.exited).toBe(0);
   });
+});
+
+// The head of a response waits in the cork buffer in front of the body. When the socket takes none of the head,
+// the queue is sized for the head and the body in one step. With a body of INT_MAX bytes that sum does not fit an
+// int. The server queues a copy of the body, about 2 GiB, so this runs where the memory exists.
+const memory = Math.min(os.totalmem(), process.constrainedMemory() || Infinity);
+describe.skipIf(skip || memory < 10 * 1024 ** 3)("node:http res.end() of INT_MAX bytes under a stalled send", () => {
+  test("a head that the socket does not take is queued in front of the body (subprocess server)", async () => {
+    const SIZE = 2 ** 31 - 1;
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const server = http.createServer((req, res) => {
+        fault.set({ syscall: "send", action: "zero", repeat: 1 });
+        res.end(Buffer.alloc(${SIZE}));
+        console.log("ended");
+        server.unref();
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    const reader = proc.stdout.pipeThrough(new TextDecoderStream()).getReader();
+    let stdout = "";
+    while (!stdout.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("server exited before printing its port");
+      stdout += value;
+    }
+
+    // The client reads the head and goes away: the body does not have to cross the wire.
+    const socket = net.connect(parseInt(stdout), "127.0.0.1");
+    let head = "";
+    socket.on("data", (chunk: Buffer) => {
+      head += chunk.toString("latin1", 0, 1024);
+      if (head.includes("\r\n\r\n")) socket.destroy();
+    });
+    socket.on("error", () => {});
+    socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+    await once(socket, "close");
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += value;
+    }
+
+    expect({
+      framing: /^content-length: .*$/im.exec(head)?.[0],
+      stdout: stdout.slice(stdout.indexOf("\n") + 1),
+      exitCode: await proc.exited,
+      signalCode: proc.signalCode,
+    }).toEqual({ framing: `Content-Length: ${SIZE}`, stdout: "ended\n", exitCode: 0, signalCode: null });
+  }, 60_000);
 });
 
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {

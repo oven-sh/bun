@@ -286,7 +286,7 @@ public:
                 std::string &trailers = nodeHttpResponseData->nodeHttpResponseTrailers;
                 trailers.insert(0, "0\r\n", 3);
                 trailers.append("\r\n", 2);
-                Super::write(trailers.data(), (int) trailers.length());
+                Super::write(trailers.data(), trailers.length());
                 trailers.clear();
                 httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS;
             } else if (!terminated) {
@@ -332,19 +332,10 @@ public:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
             }
 
-            /* Even if we supply no new data to write, its failed boolean is useful to know
-             * if it failed to drain any prior failed header writes */
-
-            /* Write as much as possible without causing backpressure */
-            size_t written = 0;
-            bool failed = false;
-            while (written < data.length() && !failed) {
-                /* uSockets only deals with int sizes, so pass chunks of max signed int size */
-                auto writtenFailed = Super::write(data.data() + written, (int) std::min<size_t>(data.length() - written, INT_MAX), optional);
-
-                written += (size_t) writtenFailed.first;
-                failed = writtenFailed.second;
-            }
+            /* tryEnd() stops at what the socket takes, end() queues the rest. With no data there is no call:
+             * write(src, 0) retries the flush of what is queued. */
+            auto [written, failed] = data.empty() ? std::pair<size_t, bool>{0, false} : Super::write(data.data(), data.length(), optional);
+            ASSERT(optional || written == data.length());
 
             httpResponseData->offset += written;
 
@@ -612,7 +603,7 @@ public:
      * the AsyncSocket write path (and buffer) writeStatus/end use, so a
      * pipelined replay stays ordered ahead of the final response bytes. */
     HttpResponse *writeRawInformational(std::string_view data) {
-        Super::write(data.data(), (int) data.length());
+        Super::write(data.data(), data.length());
         return this;
     }
 

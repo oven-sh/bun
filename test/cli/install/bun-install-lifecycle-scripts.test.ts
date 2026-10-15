@@ -2643,6 +2643,94 @@ test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"] as const)(
   },
 );
 
+// A bun install that dies cannot remove what it placed: the next install has to see on its own that
+// a script did not finish. The postinstall of `held` waits for a line in $GATE and builds on "go".
+describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a bun install that died (%s)", linker => {
+  type Held = {
+    proc: ReturnType<typeof spawn>;
+    release(line: "go" | "stop"): void;
+    // A later install. Its script reports to a file and waits for nothing.
+    install(): Promise<{ errors: string[]; ran: boolean; built: boolean; exitCode: number }>;
+  };
+
+  // Runs `body` while a first `bun install` waits in that postinstall.
+  async function whileScriptRuns(body: (held: Held) => Promise<void>) {
+    using ctx = await setupScriptPackages(linker, {
+      held: {
+        scripts: {
+          postinstall:
+            'echo started > "$STARTED" && { test -z "$GATE" || { read line < "$GATE" && test "$line" = go; }; } && echo built > built.txt',
+        },
+      },
+    });
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] }),
+    );
+    const [STARTED, GATE, ran] = ["started", "gate", "ran.txt"].map(name => join(ctx.packageDir, name));
+    expect(Bun.spawnSync({ cmd: ["mkfifo", STARTED, GATE] }).exitCode).toBe(0);
+    const gate = openSync(GATE, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.packageDir,
+      env: { ...ctx.env, STARTED, GATE },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    try {
+      const started = createReadStream(STARTED, "utf8")[Symbol.asyncIterator]();
+      expect(await Promise.race([started.next(), proc.exited])).toEqual({ done: false, value: "started\n" });
+      await body({
+        proc,
+        release: line => void writeSync(gate, line + "\n"),
+        async install() {
+          await rm(ran, { force: true });
+          Object.assign(ctx.env, { STARTED: ran, GATE: "" });
+          const { err, exitCode } = await ctx.bun("install");
+          return {
+            errors: splitErrLines(err).filter(line => line.startsWith("error:")),
+            ran: existsSync(ran),
+            built: existsSync(ctx.installed("held", "built.txt")),
+            exitCode,
+          };
+        },
+      });
+    } finally {
+      // Ends a reader that still waits for a script to open the other end.
+      closeSync(openSync(STARTED, fsConstants.O_RDWR | fsConstants.O_NONBLOCK));
+      closeSync(gate);
+    }
+  }
+
+  test.skipIf(isWindows).each(["SIGKILL", "SIGTERM", "SIGINT", "SIGHUP"] as const)(
+    "%s while a postinstall runs: the next install runs it again, the one after does not",
+    async signal => {
+      await whileScriptRuns(async ({ proc, release, install }) => {
+        proc.kill(signal);
+        await proc.exited;
+        expect(proc.signalCode).toBe(signal);
+        // A script that outlived bun (no PR_SET_PDEATHSIG) ends here, without a build.
+        release("stop");
+
+        expect(await install()).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
+        expect(await install()).toEqual({ errors: [], ran: false, built: true, exitCode: 0 });
+      });
+    },
+  );
+
+  test.skipIf(isWindows)("an install that runs meanwhile leaves the package to the first one", async () => {
+    await whileScriptRuns(async ({ proc, release, install }) => {
+      expect(await install()).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
+
+      release("go");
+      expect(await proc.exited).toBe(0);
+      expect(await install()).toEqual({ errors: [], ran: false, built: true, exitCode: 0 });
+    });
+  });
+});
+
 // `baz` is an optional dependency of the project and its postinstall fails. Whether the install goes
 // on without it depends on who else needs it, not on the dependency the linker placed it for.
 describe.concurrent.each(["hoisted", "isolated"] as const)("failed script of an optional dependency (%s)", linker => {

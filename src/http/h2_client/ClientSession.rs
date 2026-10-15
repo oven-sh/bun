@@ -30,7 +30,8 @@ const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 
 /// An abort sends a liveness PING only if its request waited this long with no bytes read.
 const LIVENESS_GRACE: Duration = Duration::from_secs(1);
-/// Cap on the idle timer while a liveness PING is unanswered. Go's default `PingTimeout`.
+/// Cap on the idle timer while a liveness PING is unanswered, unless
+/// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is shorter. Go's default `PingTimeout`.
 const PING_ACK_TIMEOUT_SECONDS: u64 = 15;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
@@ -120,6 +121,8 @@ pub struct ClientSession {
     /// A liveness PING is unanswered: the session takes no new stream and is
     /// not pooled, and `rearm_timeout` bounds the wait for the ACK.
     pub(crate) awaiting_ping_ack: bool,
+    /// The idle timer is armed for that wait, not for a request's own shorter timeout.
+    ping_cap_armed: bool,
     /// A liveness PING went out since the last HEADERS or DATA. gRPC servers
     /// close a connection that sends several PINGs with neither in between:
     /// https://github.com/golang/go/issues/70575
@@ -283,12 +286,12 @@ impl ClientSession {
         Self::enter(this, |s| s.fail_streams(err));
     }
 
-    /// Socket onTimeout entry point; see [`Self::on_close`]. With a liveness
-    /// PING unanswered the connection is lost, whatever timeout a request asked for.
+    /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for
+    /// the ACK of a liveness PING ran out, the connection is lost.
     pub(crate) fn on_timeout(this: SessionPtr) {
         Self::on_close(
             this,
-            if this.awaiting_ping_ack {
+            if this.ping_cap_armed {
                 Error::ConnectionClosed
             } else {
                 Error::Timeout
@@ -397,6 +400,7 @@ impl ClientSession {
             stream_progressed: false,
             last_read: Instant::now(),
             awaiting_ping_ack: false,
+            ping_cap_armed: false,
             liveness_ping_spent: false,
             goaway_last_stream_id: 0,
             fatal_error: None,
@@ -521,6 +525,19 @@ impl ClientSession {
             && self.write_buffer.is_empty()
             && self.remote_max_concurrent_streams > 0
             && self.next_stream_id < wire::MAX_STREAM_ID
+    }
+
+    /// No request is left: the connection only waits for the ACK of its liveness PING.
+    pub(crate) fn is_idle_in_pool(&self, pool_id: u64) -> bool {
+        self.pool.id == pool_id && self.streams.count() == 0 && self.pending_attach.is_empty()
+    }
+
+    /// Close such a connection, which the ACK would otherwise park.
+    pub(crate) fn close_idle(this: SessionPtr) {
+        Self::enter(this, |s| {
+            s.goaway_received = true;
+            s.maybe_release();
+        });
     }
 
     #[inline]
@@ -711,9 +728,17 @@ impl ClientSession {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
         }
+        self.ping_cap_armed = false;
         if self.awaiting_ping_ack {
-            let cap = crate::normalize_idle_timeout_seconds(PING_ACK_TIMEOUT_SECONDS);
-            want = if want == 0 { cap } else { want.min(cap) };
+            let mut cap = crate::normalize_idle_timeout_seconds(PING_ACK_TIMEOUT_SECONDS);
+            let global = crate::idle_timeout_seconds();
+            if global != 0 {
+                cap = cap.min(global);
+            }
+            if want == 0 || cap < want {
+                want = cap;
+                self.ping_cap_armed = true;
+            }
         }
         self.socket.set_timeout(want);
     }
@@ -1127,8 +1152,6 @@ impl ClientSession {
             // the multiplexed connection; the socket ext's ref moves to it.
             // SAFETY: `self` is heap-owned and that ref is outstanding.
             let self_ref = unsafe { RefPtr::from_raw(core::ptr::from_mut(self)) };
-            // No sibling is left for the server's PING limit to take down.
-            self.liveness_ping_spent = false;
             // ctx back-ref is valid for the session's lifetime. Unlike
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls } from "harness";
+import { bunEnv, bunExe, isASAN, nodeExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import https from "node:https";
+import { join } from "node:path";
 import nodetls from "node:tls";
 import zlib from "node:zlib";
 
@@ -82,6 +83,8 @@ type RawState = {
   rst: Array<{ id: number; code: number }>;
   /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
   onPing?: (conn: RawConn, payload: Buffer) => void;
+  /** Called for each request, before `onStream`. */
+  onRequest?: () => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
    *  in-flight client frames have been delivered to the `data` handler.
    *  Tests asserting on server-side capture (`state.rst`) should await this
@@ -135,6 +138,7 @@ async function withRawH2Server(
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
+        if (type === 1) state.onRequest?.();
         if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
         if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
@@ -178,14 +182,16 @@ async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pip
   return proc;
 }
 
-function spawnFetch(script: string) {
+function spawnFetch(script: string, options: { env?: Record<string, string>; ipc?: () => void } = {}) {
   return spawnCapped({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
       ...bunEnv,
       BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: "1",
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      ...options.env,
     },
+    ipc: options.ipc,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1741,21 +1747,32 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     });
 
     // An abort sends a liveness PING only if its request waited a second with no bytes
-    // from the server. Nothing observable marks that moment, so these tests sleep past it.
-    async function runLiveness(url: string, script: string) {
-      await using proc = await spawnFetch(`
+    // from the server. Nothing observable marks that moment, so these tests sleep past it,
+    // starting when the server has seen the request: the client opened the stream before that.
+    async function runLiveness(url: string, states: RawState[], script: string, env?: Record<string, string>) {
+      await using proc = await spawnFetch(
+        `
+        import { once } from "node:events";
         const tls = { rejectUnauthorized: false };
-        const get = () => fetch("${url}", { tls }).then(r => r.status);
-        const abortAfter = async ms => {
+        let sent = 0;
+        let seen = 0;
+        process.on("message", () => void seen++);
+        const request = (init, url = "${url}") => (sent++, fetch(url, { tls, ...init }));
+        const get = init => request(init).then(r => r.status);
+        const abortAfter = async (ms, init, url) => {
           const ac = new AbortController();
-          const aborted = fetch("${url}", { tls, signal: ac.signal }).then(r => r.status, e => e.name);
+          const aborted = request({ ...init, signal: ac.signal }, url).then(r => r.status, e => e.name);
+          for (const mine = sent; seen < mine; ) await once(process, "message");
           await Bun.sleep(ms);
           ac.abort();
           return aborted;
         };
         ${script}
         process.exit(0);
-      `);
+      `,
+        { env, ipc() {} },
+      );
+      for (const state of states) state.onRequest = () => proc.send("request");
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout: stdout.trim().split("\n"), stderr, exitCode };
     }
@@ -1788,8 +1805,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           };
           const result = await runLiveness(
             url,
+            [state],
             `
-            const reader = (await fetch("${url}", { tls, timeout: false })).body.getReader();
+            const reader = (await request({ timeout: false })).body.getReader();
             const read = async () => new TextDecoder().decode((await reader.read()).value);
             console.log(await abortAfter(1100));
             console.log(await get());
@@ -1819,9 +1837,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           if (connIndex === 0 && id === 3) return;
           conn.headers(id, hpackStatus(204), { endStream: true });
         },
-        async url => {
+        async (url, state) => {
           const result = await runLiveness(
             url,
+            [state],
             `
             console.log(await get());
             console.log(await abortAfter(1100));
@@ -1850,11 +1869,11 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           state.onPing = () => pings++;
           const result = await runLiveness(
             url,
+            [state],
             `
             console.log(await get());
             await Bun.sleep(1100);
-            // Long enough for the request to go out on the pooled connection.
-            console.log(await abortAfter(300));
+            console.log(await abortAfter(0));
             console.log(await get());
             `,
           );
@@ -1886,6 +1905,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           };
           const result = await runLiveness(
             url,
+            [state],
             `
             console.log(await get());
             // The ACK of the first abort's PING counts as bytes from the server.
@@ -1904,7 +1924,46 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     }, 30_000);
 
-    test("a connection that answered the PING and was pooled can get another PING", async () => {
+    // A server counts PINGs per connection, so the keep-alive pool does not give the PING back.
+    test("a connection that answered the PING and was pooled gets no second PING", async () => {
+      const served: string[] = [];
+      let pings = 0;
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          served.push(connIndex + ":" + id);
+          if (connIndex === 0 && id > 1) return;
+          conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          state.onPing = (conn, payload) => {
+            pings++;
+            conn.socket.write(pingAck(payload));
+          };
+          const result = await runLiveness(
+            url,
+            [state],
+            `
+            console.log(await get());
+            for (let i = 0; i < 2; i++) {
+              console.log(await abortAfter(1100));
+              // Nothing shows that the client has read the ACK and pooled the connection.
+              await Bun.sleep(1000);
+            }
+            console.log(await get());
+            `,
+          );
+          expect({ ...result, served, pings }).toEqual({
+            stdout: ["204", "AbortError", "AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            served: ["0:1", "0:3", "0:5", "1:1"],
+            pings: 1,
+          });
+        },
+      );
+    }, 30_000);
+
+    test("HEADERS that crossed the RST_STREAM count as a response: the next abort can send a PING", async () => {
       const served: string[] = [];
       let pings = 0;
       await withRawH2Server(
@@ -1915,11 +1974,12 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         },
         async (url, state) => {
           state.onPing = (conn, payload) => {
-            pings++;
+            if (++pings === 1) conn.headers(3, hpackStatus(200));
             conn.socket.write(pingAck(payload));
           };
           const result = await runLiveness(
             url,
+            [state],
             `
             console.log(await get());
             for (let i = 0; i < 2; i++) {
@@ -1941,8 +2001,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     }, 30_000);
 
-    // The timer for the ACK fires after 16 to 20 s. Both servers hold a stream with no
-    // timeout; the one that answers the PING sends its body after the other was closed.
+    // BUN_CONFIG_HTTP_IDLE_TIMEOUT=1 shortens the wait for the ACK from 16 to 20 s to 4 to 8 s,
+    // the shortest the timer wheel has. Both servers hold a stream with no timeout; the one
+    // that answers the PING sends its body after the other was closed.
     test("a connection that does not answer the PING is closed; one that does keeps its streams", async () => {
       const onStream = (conn: RawConn, id: number) => {
         if (id === 1) conn.headers(id, hpackStatus(200));
@@ -1953,29 +2014,84 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             conn.socket.write(pingAck(payload));
             silent.allClosed().then(() => conn.data(1, "alive", true));
           };
-          await using proc = await spawnFetch(`
-            const tls = { rejectUnauthorized: false };
+          const result = await runLiveness(
+            silentUrl,
+            [silent, live],
+            `
             const run = async url => {
-              const held = await fetch(url, { tls, timeout: false });
-              const ac = new AbortController();
-              const aborted = fetch(url, { tls, signal: ac.signal }).catch(() => {});
-              await Bun.sleep(1100);
-              ac.abort();
-              await aborted;
+              const held = await request({ timeout: false }, url);
+              await abortAfter(1100, {}, url);
               return held.text().catch(e => e.code);
             };
             console.log((await Promise.all([run("${silentUrl}"), run("${liveUrl}")])).join());
-          `);
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-            stdout: "ECONNRESET,alive",
+            `,
+            { BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+          );
+          expect({ ...result, silent: silent.connections, live: live.connections }).toEqual({
+            stdout: ["ECONNRESET,alive"],
             stderr: "",
             exitCode: 0,
+            silent: 1,
+            live: 1,
           });
-          expect({ silent: silent.connections, live: live.connections }).toEqual({ silent: 1, live: 1 });
         });
       });
-    }, 60_000);
+    }, 30_000);
+
+    // The request's timer fires after 4 to 8 s, the wait for the ACK would end after 16 to 20 s.
+    test("a request's own timeout is still reported as a timeout while a PING is unanswered", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          if (id === 1) conn.headers(id, hpackStatus(200));
+        },
+        async (url, state) => {
+          const result = await runLiveness(
+            url,
+            [state],
+            `
+            const held = await request({ timeout: 1000 });
+            console.log(await abortAfter(1100));
+            console.log(await held.text().catch(e => e.name));
+            `,
+          );
+          expect(result).toEqual({ stdout: ["AbortError", "TimeoutError"], stderr: "", exitCode: 0 });
+        },
+      );
+    }, 30_000);
+
+    test("FetchSession.close() closes a connection that waits for the ACK of a PING", async () => {
+      let ack: (() => void) | undefined;
+      const sessionConnectionClosed = Promise.withResolvers<void>();
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          if (connIndex === 0) {
+            if (id !== 1) return;
+            conn.socket.once("close", () => sessionConnectionClosed.resolve());
+            return conn.headers(id, hpackStatus(204), { endStream: true });
+          }
+          // The request after close(): an ACK from here on must not get the connection pooled.
+          ack?.();
+          sessionConnectionClosed.promise.then(() => conn.headers(id, hpackStatus(204), { endStream: true }));
+        },
+        async (url, state) => {
+          state.onPing = (conn, payload) => {
+            ack = () => conn.socket.write(pingAck(payload));
+          };
+          const result = await runLiveness(
+            url,
+            [state],
+            `
+            const session = new Bun.FetchSession();
+            console.log(await get({ session }));
+            console.log(await abortAfter(1100, { session }));
+            session.close();
+            console.log(await get());
+            `,
+          );
+          expect(result).toEqual({ stdout: ["204", "AbortError", "204"], stderr: "", exitCode: 0 });
+        },
+      );
+    }, 30_000);
 
     test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
       await withRawH2Server(
@@ -2434,6 +2550,32 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     } finally {
       server.close();
     }
+  });
+
+  // Node is the peer because BoringSSL cannot start a renegotiation from the server side.
+  test.skipIf(!nodeExe())("fetch rejects when the server renegotiates TLS 1.2 on an HTTP/2 connection", async () => {
+    await using peer = Bun.spawn({
+      cmd: [nodeExe()!, join(import.meta.dir, "fetch-http2-renegotiation-peer-fixture.mjs")],
+      env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let port = "";
+    for await (const chunk of peer.stdout) {
+      port += new TextDecoder().decode(chunk);
+      if (port.includes("\n")) break;
+    }
+    await using proc = await spawnFetch(`
+      const get = () =>
+        fetch("https://127.0.0.1:${port.trim()}", { tls: { rejectUnauthorized: false } }).then(() => "unexpected-ok", e => e.code);
+      console.log(await get(), await get());
+    `);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "HTTP2ProtocolError HTTP2ProtocolError",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("SETTINGS_HEADER_TABLE_SIZE=0: encoder emits a Dynamic Table Size Update so request 2+ decodes", async () => {

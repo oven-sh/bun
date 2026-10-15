@@ -1232,7 +1232,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
-    /// Retire every parked socket that belongs to fetch session `pool_id`.
+    /// Retire every idle socket that belongs to fetch session `pool_id`.
     pub(crate) fn close_idle_sockets(&mut self, pool_id: u64) {
         fn close_in<const SSL: bool, const N: usize>(
             pool: &HiveArray<PooledSocket<SSL>, N>,
@@ -1253,6 +1253,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         if let Some(pool) = self.pending_unix_sockets.get() {
             close_in(pool, pool_id);
+        }
+        // Collected first: closing a session takes it off the list.
+        let idle: Vec<_> = self
+            .active_h2_sessions
+            .iter()
+            .map(|session| session.this_ptr())
+            .filter(|session| session.is_idle_in_pool(pool_id))
+            .collect();
+        for session in idle {
+            h2::ClientSession::close_idle(session);
         }
     }
 

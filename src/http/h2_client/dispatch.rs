@@ -334,6 +334,7 @@ fn dispatch_frame(
                     session.fatal_error = Some(crate::Error::HTTP2HeaderListTooLarge);
                     return;
                 }
+                reset_stream_frame_received(session);
                 session.orphan_header_block.clear();
                 session.orphan_header_block.extend_from_slice(fragment);
                 if flags & wire::HeadersFrameFlags::END_HEADERS as u8 != 0 {
@@ -429,8 +430,7 @@ fn dispatch_frame(
                     if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                     }
-                    // What the peer sent before it saw the RST_STREAM is in front of the ACK.
-                    session.stream_progressed |= session.awaiting_ping_ack;
+                    reset_stream_frame_received(session);
                     return;
                 }
             };
@@ -737,6 +737,13 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
             .decoded_headers
             .push(picohttp::Header::new(name, value));
     }
+}
+
+/// HEADERS or DATA the peer sent before it saw the RST_STREAM of their stream. They are in
+/// front of the ACK of a liveness PING, and a server's PING limit counts them as a response.
+fn reset_stream_frame_received(session: &mut ClientSession) {
+    session.stream_progressed |= session.awaiting_ping_ack;
+    session.liveness_ping_spent = false;
 }
 
 fn strip_padding(payload: &[u8]) -> Option<&[u8]> {

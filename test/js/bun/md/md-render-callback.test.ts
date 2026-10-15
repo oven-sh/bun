@@ -125,6 +125,29 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe('<pre lang="none">plain code\n</pre>');
   });
 
+  // `fs.readFileSync` keeps the byte order mark that an editor on Windows writes.
+  describe.each([
+    ["string", (md: string) => md],
+    ["Buffer", (md: string) => Buffer.from(md)],
+  ])("code block in a %s that starts with a byte order mark", (_, input) => {
+    const calls = (md: string) => {
+      const seen: unknown[][] = [];
+      Markdown.render(input("\uFEFF" + md), { code: (...args: unknown[]) => (seen.push(args), "") });
+      return seen;
+    };
+
+    test("gets the language of its info string", () => {
+      expect(calls("# Title\n\n~~~js\nlet a = 1;\n~~~\n\n```ts title=x\nlet b = 2;\n```\n")).toEqual([
+        ["let a = 1;\n", { language: "js" }],
+        ["let b = 2;\n", { language: "ts" }],
+      ]);
+    });
+
+    test("gets no meta without a language", () => {
+      expect(calls("```\nfenced\n```\n\n    indented\n")).toEqual([["fenced\n"], ["indented\n"]]);
+    });
+  });
+
   test("codespan callback", () => {
     const result = Markdown.render("`code`\n", {
       codespan: (children: string) => `<code>${children}</code>`,

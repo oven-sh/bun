@@ -1199,10 +1199,12 @@ impl Run<'_> {
             .collect();
         let is_named = |path: &Vec<u8>| named.contains(&paths::from_native(path));
         let mut without_include = std::mem::take(&mut *without_include.lock());
-        if options.only.is_some() || options.stdin {
+        if options.only.is_some() || options.stdin || options.silent {
             without_include.clear();
         }
-        without_include.retain(|program| !program.files.iter().all(is_named));
+        without_include.retain(|program| {
+            typed::is_out_of_proportion(program) && !program.files.iter().all(is_named)
+        });
         for program in without_include {
             let relative =
                 |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
@@ -1224,6 +1226,10 @@ impl Run<'_> {
                 false => format!("{:.0}ms", seconds * 1e3),
             };
             let config = relative(&program.config_path);
+            let or_the_flag: &[u8] = match options.tsconfig {
+                Some(_) => b".",
+                None => b", or pass --tsconfig.",
+            };
             self.warn(
                 &[
                     b"Loaded ",
@@ -1238,7 +1244,8 @@ impl Run<'_> {
                     b"\n  ",
                     &config,
                     b" has no \"include\", so every file below it is part of its project.",
-                    b"\n  To lint faster, add \"include\" to it, or pass --tsconfig.",
+                    b"\n  To lint faster, add \"include\" to it",
+                    or_the_flag,
                 ]
                 .concat(),
             );

@@ -489,19 +489,26 @@ fn check_and_lint_in(
             )
         });
     let mut noted = context.without_include.lock();
-    for program in without_include.into_iter().filter(is_out_of_proportion) {
+    for program in without_include {
         let config_path = to_native(&program.config_path).to_vec();
-        // Each pass of `--fix` finds it again.
-        if noted.iter().any(|it| it.config_path == config_path) {
-            continue;
-        }
         // As they are spelled by who named them.
         let places = (program.files.iter()).filter_map(|it| by_path.get(it, is_case_sensitive));
-        noted.push(WithoutInclude {
-            config_path,
-            files: places.map(|at| files[indices[at]].path.to_vec()).collect(),
-            ..program
-        });
+        let linted = places.map(|at| files[indices[at]].path);
+        // A pass of `--fix` loads it again for the files that have changed, and so does each kind of configuration for its own.
+        match noted.iter_mut().find(|it| it.config_path == config_path) {
+            Some(known) => {
+                for path in linted {
+                    if !known.files.iter().any(|it| it == path) {
+                        known.files.push(path.to_vec());
+                    }
+                }
+            }
+            None => noted.push(WithoutInclude {
+                config_path,
+                files: linted.map(<[u8]>::to_vec).collect(),
+                ..program
+            }),
+        }
     }
     drop(noted);
     // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
@@ -544,7 +551,7 @@ fn check_and_lint_in(
 
 /// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
 /// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
-fn is_out_of_proportion(program: &WithoutInclude) -> bool {
+pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
     program.included >= 1000 && program.included >= 100 * program.files.len()
 }
 

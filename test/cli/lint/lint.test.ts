@@ -5346,10 +5346,15 @@ maybe(() => { return f; });
         const warning = `warn: Loaded 1,005 files in <time> to lint 1 file: config.ts
   ../../tsconfig.json has no "include", so every file below it is part of its project.
   To lint faster, add "include" to it, or pass --tsconfig.`;
+        const ofFlag = `warn: Loaded 1,005 files in <time> to lint 3 files: config.ts, src/a.d.ts, src/b.ts
+  ../../tsconfig.json has no "include", so every file below it is part of its project.
+  To lint faster, add "include" to it.`;
         test.each([
           ["a warning says that a thousand files were loaded for it", {}, [], "packages/a", warning],
           ["not if the tsconfig.json says what it includes", { "tsconfig.json": withInclude }, [], "packages/a", ""],
           ["not with --tsconfig", {}, ["--tsconfig", "all.json"], "packages/a", ""],
+          ["but if that one has no include either", {}, ["--tsconfig", "../../tsconfig.json"], "packages/a", ofFlag],
+          ["not with --silent", {}, ["--silent"], "packages/a", ""],
           ["not if they are all linted", {}, [], ".", ""],
           // Who names the files knows that they are few.
           ["not if the file is named", {}, ["config.ts", "src/b.ts"], "packages/a", ""],
@@ -5362,6 +5367,33 @@ maybe(() => { return f; });
             stderr: expected,
             exitCode: 1,
           });
+        });
+
+        // A thousand files or more, and a hundred or more for each that is linted.
+        test.each([
+          [1000, 1, [], true],
+          [999, 1, [], false],
+          [1000, 10, [], true],
+          [1000, 11, [], false],
+          // The second pass is only about the one file that was fixed. There is none with the configuration of oxlint.
+          [1000, 11, ["--fix"], false],
+        ])("of %d files, %d are linted %j: a warning %p", async (all, linted, flags, warns) => {
+          const names = Array.from({ length: all }, (_, i) => (i < linted ? `sub/${i}.ts` : `other/${i}.ts`));
+          const { stderr, exitCode } = await lint(
+            {
+              "tsconfig.json": JSON.stringify({ compilerOptions }),
+              ...Object.fromEntries(names.map(name => [name, "export {};\n"])),
+              "sub/0.ts": "debugger;\nvar b = 1;\nexport { b };\n",
+            },
+            ["--type-aware", "--rule", "no-var: error", "--rule", "no-debugger: error", ...flags, "sub"],
+          );
+          const warnings = stderr.split("\n").filter(it => it.startsWith("warn: "));
+          const noun = linted === 1 ? "file" : "files";
+          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${linted} ${noun}:`;
+          expect({
+            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ").replace(/: sub\/.*/, ":")),
+            exitCode,
+          }).toEqual({ warnings: warns ? [expected] : [], exitCode: 1 });
         });
       });
 

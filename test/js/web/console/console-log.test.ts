@@ -169,7 +169,7 @@ describe("%j with a cyclic value", () => {
     return { stdout: stdout.replaceAll("\r\n", "\n"), stderr: stderr.replaceAll("\r\n", "\n"), exitCode };
   }
 
-  it.concurrent("prints [Circular] from every console method that takes a format", async () => {
+  it.concurrent("prints [Circular] from log, info, debug, dirxml, warn, error, group and groupCollapsed", async () => {
     expect(
       await run(`
         const c = { a: 1 }; c.self = c;
@@ -195,6 +195,16 @@ describe("%j with a cyclic value", () => {
       stderr: "warn [Circular]\nerror [Circular]\n",
       exitCode: 0,
     });
+  });
+
+  // console.assert is not covered: a failing assert aborts under the exception validator that ASAN lanes set (#44950).
+  it.concurrent("prints [Circular] from trace", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const c = { a: 1 }; c.self = c;
+      console.trace("trace %j", c);
+    `);
+    const lines = (stdout + stderr).split("\n").filter(line => line !== "" && !/^\s+at /.test(line));
+    expect({ lines, exitCode }).toEqual({ lines: ["trace [Circular]"], exitCode: 0 });
   });
 
   it.concurrent("keeps the text and the arguments around the specifier", async () => {

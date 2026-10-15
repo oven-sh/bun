@@ -7,7 +7,8 @@ import { join } from "node:path";
 // Seccomp helper: installs a filter that makes one syscall (`BLOCK_SYSCALL`,
 // a `-D` define) fail with the errno given in argv[1], then execs argv[2..].
 // With `-DBLOCK_ARG1=value` only calls whose second argument is `value` fail.
-// Shared by the describe blocks below.
+// With `-DBLOCK_ARG2_BITS=bits` only calls whose third argument has one of
+// `bits` fail. Shared by the describe blocks below.
 const helperSrc = `
 #define _GNU_SOURCE
 #include <errno.h>
@@ -35,11 +36,21 @@ const helperSrc = `
   #define __NR_faccessat2 439
 #endif
 
+/* Linux 5.6; the same number on every architecture. */
+#ifndef __NR_openat2
+  #define __NR_openat2 437
+#endif
+
 /* instructions between the syscall-nr test and the errno return */
 #ifdef BLOCK_ARG1
   #define ARG1_TEST_LEN 2
 #else
   #define ARG1_TEST_LEN 0
+#endif
+#ifdef BLOCK_ARG2_BITS
+  #define ARG2_TEST_LEN 2
+#else
+  #define ARG2_TEST_LEN 0
 #endif
 
 /* usage: block <errno> <cmd> [args...] */
@@ -56,11 +67,16 @@ int main(int argc, char **argv) {
     /* load syscall nr */
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
     /* if nr == BLOCK_SYSCALL → return the requested errno */
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_SYSCALL, 0, 1 + ARG1_TEST_LEN),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_SYSCALL, 0, 1 + ARG1_TEST_LEN + ARG2_TEST_LEN),
 #ifdef BLOCK_ARG1
     /* ... but only if the low word of args[1] == BLOCK_ARG1 (little-endian) */
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_ARG1, 0, 1),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, BLOCK_ARG1, 0, 1 + ARG2_TEST_LEN),
+#endif
+#ifdef BLOCK_ARG2_BITS
+    /* ... but only if the low word of args[2] has one of BLOCK_ARG2_BITS */
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[2])),
+    BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, BLOCK_ARG2_BITS, 0, 1),
 #endif
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | (err & SECCOMP_RET_DATA)),
     /* else → allow */
@@ -88,18 +104,22 @@ int main(int argc, char **argv) {
 
 // Linux errno values (identical on x86_64 and aarch64).
 const EPERM = 1;
+const E2BIG = 7;
 const EACCES = 13;
+const EFAULT = 14;
 const EINVAL = 22;
 const ENOSYS = 38;
+const EOPNOTSUPP = 95;
 // Driver-internal code that leaks to userspace; above EHWPOISON (133), the
 // last errno bun's SystemErrno table declares.
 const ENOTSUPP = 524;
 
 // Compile the seccomp helper for one syscall (and, with `arg1`, one value of
-// its second argument). Returns the binary path, or null if the host
-// genuinely can't build it (no cc, missing kernel headers). Any other compile
-// failure throws so a source regression isn't silently hidden as a skip.
-function tryBuildHelper(syscall: string, arg1?: string): string | null {
+// its second argument, or with `arg2Bits`, some bits of its third). Returns
+// the binary path, or null if the host genuinely can't build it (no cc,
+// missing kernel headers). Any other compile failure throws so a source
+// regression isn't silently hidden as a skip.
+function tryBuildHelper(syscall: string, arg1?: string, arg2Bits?: string): string | null {
   const dir = tempDirWithFiles("seccomp-helper", {
     "block.c": helperSrc,
   });
@@ -107,6 +127,7 @@ function tryBuildHelper(syscall: string, arg1?: string): string | null {
   const bin = join(dir, "block");
   const defines = [`-DBLOCK_SYSCALL=${syscall}`];
   if (arg1 !== undefined) defines.push(`-DBLOCK_ARG1=${arg1}`);
+  if (arg2Bits !== undefined) defines.push(`-DBLOCK_ARG2_BITS=${arg2Bits}`);
   const compile = spawnSync("cc", ["-O0", ...defines, "-o", bin, src], { stdio: "pipe" });
 
   // compiler not on PATH — expected skip
@@ -359,6 +380,110 @@ describe.skipIf(!isLinux)("bun install when faccessat2 is blocked by seccomp", (
       });
     });
   }
+});
+
+// `Bun.Archive#extract()` opens each entry with openat2(RESOLVE_NO_SYMLINKS),
+// so that the kernel refuses a symlink that is already in the destination.
+// Without openat2 it opens the path one component at a time, with the same
+// results. A sandbox answers a syscall it does not list with the errno its
+// author chose, and openat2 answers some of those errnos for a path too.
+describe.skipIf(!isLinux)("Bun.Archive#extract when openat2 is blocked by seccomp", () => {
+  const helperBin = tryBuildHelper("__NR_openat2");
+
+  const extractSnippet = `
+    const { mkdirSync, readdirSync, symlinkSync } = require("node:fs");
+    mkdirSync("out");
+    symlinkSync("../victim", "out/shared");
+    const nested = await new Bun.Archive({ "a/b/c.txt": "C", "top.txt": "TOP" }).extract("out");
+    const belowLink = await new Bun.Archive({ "shared/f.txt": "F" }).extract("out").then(count => count, e => e.code);
+    const c = await Bun.file("out/a/b/c.txt").text();
+    console.log(JSON.stringify({ nested, belowLink, c, victim: readdirSync("victim") }));
+  `;
+
+  for (const [name, errno] of [
+    ["ENOSYS", ENOSYS],
+    ["EPERM", EPERM],
+    ["EACCES", EACCES],
+    ["EFAULT", EFAULT],
+    ["EOPNOTSUPP", EOPNOTSUPP],
+    ["EINVAL", EINVAL],
+    ["E2BIG", E2BIG],
+  ] as const) {
+    test.concurrent(`extracts, and refuses a symlink in the destination (${name})`, async () => {
+      if (helperBin == null) {
+        console.warn("SKIP openat2 seccomp: cc or seccomp headers not available");
+        return;
+      }
+      using dir = tempDir("openat2-seccomp", { "victim/keep.txt": "KEEP" });
+      const out = await runBunUnderSeccomp(helperBin, errno, ["-e", extractSnippet], { cwd: String(dir) });
+      if (out == null) {
+        console.warn("SKIP openat2 seccomp: seccomp not permitted in this environment");
+        return;
+      }
+      expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+        stdout: JSON.stringify({ nested: 2, belowLink: "ELOOP", c: "C", victim: ["keep.txt"] }),
+        exitCode: 0,
+      });
+    });
+  }
+});
+
+// systemd's RestrictSUIDSGID= (DynamicUser= turns it on) answers EPERM to a
+// mkdirat whose mode has the setuid or the setgid bit. The kernel ignores both
+// bits in the mode of a new directory, so the extractor does not pass them.
+describe.skipIf(!isLinux)("Bun.Archive#extract when seccomp refuses mkdirat with a setgid mode", () => {
+  const helperBin = tryBuildHelper("__NR_mkdirat", undefined, "06000");
+
+  // What `tar -cf` writes for `proj`, a `drwxrwsr-x` directory in it, and a file in that.
+  const ustar = (name: string, type: string, mode: string, data = "") => {
+    const block = Buffer.alloc(512 + Math.ceil(data.length / 512) * 512);
+    block.write(name);
+    block.write(mode + "\0", 100);
+    block.write("0000000\0", 108);
+    block.write("0000000\0", 116);
+    block.write(data.length.toString(8).padStart(11, "0") + "\0", 124);
+    block.write("00000000000\0", 136);
+    block.write("        ", 148);
+    block.write(type, 156);
+    block.write("ustar\0" + "00", 257);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += block[i];
+    block.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+    block.write(data, 512);
+    return block;
+  };
+  const tarball = Buffer.concat([
+    ustar("proj/", "5", "0000755"),
+    ustar("proj/shared/", "5", "0002775"),
+    ustar("proj/shared/f.txt", "0", "0000644", "F"),
+    Buffer.alloc(1024),
+  ]);
+
+  test("extracts the directory and what is in it", async () => {
+    if (helperBin == null) {
+      console.warn("SKIP mkdirat seccomp: cc or seccomp headers not available");
+      return;
+    }
+    using dir = tempDir("mkdirat-setgid-seccomp", { "shared.tar": tarball });
+    const out = await runBunUnderSeccomp(
+      helperBin,
+      EPERM,
+      [
+        "-e",
+        `const count = await new Bun.Archive(await Bun.file("shared.tar").bytes()).extract("out");
+         console.log(JSON.stringify({ count, f: await Bun.file("out/proj/shared/f.txt").text() }));`,
+      ],
+      { cwd: String(dir) },
+    );
+    if (out == null) {
+      console.warn("SKIP mkdirat seccomp: seccomp not permitted in this environment");
+      return;
+    }
+    expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+      stdout: JSON.stringify({ count: 3, f: "F" }),
+      exitCode: 0,
+    });
+  });
 });
 
 // glibc implements getrlimit() with prlimit64. bun raises RLIMIT_NOFILE at

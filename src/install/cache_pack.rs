@@ -809,7 +809,9 @@ fn unpack_package(
     }
 
     #[cfg(unix)]
-    if bun_libarchive::create_deferred_symlinks(dir.fd(), &links, false) as usize != links.len() {
+    if !bun_libarchive::create_deferred_symlinks(dir.fd(), &links, false)
+        .is_ok_and(|created| created as usize == links.len())
+    {
         return Err(r.refuse("symlink collides with another entry", name.as_bytes()));
     }
     // Windows: closed before it is renamed.

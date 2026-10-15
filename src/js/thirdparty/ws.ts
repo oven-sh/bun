@@ -44,6 +44,7 @@ const kFirstFragment = Symbol("kFirstFragment");
 const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
 const kHandshake = Symbol("kHandshake");
 const kCallerCatches = Symbol("kCallerCatches");
+const kForgetSignal = Symbol("kForgetSignal");
 const kHandshakeTimer = Symbol("kHandshakeTimer");
 const kHeaders = Symbol("kHeaders");
 const kInternalSocketData = Symbol.for("::bunternal::");
@@ -1475,23 +1476,27 @@ function sendControl(
   const native = websocket[kNative]!;
   const stream = websocket[kTransport] === STREAM;
 
-  if (stream) websocket[kWriteCallback] = cb;
-
   if (!data) {
-    if (opcode === 0x09) native.ping();
-    else native.pong();
+    data = undefined;
   } else {
     if (typeof data !== "string" && !isBlob(data)) data = toBuffer(data);
 
     const byteLength = typeof data === "string" ? Buffer.byteLength(data) : isBlob(data) ? data.size : data.length;
 
     if (byteLength > 125) {
-      websocket[kWriteCallback] = undefined;
       throw new RangeError("The data size must not be greater than 125 bytes");
     }
+  }
 
+  if (stream) websocket[kWriteCallback] = cb;
+
+  try {
     if (opcode === 0x09) native.ping(data);
     else native.pong(data);
+  } catch (err) {
+    // A Blob that is a file.
+    websocket[kWriteCallback] = undefined;
+    throw err;
   }
 
   if (stream) writeCallbackNotTaken(websocket);
@@ -1809,6 +1814,7 @@ const clientHandlers: ClientHandlers = {
     const native = this[kNative] as NativeClient;
 
     clearTimeout(this[kHandshakeTimer]);
+    forgetSignal(this._req!);
     detach(native);
     this[kNative] = null;
     this._req = null;
@@ -2066,6 +2072,7 @@ function validateUpgrade(
   const { protocolSet, perMessageDeflate } = req[kOptions];
 
   websocket._req = null;
+  forgetSignal(req);
 
   if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
     abortHandshake(websocket, req, "Invalid Upgrade header");
@@ -2141,17 +2148,27 @@ function validateUpgrade(
   return true;
 }
 
-// The `signal` option of http.request(), which destroys the request. Once the socket is open there is none.
-function abortOnSignal(websocket: WebSocket, signal: AbortSignal): void {
+// The `signal` option of http.request(), which destroys the request, for as long as there is one.
+function abortOnSignal(req: ClientRequest, signal: AbortSignal): void {
   require("internal/validators").validateAbortSignal(signal, "options.signal");
 
-  const onAbort = () => void websocket._req?.destroy($makeAbortError(undefined, { cause: signal.reason }));
+  const onAbort = () => void req.destroy($makeAbortError(undefined, { cause: signal.reason }));
 
   if (signal.aborted) {
     process.nextTick(onAbort);
   } else {
     signal.addEventListener("abort", onAbort, { once: true });
-    websocket.once("close", () => signal.removeEventListener("abort", onAbort));
+    req[kForgetSignal] = () => signal.removeEventListener("abort", onAbort);
+  }
+}
+
+// However the request has ended. A signal may live much longer.
+function forgetSignal(req: HandshakeRequest): void {
+  const forget = (req as ClientRequest)[kForgetSignal];
+
+  if (forget !== undefined) {
+    (req as ClientRequest)[kForgetSignal] = undefined;
+    forget();
   }
 }
 
@@ -2221,6 +2238,7 @@ class ClientRequest extends EventEmitter {
   declare socket: null;
   declare [kAborted]: boolean;
   declare [kCallerCatches]: boolean;
+  declare [kForgetSignal]: (() => void) | undefined;
   declare [kHeaders]: Dictionary<[name: string, value: HeaderValue]>;
   declare [kNative]: NativeClient | null;
   declare [kNativeOptions]: NativeClientOptions;
@@ -2244,6 +2262,7 @@ class ClientRequest extends EventEmitter {
     this.socket = null;
     this[kAborted] = false;
     this[kCallerCatches] = false;
+    this[kForgetSignal] = undefined;
     this[kHeaders] = { __proto__: null as never };
     this[kNative] = null;
     this[kNativeOptions] = nativeOptions;
@@ -2351,6 +2370,7 @@ class ClientRequest extends EventEmitter {
     this.destroyed = true;
 
     clearTimeout(this[kWebSocket][kHandshakeTimer]);
+    forgetSignal(this);
 
     const { res } = this;
 
@@ -2816,7 +2836,7 @@ function initAsClient(
   }
 
   const { signal } = opts;
-  if (signal && websocket._redirects === 0) abortOnSignal(websocket, signal);
+  if (signal) abortOnSignal(req, signal);
 
   // It also runs for a request that `finishRequest` ends late or never.
   if (handshakeTimeout) {
@@ -2831,6 +2851,7 @@ function initAsClient(
     else req.end();
   } catch (err) {
     clearTimeout(websocket[kHandshakeTimer]);
+    forgetSignal(req);
     throw err;
   } finally {
     req[kCallerCatches] = false;

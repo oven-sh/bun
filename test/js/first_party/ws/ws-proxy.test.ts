@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { gc, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
+import { getEventListeners, once } from "node:events";
+import type { IncomingMessage } from "node:http";
+import net from "node:net";
 import WebSocket from "ws";
 import { connectRequest, startEchoServer, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 
@@ -158,6 +161,67 @@ describe("ws package through HTTP CONNECT proxy", () => {
       requests: [connectRequest(wsPort)],
     });
     gc();
+  });
+
+  // Through a proxy the native client dials, so `signal` is not node:http's to look after. A signal may live much
+  // longer than the dials it was given to.
+  describe("the `signal` option", () => {
+    const refusing = () =>
+      Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no", { status: 503 }) });
+
+    test("abort() while CONNECTING: an AbortError, then 'close' 1006", async () => {
+      using recorded = await startRecordingProxy();
+      // Accepts the tunnel and never answers the upgrade request.
+      const silent = net.createServer(() => {}).listen(0, "127.0.0.1");
+      await once(silent, "listening");
+      try {
+        const controller = new AbortController();
+        const ws = new WebSocket(`ws://127.0.0.1:${(silent.address() as net.AddressInfo).port}`, {
+          proxy: `http://127.0.0.1:${recorded.port}`,
+          signal: controller.signal,
+        } as ClientOptions);
+        const events = wsEvents(ws);
+        await once(silent, "connection");
+        controller.abort(new Error("why"));
+        expect(await events).toEqual([
+          { error: "The operation was aborted", code: "ABORT_ERR" },
+          { close: [1006, Buffer.alloc(0)] },
+        ]);
+        expect(getEventListeners(controller.signal, "abort")).toEqual([]);
+      } finally {
+        silent.close();
+      }
+    });
+
+    test.each(["'open'", "'unexpected-response'", "'error'", "a constructor that throws"])(
+      "nothing is left on the signal after %s",
+      async outcome => {
+        using recorded = await startRecordingProxy();
+        using target = refusing();
+        const { signal } = new AbortController();
+        const port = outcome === "'open'" ? wsPort : target.port;
+        const options = {
+          proxy: `http://127.0.0.1:${recorded.port}`,
+          signal,
+          headers: outcome === "a constructor that throws" ? { "X-Bad": "a\r\nb" } : {},
+        } as ClientOptions;
+        if (outcome === "a constructor that throws") {
+          expect(() => new WebSocket(`ws://127.0.0.1:${port}`, options)).toThrow(TypeError);
+        } else {
+          const ws = new WebSocket(`ws://127.0.0.1:${port}`, options);
+          expect(getEventListeners(signal, "abort")).toHaveLength(1);
+          if (outcome === "'unexpected-response'") {
+            const [, res] = (await once(ws, "unexpected-response")) as [unknown, IncomingMessage];
+            await once(res.resume(), "close");
+          } else {
+            await once(ws, outcome.slice(1, -1));
+          }
+          ws.on("error", () => {});
+          ws.terminate();
+        }
+        expect(getEventListeners(signal, "abort")).toEqual([]);
+      },
+    );
   });
 
   test("ws:// through HTTP proxy when finishRequest calls req.end() later", async () => {

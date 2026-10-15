@@ -1529,21 +1529,32 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        use super::server_web_socket::{
-            Accept, compress_from_js, payload_from_js, send_status_to_js, topic_from_js,
-        };
+        use super::server_web_socket::{Accept, payload_from_js, send_status_to_js};
 
         let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
-        if callframe.arguments_count() < 2 {
+        let argument_count = callframe.arguments_count();
+        if argument_count < 1 {
             return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
         }
-        let topic_view = topic_from_js(global, "publish", topic_value)?;
+        if topic_value.is_undefined_or_null() {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        }
+        let topic_view = topic_value.to_js_string_view(global)?;
         let topic = topic_view.to_utf8();
-        let compress = compress_from_js(global, "publish", compress_value, true)?;
-        let payload = payload_from_js(global, "publish", message_value, Accept::Any)?;
+        if argument_count < 2 {
+            return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+        }
+        let compress = compress_value.is_undefined() || compress_value.to_boolean();
+        let payload = payload_from_js(global, "publish", message_value, Accept::AnyOrNullish)?;
         let bytes = payload.bytes();
 
-        let Some(app) = self.app.filter(|_| self.config.websocket.is_some()) else {
+        if self.config.websocket.is_none() {
+            return Ok(JSValue::js_number(0.0));
+        }
+        if topic.slice().is_empty() {
+            return Err(global.throw(format_args!("publish requires a topic string")));
+        }
+        let Some(app) = self.app else {
             return Ok(JSValue::js_number(0.0));
         };
         let status = AnyWebSocket::publish_with_options(

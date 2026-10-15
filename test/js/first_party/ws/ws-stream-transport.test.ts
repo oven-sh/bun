@@ -899,6 +899,24 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(results.filter(result => !(result instanceof Error))).toEqual([]);
       });
 
+      test.skipIf(!builtin).each(["ping", "pong"] as const)(
+        "%s(Bun.file()) throws, and its callback does not run for the next frame",
+        async method => {
+          using dir = tempDir("ws-ping-file", { "data.txt": "file" });
+          await using connection = await open(implementation, role);
+          const { ws, stream, peer } = connection;
+          const results: unknown[] = [];
+          const file = Bun.file(path.join(String(dir), "data.txt"));
+          expect(() => ws[method](file, undefined, error => results.push(error))).toThrow("file");
+          // A frame that the engine writes by itself would take a callback that was left.
+          ws.close(1000);
+          expect(await peer.take(1)).toEqual(["close 1000"]);
+          // The callbacks of a stream run in the order of its writes.
+          await new Promise(resolve => stream.write(Buffer.alloc(0), resolve));
+          expect(results).toEqual([]);
+        },
+      );
+
       test("a Blob keeps its place", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer } = connection;

@@ -198,8 +198,10 @@ pub(super) fn send_status_to_js(status: SendStatus, len: usize, op: &'static str
 /// What a method takes as its message.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Accept {
-    /// A BufferSource or Blob is binary. Anything else is converted to a string.
+    /// A BufferSource or Blob is binary. Anything else but `undefined` and `null` is converted to a string.
     Any,
+    /// `server.publish()`: as `Any`, and `undefined` and `null` are converted too.
+    AnyOrNullish,
     Text,
     Binary,
     /// A string, BufferSource, Blob, or nothing.
@@ -257,7 +259,7 @@ pub(super) fn payload_from_js<'a>(
                     global_this.throw(format_args!("{fn_name} requires a non-empty message"))
                 );
             }
-            Accept::Text | Accept::Binary => {}
+            Accept::AnyOrNullish | Accept::Text | Accept::Binary => {}
         }
     }
     if accept != Accept::Text {
@@ -277,7 +279,7 @@ pub(super) fn payload_from_js<'a>(
         }
     }
     let expected = match accept {
-        Accept::Any => None,
+        Accept::Any | Accept::AnyOrNullish => None,
         Accept::Text | Accept::Control if value.is_string() => None,
         Accept::Text => Some("a string"),
         Accept::Binary => Some("a Blob or BufferSource"),
@@ -289,32 +291,38 @@ pub(super) fn payload_from_js<'a>(
     Ok(Payload::Text(value.to_js_string_view(global_this)?))
 }
 
-/// A topic is a non-empty string.
+/// A topic is a non-empty string. `publishText("")` has always published to nobody, where the others throw.
 #[inline]
-pub(super) fn topic_from_js<'a>(
+fn topic_from_js<'a>(
     global_this: &'a JSGlobalObject,
     fn_name: &'static str,
     value: JSValue,
+    empty: EmptyTopic,
 ) -> JsResult<jsc::JSStringView<'a>> {
     if !value.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", value));
     }
     let topic = value.to_js_string_view(global_this)?;
-    if topic.is_empty() {
+    if topic.is_empty() && matches!(empty, EmptyTopic::Throws) {
         return Err(global_this.throw(format_args!("{fn_name} requires a non-empty topic name")));
     }
     Ok(topic)
 }
 
+#[derive(Clone, Copy)]
+enum EmptyTopic {
+    Throws,
+    IsNobody,
+}
+
 #[inline]
-pub(super) fn compress_from_js(
+fn compress_from_js(
     global_this: &JSGlobalObject,
     fn_name: &'static str,
     value: JSValue,
-    default: bool,
 ) -> JsResult<bool> {
     if value.is_undefined() {
-        return Ok(default);
+        return Ok(false);
     }
     if !value.is_boolean() {
         return Err(global_this.throw(format_args!("{fn_name} expects compress to be a boolean")));
@@ -380,7 +388,7 @@ impl ServerWebSocket {
         if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
-        let compress = compress_from_js(global_this, fn_name, compress_value, false)?;
+        let compress = compress_from_js(global_this, fn_name, compress_value)?;
         let payload = payload_from_js(global_this, fn_name, message_value, accept)?;
         let bytes = payload.bytes();
 
@@ -458,11 +466,19 @@ impl ServerWebSocket {
         if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
-        let topic_view = topic_from_js(global_this, fn_name, topic_value)?;
+        let empty = if matches!(accept, Accept::Text) {
+            EmptyTopic::IsNobody
+        } else {
+            EmptyTopic::Throws
+        };
+        let topic_view = topic_from_js(global_this, fn_name, topic_value, empty)?;
         let topic = topic_view.to_utf8();
-        let compress = compress_from_js(global_this, fn_name, compress_value, false)?;
+        let compress = compress_from_js(global_this, fn_name, compress_value)?;
         let payload = payload_from_js(global_this, fn_name, message_value, accept)?;
         let bytes = payload.bytes();
+        if topic_view.is_empty() {
+            return Ok(JSValue::js_number(0.0));
+        }
 
         let handler = self.handler();
         let Some(app) = handler.app else {
@@ -498,7 +514,12 @@ impl ServerWebSocket {
         if callframe.arguments_count() < 1 {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
-        let topic = topic_from_js(global_this, fn_name, callframe.argument(0))?;
+        let topic = topic_from_js(
+            global_this,
+            fn_name,
+            callframe.argument(0),
+            EmptyTopic::Throws,
+        )?;
 
         if self.is_closed() {
             return Ok(JSValue::FALSE);

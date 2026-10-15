@@ -3674,7 +3674,6 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     ["publish('', 'x')", ws => ws.publish("", "x"), "publish requires a non-empty topic"],
     ["publish('t', null)", ws => ws.publish("t", null), "publish requires a non-empty message"],
     ["publishText()", ws => ws.publishText(), "publishText requires at least 1 argument"],
-    ["publishText('', 'x')", ws => ws.publishText("", "x"), "publishText requires a non-empty topic"],
     ["publishText('t', 1)", ws => ws.publishText("t", 1), "publishText expects a string"],
     ["publishBinary('t', 'x')", ws => ws.publishBinary("t", "x"), "publishBinary expects a Blob or BufferSource"],
     ["close('x')", ws => ws.close("x"), "close requires a numeric code or undefined"],
@@ -3703,6 +3702,13 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
       });
     }
     expect([sockets.open.readyState, sockets.closed.readyState]).toEqual([1, 3]);
+  });
+
+  it('publishText("") publishes to nobody, where publish("") and publishBinary("") throw', async () => {
+    using sockets = await openAndClosedSocket();
+    expect([sockets.open.publishText("", "x"), sockets.open.publishText("", "")]).toEqual([0, 0]);
+    // The message is still looked at.
+    expect(() => sockets.open.publishText("", 1 as any)).toThrow("publishText expects a string");
   });
 
   it("valid calls on a closed socket do nothing", async () => {
@@ -3742,16 +3748,78 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     });
   });
 
-  it("server.publish() checks its arguments like ws.publish()", async () => {
-    using sockets = await openAndClosedSocket();
-    const server = sockets.server as any;
-    expect(() => server.publish("t")).toThrow("Missing argument");
-    expect(() => server.publish(1, "x")).toThrow('The "topic" argument must be of type string');
-    expect(() => server.publish("", "x")).toThrow("publish requires a non-empty topic");
-    expect(() => server.publish("t", null)).toThrow("publish requires a non-empty message");
-    expect(() => server.publish("t", undefined)).toThrow("publish requires a non-empty message");
-    expect(() => server.publish("t", "x", "no")).toThrow("publish expects compress to be a boolean");
-    expect(server.publish("t", 5)).toBe(0);
+  // Unlike the methods of a ServerWebSocket, it converts: the topic and the message to strings, `compress` to a boolean.
+  it("server.publish() converts its arguments", async () => {
+    const opened = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          for (const topic of ["42", "true", "1,2", "named", "[object Object]", "t"]) ws.subscribe(topic);
+          opened.resolve();
+        },
+        message() {},
+      },
+    });
+    using client = await rawClient(server.port!);
+    await opened.promise;
+    const publish = server.publish.bind(server) as (...args: unknown[]) => number;
+    const named = { toString: () => "named" };
+
+    const delivered: [unknown[], number, string][] = [
+      [[42, "a"], 1, "a"],
+      [[true, "b"], 1, "b"],
+      [[[1, 2], "c"], 1, "c"],
+      [[named, "d"], 1, "d"],
+      [[{}, "e"], 1, "e"],
+      [["t", undefined], 9, "undefined"],
+      [["t", null], 4, "null"],
+      [["t", 7], 1, "7"],
+      [["t", true], 4, "true"],
+      [["t", named], 5, "named"],
+      [["t", {}], 15, "[object Object]"],
+      [["t", "f", undefined], 1, "f"],
+      [["t", "g", null], 1, "g"],
+      [["t", "h", 0], 1, "h"],
+      [["t", "i", 1], 1, "i"],
+      [["t", "j", "x"], 1, "j"],
+      [["t", "k", Symbol()], 1, "k"],
+    ];
+    for (const [args, returned, text] of delivered) {
+      expect({ args, returned: publish(...args), frame: await client.frame() }).toEqual({
+        args,
+        returned,
+        frame: { opcode: 1, payload: Buffer.from(text) },
+      });
+    }
+    expect(publish(10n, "nobody subscribed to 10")).toBe(0);
+
+    const thrown: [unknown[], string][] = [
+      [[], "Missing argument"],
+      [["t"], "Missing argument"],
+      [[""], "Missing argument"],
+      [[undefined], "Expected string"],
+      [[undefined, "x"], "Expected string"],
+      [[null, "x"], "Expected string"],
+      [["", "x"], "publish requires a topic string"],
+      [[Symbol(), "x"], "Cannot convert a symbol to a string"],
+      [[Symbol()], "Cannot convert a symbol to a string"],
+      [["t", Symbol()], "Cannot convert a symbol to a string"],
+    ];
+    for (const [args, message] of thrown) expect(() => publish(...args)).toThrow(message);
+  });
+
+  it("server.publish() without a websocket handler returns 0, also for an empty topic", () => {
+    using server = serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no") });
+    const publish = server.publish.bind(server) as (...args: unknown[]) => number;
+    expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1)]).toEqual([0, 0, 0]);
+    expect(() => publish(null, "x")).toThrow("Expected string");
+    expect(() => publish("t")).toThrow("Missing argument");
   });
 });
 

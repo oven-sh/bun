@@ -71,8 +71,7 @@ pub(crate) fn quantize(
                 map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
             } else {
                 match table {
-                    // A lookup per colour beats a search per colour when a
-                    // search is long. `table_room` keeps the table small.
+                    // A lookup per colour beats a search per colour from 16 entries.
                     Some(mut slots) if k >= 16 => {
                         for slot in slots.iter_mut().filter(|slot| slot.val != 0) {
                             slot.val = u32::from(nearest(&palette, k, slot.key)) + 1;
@@ -112,21 +111,16 @@ fn try_filled<T: Clone + Default>(len: usize) -> Result<Vec<T>, AllocError> {
 /// One slot of an open-addressing table from a colour to a non-zero number.
 #[derive(Clone, Copy, Default)]
 struct Slot {
-    /// The pixel's four bytes, little-endian on every target so the table
-    /// layout does not depend on the host.
+    /// The pixel's four bytes, little-endian on every target.
     key: u32,
     /// 0 marks an empty slot.
     val: u32,
 }
 
-/// The longest run of occupied slots a probe walks before it gives up. The
-/// hash is fixed, so an image can be built to put every colour in one run:
-/// without a limit each of its colours would walk all the others.
+/// Probe limit. The hash is fixed: without it, colours built to collide each walk all the others.
 const MAX_PROBE: usize = 256;
 
-/// The slot that holds `key`, or the empty slot where `key` goes. `None`
-/// when neither is within `MAX_PROBE` slots of where `key` hashes to. The
-/// length of `slots` is a power of two.
+/// The slot of `key`, or the empty slot for it. `None` past `MAX_PROBE`. `slots.len()` is 2^n.
 #[inline]
 fn slot_for(slots: &mut [Slot], key: u32) -> Option<&mut Slot> {
     let mask = slots.len() - 1;
@@ -143,12 +137,9 @@ fn slot_for(slots: &mut [Slot], key: u32) -> Option<&mut Slot> {
 
 /// What the first pass over the pixels found.
 enum Scan {
-    /// At most `want` distinct colours. They are the palette, in the order
-    /// they first appear, and `indices` is complete.
+    /// At most `want` colours: the palette, in order of first appearance. `indices` is complete.
     Fits(Vec<u8>),
-    /// More than `want`. Pixel `at` is the first whose colour is not one of
-    /// `seen`, the `want` colours before it. `indices[..at]` index into
-    /// `seen`.
+    /// Pixel `at` is the first with a colour not in `seen`. `indices[..at]` index `seen`.
     Over { seen: Vec<u8>, at: usize },
 }
 
@@ -190,13 +181,12 @@ struct Bin {
     count: u32,
 }
 
-/// The most distinct colours the table of `count_colors` holds. An image with
-/// more is counted by sorting its pixels. The table is worth its memory when
-/// colours repeat (at most one per two pixels) and when it stays in cache for
-/// the mapping in `quantize`: 1024 per palette entry measured faster than a
-/// search per colour at every palette size from 16.
+/// Table lookups measured faster than palette searches up to this many colours per entry.
+const TABLE_COLORS_PER_ENTRY: usize = 1024;
+
+/// Most colours the count table holds. Past it, or when colours do not repeat, pixels are sorted.
 fn table_room(pixels: usize, want: usize) -> usize {
-    (1024 * want.max(16)).min(pixels / 2)
+    (TABLE_COLORS_PER_ENTRY * want.max(16)).min(pixels / 2)
 }
 
 /// Pixel counts by colour, for at most `room` colours.
@@ -208,8 +198,7 @@ struct Counts {
 }
 
 impl Counts {
-    /// False, with the count not added, when the table cannot take `key`:
-    /// there is no room, or no slot within reach (see `MAX_PROBE`).
+    /// False when `key` is new and there is no room, or no slot within `MAX_PROBE`.
     fn add(&mut self, key: u32, count: u32) -> Result<bool, AllocError> {
         let Some(slot) = slot_for(&mut self.slots, key) else {
             return Ok(false);
@@ -237,12 +226,8 @@ impl Counts {
     }
 }
 
-/// Every distinct colour of an image that has more than `seen.len() / 4` of
-/// them, in no particular order. `counted` is `indices[..at]` of the scan:
-/// the pixels before `at` are counted from it, the rest from `pixels`.
-///
-/// While the colours fit the table (see `table_room`) it comes back too,
-/// each `val` the colour's pixel count.
+/// Every distinct colour with its pixel count, and the table when they fit it (`val` = count).
+/// `counted` is `indices[..at]` of the scan: the pixels before `at` are counted from it.
 fn count_colors(
     pixels: &[[u8; 4]],
     seen: &[u8],
@@ -296,8 +281,7 @@ fn count_colors(
     Ok((bins, Some(table.slots)))
 }
 
-/// `count_colors` without the table: sort a copy of the pixels and count each
-/// run of equal ones. 4 bytes per pixel whatever the number of colours.
+/// `count_colors` without the table: sort a copy of the pixels, count each run of equal ones.
 fn count_sorted(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
     let mut keys: Vec<u32> = Vec::new();
     keys.try_reserve_exact(pixels.len())
@@ -314,8 +298,7 @@ fn count_sorted(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
     Ok(bins)
 }
 
-/// Pixel count, and per channel the sum and the sum of squares, of a set of
-/// pixels: enough for the set's mean and its squared error about that mean.
+/// Count, sums and sums of squares of a set of pixels: enough for its mean and squared error.
 #[derive(Clone, Copy, Default)]
 struct Moments {
     n: u64,
@@ -344,8 +327,7 @@ impl Moments {
         out
     }
 
-    /// `n` times the squared error of channel `c` about its mean. Exact:
-    /// n < 2^32, sum < 2^40, sq < 2^48.
+    /// `n` × squared error of channel `c` about its mean. Exact: n < 2^32, sum < 2^40, sq < 2^48.
     fn error_times_n(&self, c: usize) -> u128 {
         u128::from(self.n) * u128::from(self.sq[c])
             - u128::from(self.sum[c]) * u128::from(self.sum[c])
@@ -397,10 +379,8 @@ impl ColorBox {
     }
 }
 
-/// Split `bins` into `want` boxes, or fewer when every box is down to one
-/// colour, and return each box's mean as `[k][4]u8`. The order of `bins` on
-/// entry does not change the result: every step adds bins up or sorts them
-/// first.
+/// Split `bins` into `want` boxes (fewer if every box is one colour). Each box's mean is an entry.
+/// The order of `bins` on entry does not change the result.
 fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
     let mut all = Moments::default();
     for &bin in bins.iter() {
@@ -409,8 +389,7 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
     boxes.push(ColorBox::new(0, bins.len(), &all));
     while boxes.len() < want {
-        // A split helps most where the squared error is largest. A box of
-        // one bin is one colour and has none.
+        // The box with the most squared error. A box of one bin has none.
         let mut pick: Option<usize> = None;
         for (i, b) in boxes.iter().enumerate() {
             if b.hi - b.lo < 2 {
@@ -443,12 +422,9 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
     palette
 }
 
-/// Where to cut `bins` (sorted by channel `ch`, moments `total`) and the
-/// moments of the left part. Only a position between two different values of
-/// `ch` is a candidate, so equal colours stay together. Of those, take the
-/// one that leaves the least squared error about the two parts' means. The
-/// sum of squares is fixed, so that is the largest L²/nL + R²/nR, where L²
-/// and R² are the left and right sums squared and added over the channels.
+/// The cut of `bins` (sorted by `ch`) that leaves the least squared error, and the left part's
+/// moments. Only between two different values of `ch`, so equal colours stay together. The sum of
+/// squares is fixed, so least error is the largest L²/nL + R²/nR over the channel sums L and R.
 fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<(usize, Moments)> {
     let mut left = Moments::default();
     let mut best: Option<(u128, usize, Moments)> = None;
@@ -473,9 +449,7 @@ fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<(usize, Moments)> {
     best.map(|(_, i, moments)| (i, moments))
 }
 
-/// Index of the palette entry nearest to the colour `key`, the first one on
-/// a tie. k ≤ 256; the search is the highway-dispatched kernel so it runs
-/// under the best -march.
+/// Index of the palette entry nearest to the colour `key`, the first one on a tie.
 #[inline]
 fn nearest(palette: &[u8], k: u16, key: u32) -> u8 {
     let [r, g, b, a] = key.to_le_bytes().map(i32::from);
@@ -484,8 +458,7 @@ fn nearest(palette: &[u8], k: u16, key: u32) -> u8 {
         .expect("int cast")
 }
 
-/// Write every pixel's palette index. `index_of` is asked once per run of
-/// equal pixels: flat images are mostly runs.
+/// Write every pixel's palette index, asking `index_of` once per run of equal pixels.
 fn map_runs(pixels: &[[u8; 4]], indices: &mut [u8], mut index_of: impl FnMut(u32) -> u8) {
     let mut last: Option<(u32, u8)> = None;
     for (p, out) in pixels.iter().zip(indices.iter_mut()) {

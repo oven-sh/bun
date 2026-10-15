@@ -84,19 +84,26 @@ struct IslandPass : PassInfoMixin<IslandPass> {
     // COFF has room for few sections, and sorts what goes into one by what follows the "$" in its name. So there an island is
     // what has the name "$bun7.m", and this is what has the names before and after it, of which every unit has a copy and
     // the linker keeps one: where it starts, where it ends, and a record of {the two, as distances from it, the number}.
-    template<typename MakeEdge> void recordEdges(Module& module, StringRef kind, MakeEdge makeEdge)
+    void recordEdges(Module& module)
     {
+        LLVMContext& context = module.getContext();
         auto keepOne = [&](GlobalObject* global) {
-            global->setLinkage(GlobalValue::LinkOnceODRLinkage);
             global->setComdat(module.getOrInsertComdat(global->getName()));
             return global;
         };
-        std::string name = "bun_island_" + island + "_" + kind.str();
-        GlobalObject* start = keepOne(makeEdge(name + "_start", "bun" + island + ".a"));
-        GlobalObject* end = keepOne(makeEdge(name + "_end", "bun" + island + ".z"));
+        std::string name = "bun_island_" + island + "_code";
+        auto edge = [&](StringRef which, StringRef prefix) {
+            auto* type = FunctionType::get(Type::getVoidTy(context), false);
+            auto* function = Function::Create(type, GlobalValue::LinkOnceODRLinkage, name + which, module);
+            new UnreachableInst(context, BasicBlock::Create(context, "", function));
+            function->setSectionPrefix(("bun" + island + prefix).str());
+            function->addFnAttr(Attribute::NoUnwind);
+            return keepOne(function);
+        };
+        GlobalObject *start = edge("_start", ".a"), *end = edge("_end", ".z");
 
-        auto* word = Type::getInt32Ty(module.getContext());
-        auto* address = Type::getInt64Ty(module.getContext());
+        auto* word = Type::getInt32Ty(context);
+        auto* address = Type::getInt64Ty(context);
         auto* type = ArrayType::get(word, 3);
         auto* record = new GlobalVariable(module, type, true, GlobalValue::LinkOnceODRLinkage, nullptr, name);
         auto distanceTo = [&](GlobalObject* edge) {
@@ -116,11 +123,12 @@ struct IslandPass : PassInfoMixin<IslandPass> {
         //
         // What is given the name of a section is one piece per unit, though, of which the linker can neither drop nor fold a
         // part. Not on Mach-O. On ELF a flag of the link has each function and constant be a piece
-        // (scripts/build/flags.ts). On COFF a function with a prefix stays one.
+        // (scripts/build/flags.ts). On COFF a function with a prefix stays one, and LLVM has no prefix for a constant
+        // there, so those stay where they are: as one piece, no two of them are folded, nor the functions that use them.
         const Triple& target = module.getTargetTriple();
         bool isMachO = target.isOSBinFormatMachO(), isCOFF = target.isOSBinFormatCOFF();
         std::string code = isMachO ? "__TEXT,__bun_x" + island + ",regular,pure_instructions" : ".bun_island_x." + island;
-        std::string constants = isMachO ? "__TEXT,__bun_r" + island : isCOFF ? ".rdata$bun" + island + ".m" : ".bun_island_r." + island;
+        std::string constants = isMachO ? "__TEXT,__bun_r" + island : ".bun_island_r." + island;
 
         // Those that there are by now are the compiler's, a sanitizer's for one, and stay.
         SmallPtrSet<const Value*, 4> runBeforeMain;
@@ -171,7 +179,7 @@ struct IslandPass : PassInfoMixin<IslandPass> {
         // the loader has something to do to it, which is where code can be loaded anywhere. What only they point to goes
         // all the same.
         bool isLoadedAnywhere = isMachO || isCOFF || module.getPICLevel() != PICLevel::NotPIC;
-        bool hasCode = false, hasConstants = false;
+        bool hasCode = false;
         for (GlobalObject& global : module.global_objects()) {
             if (!owned.count(&global))
                 continue;
@@ -185,31 +193,12 @@ struct IslandPass : PassInfoMixin<IslandPass> {
             }
             auto& variable = cast<GlobalVariable>(global);
             bool isPatched = variable.getInitializer()->needsRelocation() && isLoadedAnywhere;
-            if (variable.isConstant() && !variable.isThreadLocal() && !isPatched) {
+            if (variable.isConstant() && !variable.isThreadLocal() && !isPatched && !isCOFF)
                 variable.setSection(constants);
-                hasConstants = true;
-            }
         }
 
-        LLVMContext& context = module.getContext();
-        if (isCOFF && hasCode) {
-            recordEdges(module, "code", [&](const Twine& name, const Twine& prefix) {
-                auto* type = FunctionType::get(Type::getVoidTy(context), false);
-                auto* function = Function::Create(type, GlobalValue::LinkOnceODRLinkage, name, module);
-                new UnreachableInst(context, BasicBlock::Create(context, "", function));
-                function->setSectionPrefix(prefix.str());
-                function->addFnAttr(Attribute::NoUnwind);
-                return function;
-            });
-        }
-        if (isCOFF && hasConstants) {
-            recordEdges(module, "constants", [&](const Twine& name, const Twine& suffix) {
-                auto* byte = Type::getInt8Ty(context);
-                auto* variable = new GlobalVariable(module, byte, true, GlobalValue::LinkOnceODRLinkage, ConstantInt::get(byte, 0), name);
-                variable->setSection((".rdata$" + suffix).str());
-                return variable;
-            });
-        }
+        if (isCOFF && hasCode)
+            recordEdges(module);
         return PreservedAnalyses::all();
     }
 

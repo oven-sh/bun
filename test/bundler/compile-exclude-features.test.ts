@@ -266,8 +266,8 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     expect(exitCode).toBe(0);
   });
 
-  // Too small to make the file much smaller, and gone all the same.
-  test("what is excluded is not in the file", () => {
+  // Too small to make the file much smaller, and gone all the same. On Windows an island has code only.
+  test.skipIf(isWindows)("what is excluded is not in the file", () => {
     const text = "Missing required token parameter";
     expect(readFileSync(join(cwd, exe(without()))).includes(text)).toBe(true);
     expect(readFileSync(join(cwd, exe(without("semver")))).includes(text)).toBe(true);

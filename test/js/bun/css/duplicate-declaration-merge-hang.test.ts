@@ -199,6 +199,17 @@ test("duplicate-rule detection distinguishes custom property names", () => {
   expect(cssInternals.minifyTest(":root{--a:1}.q{z-index:9}:root{--a:2}", "")).toBe(".q{z-index:9}:root{--a:2}");
   // Unknown (non-dashed) property names must also be distinguished.
   expect(cssInternals.minifyTest(".a{foo:1}.q{z-index:9}.a{bar:2}", "")).toBe(".a{foo:1}.q{z-index:9}.a{bar:2}");
+  // https://github.com/oven-sh/bun/issues/44704: Chrome 80 has no `:where()`,
+  // so these neighbours do not merge and reach the duplicate check.
+  expect(cssInternals.minifyTest(":where(.x){--a:1}:where(.x){--b:2}", "", { chrome: 80 << 16 })).toBe(
+    ":where(.x){--a:1}:where(.x){--b:2}",
+  );
+  expect(cssInternals.minifyTest(":where(.x) .y{--a:1}:where(.x) .y{--b:2}", "", { chrome: 80 << 16 })).toBe(
+    ":where(.x) .y{--a:1}:where(.x) .y{--b:2}",
+  );
+  expect(cssInternals.minifyTest(":where(.x){--a:1}:where(.x){--a:2}", "", { chrome: 80 << 16 })).toBe(
+    ":where(.x){--a:2}",
+  );
 });
 
 // `is_duplicate` compared the *total* declaration count but then zipped the

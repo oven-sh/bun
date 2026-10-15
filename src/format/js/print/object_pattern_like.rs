@@ -18,6 +18,13 @@ impl Spanned for ObjectPatternLike<'_> {
 }
 
 impl<'a> ObjectPatternLike<'a> {
+    fn node(&self) -> AstNodes<'a> {
+        match self {
+            Self::ObjectPattern(pat, _) => pat.as_ast_nodes(),
+            Self::ObjectAssignmentTarget(e, _) => e.as_ast_nodes(),
+        }
+    }
+
     fn is_empty(&self) -> bool {
         match self {
             Self::ObjectPattern(_, props) => props.is_empty(),
@@ -148,10 +155,9 @@ impl<'a> Format<'a> for ObjectPatternLike<'a> {
 
         write!(f, "{");
         match self.layout(f) {
-            ObjectPatternLayout::Empty => write!(
-                f,
-                format_dangling_comments(self.span()).with_soft_block_indent()
-            ),
+            ObjectPatternLayout::Empty => {
+                write!(f, dangling_comments(self.node()).with_soft_block_indent())
+            }
             ObjectPatternLayout::Inline => write!(f, format_properties),
             ObjectPatternLayout::Group { expand } => {
                 write!(f, group(&format_properties).should_expand(expand))

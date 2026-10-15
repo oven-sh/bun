@@ -2,11 +2,10 @@
 
 use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
-use crate::linter::globals::{Tables, config_globals_in_order, environment};
+use crate::linter::globals::config_globals_in_order;
 use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -52,6 +51,13 @@ pub struct Rule {
 pub struct Plugin {
     /// The prefix of its rules.
     pub name: Box<[u8]>,
+    /// `{ module, export }`: the file that it is in, as Node.js writes the path, and where in what that exports. `None` for one
+    /// that was found in a configuration.
+    pub location: Option<Json>,
+    /// `meta.name@meta.version`, as ESLint prints a plugin.
+    pub id: Option<Box<[u8]>>,
+    /// It has nothing of what a plugin has: no `meta`, no `rules`.
+    pub has_nothing: bool,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
 }
@@ -145,33 +151,6 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
     }
 }
 
-/// The variables that oxlint's `addGlobals` defines for a plugin, in its order: for each `env` that is on what can only be read and then
-/// what can be written, then what `globals` has. A name that `globals` has is only there, and not at all if it's `"off"`. Unlike
-/// oxlint's own rules, plugins only have `Array` and the like if the `env` called `builtin` is on. oxlint goes through the `env`s and
-/// through `globals` in the order of a hash map. Here it's by their names.
-fn globals_of_oxlint(language: &LanguageOptions) -> Vec<(Box<[u8]>, Global)> {
-    let own = &language.own_globals;
-    let is_own = |name: &[u8]| own.binary_search_by(|it| (*it.0).cmp(name)).is_ok();
-    let mut all: Vec<(Box<[u8]>, Global)> = Vec::new();
-    let mut index_of: FxHashMap<&'static [u8], usize> = FxHashMap::default();
-    for env in &language.envs {
-        let variables = environment(env, Tables::Oxlint).into_iter().flatten();
-        let variables: Vec<_> = variables.filter(|it| !is_own(it.0)).collect();
-        for wanted in [Global::Readonly, Global::Writable] {
-            for &(name, setting) in variables.iter().filter(|it| it.1 == wanted) {
-                // The one that is there keeps its place.
-                let at = *index_of.entry(name).or_insert_with(|| {
-                    all.push((name.into(), setting));
-                    all.len() - 1
-                });
-                all[at].1 = setting;
-            }
-        }
-    }
-    all.extend(own.iter().filter(|it| it.1 != Global::Off).cloned());
-    all
-}
-
 impl FileSettings {
     /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
     /// `$parser` of the one that `languageOptions.parser` is from.
@@ -245,7 +224,9 @@ impl FileSettings {
             }
         };
         let globals = match language.is_oxlint {
-            true => ConfiguredGlobals::new(globals_of_oxlint(language), std::iter::empty()),
+            true => {
+                ConfiguredGlobals::new(language.globals_of_oxlint_plugins(), std::iter::empty())
+            }
             false => {
                 let globals = config_globals_in_order(language)
                     .into_iter()

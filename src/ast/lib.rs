@@ -1938,6 +1938,25 @@ impl Log {
         )
     }
 
+    /// A warning at `loc` that never prints the source line, which may hold a secret the redactor cannot recognise.
+    #[cold]
+    pub fn add_warning_fmt_no_excerpt(
+        &mut self,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        let range = Range { loc, len: 1 };
+        let text = alloc_print(args);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
+            location.line_text = None;
+        }
+    }
+
     #[cold]
     pub fn add_warning_fmt_line_col(
         &mut self,

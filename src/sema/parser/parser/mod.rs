@@ -2,6 +2,7 @@
 //! speculation, names and lists.
 
 mod class;
+mod comments;
 mod declared;
 mod expr;
 mod flow;
@@ -60,6 +61,8 @@ pub(crate) mod ctx {
     pub(crate) const IN_SWITCH: u32 = 1 << 13;
     /// The node is in the body of a namespace.
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
+    /// The body of no function encloses the node. The parameters of one can, its return type, or a class.
+    pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
 }
 
 macro_rules! stacks {
@@ -151,7 +154,8 @@ file_lists! {
     classes, interfaces, aliases, enums, enum_members, modules, members, props, var_decls, calls,
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
-    decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
+    decorators, modifiers_of_params, modifiers_of_props, with_bodies, detached_semicolons,
+    import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
@@ -172,11 +176,15 @@ pub(crate) struct Checkpoint {
     unclaimed_nullable_types: u32,
     declared: declared::Mark,
     jsdoc: jsdoc::Lens,
+    comments: comments::CommentCheckpoint,
 }
 
 /// `GENERAL`: it can recover from errors, read JSDoc comments and read Flow, if the options say so. Without it
 /// it does none of that, and a text without errors pays nothing for it.
-pub(crate) struct Parser<'a, const GENERAL: bool> {
+///
+/// `COMMENTS`: it finds the nodes around each comment, if the options say so. See [`comments`]. Without it `bun check` and
+/// `bun lint`, which do not ask for them, pay nothing for it.
+pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) lx: Lexer<'a>,
     pub(crate) f: FileBuilder,
     pub(crate) s: Stacks,
@@ -190,6 +198,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// See `reads_jsdoc()`.
     reads_jsdoc: bool,
     pub(crate) jsdoc: jsdoc::State,
+    comments: comments::CommentTracker,
     /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
     pub(crate) lists: u32,
     pub(crate) declaration_scan: stmt::DeclarationScan,
@@ -224,6 +233,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// The private names that the classes around the token have declared so far.
     pub(crate) declared_private_names: Vec<Atom>,
     pub(crate) declared: Declared,
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
     pub(crate) has_top_level_await: bool,
     /// One of them can be nothing else: `await a`, `for await`, `await using`. Not `await (a)`, which calls `await` in a script.
     pub(crate) has_plain_top_level_await: bool,
@@ -313,6 +324,7 @@ struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
+    end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
 }
@@ -326,9 +338,14 @@ pub(crate) fn run<'a>(
     if text.len() >= 1 << 30 {
         return Err(Refused::new(Refusal::TooLarge));
     }
-    match atoms {
-        Some(atoms) => scratch.names.belong_to(atoms),
-        None => scratch.names.begin_own(text.len()),
+    match (atoms, options.part) {
+        (Some(atoms), _) => scratch.names.belong_to(atoms),
+        (None, None) => scratch.names.begin_own(text.len()),
+        // What follows the part is not paid for.
+        (None, Some(part)) => {
+            let len = part.until.saturating_sub(part.from) as usize;
+            scratch.names.begin_own(len.min(1 << 12));
+        }
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
@@ -345,9 +362,14 @@ pub(crate) fn run<'a>(
     );
     let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
+    if let Some(part) = options.part {
+        lx.start_at(part.from);
+        lx.set_src(text.get(..part.until as usize).unwrap_or(text));
+    }
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
+    lx.attach_comments = options.attach_comments;
     let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
     lx.is_ecmascript = is_ecmascript;
     lx.is_typescript_5 = options.dialect.typescript_5;
@@ -368,11 +390,13 @@ pub(crate) fn run<'a>(
         lx,
         stacks,
         declared,
+        end,
         has_top_level_await,
         has_plain_top_level_await,
-    } = match is_general {
-        true => Parser::<true>::new(seed).parse_into(&mut f),
-        false => Parser::<false>::new(seed).parse_into(&mut f),
+    } = match (is_general, options.attach_comments) {
+        (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
+        (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
+        (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
     };
     let (refusal, refused_at) = (lx.refusal, lx.refused_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
@@ -415,10 +439,11 @@ pub(crate) fn run<'a>(
     Ok(Parsed {
         file: f,
         has_top_level_await,
+        end,
     })
 }
 
-impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     #[inline(always)]
     fn new(seed: Seed<'a>) -> Self {
         let Seed {
@@ -432,7 +457,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
         let is_flow = options.dialect.flow && is_script;
-        let mut context = ctx::TOP_LEVEL;
+        let mut context = ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
         }
@@ -450,6 +475,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
+            comments: comments::CommentTracker::default(),
             lists: 0,
             // No token is in it.
             declaration_scan: stmt::DeclarationScan {
@@ -476,6 +502,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             odd_parameters: 0,
             declared_private_names: Vec::new(),
             declared,
+            end: (0, 0),
             has_top_level_await: false,
             has_plain_top_level_await: false,
             has_await_in_statement: false,
@@ -503,6 +530,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// Leaves the file in `file`.
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
+        self.resolve_top_level_comments();
         self.report_what_the_scanner_flagged();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
@@ -513,6 +541,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
+            end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
         }
@@ -539,6 +568,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
+        self.end = (self.f.source_len, self.f.source_len);
         self.f.kind = if self.options.is_json {
             FileKind::Json
         } else if self.options.is_declaration_file {
@@ -557,6 +587,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             let value = self.json_text();
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
+        }
+        if let Some(part) = self.options.part {
+            let part = self.part(part.goal);
+            self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
@@ -652,7 +686,17 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[inline(always)]
     pub(crate) fn next_after_name(&mut self) {
         self.take_as_name();
+        let (pos, end) = (self.lx.start, self.lx.end);
         self.lx.next();
+        self.finish_name(pos, end);
+    }
+
+    /// Goes on from a string literal that is a field of its node here, and a `Literal` node in ESTree: `module "a" {}`.
+    #[inline(always)]
+    pub(crate) fn next_after_string(&mut self) {
+        let (pos, end) = (self.lx.start, self.lx.end);
+        self.next();
+        self.finish_name(pos, end);
     }
 
     /// The token, a word, is taken as a name.
@@ -823,13 +867,34 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         matches!(self.lx.token, T::Semicolon | T::CloseBrace | T::Eof) || self.lx.newline_before
     }
 
+    /// Consumes a `;` that terminates a statement or a class member, if the current token is one.
+    #[inline(always)]
+    pub(crate) fn eat_semicolon(&mut self) -> bool {
+        if self.lx.token != T::Semicolon {
+            return false;
+        }
+        if COMMENTS && self.lx.full_start != self.lx.start {
+            self.record_detached_semicolon();
+        }
+        self.lx.next();
+        true
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_detached_semicolon(&mut self) {
+        if self.options.attach_comments {
+            (self.f.detached_semicolons).push((self.lx.start, self.lx.full_start));
+        }
+    }
+
     /// `parseSemicolon`
     #[inline(always)]
     #[track_caller]
     pub(crate) fn semicolon(&mut self) {
-        if self.lx.token == T::Semicolon {
-            self.lx.next();
-        } else if !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before) {
+        if !self.eat_semicolon()
+            && !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before)
+        {
             self.expected(T::Semicolon);
         }
     }
@@ -923,6 +988,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             unclaimed_nullable_types: self.unclaimed_nullable_types,
             declared: self.declared.mark(),
             jsdoc,
+            comments: self.comment_checkpoint(),
         }
     }
 
@@ -939,6 +1005,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
         }
+        self.rollback_comments(to);
     }
 
     /// Forgets the nodes that were built since `since`, for which the tree has no place. The tokens
@@ -1210,6 +1277,7 @@ macro_rules! take_span {
             _ => $p.f.$field.extend_from_slice(items),
         }
         $p.s.$field.truncate(base);
+        $crate::parser::comments::finish_list!($p, $field, start, len);
         bun_sema::hir::Span::new(start, len)
     }};
 }

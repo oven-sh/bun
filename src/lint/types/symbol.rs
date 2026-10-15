@@ -21,6 +21,12 @@ impl PartialEq for TsSymbol<'_> {
     }
 }
 impl Eq for TsSymbol<'_> {}
+impl crate::types::Indexed for TsSymbol<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for TsSymbol<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

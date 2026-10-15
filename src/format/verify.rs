@@ -82,7 +82,7 @@ impl std::fmt::Display for Difference {
 
 /// Whether the text of the template `e` may be formatted as a style sheet, as GraphQL, as HTML or as Markdown.
 #[optimize(size)]
-fn is_in_another_language(e: Expr<'_>) -> bool {
+pub(crate) fn is_in_another_language(e: Expr<'_>) -> bool {
     let has_tag = match e.parent() {
         Node::Expr(parent) => match parent.kind() {
             ExprKind::TaggedTemplate(call) => {
@@ -112,7 +112,7 @@ fn is_in_another_language(e: Expr<'_>) -> bool {
 
 /// Whether the template `e` is the table of a `` describe.each`..` ``.
 #[optimize(size)]
-fn is_table(e: Expr<'_>) -> bool {
+pub(crate) fn is_table(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
         if call.template() == Some(e) && call.callee().text().ends_with(b".each")))
 }

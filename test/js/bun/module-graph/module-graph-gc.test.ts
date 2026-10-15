@@ -3,7 +3,7 @@
 import { generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -43,6 +43,8 @@ const dir = String(
     // What the graph opens reports to, and is stopped through, `control` (a host object in
     // `globals`), so the host can stop it without holding anything of the graph.
     "io.mjs": `
+      import http from "node:http";
+      import https from "node:https";
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -67,6 +69,25 @@ const dir = String(
       export function worker() {
         const w = new Worker("data:text/javascript,setInterval(() => {}, 1000); postMessage('up')");
         return new Promise(resolve => { w.onmessage = () => resolve(); w.addEventListener("close", () => control.heard.push("worker close")); });
+      }
+      // node:http waits for the promise of its native server to emit 'close', and that reaction reaches the server.
+      export function listenWithNode(tls) {
+        const server = tls ? https.createServer(tls, () => {}) : http.createServer(() => {});
+        server.on("close", () => control.heard.push("close"));
+        return new Promise(resolve => server.listen(0, "127.0.0.1", () => { control.httpPort = server.address().port; resolve(); }));
+      }
+      // A stop() that waits for a request nobody answers, with a reaction that reaches the server.
+      export async function stopThatWaitsForARequest() {
+        const asked = Promise.withResolvers();
+        const server = Bun.serve({ port: 0, fetch() { asked.resolve(); return new Promise(() => {}); } });
+        control.httpPort = server.port;
+        fetch("http://127.0.0.1:" + server.port + "/").catch(asked.reject);
+        await asked.promise;
+        server.stop().then(() => control.heard.push("stopped " + server.id));
+      }
+      // An open terminal is a GC root, and its callbacks are the graph's.
+      export function openTerminal() {
+        new Bun.Terminal({ data() { control.heard.push("terminal data"); }, exit() { control.heard.push("terminal exit"); } });
       }
       // A rewrite whose <div> is never closed, with an onEndTag() callback that reaches the output Response.
       export function rewriteThatWaitsForAnEndTag() {
@@ -542,6 +563,40 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       graph.dispose();
     })();
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // Nothing settles the promise that tells a server is closed once its graph is disposed, and its reactions reach the server.
+  for (const [what, open] of [
+    ["node:http server that is listening", io => io.listenWithNode()],
+    ["node:https server that is listening", io => io.listenWithNode(tls)],
+    ["Bun.serve() server whose stop() is waited for", io => io.stopThatWaitsForARequest()],
+  ] as [string, (io: any) => Promise<void>][]) {
+    test(`a ${what} when its graph is disposed goes with the graph`, async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        await graph.run(() => open(io));
+        graph.dispose();
+      })();
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      expect(state.heard).toEqual([]);
+      expect(await accepts(state.httpPort)).toBe(false);
+    });
+  }
+
+  test("a Bun.Terminal that is open when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+      const io = await graph.import(file("io.mjs"));
+      graph.run(() => io.openTerminal());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(state.heard).toEqual([]);
   });
 
   // The tick's promise is the host's to settle: the job is still there when it does, and gone afterwards.

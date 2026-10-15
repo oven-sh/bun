@@ -1,7 +1,7 @@
 //! `getConstraintInfo.ts`
 
-use crate::types::Type;
 use crate::types::tsutils::is_type_parameter;
+use crate::types::{SyntaxKind, Type};
 
 /// `ConstraintTypeInfo`
 #[derive(Copy, Clone, Debug)]
@@ -25,4 +25,18 @@ pub fn get_constraint_info(ty: Type<'_>) -> ConstraintTypeInfo<'_> {
             is_type_parameter: false,
         },
     }
+}
+
+/// `checker.getConstraintOfTypeParameter(type)`: the constraint as it is declared, which can be a
+/// type parameter itself.
+pub fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
+    if !is_type_parameter(ty) {
+        return None;
+    }
+    let constraint = ty
+        .get_symbol()?
+        .declarations()
+        .filter(|it| it.kind() == SyntaxKind::TypeParameter)
+        .find_map(|it| it.constraint())?;
+    Some(constraint.get_type_from_type_node())
 }

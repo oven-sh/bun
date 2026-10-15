@@ -27,9 +27,6 @@ pub struct Refusal {
     pub message: Vec<u8>,
 }
 
-/// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
-pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
-
 fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
     Err(Refusal {
         at,
@@ -294,11 +291,12 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
-        // Features beyond Prettier's options. The first four also take a table, see `FEATURES`.
+        // Features beyond Prettier's options. The first five also take a table, see `FEATURES`.
         b"sort-imports",
         b"sort-tailwindcss",
         b"sort-package-json",
         b"jsdoc",
+        b"svelte",
         b"insert-final-newline",
     ],
     renamed: &[
@@ -338,6 +336,7 @@ const FORMAT: Table = Table {
         b"no-bracket-spacing",
         b"no-error-on-unmatched-pattern",
         b"no-insert-final-newline",
+        b"no-svelte",
         b"no-color",
         b"parser",
         b"plugin",
@@ -408,7 +407,7 @@ struct Feature {
     options: &'static [(&'static [u8], Takes)],
 }
 
-const FEATURES: [Feature; 4] = [
+const FEATURES: [Feature; 5] = [
     Feature {
         flag: b"sort-imports",
         name: b"sortImports",
@@ -462,6 +461,16 @@ const FEATURES: [Feature; 4] = [
             (b"jsdoc.keepUnparsableExampleIndent", Takes::Boolean),
         ],
     },
+    Feature {
+        flag: b"svelte",
+        name: b"svelte",
+        table: As::Parts,
+        options: &[
+            (b"svelte.sortOrder", Takes::String),
+            (b"svelte.allowShorthand", Takes::Boolean),
+            (b"svelte.indentScriptAndStyle", Takes::Boolean),
+        ],
+    },
 ];
 
 impl Feature {
@@ -502,7 +511,16 @@ impl Feature {
                 .set(name, &text)
                 .is_err()
             {
-                return refuse(value.loc, &[b"Invalid ", name, b" value: ", &text, b"."]);
+                let hint: &[u8] = match name {
+                    b"svelte.sortOrder" => {
+                        b"\n  Use \"none\", or all four parts in the order you want: \"options-scripts-markup-styles\""
+                    }
+                    _ => b"",
+                };
+                return refuse(
+                    value.loc,
+                    &[b"Invalid ", name, b" value: ", &text, b".", hint],
+                );
             }
             parts.push((name, text));
         }
@@ -699,6 +717,7 @@ const LINT: Table = Table {
             b"report-unused-disable-directives",
         ),
         (b"reportUnusedDisableDirectives", UNUSED_SEVERITY),
+        (b"plugins", b"plugin"),
         (b"rules", b"rule"),
         (b"globals", b"global"),
         (b"parserOptions", b"parser-options"),
@@ -749,7 +768,6 @@ const LINT: Table = Table {
         b"no-native-plugin-rules",
         b"no-eslintrc",
         b"parser",
-        b"plugin",
         b"eslintrc",
         b"env",
         b"rulesdir",
@@ -859,6 +877,68 @@ impl Place {
     }
 }
 
+/// One entry of `plugins` in `[lint]`.
+#[derive(Clone, Debug)]
+pub struct PluginOfBunfig {
+    /// `name`: the prefix of its rules, if that isn't the name the plugin has for itself.
+    pub alias: Option<Vec<u8>>,
+    pub at: usize,
+}
+
+/// Parses `plugins`. An entry is a path or the name of a package, or `{ name = "..", specifier = ".." }`, as in oxlint's
+/// `jsPlugins`.
+fn plugins(value: &Expr) -> Result<(Vec<Vec<u8>>, Vec<PluginOfBunfig>), Refusal> {
+    let Data::EArray(items) = &value.data else {
+        return expected("array", value);
+    };
+    let (mut specifiers, mut places) = (Vec::new(), Vec::new());
+    for item in items.slice() {
+        let text = |value: &Expr| match json_of(value)?.as_str() {
+            Some(text) => Ok(text.to_vec()),
+            None => expected("string", value),
+        };
+        let (mut specifier, mut alias) = (None, None);
+        match &item.data {
+            Data::EObject(_) => {
+                for (key, value) in entries(item)? {
+                    match &key.name[..] {
+                        b"specifier" => specifier = Some(text(value)?),
+                        b"name" => {
+                            let name = text(value)?;
+                            if name.is_empty() {
+                                return refuse(value.loc, &[b"A plugin's name can't be empty"]);
+                            }
+                            alias = Some(name);
+                        }
+                        _ => {
+                            let known = [b"name".to_vec(), b"specifier".to_vec()];
+                            return unknown_key(
+                                &key.name,
+                                key.at,
+                                b"lint.plugins",
+                                known.into_iter(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => specifier = Some(text(item)?),
+        }
+        let Some(specifier) = specifier else {
+            return refuse(
+                item.loc,
+                &[b"A plugin needs a specifier\n  A path, or the name of a package"],
+            );
+        };
+        specifiers.push(specifier);
+        places.push(PluginOfBunfig {
+            alias,
+            at: item.loc.start.max(0) as usize,
+        });
+    }
+    Ok((specifiers, places))
+}
+
 /// One entry of `[lint.rules]` or of an override's `rules`.
 #[derive(Clone, Debug)]
 pub struct RuleOfBunfig {
@@ -957,14 +1037,11 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// What `[lint]` of `file` says, and `[fmt]`, which is for the rule that holds a file against what `bun fmt` prints.
+/// What `[lint]` of `file` says.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
-    let mut options = crate::cli::Options {
-        of_bun_format: format(file)?.map(Box::new),
-        ..Default::default()
-    };
+    let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
-        return Ok(options.of_bun_format.is_some().then_some(options));
+        return Ok(None);
     };
     for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
@@ -1039,6 +1116,7 @@ pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
                     set(flag, Some(&name.name), true).map_err(at(value))?;
                 }
             }
+            b"plugins" => (options.plugin, options.plugins_of_bunfig) = plugins(value)?,
             b"rules" => (options.rule, options.rules_of_bunfig) = rules(value)?,
             b"settings" => options.settings = settings(value)?,
             b"overrides" => options.overrides = overrides_of_lint(value)?,

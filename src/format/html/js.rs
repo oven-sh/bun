@@ -5,14 +5,15 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
-use crate::js::comments::collect;
+use crate::js::ast_nodes::node_as_ast_nodes;
+use crate::js::comments::{self, NO_COMMENTS};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
-use crate::js::utils::tailwindcss::{Texts, collapse_among, ends_in_template};
+use crate::js::utils::tailwindcss::{Collapse, Texts, collapse_among, ends_in_template};
 use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
 use crate::prelude::*;
-use crate::tailwind::Tailwind;
+use crate::tailwind::{Tailwind, Tidies};
 use crate::{format_args, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
@@ -43,8 +44,9 @@ pub(crate) enum SourceType {
 }
 
 /// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
-const EXPRESSION_JSX: &[u8] = b"\0.jsx";
-const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
+pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 pub fn is_probably_jsx(text: &[u8]) -> bool {
@@ -76,7 +78,7 @@ pub fn is_probably_jsx(text: &[u8]) -> bool {
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
-        quote_style: if in_html.is_in_attribute {
+        quote_style: if in_html.is_in_attribute || in_html.has_single_quotes {
             QuoteStyle::Single
         } else {
             options.quote_style
@@ -126,7 +128,7 @@ impl<'p> Parse<'p> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
-    fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
+    pub(crate) fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
         let code = Code {
             path,
             text,
@@ -139,11 +141,11 @@ impl<'p> Parse<'p> {
     }
 }
 
-type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
+pub(crate) type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
 /// What code is.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Piece {
+pub(crate) enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
@@ -165,7 +167,7 @@ enum Attempt {
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
-fn with_file(
+pub(crate) fn with_file(
     f: &mut Formatter<'_>,
     code: &[u8],
     paths: &[&[u8]],
@@ -224,20 +226,16 @@ fn with_file(
                     {
                         return;
                     }
-                    let comments = file.extension(|| {
-                        let mut comments = Vec::new();
-                        collect(file, options.flavor, &mut comments);
-                        comments
-                    });
-                    let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                    let comments = comments::of_file(file, &options);
                     // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
-                    let is_html_like = |comment: &Comment| {
+                    let is_html_like = |comment: Comment<'_>| {
                         matches!(
-                            file.text().get(comment.span.start as usize),
+                            file.text().get(comment.span().start as usize),
                             Some(b'<' | b'-')
                         )
                     };
-                    if source_type != SourceType::Script && comments.iter().any(is_html_like) {
+                    if source_type != SourceType::Script && file.comments_by_id().any(is_html_like)
+                    {
                         return;
                     }
                     if let Some(sorted) = sorts_text.and_then(|how| sorted_text(file, how)) {
@@ -245,7 +243,14 @@ fn with_file(
                         return;
                     }
                     let context = JsFormatContext::new(file, options.clone(), comments);
-                    let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
+                    let is_written = match file.comment_count() {
+                        0 => f.write_embedded(context, file.text(), |f| write(file, f)),
+                        // Prettier's `ensureAllCommentsPrinted`. It throws, and the code stays as it is written:
+                        // `v-slot="/* comment */"`
+                        _ => f.try_write_embedded(context, file.text(), |f| {
+                            write(file, f) && f.comments().unprinted().next().is_none()
+                        }),
+                    };
                     result = Attempt::Written(is_written);
                 });
                 result
@@ -278,10 +283,18 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
     None
 }
 
+/// What an expression with classes is in.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Host {
+    Vue,
+    Angular,
+    Svelte,
+}
+
 /// Finds the strings and the templates of a program, and sorts the classes in them.
 struct ClassSorter<'t, 'a> {
     tailwind: &'t Tailwind,
-    is_angular: bool,
+    host: Host,
     /// Each `+` and each template around what is visited, from the outside to the inside.
     around: Vec<Expr<'a>>,
     /// What is written in the place of what, in the order of the text.
@@ -289,17 +302,30 @@ struct ClassSorter<'t, 'a> {
 }
 
 impl ClassSorter<'_, '_> {
+    /// How the texts of the template or the string at `whole` are sorted.
+    fn how(&self, whole: Span) -> (Collapse, Tidies) {
+        let among = |rules| collapse_among(&self.around, whole, self.tailwind, rules);
+        match self.host {
+            Host::Angular => (among((true, Texts::AsWritten)), self.tailwind.tidies()),
+            Host::Vue => (among((false, Texts::Unseen)), self.tailwind.tidies()),
+            // `removeDuplicates: false, collapseWhitespace: false`
+            Host::Svelte => (
+                Collapse::ALL,
+                Tidies {
+                    collapses_white_space: false,
+                    removes_duplicates: false,
+                },
+            ),
+        }
+    }
+
     /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
     fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
-        let rules = match self.is_angular {
-            true => (true, Texts::AsWritten),
-            false => (false, Texts::Unseen),
-        };
-        let around = collapse_among(&self.around, whole, self.tailwind, rules);
+        let (around, tidies) = self.how(whole);
         let count = texts.len();
         for (index, (text, span)) in texts.enumerate() {
             let ends = ends_in_template(text, (index == 0, index + 1 == count), around);
-            let sorted = self.tailwind.sorted_between(text, ends);
+            let sorted = self.tailwind.sorted_with(text, ends, tidies);
             if *sorted != *text {
                 self.changes.push((span, sorted.into_owned()));
             }
@@ -380,7 +406,10 @@ pub(crate) fn with_sorted_classes(
             if !file.has_parse_errors() {
                 let mut sorter = ClassSorter {
                     tailwind,
-                    is_angular,
+                    host: match is_angular {
+                        true => Host::Angular,
+                        false => Host::Vue,
+                    },
                     around: Vec::new(),
                     changes: Vec::new(),
                 };
@@ -405,7 +434,26 @@ pub(crate) fn with_sorted_classes(
     Some(sorted)
 }
 
-fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
+/// For `file`, which is the expression in the braces of an attribute for classes of Svelte: what is written in the place
+/// of what. The plugin's `transformSvelte` sorts all its strings and templates, and does nothing else to them.
+pub(crate) fn sorted_in_svelte<'a>(
+    file: &'a File<'a>,
+    tailwind: &Tailwind,
+) -> Vec<(Span, Vec<u8>)> {
+    if file.has_parse_errors() {
+        return Vec::new();
+    }
+    let mut sorter = ClassSorter {
+        tailwind,
+        host: Host::Svelte,
+        around: Vec::new(),
+        changes: Vec::new(),
+    };
+    walk(file, &mut sorter);
+    sorter.changes
+}
+
+pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
     match syntax {
         Syntax::Babel => &[b"dummy.jsx"],
         Syntax::BabelTs => &[b"dummy.tsx", b"dummy.ts"],
@@ -420,33 +468,20 @@ fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
 
 /// What Prettier makes of a `Program`, without the line break at the end.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
-    // Nothing that a comment could belong to. Without a statement at all the comments keep the empty lines between
-    // them, as in `write_program`, which counts on being at the start of a line.
-    let is_all_empty = file
-        .body()
-        .iter()
-        .all(|it| matches!(it.kind(), StmtKind::Empty));
-    write_hashbang(
-        is_all_empty && f.comments().unprinted_comments().is_empty(),
+    let program = node_as_ast_nodes(Node::File(file));
+    let owned = f.comments().of_node(program);
+    let has_statements = (file.body().iter()).any(|it| !matches!(it.kind(), StmtKind::Empty));
+    let is_hashbang_last = !has_statements && owned.leading.is_empty() && owned.dangling.is_empty();
+    write_hashbang(is_hashbang_last, f);
+    // The program only owns comments if there is no statement to attach them to.
+    write!(
         f,
+        [
+            leading_comments(program),
+            FormatStatements(file.body()),
+            dangling_comments(program)
+        ]
     );
-    if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
-        let comments = f.comments().unprinted_comments();
-        let indent = DanglingIndentMode::None;
-        return write!(f, FormatDanglingComments::Comments { comments, indent });
-    }
-    write!(f, FormatStatements(file.body()));
-    let mut rest = f.comments().unprinted_comments();
-    // The empty lines before the first thing in a script go.
-    if let Some((first, others)) = rest.split_first()
-        && (file.text().get(..first.span.start as usize))
-            .is_some_and(|before| before.trim_ascii().is_empty())
-    {
-        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
-        write!(f, FormatDanglingComments::Comments { comments, indent });
-        rest = others;
-    }
-    write!(f, FormatTrailingComments::Comments(rest));
 }
 
 /// `textToDoc(code, { parser })` for a program. `flavor`: whose output it is. Returns whether it has been written.
@@ -538,7 +573,7 @@ pub(crate) fn write_hugged<'b>(
 }
 
 /// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
-fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
+pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     let mut statements = file.body().iter();
     let (Some(statement), None) = (statements.next(), statements.next()) else {
         return None;
@@ -608,7 +643,7 @@ fn is_reserved_word(name: &[u8]) -> bool {
 
 /// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
 /// without being parsed. Returns whether `code` is one.
-fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
+pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     let code = code.trim_ascii();
     let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
     let is_name = |name: &[u8]| {
@@ -678,8 +713,6 @@ pub(crate) fn write_expression(
             let should_hug = hug.of_expression(e, in_html.root);
             let content = format_with(|f| {
                 write!(f, e);
-                let rest = f.comments().unprinted_comments();
-                write!(f, FormatTrailingComments::Comments(rest));
             });
             write_hugged(should_hug, &content, f);
             true
@@ -755,7 +788,7 @@ pub(crate) fn write_angular_expression(
             }
             write_rest(f);
         });
-        let context = JsFormatContext::new(file, options.clone(), &[]);
+        let context = JsFormatContext::new(file, options.clone(), &NO_COMMENTS);
         f.write_embedded(context, source, |f| write_hugged(should_hug, &content, f));
         is_written = true;
     });

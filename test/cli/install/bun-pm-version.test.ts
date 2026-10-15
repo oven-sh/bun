@@ -41,6 +41,19 @@ describe.concurrent("bun pm version", () => {
       env: bunEnv,
     }).exited;
 
+    // Signing needs a key that the machine running the test may not have.
+    await Bun.spawn({
+      cmd: ["git", "config", "commit.gpgsign", "false"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
+    await Bun.spawn({
+      cmd: ["git", "config", "tag.gpgsign", "false"],
+      cwd: testDir,
+      env: bunEnv,
+    }).exited;
+
     await Bun.spawn({
       cmd: ["git", "add", "package.json"],
       cwd: testDir,
@@ -205,6 +218,20 @@ describe.concurrent("bun pm version", () => {
       expect(packageJson.version).toBe("2.0.0");
     });
 
+    // `npm version patch` writes the same version, although both tools then refuse to increment it again.
+    it("increments a number equal to Number.MAX_SAFE_INTEGER", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.9007199254740991" }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        testDir,
+      );
+
+      expect({ output, error, code }).toEqual({ output: "v1.0.9007199254740992\n", error: "", code: 0 });
+    });
+
     it("should set specific version", async () => {
       const testDir = setupTest();
 
@@ -274,6 +301,53 @@ describe.concurrent("bun pm version", () => {
       expect(code5).toBe(0);
     });
 
+    // `npm version` rejects these too (node-semver: "Invalid patch version"). The number used to wrap:
+    // the first three wrote 1.0.0, 1.0.0 and 0.0.0, and the `+ 1` aborted a debug build.
+    it.each([
+      ["1.0.18446744073709551615", "patch"],
+      ["1.18446744073709551615.0", "minor"],
+      ["18446744073709551615.0.0", "major"],
+      ["1.0.18446744073709551615", "prerelease"],
+      ["1.0.9007199254740992", "patch"],
+    ])("rejects %s as the version to increment with %s", async (version, increment) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", increment, "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: "",
+        error: `error: Current version "${version}" is not a valid semver\n`,
+        code: 1,
+        version,
+      });
+    });
+
+    // The same limit applies to a version given as the argument. `npm version` prints "Invalid version".
+    it("rejects a specific version with a number above Number.MAX_SAFE_INTEGER", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "1.0.9007199254740992", "--no-git-tag-version"],
+        testDir,
+        false,
+      );
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+
+      expect({ output, error: error.split("\n")[0], code, version: packageJson.version }).toEqual({
+        output: "",
+        error: 'error: Invalid version argument: "1.0.9007199254740992"',
+        code: 1,
+        version: "1.0.0",
+      });
+    });
+
     it("handles missing package.json like npm", async () => {
       await using testDir = tempDir(`version-${i++}`, {
         "README.md": "# Test project",
@@ -337,6 +411,29 @@ describe.concurrent("bun pm version", () => {
       expect(tagOutput).toContain("v1.0.1");
 
       const { output: logOutput } = await runCommand(["git", "log", "--oneline"], testDir1);
+      expect(logOutput).toContain("v1.0.1");
+    });
+
+    it("creates git commits and tags inside a linked worktree", async () => {
+      const mainDir = await setupGitTest();
+      const worktreeDir = join(tempDirWithFiles(`version-${i++}`, { ".keep": "" }), "worktree");
+
+      const { code: addCode } = await runCommand(["git", "worktree", "add", worktreeDir, "-b", "release"], mainDir);
+      expect(addCode).toBe(0);
+
+      // A linked worktree has a `.git` file, not a `.git` directory.
+      expect(await Bun.file(join(worktreeDir, ".git")).text()).toStartWith("gitdir:");
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch"], worktreeDir);
+
+      expect(error.trim()).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], worktreeDir);
+      expect(tagOutput).toContain("v1.0.1");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--oneline"], worktreeDir);
       expect(logOutput).toContain("v1.0.1");
     });
 
@@ -487,6 +584,58 @@ describe.concurrent("bun pm version", () => {
     });
   });
 
+  describe("--dry-run", () => {
+    it("prints the new version without writing package.json or running scripts", async () => {
+      using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify(
+          {
+            name: "test",
+            version: "1.0.0",
+            scripts: {
+              preversion: "echo 'step1' >> lifecycle.log",
+              version: "echo 'step2' >> lifecycle.log",
+              postversion: "echo 'step3' >> lifecycle.log",
+            },
+          },
+          null,
+          2,
+        ),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "minor", "--dry-run", "--no-git-tag-version"],
+        String(testDir),
+      );
+
+      expect(error).toBe("");
+      expect(output).toBe("v1.1.0\n");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(String(testDir), "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+      expect(await Bun.file(join(String(testDir), "lifecycle.log")).exists()).toBe(false);
+    });
+
+    it("does not commit or tag in a git repository", async () => {
+      const testDir = await setupGitTest();
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "patch", "--dry-run"], testDir);
+
+      expect(error).toBe("");
+      expect(output).toBe("v1.0.1\n");
+      expect(code).toBe(0);
+
+      const pkg = await Bun.file(join(testDir, "package.json")).json();
+      expect(pkg.version).toBe("1.0.0");
+
+      const { output: tagOutput } = await runCommand(["git", "tag", "-l"], testDir);
+      expect(tagOutput).toBe("");
+
+      const { output: logOutput } = await runCommand(["git", "log", "--format=%s"], testDir);
+      expect(logOutput).toBe("Initial commit\n");
+    });
+  });
+
   describe("JSON formatting preservation", () => {
     it("preserves JSON formatting correctly", async () => {
       const originalJson1 = `{
@@ -524,6 +673,30 @@ describe.concurrent("bun pm version", () => {
         scripts: {
           test: "echo test",
         },
+      });
+    });
+
+    it("keeps the file valid JSON when a number literal overflows to Infinity", async () => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": `{
+  "name": "test",
+  "version": "1.0.0",
+  "config": { "max": 1e400, "min": -1e400 }
+}`,
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      expect(JSON.parse(await Bun.file(join(String(testDir), "package.json")).text())).toEqual({
+        name: "test",
+        version: "1.0.1",
+        config: { max: null, min: null },
       });
     });
   });
@@ -577,6 +750,37 @@ describe.concurrent("bun pm version", () => {
 
       expect(code6).toBe(0);
       expect(output6.trim()).toBe("v1.0.0-4");
+    });
+
+    // The prerelease number used to be read as a u32: 4294967295 wrapped to 0 and a build timestamp
+    // (above 2^32 - 1) counted as 0, so both wrote a version lower than the current one.
+    it.each([
+      ["1.0.0-beta.4294967295", [], "1.0.0-beta.4294967296"],
+      ["1.0.0-4294967295", [], "1.0.0-4294967296"],
+      ["1.0.0-4294967295", ["--preid", "rc"], "1.0.0-rc.4294967296"],
+      ["1.0.0-canary.20250101123456", [], "1.0.0-canary.20250101123457"],
+      ["1.0.0-20250101123456", [], "1.0.0-20250101123457"],
+      ["1.0.0-beta.18446744073709551614", [], "1.0.0-beta.18446744073709551615"],
+      // No larger number fits, so this one counts as a name and gets a new field.
+      ["1.0.0-18446744073709551615", [], "1.0.0-18446744073709551615.1"],
+      ["1.0.9007199254740991-0", [], "1.0.9007199254740991-1"],
+    ])("increments the prerelease number of %s", async (version, flags, expected) => {
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test", version }, null, 2),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "prerelease", ...flags, "--no-git-tag-version"],
+        testDir,
+      );
+      const packageJson = await Bun.file(join(String(testDir), "package.json")).json();
+
+      expect({ output, error, code, version: packageJson.version }).toEqual({
+        output: `v${expected}\n`,
+        error: "",
+        code: 0,
+        version: expected,
+      });
     });
 
     it("should preserve prerelease identifiers correctly", async () => {
@@ -717,8 +921,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
 
       const eventContent = await Bun.file(join(testDir2, "event.log")).text();
       const scriptContent = await Bun.file(join(testDir2, "script.log")).text();
@@ -777,8 +981,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
+      await expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
+      await expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
 
       const content = await Bun.file(join(testDir4, "version-output.txt")).text();
       expect(content.trim()).toBe("built");

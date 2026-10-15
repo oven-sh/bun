@@ -29,6 +29,12 @@ impl PartialEq for Type<'_> {
     }
 }
 impl Eq for Type<'_> {}
+impl crate::types::Indexed for Type<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for Type<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -188,6 +194,12 @@ impl<'a> TupleTarget<'a> {
     #[inline]
     pub fn has_rest_element(self) -> bool {
         self.info.combined_flags.intersects(ElementFlags::VARIABLE)
+    }
+
+    /// `target.elementFlags`
+    #[inline]
+    pub fn element_flags(self) -> &'a [ElementFlags] {
+        self.info.element_flags
     }
 }
 

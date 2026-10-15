@@ -1046,6 +1046,11 @@ extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)
     return !globalObject->onLoadPlugins.isEmpty() || !globalObject->onResolvePlugins.isEmpty();
 }
 
+extern "C" bool Bun__hasOnResolve(Zig::GlobalObject* globalObject)
+{
+    return !globalObject->onResolvePlugins.isEmpty();
+}
+
 extern "C" BunString Bun__resolveVirtualModule(Zig::GlobalObject* globalObject, const BunString* specifier, const BunString* importer)
 {
     auto& plugins = globalObject->onLoadPlugins;

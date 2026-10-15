@@ -219,6 +219,8 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
+    /// Set while an `onResolve` callback runs (`OnResolveScope`).
+    pub(crate) is_in_on_resolve: Cell<bool>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -5300,7 +5302,7 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
-        if global.has_plugins() {
+        if global.has_on_resolve() {
             match run_on_resolve(global, specifier, source)? {
                 None => {}
                 Some(Err(error)) => return Ok(Err(error)),
@@ -5308,11 +5310,11 @@ impl VirtualMachine {
                     if let Some(name) = global.resolve_virtual_module(&answer, source) {
                         return Ok(Ok(name));
                     }
-                    // A bare name may be a package's in the registry. It is the plugin's own, and not
-                    // installed, if `onResolve` answers about it as well.
+                    // A bare name that an `onLoad` could serve may also be a package's in the registry.
+                    // It is the plugin's own, and not installed, if `onResolve` answers about it as well.
                     let answer_utf8 = answer.to_utf8();
                     let is_bare = bun_resolver::is_package_path(&answer_utf8)
-                        && ModuleLoader::plugin_namespace_and_path(&answer_utf8)
+                        && ModuleLoader::on_load_namespace_and_path(&answer_utf8)
                             .is_some_and(|(namespace, _)| namespace.is_empty());
                     drop(answer_utf8);
                     let is_own = is_bare
@@ -5434,7 +5436,7 @@ impl VirtualMachine {
 
         // (One letter is a Windows drive.)
         if has_plugins
-            && ModuleLoader::plugin_namespace_and_path(&specifier_utf8)
+            && ModuleLoader::on_load_namespace_and_path(&specifier_utf8)
                 .is_some_and(|(namespace, _)| namespace.len() > 1)
             && global.has_on_load(&specifier_utf8)?
         {
@@ -7742,6 +7744,30 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+/// Keeps a resolve made inside an `onResolve` callback from inheriting the outer resolve's state.
+struct OnResolveScope<'a> {
+    vm: &'a VirtualMachine,
+    was_in_on_resolve: bool,
+    custom_dir_paths: Option<&'static [bun_core::String]>,
+}
+
+impl<'a> OnResolveScope<'a> {
+    fn enter(vm: &'a VirtualMachine) -> Self {
+        Self {
+            vm,
+            was_in_on_resolve: vm.is_in_on_resolve.replace(true),
+            custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
+        }
+    }
+}
+
+impl Drop for OnResolveScope<'_> {
+    fn drop(&mut self) {
+        self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
+        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
+    }
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 fn run_on_resolve(
     global: &JSGlobalObject,
@@ -7749,21 +7775,39 @@ fn run_on_resolve(
     importer: &bun_core::String,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let specifier = specifier.to_utf8();
-    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
+    if specifier.is_empty() {
         return Ok(None);
-    };
+    }
+    let vm = global.bun_vm();
+    // Without an extension or a namespace, skip builtin names and anything a callback resolves: a
+    // catch-all filter would otherwise claim `require("fs")` and recurse on its own `require()`.
+    if !ModuleLoader::has_extension_or_namespace(&specifier)
+        && (vm.is_in_on_resolve.get()
+            || ModuleLoader::HardcodedModule::Alias::get(
+                &specifier,
+                bun_ast::Target::Bun,
+                Default::default(),
+            )
+            .is_some())
+    {
+        return Ok(None);
+    }
+    let (namespace, path) = ModuleLoader::namespace_and_path(&specifier);
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
     let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
         Some(query) => &importer[..query],
         None => &importer[..],
     };
-    let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
-        &bun_core::String::borrow_utf8(path),
-        &bun_core::String::borrow_utf8(importer),
-    )?
-    else {
+    let answer = {
+        let _scope = OnResolveScope::enter(vm);
+        global.run_on_resolve_plugins(
+            &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
+            &bun_core::String::borrow_utf8(path),
+            &bun_core::String::borrow_utf8(importer),
+        )?
+    };
+    let Some(on_resolve_plugin) = answer else {
         return Ok(None);
     };
     if !on_resolve_plugin.is_object() {
@@ -7786,14 +7830,6 @@ fn run_on_resolve(
     if file_path.length() == 0 {
         return Ok(Some(Err(global.create_error_instance(format_args!(
             "Expected \"path\" to be a non-empty string in onResolve plugin"
-        )))));
-    } else if file_path.eq_ascii(b".")
-        || file_path.eq_ascii(b"..")
-        || file_path.eq_ascii(b"...")
-        || file_path.eq_ascii(b" ")
-    {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "\"path\" is invalid in onResolve plugin"
         )))));
     }
     let user_namespace: bun_core::String = 'brk: {

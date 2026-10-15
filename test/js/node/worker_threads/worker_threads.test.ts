@@ -3340,3 +3340,28 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
 });
+
+describe("Worker exit listener cleanup", () => {
+  test.concurrent.each(["normal", "terminate", "error"])("releases listeners after %s", async mode => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--expose-gc", join(import.meta.dir, "worker-exit-cleanup-fixture.mjs"), mode],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        before: { message: 0, messageerrors: 0, messageerror: 1, error: 2, online: 1, custom: 1 },
+        after: { message: 0, messageerrors: 0, messageerror: 0, error: 0, online: 0, custom: 0, exit: 0 },
+        eventNames: [],
+        collected: [true, true, true, true],
+        controlCollected: true,
+        code: mode === "normal" ? 0 : 1,
+        errorMessage: mode === "error" ? "expected worker failure" : null,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

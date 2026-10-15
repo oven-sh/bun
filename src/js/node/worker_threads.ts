@@ -1204,10 +1204,16 @@ class Worker extends EventEmitter {
       while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
         this.emit("message", entry.message);
       }
+      this.removeAllListeners("message");
+      // Node 24 intentionally uses the plural spelling before 'exit':
+      // https://github.com/nodejs/node/blob/v24.21.0/lib/internal/worker.js#L385-L402
+      this.removeAllListeners("messageerrors");
+      this.#publicPort.unref();
       this.#publicPort.close();
     }
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+    this.removeAllListeners();
   }
 
   #onError(event: ErrorEvent) {

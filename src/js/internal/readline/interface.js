@@ -76,6 +76,16 @@ const kMincrlfDelay = 100;
  */
 const lineEnding = /\r?\n|\r(?!\n)|\u2028|\u2029/g;
 
+// True when "\n" is the only line ending the string can hold. Such a string
+// splits with indexOf, which allocates nothing, instead of one RegExp match per line.
+function hasOnlyLineFeeds(string) {
+  return (
+    StringPrototypeIndexOf(string, "\r") === -1 &&
+    StringPrototypeIndexOf(string, "\u2028") === -1 &&
+    StringPrototypeIndexOf(string, "\u2029") === -1
+  );
+}
+
 const kLineObjectStream = Symbol("line object stream");
 const kQuestionCancel = Symbol("kQuestionCancel");
 const kQuestion = Symbol("kQuestion");
@@ -619,12 +629,7 @@ class Interface extends InterfaceConstructor {
       this[kSawReturnAt] = 0;
     }
 
-    // kLine_buffer follows the last line ending, so only the new chunk can hold one.
-    if (
-      StringPrototypeIndexOf(string, "\r") === -1 &&
-      StringPrototypeIndexOf(string, "\u2028") === -1 &&
-      StringPrototypeIndexOf(string, "\u2029") === -1
-    ) {
+    if (hasOnlyLineFeeds(string)) {
       let newline = StringPrototypeIndexOf(string, "\n");
       if (newline === -1) {
         if (string) {
@@ -637,26 +642,31 @@ class Interface extends InterfaceConstructor {
         }
         return;
       }
-      if (this[kLine_buffer]) {
-        newline += this[kLine_buffer].length;
-        string = this[kLine_buffer] + string;
-        this[kLine_buffer] = null;
+      // The legacy _line_buffer setter can put any text in the buffer.
+      const buffer = this[kLine_buffer];
+      if (!buffer || hasOnlyLineFeeds(buffer)) {
+        if (buffer) {
+          string = buffer + string;
+          this[kLine_buffer] = null;
+          newline = StringPrototypeIndexOf(string, "\n");
+        }
+        this[kSawReturnAt] = 0;
+        const lastNewline = StringPrototypeLastIndexOf(string, "\n");
+        // Either '' or (conceivably) the unfinished portion of the next line
+        this[kLine_buffer] = StringPrototypeSlice(string, lastNewline + 1);
+        let start = 0;
+        while (true) {
+          this[kOnLine](StringPrototypeSlice(string, start, newline));
+          if (newline === lastNewline) break;
+          start = newline + 1;
+          newline = StringPrototypeIndexOf(string, "\n", start);
+        }
+        return;
       }
-      this[kSawReturnAt] = 0;
-      const lastNewline = StringPrototypeLastIndexOf(string, "\n");
-      // Either '' or (conceivably) the unfinished portion of the next line
-      this[kLine_buffer] = StringPrototypeSlice(string, lastNewline + 1);
-      let start = 0;
-      while (true) {
-        this[kOnLine](StringPrototypeSlice(string, start, newline));
-        if (newline === lastNewline) break;
-        start = newline + 1;
-        newline = StringPrototypeIndexOf(string, "\n", start);
-      }
-      return;
     }
 
     // Run test() on the new string chunk, not on the entire line buffer.
+    lineEnding.lastIndex = 0;
     let newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
     if (newPartContainsEnding !== null) {
       if (this[kLine_buffer]) {

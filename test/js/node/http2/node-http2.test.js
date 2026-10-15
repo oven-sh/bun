@@ -6289,7 +6289,7 @@ describe.concurrent("write() after end()", () => {
     });
 
     it("server stream, request already ended", async () => {
-      // The END_STREAM then closes the native stream at once, before 'error' is emitted. The late
+      // The END_STREAM goes out as 'error' is emitted and closes the native stream at once. The late
       // write callback and the 'error' listener still get a live stream, like node.
       const live = [];
       const isLive = stream => !stream.destroyed && stream.session !== undefined;
@@ -6335,6 +6335,18 @@ describe.concurrent("write() after end()", () => {
       expect(events).toEqual(lateWriteEvents);
     });
 
+    it("client stream that is still pending", async () => {
+      // The write is held until 'ready', after end(), and carries END_STREAM itself.
+      let pending;
+      const events = await request((client, req, late) => {
+        pending = req.pending;
+        req.write("body");
+        req.end();
+        req.write("late", late);
+      });
+      expect([pending, events]).toEqual([true, lateWriteEvents]);
+    });
+
     it("write blocked on flow control", async () => {
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });
@@ -6359,6 +6371,18 @@ describe.concurrent("write() after end()", () => {
         });
       });
       expect([blockedLength, ...result]).toEqual([big.length, lateWriteEvents, big.length]);
+    });
+
+    it("chunk buffered behind the blocked write", async () => {
+      // The buffered chunk is dispatched when the blocked write completes, and carries END_STREAM itself.
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.write("tail");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length + 4]);
     });
 
     // Guard, passes without the fix too: the END_STREAM must not make the callback of a write run
@@ -6400,9 +6424,35 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
+    // Guard, passes without the fix too: a file response sends its own END_STREAM when the file is done.
+    it("late write during a file response does not cut the file short", async () => {
+      using dir = tempDir("http2-late-write-file", { "body.bin": Buffer.alloc(512 * 1024, "f") });
+      const result = await serve((stream, late) => {
+        stream.respondWithFile(path.join(String(dir), "body.bin"), { ":status": 200 });
+        // respondWithFile ends the writable side, so 'finish' comes while the file is still in transit.
+        stream.on("finish", () => stream.write("late", late));
+      });
+      expect(result).toEqual([["finish", ...lateWriteEvents], 512 * 1024]);
+    });
+
+    // Guard, passes without the fix too: a stream that end() did not close is owed no END_STREAM,
+    // so the reset from its 'error' listener reaches the peer.
+    it("error on a stream that has not ended does not end it", async () => {
+      const result = serve(stream => {
+        stream.on("error", () => stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR));
+        stream.respond({ ":status": 200 });
+        stream.resume();
+        // unshift() after 'end' errors the stream (ERR_STREAM_UNSHIFT_AFTER_END_EVENT) and does not destroy it.
+        stream.on("end", () => stream.unshift("x"));
+      });
+      await expect(result).rejects.toMatchObject({
+        code: "ERR_HTTP2_STREAM_ERROR",
+        message: expect.stringContaining("NGHTTP2_INTERNAL_ERROR"),
+      });
+    });
+
     // With trailers pending, END_STREAM rides the trailers, and node leaves this stream open too.
-    // The write completes before the late write's callback and 'error', so a 'wantTrailers'
-    // from the completion would be the first event.
+    // A 'wantTrailers' from the error path would come before the 'error' listener runs.
     it("respond({ waitForTrailers: true }) is not asked for trailers", async () => {
       const server = http2.createServer();
       let client;
@@ -6456,8 +6506,8 @@ describe.concurrent("write() after end()", () => {
       }
     });
 
-    // END_STREAM goes out when the write completes, before 'error' is emitted (node submits it
-    // before 'error' too), so a reset from the 'error' listener comes after a clean end.
+    // END_STREAM goes out before the 'error' listeners run (node submits it before 'error' too),
+    // so a reset from an 'error' listener comes after a clean end.
     it.each([
       ["close(code)", stream => stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR)],
       ["destroy(err)", (stream, err) => stream.destroy(err)],

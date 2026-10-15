@@ -2104,34 +2104,6 @@ function onEndStreamSettled(stream: Http2Stream) {
   }
 }
 
-const kWriteCallback = Symbol("writeCallback");
-const kOnWriteDone = Symbol("onWriteDone");
-// Writable has one _write/_writev in flight at a time: one slot and one bound function serve them all.
-function writeCompletion(stream: Http2Stream, callback: (err?: Error | null) => void) {
-  stream[kWriteCallback] = callback;
-  return (stream[kOnWriteDone] ??= onStreamWriteDone.bind(stream));
-}
-// Writable never calls _final on an errored stream (a write() after end()): send its END_STREAM here.
-function onStreamWriteDone(this: Http2Stream, err?: Error | null) {
-  const callback = this[kWriteCallback]!;
-  this[kWriteCallback] = undefined;
-  callback(err);
-  const state = this._writableState;
-  // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
-  if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
-  const status = this[bunHTTP2StreamStatus];
-  // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
-  if ((status & (StreamState.EndStreamSent | StreamState.NativeClosed | StreamState.NativeErrored)) !== 0) return;
-  // Pending trailers carry END_STREAM themselves. A pending reset must not follow a clean end.
-  if (this[bunHTTP2WaitForTrailers] || (status & StreamState.RequestWaitsForTrailers) !== 0 || this.rstCode) return;
-  const native = this[bunHTTP2Session]?.[bunHTTP2Native];
-  if (!native) return;
-  this[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
-  const settled = native.writeStream(this.id, "", "ascii", true);
-  native.flush();
-  if (settled === 5) onEndStreamSettled(this);
-}
-
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
   if (typeof _final === "function") {
@@ -2276,11 +2248,34 @@ function streamOnResume(this: Http2Stream) {
   const id = this.id;
   if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
 }
-// An error on a natively closed stream cancels the 'end' or 'finish' that destroyClosedStream waits for.
+// The Writable never calls _final on an errored stream (a write() after end()): send the END_STREAM that _final owed.
+function endErroredStream(stream: Http2Stream) {
+  const state = stream._writableState;
+  // finalCalled also covers a file response, which has no _final and sends END_STREAM when the file is done.
+  if (!state.ending || state.finalCalled) return;
+  // A chunk buffered behind the write in flight carries END_STREAM itself (isFinalWrite).
+  if (state.length !== state.writelen) return;
+  const status = stream[bunHTTP2StreamStatus];
+  // The native side drops a closed stream at the next read, and writeStream throws on an id it dropped.
+  if ((status & (StreamState.EndStreamSent | StreamState.NativeErrored)) !== 0) return;
+  // Pending trailers carry END_STREAM themselves. So does a write held until 'ready'.
+  if (stream[bunHTTP2WaitForTrailers] || (status & StreamState.RequestWaitsForTrailers) !== 0 || stream.pending) return;
+  const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
+  // A pending reset must not follow a clean end.
+  if (!native || stream.rstCode) return;
+  stream[bunHTTP2StreamStatus] = status | StreamState.EndStreamSent;
+  const settled = native.writeStream(stream.id, "", "ascii", true);
+  native.flush();
+  if (settled === 5) onEndStreamSettled(stream);
+}
+// An error cancels what the Writable owed the stream: _final, and the 'finish' or 'end' a native close waits for.
 function streamOnErrored(this: Http2Stream) {
-  if (!this.destroyed && this.errored && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+  if (this.destroyed || !this.errored) return;
+  if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
     // Deferred so the 'error' listeners observe the same live stream as when the close comes second.
     process.nextTick(destroyIfNotDestroyedNT, this);
+  } else {
+    endErroredStream(this);
   }
 }
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
@@ -2344,10 +2339,10 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
-  errored: Error | null;
   errorEmitted: boolean;
   finalCalled: boolean;
   length: number;
+  writelen: number;
 }
 type DuplexStream = import("node:stream").Duplex;
 interface DuplexStateAccessors {
@@ -2362,8 +2357,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: (() => void) | null = null;
-  [kWriteCallback]: ((err?: Error | null) => void) | undefined = undefined;
-  [kOnWriteDone]: ((err?: Error | null) => void) | undefined = undefined;
   [bunHTTP2StreamStatus]: number = 0;
   // Async-context frame captured at construction so native-driven callbacks
   // (response/data/end/…) on client streams observe the AsyncLocalStorage
@@ -2952,7 +2945,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
-        if (!endStream) callback = writeCompletion(this, callback);
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -2994,7 +2986,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
-        if (!endStream) callback = writeCompletion(this, callback);
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -4974,8 +4965,8 @@ function destroySelfOnEnd(this: Http2Stream) {
 // streamEnd(7): the native side fully closed the stream and freed it.
 function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
-    // While 'error' is still queued, streamOnErrored destroys after it, so its listeners get a live stream.
-    if (stream._writableState.errorEmitted) stream.destroy();
+    // The 'error' listeners get a live stream. streamOnErrored destroys after an 'error' that is still queued.
+    if (stream._writableState.errorEmitted) process.nextTick(destroyIfNotDestroyedNT, stream);
   } else if (stream.readable && !stream.rstCode) {
     // Unread data is still buffered: like node, destroy at 'end' so that a late reader loses nothing.
     stream.once("end", destroySelfOnEnd);

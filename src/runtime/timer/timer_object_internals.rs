@@ -655,9 +655,7 @@ impl TimerObjectInternals {
                         }
                     }
                 } else {
-                    // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
-                    // Node's `_idleTimeout !== -1` also means "not cleared": `unenroll()` writes
-                    // the -1. `cancel()` records a clear in `has_cleared_timer` instead.
+                    // `cancel()` sets `has_cleared_timer` where Node writes `_idleTimeout = -1`.
                     if kind == KindBig::SetTimeout
                         && !repeat.is_null()
                         && !s.flags.get().has_cleared_timer()

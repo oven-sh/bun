@@ -81,6 +81,16 @@ static String internalModuleString(uint32_t offset, uint32_t length)
     return WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + offset, length));
 }
 
+bool isInternalModuleName(StringView name)
+{
+    for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
+        const auto& m = internalModuleRecord(id);
+        if (name == StringView(std::span<const char>(bun_internal_modules_data + m.nameOffset, m.nameLength)))
+            return true;
+    }
+    return false;
+}
+
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
 static String internalModuleSource(uint32_t id)
 {

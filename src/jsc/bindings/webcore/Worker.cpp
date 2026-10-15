@@ -32,7 +32,10 @@
 #include "ErrorEvent.h"
 #include "Event.h"
 #include "EventNames.h"
+#include "JSDOMExceptionHandling.h"
+#include "PathInlines.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -194,18 +197,30 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
+// it to the Worker object. `thrown` is the JSC::Exception when the thrower still had it, whose stack
+// says where it was thrown, else the value.
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue thrown)
 {
-    JSC::JSValue error = JSC::JSValue::decode(errorValue);
     String messageStr = message.transferToWTFString();
+
+    // Script only ever sees the value, never the JSC::Exception.
+    JSC::JSValue error = JSC::JSValue::decode(thrown);
+    auto* exception = dynamicDowncast<JSC::Exception>(error);
+    if (exception)
+        error = exception->value();
+    ScriptPosition position = scriptPositionOfThrownValue(*globalObject, error, exception);
+
     ErrorEvent::Init init;
     init.message = messageStr;
+    // A module on disk has its path as its source URL.
+    init.filename = isAbsolutePath(position.sourceURL) ? URL::fileURLWithFileSystemPath(position.sourceURL).string() : position.sourceURL;
+    init.lineno = position.line;
+    init.colno = position.column;
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
+    proxy->postErrorToWorkerObject(*globalObject, messageStr, init.filename, init.lineno, init.colno, error);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

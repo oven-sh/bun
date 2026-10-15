@@ -166,11 +166,12 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
+    /// `thrown` may be the `JSC::Exception` cell that carries the value.
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
-        err: JSValue,
+        thrown: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
@@ -1154,6 +1155,7 @@ fn on_unhandled_rejection(
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);
+    let thrown_value = error_instance;
 
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
@@ -1204,13 +1206,14 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
+    // The JSC::Exception, when that is what arrived, says where its value was thrown.
+    let thrown = if error_instance == thrown_value {
+        error_instance_or_exception
+    } else {
+        error_instance
+    };
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
-        WebWorker__dispatchError(
-            global_object,
-            worker.messaging_proxy,
-            error_message,
-            error_instance,
-        );
+        WebWorker__dispatchError(global_object, worker.messaging_proxy, error_message, thrown);
     })
     .is_err()
     {

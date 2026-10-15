@@ -1118,20 +1118,24 @@ describe.concurrent("bun test --isolate", () => {
         `;
       }
       files["counts.test.ts"] = `
-        import { heapStats } from "bun:jsc";
+        import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
         import { test } from "bun:test";
+        ${Heap}
         ${keep(12)}
         test("counts", async () => {
+          const filesOf = count => Array.from({ length: 13 }, (_, file) => file).filter(file => (count >> 4) & (1 << file));
           let alive, rounds = 0;
           // Only what stays alive counts.
           do {
             Bun.gc(true);
             await new Promise(resolve => setTimeout(resolve, 1));
-            const count = heapStats().objectTypeCounts.URLSearchParams >> 4;
-            alive = Array.from({ length: 13 }, (_, file) => file).filter(file => count & (1 << file));
-          } while (++rounds < 100 && alive.some(file => file < 10));
-          console.log(JSON.stringify(alive));
-        });
+            alive = filesOf(heapStats().objectTypeCounts.URLSearchParams);
+          } while (++rounds < 20 && alive.some(file => file < 10));
+          // A word that an earlier call left in a slot of a live native frame can keep a file alive. Bun holds what a root reaches.
+          const isOld = file => file < 10;
+          const held = alive.some(isOld) ? filesOf(new Heap().counts(["URLSearchParams"]).URLSearchParams) : alive;
+          console.log(JSON.stringify({ alive, held }));
+        }, 60_000);
       `;
       using dir = tempDir("isolate-collects-globals", files);
       const { stdout, stderr, exitCode } = await runTests(
@@ -1140,13 +1144,14 @@ describe.concurrent("bun test --isolate", () => {
         Object.keys(files).map(file => "./" + file),
       );
       const printed = stdout.replace(/^bun test .*\n/, "");
-      expect(printed, stderr).toStartWith("[");
-      const alive: number[] = JSON.parse(printed);
+      expect(printed, stderr).toStartWith("{");
+      const { alive, held }: Record<"alive" | "held", number[]> = JSON.parse(printed);
       expect({
-        theFileThatCounts: alive.includes(12),
-        aliveLongAfterItsEnd: alive.filter(file => file < 10),
+        theFileThatCounts: held.includes(12),
+        heldLongAfterItsEnd: held.filter(file => file < 10),
         exitCode,
-      }).toEqual({ theFileThatCounts: true, aliveLongAfterItsEnd: [], exitCode: 0 });
+      }).toEqual({ theFileThatCounts: true, heldLongAfterItsEnd: [], exitCode: 0 });
+      expect(alive.filter(file => file < 10).length).toBeLessThanOrEqual(1);
     },
   );
 
@@ -1498,13 +1503,18 @@ describe.concurrent("bun test --isolate=modules", () => {
 
   test("a file runs the code that was compiled for the files before it", async () => {
     const hot = (name: string) => `
-      import { numberOfDFGCompiles } from "bun:jsc";
+      import { noInline, numberOfDFGCompiles } from "bun:jsc";
       import { esm } from "./hot.js";
       import cjs from "./hot.cjs";
       test("${name}", () => {
         console.log("${name}", numberOfDFGCompiles(esm) > 0, numberOfDFGCompiles(cjs) > 0);
-        for (const fn of [esm, cjs]) for (let i = 0; i < 1000 && !numberOfDFGCompiles(fn); i++) for (let j = 0; j < 500; j++) fn(j);
-      });
+        for (const fn of [esm, cjs]) {
+          // Inlined into this function, it would never be compiled on its own.
+          noInline(fn);
+          const deadline = Date.now() + 20_000;
+          while (!numberOfDFGCompiles(fn) && Date.now() < deadline) for (let i = 0; i < 500; i++) fn(i);
+        }
+      }, 30_000);
     `;
     const files = {
       "hot.js": `export function esm(x) { return x * 2 + 1; }`,

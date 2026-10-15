@@ -786,6 +786,12 @@ declare module "bun" {
      * return value. `BEGIN` is sent automatically, and if anything fails,
      * `ROLLBACK` is sent so the connection can be released and execution can
      * continue.
+     *
+     * On SQLite, some failing statements make SQLite roll the whole
+     * transaction back: `ON CONFLICT ROLLBACK`, `INSERT OR ROLLBACK`,
+     * `UPDATE OR ROLLBACK`, `RAISE(ROLLBACK)`, or a full database. A later
+     * query on the scoped instance then does not run. It rejects with the
+     * code `ERR_SQLITE_INVALID_TRANSACTION_STATE`, and so does `sql.begin`.
      * @example
      * ```ts
      * const [user, account] = await sql.begin(async sql => {
@@ -819,6 +825,12 @@ declare module "bun" {
      * return value. `BEGIN` is sent with the given options, and if anything
      * fails, `ROLLBACK` is sent so the connection can be released and
      * execution can continue.
+     *
+     * On SQLite, some failing statements make SQLite roll the whole
+     * transaction back: `ON CONFLICT ROLLBACK`, `INSERT OR ROLLBACK`,
+     * `UPDATE OR ROLLBACK`, `RAISE(ROLLBACK)`, or a full database. A later
+     * query on the scoped instance then does not run. It rejects with the
+     * code `ERR_SQLITE_INVALID_TRANSACTION_STATE`, and so does `sql.begin`.
      * @example
      * ```ts
      * const [user, account] = await sql.begin("read write", async sql => {

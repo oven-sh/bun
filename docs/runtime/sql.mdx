@@ -867,6 +867,24 @@ await sql.begin(async tx => {
 });
 ```
 
+### SQLite: a transaction that SQLite rolls back
+
+SQLite rolls back the whole transaction when a statement fails under `ON CONFLICT ROLLBACK`, `INSERT OR ROLLBACK`, `UPDATE OR ROLLBACK`, or `RAISE(ROLLBACK)`. It can also do so when the database or the disk is full (`SQLITE_FULL`), on an I/O error (`SQLITE_IOERR`), and when it has no memory (`SQLITE_NOMEM`). The transaction is then over, even if the callback catches the error.
+
+After that, a query on `tx` does not run. It rejects with the code `ERR_SQLITE_INVALID_TRANSACTION_STATE`, and `sql.begin` rejects.
+
+```ts
+await sql.begin(async tx => {
+  await tx`INSERT INTO audit_log (action) VALUES ('started')`;
+  // SQLite rolls the transaction back here
+  await tx`INSERT OR ROLLBACK INTO users (id) VALUES (1)`.catch(() => {});
+  // Rejects with ERR_SQLITE_INVALID_TRANSACTION_STATE
+  await tx`INSERT INTO audit_log (action) VALUES ('finished')`;
+});
+```
+
+To continue after the rollback, call `sql.begin` again.
+
 ### Savepoints
 
 Savepoints create intermediate checkpoints within a transaction, so part of it can roll back without aborting the whole thing.

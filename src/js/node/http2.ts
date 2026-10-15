@@ -4315,7 +4315,6 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.WantTrailer) !== 0) return;
 
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
-      if ((status & StreamState.Closed) !== 0) return;
 
       if (stream.listenerCount("wantTrailers") === 0) {
         self[bunHTTP2Native]?.noTrailers(stream.id);
@@ -5329,6 +5328,7 @@ class ClientHttp2Session extends Http2Session {
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
+      // node's onStreamTrailers: no 'wantTrailers' on a stream that is closed.
       if ((status & StreamState.Closed) !== 0) return;
       if (stream.listenerCount("wantTrailers") === 0) {
         self[bunHTTP2Native]?.noTrailers(stream.id);

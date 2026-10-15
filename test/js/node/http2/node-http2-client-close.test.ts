@@ -833,6 +833,28 @@ test("close() on a stalled request frees its place under SETTINGS_MAX_CONCURRENT
   });
 });
 
+// The request ends on both sides with the response unread, so no RST_STREAM leaves. The stream
+// is destroyed all the same.
+test("end(), close() on a request with an unread response frees its place", async () => {
+  await withRawServer(async (session, accepted) => {
+    const peer = await accepted;
+    peer.send(settings(3, 1));
+    await peer.settle();
+    const req = post(session);
+    await peer.until(() => peer.wire(1) === "H");
+    // A response that nobody reads.
+    const response = once(req, "response");
+    peer.send(responseHeaders(1), dataFrame(1, 100, true));
+    await response;
+    await peer.settle();
+    req.end();
+    req.close();
+    session.request({ ":path": "/" }).on("error", () => {});
+    await peer.until(() => peer.wire(3) !== "");
+    assert.deepStrictEqual([peer.wire(1), peer.wire(3)], ["H D0E", "HE"]);
+  });
+});
+
 // nghttp2 holds the HEADERS of a request back while the peer admits no more streams, and the
 // RST_STREAM of close() cancels them. Bun sends the request when it gets a place, then the reset.
 test("close() on a request that waits for a place under SETTINGS_MAX_CONCURRENT_STREAMS", async () => {

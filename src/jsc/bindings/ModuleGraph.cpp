@@ -14,6 +14,7 @@
 
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSLexicalEnvironmentInlines.h>

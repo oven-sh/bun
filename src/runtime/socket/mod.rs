@@ -76,7 +76,8 @@ pub(crate) mod uws_jsc;
 #[path = "SSLConfig.rs"]
 pub(crate) mod ssl_config;
 pub(crate) use ssl_config::{
-    SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults,
+    SSLConfig, SSLConfigFromJs, http_client_defaults, resolve_reject_unauthorized,
+    tls_true_defaults,
 };
 
 // ─── canonical type surface ──────────────────────────────────────────────────
@@ -90,6 +91,7 @@ pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
     Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
+    server_ctx_rejects_unauthorized, server_ctx_requests_cert,
 };
 
 #[cfg(windows)]
@@ -120,9 +122,9 @@ pub(crate) use udp_socket::UDPSocket;
 /// the name the generator expects rather than special-casing the generator.
 pub(crate) mod socket {
     pub(crate) use super::socket_body::{
-        js_create_socket_pair, js_first_flight_before_fin, js_get_buffered_amount,
-        js_is_named_pipe_socket, js_set_socket_options, js_upgrade_duplex_to_tls,
-        js_upgrade_tls_deferred, testing_ap_is,
+        js_check_server_identity_in_handshake, js_create_socket_pair, js_first_flight_before_fin,
+        js_get_buffered_amount, js_is_named_pipe_socket, js_release_held_flight,
+        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 

@@ -239,8 +239,7 @@ declare module "bun" {
     }
 
     type ReactRefreshSignatureFunction = () =>
-      | void
-      | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
+      void | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
     interface FrameworkFileSystemRouterType {

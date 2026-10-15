@@ -1,0 +1,5 @@
+a = b! /* a */ !;
+c = b! /* a */ /* b */ !;
+e = b! /* a */ !.f;
+g = b! /* a */ !.h().i().j();
+k = (b  +  c)! /* prettier-ignore */ !;

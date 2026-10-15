@@ -44,6 +44,8 @@ pub(crate) use bun_jsc::bun_string_jsc::js_escape_reg_exp as string_escape_reg_e
 pub(crate) use bun_jsc::bun_string_jsc::js_escape_reg_exp_for_package_name_matching as string_escape_reg_exp_js_escape_reg_exp_for_package_name_matching;
 pub(crate) use bun_jsc::bun_string_jsc::unicode_testing_apis::to_utf16_alloc_sentinel as bun_core_string_immutable_unicode_testing_ap_is_to_utf16_alloc_sentinel;
 
+pub(crate) use bun_semver_jsc::SemverObject::intersects_for_testing as semver_jsc_semver_object_intersects_for_testing;
+
 pub(crate) use bun_patch_jsc::testing::patch_apply as patch_patch_testing_ap_is_apply;
 pub(crate) use bun_patch_jsc::testing::patch_make_diff as patch_patch_testing_ap_is_make_diff;
 pub(crate) use bun_patch_jsc::testing::patch_parse as patch_patch_testing_ap_is_parse;

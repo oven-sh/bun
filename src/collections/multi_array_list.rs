@@ -706,12 +706,6 @@ impl<T> Slice<T> {
         ColMut::new(self.ptrs[field_index].cast::<u8>(), self.len * sz).as_mut_slice()
     }
 
-    /// `size_of` the `field_index`th field (declaration order).
-    #[inline]
-    pub fn field_size(field_index: usize) -> usize {
-        Reflected::<T>::META[field_index].size
-    }
-
     pub(crate) fn set(&mut self, index: usize, elem: T) {
         assert!(
             index < self.len,

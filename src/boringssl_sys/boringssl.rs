@@ -1137,8 +1137,6 @@ unsafe extern "C" {
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.
     pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
-    /// Returns a BORROWED reference to the local certificate, or null.
-    pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 

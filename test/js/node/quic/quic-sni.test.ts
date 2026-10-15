@@ -110,8 +110,9 @@ test("an identity with several cert/key pairs installs a matching pair", async (
 // lsquic can free a connection in the engine pass that completes its
 // handshake, before the session reports anything. The session's own
 // certificate is then read from the context the servername selected. This
-// client destroys itself once it has its 1-RTT keys, so its Finished and its
-// CONNECTION_CLOSE are sent before the listener, on this thread, reads either.
+// client destroys itself, with a close code, once it has its 1-RTT keys, so
+// its Finished and its CONNECTION_CLOSE are sent before the listener, on this
+// thread, reads either.
 test("session.certificate is the identity the servername selected once the connection is gone", async () => {
   const reported = Promise.withResolvers<unknown>();
   await using server = await listen(
@@ -122,8 +123,7 @@ test("session.certificate is the identity the servername selected once the conne
         reported.resolve({
           servername: info.servername,
           certificate: (session.certificate as X509Certificate | undefined)?.subject.match(/CN=([^\s,]+)/)?.[1],
-          // A getter that only a live connection answers.
-          remoteTransportParams: (session as any).remoteTransportParams,
+          peerMaxIdleTimeout: (session as any).remoteTransportParams?.maxIdleTimeout,
         });
     },
     { sni: { "*": identity1, "agent2.example": identity2 }, alpn: ["quic-test"] },
@@ -133,9 +133,10 @@ test("session.certificate is the identity the servername selected once the conne
     alpn: "quic-test",
     servername: "agent2.example",
     verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
     keylog: true,
     onkeylog(line) {
-      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy();
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy(undefined, { code: 1n });
     },
     onerror() {},
   } as SessionOptions);
@@ -145,7 +146,7 @@ test("session.certificate is the identity the servername selected once the conne
   expect(await reported.promise).toEqual({
     servername: "agent2.example",
     certificate: "agent2",
-    remoteTransportParams: undefined,
+    peerMaxIdleTimeout: 5n,
   });
 });
 

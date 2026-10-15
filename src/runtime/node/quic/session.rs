@@ -52,10 +52,7 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
 
-/// What a session's ALPN selects, with the values of node's
-/// `Session::Application::Type` (node/src/quic/application.h). An engine
-/// frames HTTP/3 or raw QUIC for every conn it owns, so the engine's mode
-/// decides it (`QuicEndpoint::application`).
+/// The values of node's `Session::Application::Type` (node/src/quic/application.h).
 #[derive(Clone, Copy)]
 #[repr(u8)]
 pub(super) enum Application {
@@ -261,9 +258,7 @@ pub(crate) const SESSION_STATS_FIELDS: &[&str] = &[
     "PKT_DISCARDED",
 ];
 
-/// What a session keeps of its handshake. lsquic can free the conn in the
-/// engine pass that completes the handshake, before any event of that pass is
-/// dispatched, so every field is copied while the conn is alive.
+/// Copied in the lsquic callback: the conn can be freed before its handshake is dispatched.
 pub(super) struct HskSnapshot {
     sni: Option<Vec<u8>>,
     cipher: Option<Vec<u8>>,
@@ -275,8 +270,8 @@ pub(super) struct HskSnapshot {
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
     /// `(early_data_attempted, early_data_accepted)` (RFC 8446 §2.3).
     early_data: (bool, bool),
-    /// `state.max_datagram_size` once the handshake is reported.
-    max_datagram_size: u16,
+    /// `session.remoteTransportParams` and the source of `state.max_datagram_size`.
+    peer_transport_params: Option<lsquic::NqTransportParams>,
 }
 
 pub(super) struct DeferredAbort {
@@ -506,8 +501,7 @@ impl QuicSession {
             reason = "`state_ptr` is the base of a fresh JSC ArrayBuffer (byteOffset 0); JSC allocates its backing store through Gigacage/fastMalloc, which is at least 16-byte aligned"
         )]
         this.state.set(state_ptr.cast::<SessionState>());
-        // Node's `Session::SetApplication`. Nothing else writes the
-        // application fields: the fate of the handshake does not change them.
+        // Node's `Session::SetApplication`: the only writer of the application fields.
         this.with_state(|s| {
             s.no_error_code = 0;
             s.internal_error_code = 1;
@@ -653,8 +647,7 @@ impl QuicSession {
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
-    /// The one producer of a successful handshake: every callback that learns
-    /// of one passes the conn it completed on.
+    /// Called from the lsquic callback that completes the handshake, while `conn` is alive.
     pub(super) fn note_handshake_ok(&self, conn: lsquic::Conn) {
         self.capture_hsk_snapshot(conn);
         self.push_event(SessionEvent::HandshakeDone { ok: true });
@@ -866,10 +859,10 @@ impl QuicSession {
     }
 
     pub(super) fn apply_peer_datagram_budget(&self) {
-        let Some(sz) = self.conn().and_then(peer_datagram_budget) else {
+        let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
             return;
         };
-        self.with_state(|s| s.max_datagram_size = sz);
+        self.with_state(|s| s.max_datagram_size = datagram_budget(&tp));
     }
 
     fn deliver_pending_tickets(&self, global: &JSGlobalObject) {
@@ -1560,7 +1553,8 @@ impl QuicSession {
             .get()
             .as_ref()
             .filter(|_| ok)
-            .map_or(0, |s| s.max_datagram_size);
+            .and_then(|s| s.peer_transport_params.as_ref())
+            .map_or(0, datagram_budget);
         self.with_state(|s| {
             s.handshake_completed = ok as u8;
             s.handshake_confirmed = ok as u8;
@@ -1705,7 +1699,7 @@ impl QuicSession {
         let local_cert_der = tls::local_certificate_der(ssl);
         let ephemeral = tls::ephemeral_key_info(ssl);
         let early_data = tls::early_data_info(ssl);
-        let max_datagram_size = peer_datagram_budget(conn).unwrap_or(0);
+        let peer_transport_params = conn.peer_transport_params();
         self.hsk_snapshot.with_mut(|s| {
             *s = Some(HskSnapshot {
                 sni,
@@ -1716,7 +1710,7 @@ impl QuicSession {
                 local_cert_der,
                 ephemeral,
                 early_data,
-                max_datagram_size,
+                peer_transport_params,
             });
         });
     }
@@ -2359,13 +2353,10 @@ impl QuicSession {
 }
 
 /// The largest DATAGRAM payload the peer's transport parameters allow.
-fn peer_datagram_budget(conn: lsquic::Conn) -> Option<u16> {
-    let tp = conn.peer_transport_params()?;
-    Some(
-        tp.max_datagram_frame_size
-            .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
-            .min(DATAGRAM_PAYLOAD_BUDGET) as u16,
-    )
+fn datagram_budget(tp: &lsquic::NqTransportParams) -> u16 {
+    tp.max_datagram_frame_size
+        .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
+        .min(DATAGRAM_PAYLOAD_BUDGET) as u16
 }
 
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
@@ -2405,17 +2396,18 @@ impl QuicSession {
         global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        let conn = self.conn.get();
-        if conn.is_null() {
-            return Ok(JSValue::UNDEFINED);
+        if let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) {
+            return Self::transport_params_to_js(global, &tp);
         }
-        // SAFETY: `conn` is live until on_conn_closed clears it.
-        let Some(tp) =
-            (unsafe { lsquic::Conn::from_raw(conn) }).and_then(|c| c.peer_transport_params())
-        else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        Self::transport_params_to_js(global, &tp)
+        match self
+            .hsk_snapshot
+            .get()
+            .as_ref()
+            .and_then(|s| s.peer_transport_params.as_ref())
+        {
+            Some(tp) => Self::transport_params_to_js(global, tp),
+            None => Ok(JSValue::UNDEFINED),
+        }
     }
 }
 

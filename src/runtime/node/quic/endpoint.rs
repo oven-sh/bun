@@ -1940,8 +1940,6 @@ impl QuicEndpoint {
         }
     }
 
-    /// The application of every session of the server engine, or of the
-    /// client engine.
     fn application(&self, is_server: bool) -> session::Application {
         if self.is_http(is_server) {
             session::Application::Http3

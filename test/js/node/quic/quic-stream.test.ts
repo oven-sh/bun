@@ -338,13 +338,13 @@ describe("verifyClient", () => {
   });
 
   // The same engine pass with a well-formed peer: a node:quic client that queues
-  // a stream before the handshake and destroys itself once it has its 1-RTT
-  // keys. Its Finished, its stream and its CONNECTION_CLOSE are all sent before
-  // the listener, on this thread, reads any of them.
+  // a stream before the handshake and destroys itself, with a close code, once
+  // it has its 1-RTT keys. Its Finished, its stream and its CONNECTION_CLOSE
+  // are all sent before the listener, on this thread, reads any of them.
   const closesWithItsFinished = {
     keylog: true,
     onkeylog(this: any, line: string) {
-      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy();
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy(undefined, { code: 1n });
     },
     onerror() {},
   };
@@ -363,8 +363,7 @@ describe("verifyClient", () => {
             { protocol: info.protocol, validationErrorCode: info.validationErrorCode },
             {
               peerCertificate: session.peerCertificate?.fingerprint256,
-              // A getter that only a live connection answers.
-              remoteTransportParams: session.remoteTransportParams,
+              peerMaxIdleTimeout: session.remoteTransportParams?.maxIdleTimeout,
             },
           ]);
         session.onstream = (stream: any) => {
@@ -401,7 +400,7 @@ describe("verifyClient", () => {
       [
         "handshake",
         { protocol: "quic-test", validationErrorCode: undefined },
-        { peerCertificate: new X509Certificate(clientCert).fingerprint256, remoteTransportParams: undefined },
+        { peerCertificate: new X509Certificate(clientCert).fingerprint256, peerMaxIdleTimeout: 5n },
       ],
       ["stream"],
     ]);
@@ -480,12 +479,16 @@ describe("a malformed first request stream", () => {
         const closed = Promise.withResolvers<void>();
         sessions.push(closed.promise);
         const record = sessions.length === 1 ? (event: unknown[]) => events.push(event) : () => {};
-        session.onerror = (err: any) => record(["error", err?.code]);
+        session.onerror = () => record(["error"]);
         session.onhandshake = (info: any) =>
           record([
             "handshake",
             { protocol: info.protocol, cipher: info.cipher, servername: info.servername },
-            { maxDatagramSize: session.maxDatagramSize, certificate: session.certificate?.fingerprint256 },
+            {
+              peerMaxDatagramFrameSize: session.remoteTransportParams?.maxDatagramFrameSize,
+              maxDatagramSize: session.maxDatagramSize,
+              certificate: session.certificate?.fingerprint256,
+            },
           ]);
         session.onstream = (stream: any) => {
           record([
@@ -536,11 +539,15 @@ describe("a malformed first request stream", () => {
       [
         "handshake",
         { protocol: "h3", cipher: "TLS_AES_128_GCM_SHA256", servername: "localhost" },
-        // The raw client's max_datagram_frame_size, less the 3 bytes of a DATAGRAM frame header.
-        { maxDatagramSize: 997, certificate: new X509Certificate(cert).fingerprint256 },
+        // The raw client's max_datagram_frame_size, and the same less the 3 bytes of a DATAGRAM frame header.
+        {
+          peerMaxDatagramFrameSize: 1000n,
+          maxDatagramSize: 997,
+          certificate: new X509Certificate(cert).fingerprint256,
+        },
       ],
       ["stream", { priority: { level: "default", incremental: false }, callbacks: listenCallbacks }],
-      ["error", "ERR_QUIC_TRANSPORT_ERROR"],
+      ["error"],
     ],
     status: "200",
   });

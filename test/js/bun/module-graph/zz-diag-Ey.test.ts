@@ -1,5 +1,6 @@
 // TEMPORARY, not to be merged. Reports one number through the line its expect() fails on: CI's summary links that line.
 import { expect, test } from "bun:test";
+import { bunEnv } from "harness";
 
 const lines = [
   () => void expect(0).toBe(-1),
@@ -106,7 +107,7 @@ const lines = [
 const bucket = (ms: number) => Math.min(99, Math.floor(ms / 2000));
 
 process.env.MGW_ONLY = "E";
-process.env.MGW_YIELD = "1";
+bunEnv.MGW_YIELD = "1";
 const start = performance.now();
 await import("./module-graph-workers.test.ts");
 test("elapsed", () => lines[bucket(performance.now() - start)]());

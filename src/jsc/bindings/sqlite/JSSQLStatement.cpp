@@ -528,6 +528,15 @@ public:
 
     JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values);
 
+    void finalizeStatement()
+    {
+        if (!stmt)
+            return;
+        sqlite3_finalize(std::exchange(stmt, nullptr));
+        if (version_db)
+            version_db->closeIfDrained();
+    }
+
     bool need_update() { return version_db->version.load() != version; }
     void update_version() { version = version_db->version.load(); }
 
@@ -1146,6 +1155,36 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     return jsNumber(count);
 }
 
+// The object to read the parameters from by name or index, or nullptr when `values` is itself the
+// one value to bind: a primitive, an ArrayBufferView or a function. sqlite.ts makes the same split
+// with `typeof x !== "object" || ArrayBuffer.isView(x)`.
+static ALWAYS_INLINE JSC::JSObject* parameterMapOrNull(JSC::JSValue values)
+{
+    if (!values.isCell())
+        return nullptr;
+    JSC::JSCell* cell = values.asCell();
+    // Checked first so that a plain object, the usual parameter map, pays for one type compare.
+    if (cell->type() == JSC::FinalObjectType)
+        return asObject(cell);
+    if (!cell->isObject() || isTypedArrayTypeIncludingDataView(cell->type()) || cell->isCallable())
+        return nullptr;
+    return asObject(cell);
+}
+
+// Binds `value` as the one positional value. Out of line: sqlite.ts boxes a lone value in an array
+// for every caller but db.prepare(sql, value) and Statement.native.
+static NEVER_INLINE JSC::JSValue rebindSingleValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, int required, bool safeIntegers)
+{
+    if (required != 1) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("SQLite query expected "_s, required, " values, received 1"_s)));
+        return {};
+    }
+    if (!rebindValue(lexicalGlobalObject, db, stmt, 1, value, scope, safeIntegers))
+        return {};
+    RETURN_IF_EXCEPTION(scope, {});
+    return jsNumber(1);
+}
+
 static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3* db, VersionSqlite3* versionDB, sqlite3_stmt* stmt, SQLiteBindingsMap& bindings, bool safeIntegers, JSSQLStatement* statement)
 {
     sqlite3_clear_bindings(stmt);
@@ -1153,14 +1192,13 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
     bindings.reset(sqlite3_bind_parameter_count(stmt));
 
     if (!array) {
-        if (JSC::JSObject* object = values.getObject()) {
+        if (JSC::JSObject* object = parameterMapOrNull(values)) {
             auto res = rebindObject(lexicalGlobalObject, bindings, object, scope, db, versionDB, stmt, safeIntegers, statement);
             RETURN_IF_EXCEPTION(scope, {});
             return res;
         }
 
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected array"_s));
-        return {};
+        return rebindSingleValue(lexicalGlobalObject, values, scope, db, stmt, bindings.count, safeIntegers);
     }
 
     int count = array->length();
@@ -1760,9 +1798,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlStatement->ownedByDatabase = (internalFlags & kOwnedByDatabaseFlag) != 0;
     }
 
-    if (bindings.isObject()) {
-        auto* castedThis = sqlStatement;
-        DO_REBIND(bindings)
+    if (!bindings.isUndefinedOrNull()) {
+        sqlStatement->rebind(lexicalGlobalObject, bindings);
+        if (scope.exception()) [[unlikely]] {
+            // The caller never receives this statement, so only the GC would finalize it,
+            // and until then db.close() could not release the file.
+            sqlStatement->finalizeStatement();
+            return {};
+        }
     }
     return JSValue::encode(JSValue(sqlStatement));
 }
@@ -2903,12 +2946,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
 
-    if (castedThis->stmt) {
-        sqlite3_finalize(castedThis->stmt);
-        castedThis->stmt = nullptr;
-        if (castedThis->version_db)
-            castedThis->version_db->closeIfDrained();
-    }
+    castedThis->finalizeStatement();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -2930,11 +2968,7 @@ JSSQLStatement::~JSSQLStatement()
     if (this->version_db) {
         this->version_db->statements.remove(this);
     }
-    if (this->stmt) {
-        sqlite3_finalize(this->stmt);
-        if (this->version_db)
-            this->version_db->closeIfDrained();
-    }
+    finalizeStatement();
 
     if (auto* columnNames = this->columnNames.get()) {
         columnNames->releaseData();

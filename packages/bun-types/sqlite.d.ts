@@ -242,7 +242,7 @@ declare module "bun:sqlite" {
      * ```
      *
      * @param sql The SQL query to compile
-     * @param params Optional bindings for the query
+     * @param params Optional values to bind now. An array binds by position and an object binds by name. Any other value is the one positional value, so the statement must have exactly one parameter. `null` and `undefined` bind nothing. The statement keeps the values until an execution binds new ones.
      *
      * @returns A {@link Statement} instance
      */

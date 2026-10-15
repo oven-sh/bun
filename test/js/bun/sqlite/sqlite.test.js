@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { SQL } from "bun:internal-for-testing";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
@@ -1208,6 +1209,233 @@ describe("Database.prepare", () => {
       expect(call).toThrow(RangeError);
       expect(call).toThrow("Invalid SQL statement");
     }
+  });
+});
+
+describe("prepare() binds a single non-array parameter", () => {
+  const thrownBy = call => {
+    try {
+      call();
+    } catch (error) {
+      return { name: error.name, message: error.message };
+    }
+  };
+  const arity = count => ({ name: "Error", message: `SQLite query expected ${count} values, received 1` });
+  const notBindable = {
+    name: "TypeError",
+    message: "Binding expected string, TypedArray, boolean, number, bigint or null",
+  };
+
+  it.each([
+    ["string", "hello", "text", "hello", "'hello'"],
+    ["empty string", "", "text", "", "''"],
+    ["number", 42, "integer", 42, "42"],
+    ["zero", 0, "integer", 0, "0"],
+    ["double", 1.5, "real", 1.5, "1.5"],
+    ["bigint", 5n, "integer", 5, "5"],
+    ["zero bigint", 0n, "integer", 0, "0"],
+    ["boolean", true, "integer", 1, "1"],
+    ["boolean false", false, "integer", 0, "0"],
+  ])("%s", (_label, binding, type, value, literal) => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT typeof(?1) AS type, ?1 AS value", binding);
+
+    // prepare() itself binds the value, and the value stays bound between executions.
+    expect(stmt.toString()).toBe(`SELECT typeof(${literal}) AS type, ${literal} AS value`);
+    expect(stmt.get()).toEqual({ type, value });
+    expect(stmt.all()).toEqual([{ type, value }]);
+    // A value given at execution replaces it.
+    expect(stmt.get("w")).toEqual({ type: "text", value: "w" });
+    expect(stmt.get()).toEqual({ type: "text", value: "w" });
+  });
+
+  it.each([
+    ["Uint8Array", () => new Uint8Array([7, 8]), "0708"],
+    ["Buffer", () => Buffer.from("hi"), "6869"],
+    ["DataView", () => new DataView(new Uint8Array([7, 8]).buffer), "0708"],
+    ["subarray", () => new Uint8Array([1, 7, 8, 9]).subarray(1, 3), "0708"],
+    ["empty Uint8Array", () => new Uint8Array(0), ""],
+    [
+      "detached Uint8Array",
+      () => {
+        const view = new Uint8Array(2);
+        view.buffer.transfer();
+        return view;
+      },
+      "",
+    ],
+  ])("%s, as one blob", (_label, view, hex) => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT typeof(?1) AS type, hex(?1) AS hex", view());
+
+    expect(stmt.get()).toEqual({ type: "blob", hex });
+  });
+
+  it("copies the bytes of a typed array at prepare", () => {
+    using db = new Database(":memory:");
+    const bytes = new Uint8Array([7, 8]);
+    using stmt = db.prepare("SELECT hex(?) AS hex", bytes);
+    bytes[0] = 9;
+
+    expect(stmt.get()).toEqual({ hex: "0708" });
+  });
+
+  it("shows the bound value in toString() with strict: true", () => {
+    using db = new Database(":memory:", { strict: true });
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    using stmt = db.prepare("INSERT INTO test (name) VALUES (?)", "test1");
+
+    expect(stmt.toString()).toBe("INSERT INTO test (name) VALUES ('test1')");
+    expect(stmt.run()).toEqual({ changes: 1, lastInsertRowid: 1 });
+    expect(db.query("SELECT name FROM test").all()).toEqual([{ name: "test1" }]);
+
+    using named = db.prepare("SELECT $a AS a", 5);
+    expect(named.get()).toEqual({ a: 5 });
+  });
+
+  it("binds the value when the flags argument is given too", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT ? AS value", "hello", constants.SQLITE_PREPARE_PERSISTENT);
+
+    expect(stmt.get()).toEqual({ value: "hello" });
+  });
+
+  it.each([
+    ["SELECT 1 AS x", { x: 1 }],
+    ["SELECT ? AS a", { a: null }],
+    ["SELECT ? AS a, ? AS b", { a: null, b: null }],
+  ])("null and undefined stay unbound: %s", (sql, row) => {
+    using db = new Database(":memory:");
+
+    for (const args of [[null], [undefined], [null, 0], [undefined, constants.SQLITE_PREPARE_PERSISTENT]]) {
+      using stmt = db.prepare(sql, ...args);
+      expect(stmt.get()).toEqual(row);
+    }
+  });
+
+  it("an extra binding is an arity error, not a silent drop", () => {
+    using db = new Database(":memory:");
+
+    expect(thrownBy(() => db.prepare("SELECT 1 AS a", "extra"))).toEqual(arity(0));
+    expect(thrownBy(() => db.prepare("SELECT ? AS a, ? AS b", 5))).toEqual(arity(2));
+    expect(thrownBy(() => db.prepare("SELECT ? AS a, ? AS b", new Uint8Array([7, 8])))).toEqual(arity(2));
+  });
+
+  it.each([
+    ["symbol", Symbol("s")],
+    ["function", () => 1],
+    ["class", class A {}],
+  ])("a %s is not bindable", (_label, binding) => {
+    using db = new Database(":memory:");
+
+    expect(thrownBy(() => db.prepare("SELECT ? AS a", binding))).toEqual(notBindable);
+  });
+
+  it("applies the safeIntegers range check", () => {
+    using db = new Database(":memory:", { safeIntegers: true });
+
+    expect(thrownBy(() => db.prepare("SELECT ? AS a", 2n ** 70n))).toEqual({
+      name: "RangeError",
+      message: "BigInt value '1180591620717411303424' is out of range",
+    });
+  });
+
+  it("rejects SQL with no statement before it reads the binding", () => {
+    using db = new Database(":memory:");
+
+    expect(thrownBy(() => db.prepare("-- comment", 5))).toEqual({
+      name: "RangeError",
+      message: "Invalid SQL statement",
+    });
+  });
+
+  it("arrays and objects keep binding positionally and by name", () => {
+    using db = new Database(":memory:");
+    using positional = db.prepare("SELECT ? AS a, ? AS b", ["x", "y"]);
+    using named = db.prepare("SELECT $a AS a", { $a: "z" });
+    using unbound = db.prepare("SELECT 1 AS a");
+
+    expect(positional.get()).toEqual({ a: "x", b: "y" });
+    expect(named.get()).toEqual({ a: "z" });
+    expect(unbound.get()).toEqual({ a: 1 });
+
+    const one = params => {
+      using stmt = db.prepare("SELECT ? AS a", params);
+      return stmt.get();
+    };
+    expect(one([5])).toEqual({ a: 5 });
+    expect(one([])).toEqual({ a: null });
+    expect(one({})).toEqual({ a: null });
+    expect(one({ 0: 5 })).toEqual({ a: 5 });
+    expect(one(new Proxy([5], {}))).toEqual({ a: 5 });
+    expect(one(new (class Row {})())).toEqual({ a: null });
+
+    using strict = new Database(":memory:", { strict: true });
+    using strictNamed = strict.prepare("SELECT $a AS a", { a: 5 });
+    expect(strictNamed.get()).toEqual({ a: 5 });
+  });
+
+  // Statement.native and the internal SQL object reach the native binder without the boxing that
+  // Statement.get() and Database.run() do in JS.
+  it.each([
+    ["get", { type: "blob", hex: "0708" }],
+    ["all", [{ type: "blob", hex: "0708" }]],
+    ["values", [["blob", "0708"]]],
+    ["iterate", { type: "blob", hex: "0708" }],
+  ])("Statement.native.%s(typed array) binds one blob", (method, result) => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT typeof(?1) AS type, hex(?1) AS hex");
+
+    expect(stmt.native[method](new Uint8Array([7, 8]))).toEqual(result);
+  });
+
+  it("Statement.native.raw(typed array) and Statement.native.run(typed array) bind one blob", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE w (v)");
+    using select = db.prepare("SELECT ? AS v");
+    using insert = db.prepare("INSERT INTO w VALUES (?)");
+
+    expect(select.native.raw(new Uint8Array([7, 8]))).toEqual([[new Uint8Array([7, 8])]]);
+    insert.native.run(undefined, new Uint8Array([7, 8]));
+    expect(db.query("SELECT typeof(v) AS type, hex(v) AS hex FROM w").all()).toEqual([{ type: "blob", hex: "0708" }]);
+  });
+
+  it("Statement.native never reads a typed array or a function as named parameters", () => {
+    using db = new Database(":memory:");
+    using one = db.prepare("SELECT ? AS a");
+    using two = db.prepare("SELECT ? AS a, ? AS b");
+
+    expect(thrownBy(() => two.native.get(new Uint8Array([7, 8])))).toEqual(arity(2));
+    expect(thrownBy(() => one.native.get(() => 1))).toEqual(notBindable);
+  });
+
+  it("the internal SQL.prepare and SQL.run bind a single value", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE w (v)");
+    const { 0: native, 1: changes } = SQL;
+
+    expect(native.prepare(db.handle, "SELECT ? AS a", 5, 0, 0).get()).toEqual({ a: 5 });
+    native.run(db.handle, 0, changes, "INSERT INTO w VALUES (?)", new Uint8Array([7, 8]));
+    expect(db.query("SELECT typeof(v) AS type, hex(v) AS hex FROM w").all()).toEqual([{ type: "blob", hex: "0708" }]);
+  });
+
+  it.each([
+    ["an array of the wrong length", "SELECT ? AS a, ? AS b", [5], arity(2)],
+    ["a value for two parameters", "SELECT ? AS a, ? AS b", 5, arity(2)],
+    ["a value that is not bindable", "SELECT ? AS a", Symbol("s"), notBindable],
+  ])("prepare() that throws on %s leaves no statement open", (_label, sql, params, error) => {
+    using dir = tempDir("sqlite-prepare-bind-throws", {});
+    const file = path.join(String(dir), "x.sqlite");
+    const db = new Database(file);
+    // With this locking mode the connection keeps its file lock until sqlite3 closes it.
+    db.exec("PRAGMA locking_mode = EXCLUSIVE; CREATE TABLE t (a)");
+
+    expect(thrownBy(() => db.prepare(sql, params))).toEqual(error);
+    // close() waits for live prepare() statements. The failed one must not be one of them.
+    db.close();
+
+    using other = new Database(file);
+    expect(other.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: 0 });
   });
 });
 

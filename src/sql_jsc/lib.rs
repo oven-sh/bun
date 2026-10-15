@@ -10,7 +10,7 @@
 // directly this whole module becomes `pub use bun_jsc as jsc;` with no
 // callsite churn.
 pub mod error;
-pub use error::{Error, Result, ThrowSqlError};
+pub use error::{Error, Result};
 
 pub mod jsc;
 pub use jsc::{CallFrame, JSGlobalObject, JSValue};
@@ -27,18 +27,18 @@ pub mod shared {
 
     pub mod datetime_text;
 
-    #[path = "ObjectIterator.rs"]
-    pub mod object_iterator;
-
-    #[path = "QueryBindingIterator.rs"]
-    pub mod query_binding_iterator;
-
     #[path = "QueryCtorArgs.rs"]
     pub mod query_ctor_args;
+
+    #[path = "ServerIdentity.rs"]
+    pub mod server_identity;
 
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 
+    #[path = "StatementCache.rs"]
+    pub mod statement_cache;
+
     pub use cached_structure::CachedStructure;
-    pub(crate) use query_binding_iterator::QueryBindingIterator;
+    pub(crate) use statement_cache::StatementCache;
 }

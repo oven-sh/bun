@@ -169,6 +169,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setColumnNameTransform) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \

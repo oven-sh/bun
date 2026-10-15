@@ -4,6 +4,6 @@
 pub use super::any_postgres_error::AnyPostgresError;
 pub use super::types::tag::Tag;
 
-pub use int_types::{Int4, Short, int4, short};
+pub use int_types::{Int4, int4};
 
 use super::types::int_types;

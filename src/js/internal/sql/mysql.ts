@@ -1,16 +1,11 @@
-import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SSLMode } from "./shared";
+import type { SSLMode } from "./options";
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLStatementDescription } from "./shared";
 
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const {
-  SQLResultArray,
-  BasePooledConnection,
-  BaseSQLAdapter,
-  createPooledConnectionHandle,
-  getHelperCommandFromDetect,
-} = require("internal/sql/shared");
+const { SQLResultArray } = require("internal/sql/shared");
+const { BasePooledConnection, BaseSQLAdapter, createPooledConnectionHandle } = require("internal/sql/pool");
 const {
   SQLQueryFlags,
   symbols: { _results, _handle },
@@ -23,19 +18,14 @@ const {
   init: initMySQL,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
-function wrapError(error: Error | (MySQLErrorOptions & { message: string })) {
-  if (Error.isError(error)) {
-    return error;
-  }
-  return new MySQLError(error.message, error);
-}
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
+  function onResolveMySQLQuery(query, result, count, is_last, last_insert_rowid, affected_rows, statement) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
-    result.count = count || 0;
+    result.count = count || affected_rows || 0;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
+    result.statement = statement;
 
     // CALL <proc>() and multi-statement strings can yield several result sets.
     // Accumulate until the server clears SERVER_MORE_RESULTS_EXISTS (is_last).
@@ -56,33 +46,14 @@ initMySQL(
       return;
     }
 
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
-      }
-    }
     try {
       query.resolve(query[_results]);
     } catch {}
   },
 
-  function onRejectMySQLQuery(
-    query: Query<any, any>,
-    reject: Error | (MySQLErrorOptions & { message: string }),
-    queries: Query<any, any>[],
-  ) {
-    // A parameter can throw a non-object, and the query rejects with it.
-    if ($isObject(reject)) reject = wrapError(reject);
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
-      }
-    }
-
+  function onRejectMySQLQuery(query: Query<any, any>, reject: Error) {
     try {
-      query.reject(reject as Error);
+      query.reject(reject);
     } catch {}
   },
 );
@@ -92,14 +63,13 @@ export interface MySQLDotZig {
     onResolveQuery: (
       query: Query<any, any>,
       result: SQLResultArray<unknown>,
-      commandTag: string,
       count: number,
-      queries: any,
       is_last: boolean,
-      last_insert_rowid: number,
+      last_insert_rowid: number | string | bigint,
       affected_rows: number,
+      statement: SQLStatementDescription | null,
     ) => void,
-    onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onRejectQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,
@@ -112,60 +82,36 @@ export interface MySQLDotZig {
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
-    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
+    onDisconnected: (err: Error | null) => void,
     idleTimeout: number,
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
     allowPublicKeyRetrieval: boolean,
+    onRetire: (() => void) | undefined,
+    foundRows: boolean,
+    channelBinding: 0 | 1 | 2,
+    columnTransform: ((name: string) => string) | undefined,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
     values: unknown[],
     pendingValue: SQLResultArray<unknown>,
-    columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
   ) => $ZigGeneratedClasses.MySQLQuery;
 }
 
 class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.MySQLConnection> {
-  protected handleConnected(err: any, connection?: $ZigGeneratedClasses.MySQLConnection) {
-    if (!err) {
-      this.connection = connection!;
-    }
-    super.handleConnected(err);
-  }
-
   protected async startConnection() {
-    // store the handle right away (not only in handleConnected) so a forced
-    // pool close can tear down a connection whose handshake is in flight
     this.connection = await createPooledConnectionHandle(
       createMySQLConnection,
-      this.connectionInfo,
+      this.adapter.connectionInfo,
       this.nativeCallback(this.handleConnected),
       this.nativeCallback(this.handleClose),
+      this.nativeCallback(this.handleRetire),
+      this,
     );
-  }
-
-  protected wrapError(error: any): Error {
-    return wrapError(error);
-  }
-
-  protected isNonRetryableError(code: string | undefined): boolean {
-    switch (code) {
-      case "ERR_MYSQL_PASSWORD_REQUIRED":
-      case "ERR_MYSQL_MISSING_AUTH_DATA":
-      case "ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD":
-      case "ERR_MYSQL_INVALID_PUBLIC_KEY":
-      case "ERR_MYSQL_UNSUPPORTED_PROTOCOL_VERSION":
-      case "ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN":
-      case "ERR_MYSQL_AUTHENTICATION_FAILED":
-        // we can't retry these are authentication errors
-        return true;
-      default:
-        return false;
-    }
   }
 
   /// Connect failures (ERR_MYSQL_CONNECTION_FAILED) mean the server accepted
@@ -188,14 +134,14 @@ class MySQLAdapter
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
   protected createPooledConnection(): PooledMySQLConnection {
-    return new PooledMySQLConnection(this.connectionInfo, this);
+    return new PooledMySQLConnection(this);
   }
 
   escapeIdentifier(str: string) {
     if (str.includes("\0")) {
       throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
     }
-    return "`" + str.replaceAll("`", "``") + "`";
+    return "`" + str.replaceAll("`", "``").replaceAll(".", "`.`") + "`";
   }
 
   connectionClosedError() {
@@ -282,18 +228,9 @@ class MySQLAdapter
       sql,
       values,
       new SQLResultArray(),
-      undefined,
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
     );
-  }
-
-  getHelperCommand(query: string): SQLCommand {
-    return getHelperCommandFromDetect(query, true);
-  }
-
-  isUpsertUpdate(query: string): boolean {
-    return query.trimEnd().endsWith("ON DUPLICATE KEY UPDATE");
   }
 }
 

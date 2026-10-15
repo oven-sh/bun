@@ -1,28 +1,21 @@
-import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { ArrayType, DatabaseAdapter, SQLCommand, SSLMode } from "./shared";
+import type { SSLMode } from "./options";
+import type { ArrayType, DatabaseAdapter, SQLStatementDescription } from "./shared";
 
 type SQLArrayParameter = import("./shared").SQLArrayParameter;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
+const { SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
 const {
-  SQLResultArray,
-  SQLArrayParameter,
   BasePooledConnection,
   BaseSQLAdapter,
   createPooledConnectionHandle,
-  getHelperCommandFromDetect,
-  pushBindParam,
-} = require("internal/sql/shared");
+  sameSettings,
+} = require("internal/sql/pool");
 const {
   SQLQueryFlags,
-  symbols: { _results, _handle },
+  symbols: { _results, _handle, _copy },
 } = require("internal/sql/query");
-function isTypedArray(value: any) {
-  // Buffer should be treated as a normal object
-  // Typed arrays should be treated like an array
-  return ArrayBuffer.isView(value) && !Buffer.isBuffer(value);
-}
 
 const { PostgresError } = require("internal/sql/errors");
 
@@ -32,14 +25,9 @@ const {
   init: initPostgres,
 } = $rust("postgres.rs", "createBinding") as PostgresDotZig;
 
+// 1 to 4 are the commands whose tag counts the rows written.
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const escapeBackslash = /\\/g;
-const escapeQuote = /"/g;
-
-function arrayEscape(value: string) {
-  return value.replace(escapeBackslash, "\\\\").replace(escapeQuote, '\\"');
-}
 const POSTGRES_ARRAY_TYPES = {
   // Boolean
   1000: "BOOLEAN", // bool_array
@@ -80,6 +68,9 @@ const POSTGRES_ARRAY_TYPES = {
   // XML
   143: "XML", // xml_array
 
+  // UUID
+  2951: "UUID", // uuid_array
+
   // Geometric types
   1017: "POINT", // point_array
   1018: "LSEG", // lseg_array
@@ -115,104 +106,53 @@ const POSTGRES_ARRAY_TYPES = {
   10052: "PG_DATABASE", // pg_database_array2
 };
 
-function isPostgresNumericType(type: string) {
-  switch (type) {
-    case "BIT": // bit_array
-    case "VARBIT": // varbit_array
-    case "SMALLINT": // int2_array
-    case "INT2VECTOR": // int2vector_array
-    case "INTEGER": // int4_array
-    case "INT": // int4_array
-    case "BIGINT": // int8_array
-    case "REAL": // float4_array
-    case "DOUBLE PRECISION": // float8_array
-    case "NUMERIC": // numeric_array
-    case "MONEY": // money_array
-      return true;
-    default:
-      return false;
-  }
-}
-function isPostgresJsonType(type: string) {
-  switch (type) {
-    case "JSON":
-    case "JSONB":
-      return true;
-    default:
-      return false;
-  }
-}
-function getPostgresArrayType(typeId: number) {
-  return POSTGRES_ARRAY_TYPES[typeId] || null;
+const enum ArrayKind {
+  other = 0,
+  json = 1,
+  box = 2,
 }
 
-function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boolean, value: any) {
-  // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
-  // postgres will try to convert string -> array type
-  // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
-  if ($isArray(value) || isTypedArray(value)) {
-    if (!value.length) return "{}";
-    const delimiter = type === "BOX" ? ";" : ",";
-    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
-  }
-
-  switch (typeof value) {
-    case "undefined":
-      return "null";
-    case "string":
-      if (is_json) {
-        return `"${arrayEscape(JSON.stringify(value))}"`;
-      }
-      return `"${arrayEscape(value)}"`;
-
-    case "bigint":
-    case "number":
-      if (is_numeric || is_json) {
-        return "" + value;
-      }
-      return `"${value}"`;
-    case "boolean":
-      switch (type) {
-        case "BOOLEAN":
-          return value === true ? "t" : "f";
-        case "JSON":
-        case "JSONB":
-          return value === true ? "true" : "false";
-        default:
-          if (is_numeric) {
-            // convert to int if is a numeric array
-            return "" + (value ? 1 : 0);
-          }
-          // fallback to string
-          return value === true ? '"true"' : '"false"';
-      }
-    default:
-      if (value instanceof Date) {
-        const isoValue = value.toISOString();
-        if (is_json) {
-          return `"${arrayEscape(JSON.stringify(isoValue))}"`;
-        }
-        return `"${arrayEscape(isoValue)}"`;
-      }
-      if (Buffer.isBuffer(value)) {
-        const hexValue = value.toString("hex");
-        // bytea array
-        if (type === "BYTEA") {
-          return `"\\x${arrayEscape(hexValue)}"`;
-        }
-        if (is_json) {
-          return `"${arrayEscape(JSON.stringify(hexValue))}"`;
-        }
-        return `"${arrayEscape(hexValue)}"`;
-      }
-      // fallback to JSON.stringify
-      return `"${arrayEscape(JSON.stringify(value))}"`;
-  }
+function arrayKind(type: ArrayType | undefined): ArrayKind {
+  return type === "JSON" || type === "JSONB" ? ArrayKind.json : type === "BOX" ? ArrayKind.box : ArrayKind.other;
 }
-function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
+
+const arrayEscape = /[\\"]/g;
+function quoteElement(text: string) {
+  return '"' + text.replace(arrayEscape, "\\$&") + '"';
+}
+
+function hex(bytes: Buffer) {
+  return quoteElement("\\x" + bytes.toString("hex"));
+}
+
+function jsonElement(value: unknown) {
+  const text = typeof value === "bigint" ? String(value) : JSON.stringify(value);
+  return text === undefined ? "NULL" : quoteElement(text);
+}
+
+// NULL is the only unquoted element: the server's input function for the element type reads the rest.
+function arrayLiteral(values: ArrayLike<unknown>, kind: ArrayKind): string {
+  const delimiter = kind === ArrayKind.box ? ";" : ",";
+  let literal = "{";
+  for (let i = 0, length = values.length; i < length; i++) {
+    if (i > 0) literal += delimiter;
+    const value = values[i];
+    if (value == null) literal += "NULL";
+    else if (kind === ArrayKind.json) literal += jsonElement(value);
+    else if ($isArray(value)) literal += arrayLiteral(value, kind);
+    else if (typeof value !== "object") literal += quoteElement(String(value));
+    else if (value instanceof Date) literal += quoteElement(value.toISOString());
+    else if (ArrayBuffer.isView(value)) literal += hex(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    else if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) literal += hex(Buffer.from(value));
+    else literal += jsonElement(value);
+  }
+  return literal + "}";
+}
+
+function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType | undefined {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
-    return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
+    return POSTGRES_ARRAY_TYPES[typeNameOrID as number];
   }
   if (typeOfType === "string") {
     const type = (typeNameOrID as string).toUpperCase();
@@ -230,36 +170,12 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
     }
     return type;
   }
-  // default to JSON so we accept most of the types
-  return "JSON";
-}
-function serializeArray(values: any[], type: ArrayType) {
-  if (!$isArray(values) && !isTypedArray(values)) return values;
-
-  if (!values.length) return "{}";
-
-  // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
-  const delimiter = type === "BOX" ? ";" : ",";
-
-  return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
-}
-
-function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
-  if (Error.isError(error)) {
-    return error;
-  }
-  return new PostgresError(error.message, error);
+  return undefined;
 }
 
 initPostgres(
-  function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
+  function onResolvePostgresQuery(query, result, commandTag, count, is_last, statement) {
     if (is_last) {
-      if (queries) {
-        const queriesIndex = queries.indexOf(query);
-        if (queriesIndex !== -1) {
-          queries.splice(queriesIndex, 1);
-        }
-      }
       try {
         query.resolve(query[_results]);
       } catch {}
@@ -269,15 +185,19 @@ initPostgres(
     // prepare for next query
     query[_handle].setPendingValue(new SQLResultArray());
 
+    count ||= 0;
     if (typeof commandTag === "string") {
       if (commandTag.length > 0) {
         result.command = commandTag;
       }
+      result.affectedRows = 0;
     } else {
       result.command = cmds[commandTag];
+      result.affectedRows = commandTag >= 1 && commandTag <= 4 ? count : 0;
     }
 
-    result.count = count || 0;
+    result.count = count;
+    result.statement = statement;
     const last_result = query[_results];
 
     if (!last_result) {
@@ -293,24 +213,13 @@ initPostgres(
     }
   },
 
-  function onRejectPostgresQuery(
-    query: Query<any, any>,
-    reject: Error | (PostgresErrorOptions & { message: string }),
-    queries: Query<any, any>[],
-  ) {
-    // A parameter can throw a non-object, and the query rejects with it.
-    if ($isObject(reject)) reject = wrapPostgresError(reject);
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
-      }
-    }
-
+  function onRejectPostgresQuery(query: Query<any, any>, reject: Error) {
     try {
-      query.reject(reject as Error);
+      query.reject(reject);
     } catch {}
   },
+
+  arrayLiteral,
 );
 
 export interface PostgresDotZig {
@@ -318,12 +227,13 @@ export interface PostgresDotZig {
     onResolveQuery: (
       query: Query<any, any>,
       result: SQLResultArray<unknown>,
-      commandTag: string,
+      commandTag: string | number,
       count: number,
-      queries: any,
       is_last: boolean,
+      statement: SQLStatementDescription | null,
     ) => void,
-    onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onRejectQuery: (query: Query<any, any>, err: Error) => void,
+    arrayLiteral: (values: ArrayLike<unknown>, kind: ArrayKind) => string,
   ) => void;
   createConnection: (
     hostname: string | undefined,
@@ -336,17 +246,21 @@ export interface PostgresDotZig {
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
-    onDisconnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onDisconnected: (err: Error | null) => void,
     idleTimeout: number,
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    allowPublicKeyRetrieval: boolean,
+    onRetire: (() => void) | undefined,
+    foundRows: boolean,
+    channelBinding: 0 | 1 | 2,
+    columnTransform: ((name: string) => string) | undefined,
   ) => $ZigGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,
     values: unknown[],
     pendingValue: SQLResultArray<unknown>,
-    columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLQuery;
@@ -356,30 +270,12 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
   protected async startConnection() {
     this.connection = await createPooledConnectionHandle(
       createPostgresConnection,
-      this.connectionInfo,
+      this.adapter.connectionInfo,
       this.nativeCallback(this.handleConnected),
       this.nativeCallback(this.handleClose),
+      this.nativeCallback(this.handleRetire),
+      this,
     );
-  }
-
-  protected wrapError(error: any): Error {
-    return wrapPostgresError(error);
-  }
-
-  protected isNonRetryableError(code: string | undefined): boolean {
-    switch (code) {
-      case "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD":
-      case "ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD":
-      case "ERR_POSTGRES_TLS_NOT_AVAILABLE":
-      case "ERR_POSTGRES_TLS_UPGRADE_FAILED":
-      case "ERR_POSTGRES_INVALID_SERVER_SIGNATURE":
-      case "ERR_POSTGRES_INVALID_SERVER_KEY":
-      case "ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2":
-        // we can't retry these are authentication errors
-        return true;
-      default:
-        return false;
-    }
   }
 
   /// Connect failures (ERR_POSTGRES_CONNECTION_FAILED) mean the server
@@ -411,7 +307,7 @@ class PostgresAdapter
     >
 {
   protected createPooledConnection(): PooledPostgresConnection {
-    return new PooledPostgresConnection(this.connectionInfo, this);
+    return new PooledPostgresConnection(this);
   }
 
   escapeIdentifier(str: string) {
@@ -449,7 +345,10 @@ class PostgresAdapter
 
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);
-    return new SQLArrayParameter(serializeArray(values, arrayType), arrayType);
+    return new SQLArrayParameter(
+      $isArray(values) || $isTypedArrayView(values) ? arrayLiteral(values, arrayKind(arrayType)) : values,
+      arrayType,
+    );
   }
 
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
@@ -507,37 +406,30 @@ class PostgresAdapter
       sql,
       values,
       new SQLResultArray(),
-      undefined,
       !!(flags & SQLQueryFlags.bigint),
       !!(flags & SQLQueryFlags.simple),
     );
-  }
-
-  getHelperCommand(query: string): SQLCommand {
-    return getHelperCommandFromDetect(query, false);
   }
 
   placeholder(index: number): string {
     return "$" + index;
   }
 
-  bindParam(value: unknown, binding_values: unknown[], index: number): string {
-    if (value instanceof SQLArrayParameter) {
-      binding_values.push(value.serializedValues);
-      return `$${index}::${value.arrayType}[] `;
-    }
-    return pushBindParam(this, value, binding_values, index);
+  copyStream(query: Query<any, any>, writable: boolean) {
+    return writable
+      ? new WritableStream(new CopySink(query))
+      : new ReadableStream(new CopySource(query), new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024 }));
   }
 
   #listener: ListenConnection | null = null;
 
   listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<ListenSubscription> {
     if (this.closed) return Promise.$reject(this.connectionClosedError());
-    return (this.#listener ??= new ListenConnection(this)).listen(channel, onnotify, onlisten);
+    return (this.#listener ??= ListenConnection.join(this)).listen(this, channel, onnotify, onlisten);
   }
 
   protected closeDedicatedConnections() {
-    this.#listener?.close();
+    this.#listener?.leave(this);
     this.#listener = null;
   }
 }
@@ -550,12 +442,20 @@ type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
 class ListenSubscription {
   readonly channel: string;
   #connection: ListenConnection | null;
+  readonly #registered: Set<ListenSubscription>;
   readonly #onnotify: Listener;
   readonly #onlisten: OnListen | undefined;
 
-  constructor(connection: ListenConnection, channel: string, onnotify: Listener, onlisten: OnListen | undefined) {
+  constructor(
+    connection: ListenConnection,
+    registered: Set<ListenSubscription>,
+    channel: string,
+    onnotify: Listener,
+    onlisten: OnListen | undefined,
+  ) {
     this.channel = channel;
     this.#connection = connection;
+    this.#registered = registered.add(this);
     this.#onnotify = onnotify;
     this.#onlisten = onlisten;
   }
@@ -564,6 +464,7 @@ class ListenSubscription {
     const connection = this.#connection;
     if (connection === null) return Promise.$resolve(undefined);
     this.#connection = null;
+    this.#registered.delete(this);
     return connection.unsubscribe(this.channel, this.#onnotify, this.#onlisten);
   }
 
@@ -641,11 +542,11 @@ class ListenQuery {
   }
 
   static run(conn: ListenHandle, sql: string): Promise<void> {
-    const handle = createPostgresQuery(sql, [], new SQLResultArray(), undefined, false, true);
+    const handle = createPostgresQuery(sql, [], new SQLResultArray(), false, true);
     const query = new ListenQuery(handle);
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     query.resolve = resolve;
-    query.reject = err => reject(wrapPostgresError(err as Error));
+    query.reject = reject;
     handle.run(conn, query as any);
     return promise;
   }
@@ -658,22 +559,62 @@ function quoteChannel(channel: string) {
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 32_000;
 
+/// bun --hot only: the ones that are not closed.
+const hotListeners = new Set<ListenConnection>();
+
 // Every failure (connect error, drop, rejected LISTEN) is repaired by
 // #scheduleSweep(): after a backoff, #sweep() re-issues LISTEN for each
 // channel whose `ready` is null.
 class ListenConnection {
-  readonly #adapter: PostgresAdapter;
+  /// The one of `#pools` that joined last: it dials. It is closed when they all are.
+  #adapter: PostgresAdapter;
+  /// The pools that listen on it, each with its registrations. More than one under bun --hot only.
+  readonly #pools = new Map<PostgresAdapter, Set<ListenSubscription>>();
   readonly #channels = new Map<string, Channel>();
 
   #conn: ListenHandle | null = null;
   #connecting: Promise<ListenHandle> | null = null;
-  /** Mid-handshake handle, so close() can abort it. */
+  /** Mid-handshake handle, so #close() can abort it. */
   #handshake: ListenHandle | null = null;
   #sweepTimer: ReturnType<typeof setTimeout> | null = null;
   #backoffMs = RECONNECT_MIN_MS;
 
   constructor(adapter: PostgresAdapter) {
     this.#adapter = adapter;
+    this.#pools.set(adapter, new Set());
+  }
+
+  /// Under bun --hot a pool listens on the connection of a pool with the same settings that an earlier load made.
+  static join(adapter: PostgresAdapter): ListenConnection {
+    if (adapter.generation === -1) {
+      return new ListenConnection(adapter);
+    }
+    for (const listener of hotListeners) {
+      const earlier = listener.#adapter;
+      if (earlier.generation < adapter.generation && sameSettings(earlier, adapter)) {
+        listener.#adapter = adapter;
+        listener.#pools.set(adapter, new Set());
+        return listener;
+      }
+    }
+    const listener = new ListenConnection(adapter);
+    hotListeners.add(listener);
+    return listener;
+  }
+
+  leave(adapter: PostgresAdapter) {
+    const pools = this.#pools;
+    const registered = pools.get(adapter)!;
+    pools.delete(adapter);
+    if (pools.size === 0) {
+      return this.#close();
+    }
+    if (this.#adapter === adapter) {
+      this.#adapter = Array.from(pools.keys()).pop()!;
+    }
+    for (const subscription of registered) {
+      subscription.unlisten();
+    }
   }
 
   readonly #onNotification = (channel: string, payload: string) => {
@@ -687,7 +628,12 @@ class ListenConnection {
     for (let i = 0; i < listeners.length; i++) invoke(listeners[i], payload);
   };
 
-  async listen(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<ListenSubscription> {
+  async listen(
+    adapter: PostgresAdapter,
+    channel: string,
+    onnotify: Listener,
+    onlisten: OnListen | undefined,
+  ): Promise<ListenSubscription> {
     let entry = this.#channels.get(channel);
     if (entry === undefined) {
       entry = new Channel(onnotify);
@@ -695,11 +641,13 @@ class ListenConnection {
     } else {
       entry.add(onnotify);
     }
+    const registered = this.#pools.get(adapter)!;
+    const subscription = new ListenSubscription(this, registered, channel, onnotify, onlisten);
 
     try {
       await (entry.ready ??= this.#subscribe(channel, entry));
     } catch (err) {
-      if (this.#channels.get(channel) === entry) {
+      if (registered.delete(subscription) && this.#channels.get(channel) === entry) {
         if (entry.remove(onnotify)) {
           this.#channels.delete(channel);
           this.#closeIfIdle();
@@ -710,13 +658,13 @@ class ListenConnection {
       throw err;
     }
 
-    // Our registration pins the entry, so only close() can have removed it meanwhile.
-    if (this.#channels.get(channel) !== entry) throw this.#adapter.connectionClosedError();
+    // Nobody else has the subscription yet, so only close() of the pool can have ended it meanwhile.
+    if (!registered.has(subscription) || this.#channels.get(channel) !== entry) throw adapter.connectionClosedError();
     if (onlisten !== undefined) {
       entry.addOnlisten(onlisten);
       invoke(onlisten);
     }
-    return new ListenSubscription(this, channel, onnotify, onlisten);
+    return subscription;
   }
 
   async unsubscribe(channel: string, onnotify: Listener, onlisten: OnListen | undefined): Promise<void> {
@@ -739,7 +687,8 @@ class ListenConnection {
     }
   }
 
-  close() {
+  #close() {
+    hotListeners.delete(this);
     this.#clearSweep();
     this.#channels.clear();
     const conn = this.#conn;
@@ -785,8 +734,8 @@ class ListenConnection {
             { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
             adapter.ownerCallback((err, conn) => {
               this.#handshake = null;
-              if (err) return reject(wrapPostgresError(err));
-              if (adapter.closed) {
+              if (err) return reject(err);
+              if (this.#adapter.closed) {
                 conn.close();
                 return reject(adapter.connectionClosedError());
               }
@@ -797,25 +746,30 @@ class ListenConnection {
               resolve(conn);
               this.#clearSweep();
               this.#sweep();
+              adapter.runUserCallback(adapter.connectionInfo.onconnect, null);
             }),
             adapter.ownerCallback(err => {
+              err ??= adapter.connectionClosedError();
               if (live === null) {
                 this.#handshake = null;
-                return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
+                return reject(err);
               }
-              if (this.#conn !== live) return;
-              this.#conn = null;
-              for (const entry of this.#channels.values()) entry.ready = null;
-              this.#scheduleSweep();
+              if (this.#conn === live) {
+                this.#conn = null;
+                for (const entry of this.#channels.values()) entry.ready = null;
+                this.#scheduleSweep();
+              }
+              adapter.runUserCallback(adapter.connectionInfo.onclose, err);
             }),
+            undefined,
           ),
         undefined,
       )
       .then(handle => {
         if (handle === null || live !== null) return;
-        if (adapter.closed) handle.close();
+        if (this.#adapter.closed) handle.close();
         else this.#handshake = handle;
-      });
+      }, reject);
 
     return promise;
   }
@@ -871,6 +825,184 @@ class ListenConnection {
       this.#conn = null;
       conn.close();
     }
+  }
+}
+
+// COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
+// each time the socket has drained (FROM STDIN). The stream ends as the query does.
+
+type CopyHandle = $ZigGeneratedClasses.PostgresSQLQuery;
+
+function noop() {}
+
+function notACopyError(method: string, direction: string) {
+  return new PostgresError(`${method} needs a COPY ... ${direction} statement`, {
+    code: "ERR_POSTGRES_COPY_NOT_SUPPORTED",
+  });
+}
+
+class CopySource {
+  query: Query<any, any>;
+  handle: CopyHandle | null = null;
+  started = false;
+  controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  constructor(query: Query<any, any>) {
+    this.query = query;
+    query[_copy] = this;
+  }
+
+  attach(handle: CopyHandle) {
+    this.handle = handle;
+    handle.setCopy(onCopyOut.bind(this), false);
+  }
+
+  start(controller: ReadableStreamDefaultController<Uint8Array>) {
+    this.controller = controller;
+    const query = this.query;
+    query.$then(onCopyOutEnd.bind(this), onCopyOutError.bind(this));
+    query.execute();
+  }
+
+  pull() {
+    this.handle?.copyResume();
+  }
+
+  cancel() {
+    this.controller = null;
+    this.query.cancel();
+  }
+
+  /** The query is cancelled, or what it was made on ends. */
+  abandon(why: string) {
+    this.query.reject(new PostgresError("COPY to stdout failed: " + why, { code: "ERR_POSTGRES_QUERY_CANCELLED" }));
+    this.query.cancel();
+  }
+}
+
+/** @returns false when the socket is to be paused until pull() */
+function onCopyOut(this: CopySource, chunk: Uint8Array | undefined) {
+  if (chunk === undefined) {
+    return (this.started = true);
+  }
+  const controller = this.controller;
+  if (controller === null) {
+    return true;
+  }
+  controller.enqueue(chunk);
+  return controller.desiredSize! > 0;
+}
+
+function onCopyOutEnd(this: CopySource) {
+  const controller = this.controller;
+  if (controller === null) {
+    return;
+  }
+  if (this.started) {
+    controller.close();
+  } else {
+    controller.error(notACopyError("readable()", "TO STDOUT"));
+  }
+}
+
+function onCopyOutError(this: CopySource, err: unknown) {
+  const controller = this.controller;
+  if (controller !== null) {
+    this.controller = null;
+    controller.error(err);
+  }
+}
+
+class CopySink {
+  query: Query<any, any>;
+  handle: CopyHandle | null = null;
+  controller: WritableStreamDefaultController | null = null;
+  /** of start() until the server asks for the data, then of a write() that the socket has no room for */
+  waiting: Promise<void> | null = null;
+  /** what CopyFail says, once the stream has failed */
+  failure: string | null = null;
+
+  constructor(query: Query<any, any>) {
+    this.query = query;
+    query[_copy] = this;
+  }
+
+  attach(handle: CopyHandle) {
+    this.handle = handle;
+    handle.setCopy(onCopyIn.bind(this), true);
+  }
+
+  /** The query is cancelled, or what it was made on ends. CopyFail goes out now, or when the server asks for the data. */
+  abandon(why: string) {
+    this.failure ??= why;
+    this.handle?.copyFail(why);
+  }
+
+  start(controller: WritableStreamDefaultController) {
+    this.controller = controller;
+    const query = this.query;
+    query.$then(onCopyInEnd.bind(this), onCopyInError.bind(this));
+    const waiting = (this.waiting = $newPromise<void>());
+    query.execute();
+    return waiting;
+  }
+
+  write(chunk: unknown) {
+    try {
+      if (this.handle!.copyWrite(chunk)) {
+        return;
+      }
+    } catch (err) {
+      // The stream calls nothing more, and the server would wait for ever.
+      this.abort(err);
+      throw err;
+    }
+    return (this.waiting = $newPromise<void>());
+  }
+
+  /** Settles with the query: the rows are in when the server has said so. */
+  close() {
+    this.handle!.copyDone();
+    return this.query;
+  }
+
+  abort(reason: unknown) {
+    let message = "aborted";
+    try {
+      if (reason !== undefined) message = String(reason);
+    } catch {}
+    this.abandon(message);
+    return this.query.$then(noop, noop);
+  }
+}
+
+function onCopyIn(this: CopySink) {
+  const failure = this.failure;
+  if (failure !== null) {
+    return this.handle!.copyFail(failure);
+  }
+  const waiting = this.waiting;
+  if (waiting !== null) {
+    this.waiting = null;
+    $resolvePromise(waiting, undefined);
+  }
+}
+
+function onCopyInEnd(this: CopySink) {
+  const waiting = this.waiting;
+  if (waiting !== null) {
+    this.waiting = null;
+    $rejectPromise(waiting, notACopyError("writable()", "FROM STDIN"));
+  }
+}
+
+function onCopyInError(this: CopySink, err: unknown) {
+  const waiting = this.waiting;
+  if (waiting !== null) {
+    this.waiting = null;
+    $rejectPromise(waiting, err);
+  } else {
+    this.controller!.error(err);
   }
 }
 

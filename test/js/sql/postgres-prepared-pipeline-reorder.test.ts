@@ -336,17 +336,14 @@ describe.concurrent("postgres mock", () => {
     }
   });
 
-  // These are the frames of pgdog 0.1.60 with its query parser on, for a
-  // statement that pgdog rejects itself: ErrorResponse and ReadyForQuery at the
-  // Flush, then one more ReadyForQuery at the Sync. The second one arrives when
-  // the Parse of `fresh` is on the wire. advance() must stop at `fresh`. If it
-  // stepped over it, the Bind of `prepared` would be written first.
+  // A pooler that rejects a statement itself (pgdog 0.1.60 with its query parser on) answers ErrorResponse and
+  // ReadyForQuery before it has read the Sync, then one more ReadyForQuery at the Sync.
   test("a second ReadyForQuery for one Sync lets nothing pass a statement that is being parsed", async () => {
     let rejecting = false;
     const mock = await echoServer((type, body) => {
       if (type === "P" && body.includes("rejected by the pooler")) rejecting = true;
       if (!rejecting) return;
-      if (type === "H") return [pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" }), pgReadyForQuery()];
+      if (type === "E") return [pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" }), pgReadyForQuery()];
       if (type !== "S") return [];
       rejecting = false;
       return [pgReadyForQuery()];

@@ -1,13 +1,7 @@
-// Fault-injection test: requires a server that refuses / drops / sends malformed
-// frames, which a healthy container will not do on demand. DO NOT COPY THIS
-// PATTERN — anything a real server can produce belongs in describeWithContainer.
-// All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
-// Buffer.alloc frame construction here.
-//
-// A malicious or buggy Postgres server can send a binary-format int4[]/float4[]
-// DataRow whose header `len` field exceeds the actual column byte length.
-// The binary array parser must validate `len` against the column's byte length
-// before iterating; otherwise slice() reads and writes past the read buffer.
+// Fault-injection test: requires a server that sends malformed values, which a
+// healthy container will not do on demand. DO NOT COPY THIS PATTERN: anything a
+// real server can produce belongs in describeWithContainer (postgres-decode.test.ts).
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts.
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
 import {
@@ -19,33 +13,13 @@ import {
   pgRowDescription,
 } from "./wire-frames";
 
-// Big-endian Int32 encoder for assembling the hostile *column payload* (binary
-// array bytes inside a DataRow) — these are not wire frames; the frames
-// themselves come from ./wire-frames.
-const i32 = (n: number): Buffer => {
-  const b = Buffer.alloc(4);
-  b.writeInt32BE(n, 0);
-  return b;
-};
+const OID = { int4: 23, float8: 701, timestamp: 1114, timestamptz: 1184, int4_array: 1007, text_array: 1009 } as const;
+const OID_ARRAY = { float8: 1022, bytea: 1001, json: 199 } as const;
 
-// Binary int4[]/float4[] column payload header — PostgreSQL array_send():
-// Int32 ndim, Int32 flags, Int32 elemtype, then per dim: Int32 len, Int32 lbound.
-function binaryArrayHeader(opts: {
-  ndim: number;
-  flags: number;
-  elemtype: number;
-  len: number;
-  lbound: number;
-}): Buffer {
-  return Buffer.concat([i32(opts.ndim), i32(opts.flags), i32(opts.elemtype), i32(opts.len), i32(opts.lbound)]);
-}
-
-// One mock server for the file; each test sets `current` before connecting and
-// the accept handler latches it per connection. A per-test server flaked on
-// Windows CI with ERR_POSTGRES_CONNECTION_REFUSED (loopback SYN not retransmitted).
-let current!: { col: Buffer; oid: number };
+// One mock server for the file: it answers each simple query with one row that holds `current`.
+type Cell = { typeOid: number; format: 0 | 1; bytes: Buffer };
+let current!: Cell;
 const { port, server } = await listeningServer(socket => {
-  const { col, oid } = current;
   let startup = true;
   socket.on("data", data => {
     if (startup) {
@@ -54,14 +28,10 @@ const { port, server } = await listeningServer(socket => {
       return;
     }
     if (data[0] !== 0x51 /* 'Q' */) return;
-    // Column name length is chosen so the column payload lands on a
-    // 4-byte boundary within the response buffer; this lets the
-    // unpatched parser reach slice() (the actual overflow) instead of
-    // tripping the debug-only @alignCast in init() first.
     socket.write(
       Buffer.concat([
-        pgRowDescription([{ name: "arr", typeOid: oid, format: 1 /* binary */ }]),
-        pgDataRow([col]),
+        pgRowDescription([{ name: "v", typeOid: current.typeOid, format: current.format }]),
+        pgDataRow([current.bytes]),
         pgCommandComplete("SELECT 1"),
         pgReadyForQuery(),
       ]),
@@ -71,88 +41,99 @@ const { port, server } = await listeningServer(socket => {
 });
 afterAll(() => new Promise<void>(r => server.close(() => r())));
 
-async function runMockQuery(columnBytes: Buffer, typeOid: number): Promise<unknown> {
-  current = { col: columnBytes, oid: typeOid };
-  const sql = new SQL({
-    url: `postgres://u@127.0.0.1:${port}/db`,
-    max: 1,
-    idleTimeout: 5,
-    connectionTimeout: 5,
-  });
-
-  try {
-    return await sql`select x`.simple();
-  } finally {
-    await sql.close().catch(() => {});
+/** The decoded cells, or the code each rejected with. All on one connection: a rejected query leaves it usable. */
+async function decode(cells: Cell[]): Promise<unknown[]> {
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+  const values: unknown[] = [];
+  for (const cell of cells) {
+    current = cell;
+    values.push(
+      await sql`select x`.simple().then(
+        rows => rows[0].v,
+        error => error.code ?? error.name,
+      ),
+    );
   }
+  return values;
 }
+const text = (typeOid: number, value: string): Cell => ({ typeOid, format: 0, bytes: Buffer.from(value) });
+const binary = (typeOid: number, length: number): Cell => ({ typeOid, format: 1, bytes: Buffer.alloc(length, 1) });
 
-const INT4_ARRAY = 1007;
-const FLOAT4_ARRAY = 1021;
-const INT4 = 23;
-const FLOAT4 = 700;
-
-const malformed: { name: string; oid: number; col: Buffer }[] = [
-  {
-    // 20-byte header claims 65536 elements but provides none.
-    name: "int4[] with len exceeding column bytes",
-    oid: INT4_ARRAY,
-    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
-  },
-  {
-    // Header claims 65536 elements but only 1 element worth of bytes follows.
-    name: "int4[] with len exceeding column bytes (partial data)",
-    oid: INT4_ARRAY,
-    col: Buffer.concat([
-      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 65536, lbound: 1 }),
-      i32(4),
-      i32(42),
-    ]),
-  },
-  {
-    name: "int4[] with negative len",
-    oid: INT4_ARRAY,
-    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: -1, lbound: 1 }),
-  },
-  {
-    // Only 16 bytes: ndim, flags, elemtype, len — missing lbound.
-    name: "int4[] with ndim=1 but truncated header",
-    oid: INT4_ARRAY,
-    col: Buffer.concat([i32(1), i32(0), i32(INT4), i32(1)]),
-  },
-  {
-    name: "int4[] with len = INT32_MAX",
-    oid: INT4_ARRAY,
-    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 0x7fffffff, lbound: 1 }),
-  },
-  {
-    name: "float4[] with len exceeding column bytes",
-    oid: FLOAT4_ARRAY,
-    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 1 << 20, lbound: 1 }),
-  },
-];
-
-test.each(malformed)("binary $name is rejected", async ({ oid, col }) => {
-  let err: any;
-  try {
-    await runMockQuery(col, oid);
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeDefined();
-  expect(err?.code ?? err?.message).toMatch(/ERR_POSTGRES_INVALID_BINARY_DATA|InvalidBinaryData/);
+test("an array literal that is not one rejects", async () => {
+  const literals = [
+    "",
+    "1",
+    "{",
+    "{1,2",
+    "{1,2,",
+    "{1,,2}",
+    "{,}",
+    "{1}x",
+    "{1}}",
+    "{{1},2",
+    "{{{{{{{1}}}}}}}", // one level more than the server's MAXDIM
+    "[0:1]{1,2}",
+    "[0:1]=",
+    "[0:1]=1",
+  ];
+  expect(
+    await decode([...literals.map(literal => text(OID.int4_array, literal)), text(OID.int4_array, "{7}")]),
+  ).toEqual([...literals.map(() => "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"), [7]]);
 });
 
-test("well-formed binary int4[] still parses", async () => {
-  const col = Buffer.concat([
-    binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 3, lbound: 1 }),
-    i32(4),
-    i32(1),
-    i32(4),
-    i32(2),
-    i32(4),
-    i32(3),
+test("a quoted element that does not end rejects", async () => {
+  const literals = ['{"a', '{"a\\', '{"a\\"', '{"a"', '{"a"b}'];
+  expect(await decode(literals.map(literal => text(OID.text_array, literal)))).toEqual(
+    literals.map(() => "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"),
+  );
+});
+
+test("text that is not a value of the type rejects, in a column and in an array", async () => {
+  expect(
+    await decode([
+      text(OID.int4, "x"),
+      text(OID.int4, ""),
+      text(OID.int4, "2147483648"),
+      text(OID.float8, "1.5x"),
+      text(OID.int4_array, "{1,x}"),
+      text(OID.int4_array, "{1,2147483648}"),
+      text(OID_ARRAY.float8, "{1.5,x}"),
+      text(OID_ARRAY.bytea, "{abc}"),
+      text(OID_ARRAY.json, "{falsy}"),
+    ]),
+  ).toEqual([
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_INVALID_CHARACTER",
+    "ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT",
+    "SyntaxError",
   ]);
-  const result: any = await runMockQuery(col, INT4_ARRAY);
-  expect(result[0].arr).toEqual(new Int32Array([1, 2, 3]));
+});
+
+test("a binary value of the wrong width rejects", async () => {
+  expect(
+    await decode([
+      binary(OID.int4, 0),
+      binary(OID.int4, 3),
+      binary(OID.int4, 5),
+      binary(OID.float8, 4),
+      binary(OID.float8, 9),
+      binary(OID.timestamp, 4),
+      binary(OID.timestamptz, 9),
+      binary(OID.int4, 4),
+    ]),
+  ).toEqual([
+    "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE",
+    "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE",
+    "ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE",
+    "ERR_POSTGRES_INVALID_BINARY_DATA",
+    "ERR_POSTGRES_INVALID_BINARY_DATA",
+    "ERR_POSTGRES_INVALID_BINARY_DATA",
+    "ERR_POSTGRES_INVALID_BINARY_DATA",
+    0x01010101,
+  ]);
 });

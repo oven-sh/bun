@@ -1,6 +1,56 @@
 use bun_base64;
 
+use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_boringssl_sys::SSL;
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
+use bun_sql::postgres::protocol::authentication::SASLMechanisms;
+
+unsafe extern "C" {
+    // src/jsc/bindings/SASLPrep.cpp
+    fn Bun__saslprep(input: *const u8, input_len: usize, out: *mut u8, out_capacity: usize) -> i64;
+}
+
+pub(crate) struct PreparedPassword {
+    buffer: Vec<u8>,
+    len: usize,
+}
+
+impl PreparedPassword {
+    /// `None`: use `password` as it is, which is also libpq's fallback when SASLprep refuses it.
+    pub(crate) fn new(password: &[u8]) -> Option<PreparedPassword> {
+        // SASLprep leaves ASCII alone or refuses it.
+        if password.is_ascii() {
+            return None;
+        }
+        // NFKC makes UTF-8 at most 11 times as long (U+FDFA).
+        let mut prepared = PreparedPassword {
+            buffer: vec![0; password.len() * 11],
+            len: 0,
+        };
+        // SAFETY: both pairs are a live slice's pointer and length.
+        let len = unsafe {
+            Bun__saslprep(
+                password.as_ptr(),
+                password.len(),
+                prepared.buffer.as_mut_ptr(),
+                prepared.buffer.len(),
+            )
+        };
+        prepared.len = usize::try_from(len).ok()?;
+        Some(prepared)
+    }
+
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.buffer[..self.len]
+    }
+}
+
+impl Drop for PreparedPassword {
+    fn drop(&mut self) {
+        // SAFETY: the pointer and length of a live slice.
+        unsafe { bun_alloc::secure_zero(self.buffer.as_mut_ptr(), self.buffer.len()) };
+    }
+}
 
 const NONCE_BYTE_LEN: usize = 18;
 const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);
@@ -11,6 +61,92 @@ const SERVER_SIGNATURE_BASE64_LEN: usize =
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
+/// libpq's `channel_binding`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum ChannelBinding {
+    Disable,
+    Prefer,
+    Require,
+}
+
+impl ChannelBinding {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ChannelBinding> {
+        match value.is_int32().then(|| value.as_int32()) {
+            Some(0) => Ok(ChannelBinding::Disable),
+            Some(1) => Ok(ChannelBinding::Prefer),
+            Some(2) => Ok(ChannelBinding::Require),
+            _ => Err(global.throw_invalid_arguments(format_args!(
+                "channelBinding must be 0 (disable), 1 (prefer) or 2 (require)"
+            ))),
+        }
+    }
+}
+
+/// The messages are libpq's.
+#[derive(Copy, Clone)]
+pub(crate) struct Refusal {
+    pub(crate) code: &'static [u8],
+    pub(crate) message: &'static str,
+}
+
+impl Refusal {
+    const fn required(message: &'static str) -> Refusal {
+        Refusal {
+            code: b"ERR_POSTGRES_CHANNEL_BINDING_REQUIRED",
+            message,
+        }
+    }
+
+    const fn failed(message: &'static str) -> Refusal {
+        Refusal {
+            code: b"ERR_POSTGRES_CHANNEL_BINDING_FAILED",
+            message,
+        }
+    }
+
+    const NO_KNOWN_MECHANISM: Refusal = Refusal {
+        code: b"ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM",
+        message: "none of the server's SASL authentication mechanisms are supported",
+    };
+    pub(crate) const NOT_A_SASL_REQUEST: Refusal = Refusal::required(
+        "channel binding required but not supported by server's authentication request",
+    );
+    pub(crate) const NOT_BOUND: Refusal = Refusal::required(
+        "channel binding required, but server authenticated client without channel binding",
+    );
+}
+
+/// The channel binding flag of the GS2 header (RFC 5802 §7).
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum Gs2Flag {
+    /// The client does not do channel binding.
+    N,
+    /// The client does, and thinks the server does not. A server that does refuses this.
+    Y,
+    TlsServerEndPoint,
+}
+
+impl Gs2Flag {
+    pub(crate) fn header(self) -> &'static [u8] {
+        match self {
+            Gs2Flag::N => b"n,,",
+            Gs2Flag::Y => b"y,,",
+            Gs2Flag::TlsServerEndPoint => b"p=tls-server-end-point,,",
+        }
+    }
+
+    pub(crate) fn mechanism(self) -> &'static [u8] {
+        match self {
+            Gs2Flag::N | Gs2Flag::Y => b"SCRAM-SHA-256",
+            Gs2Flag::TlsServerEndPoint => b"SCRAM-SHA-256-PLUS",
+        }
+    }
+}
+
+const CHANNEL_BINDING_MAX_LEN: usize = b"p=tls-server-end-point,,".len() + EVP_MAX_MD_SIZE;
+pub(crate) const CHANNEL_BINDING_BASE64_MAX_LEN: usize =
+    bun_base64::encode_len_from_size(CHANNEL_BINDING_MAX_LEN);
+
 pub struct SASL {
     pub(crate) nonce_base64_bytes: [u8; NONCE_BASE64_LEN],
     pub(crate) nonce_len: u8,
@@ -20,6 +156,10 @@ pub struct SASL {
 
     pub(crate) salted_password_bytes: [u8; SALTED_PASSWORD_BYTE_LEN],
     pub(crate) salted_password_created: bool,
+
+    pub(crate) gs2_flag: Gs2Flag,
+    certificate_hash: [u8; EVP_MAX_MD_SIZE],
+    certificate_hash_len: u8,
 
     pub(crate) status: SASLStatus,
 }
@@ -33,6 +173,9 @@ impl Default for SASL {
             server_signature_len: 0,
             salted_password_bytes: [0; SALTED_PASSWORD_BYTE_LEN],
             salted_password_created: false,
+            gs2_flag: Gs2Flag::N,
+            certificate_hash: [0; EVP_MAX_MD_SIZE],
+            certificate_hash_len: 0,
             status: SASLStatus::Init,
         }
     }
@@ -55,6 +198,74 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
+    /// Chooses as libpq's `pg_SASL_init` does.
+    pub(crate) fn init(
+        offered: SASLMechanisms,
+        channel_binding: ChannelBinding,
+        tls: Option<&mut SSL>,
+    ) -> Result<SASL, Refusal> {
+        let mut sasl = SASL::default();
+        let Some(ssl) = tls else {
+            if channel_binding == ChannelBinding::Require {
+                return Err(Refusal::required(
+                    "channel binding required, but SSL not in use",
+                ));
+            }
+            // A proxy that strips TLS.
+            if offered.scram_sha_256_plus {
+                return Err(Refusal::failed(
+                    "server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection",
+                ));
+            }
+            return offered
+                .scram_sha_256
+                .then_some(sasl)
+                .ok_or(Refusal::NO_KNOWN_MECHANISM);
+        };
+
+        if offered.scram_sha_256_plus && channel_binding != ChannelBinding::Disable {
+            // No fallback: who terminates TLS picks the certificate, and `n` is never refused.
+            let Some(len) = ssl
+                .peer_leaf_certificate()
+                .and_then(|cert| cert.tls_server_end_point_hash(&mut sasl.certificate_hash))
+            else {
+                return Err(Refusal::failed(
+                    "could not get the hash of the server's certificate for channel binding: its signature algorithm names no digest. channelBinding: \"disable\" connects without channel binding",
+                ));
+            };
+            sasl.certificate_hash_len = len as u8;
+            sasl.gs2_flag = Gs2Flag::TlsServerEndPoint;
+            return Ok(sasl);
+        }
+
+        if channel_binding == ChannelBinding::Require {
+            return Err(Refusal::required(
+                "channel binding is required, but server did not offer an authentication method that supports channel binding",
+            ));
+        }
+        if !offered.scram_sha_256 {
+            return Err(Refusal::NO_KNOWN_MECHANISM);
+        }
+        if channel_binding == ChannelBinding::Prefer {
+            sasl.gs2_flag = Gs2Flag::Y;
+        }
+        Ok(sasl)
+    }
+
+    /// The `c=` attribute: the GS2 header and the channel binding data.
+    pub(crate) fn channel_binding_base64<'a>(
+        &self,
+        out: &'a mut [u8; CHANNEL_BINDING_BASE64_MAX_LEN],
+    ) -> &'a [u8] {
+        let header = self.gs2_flag.header();
+        let hash = &self.certificate_hash[..self.certificate_hash_len as usize];
+        let mut input = [0u8; CHANNEL_BINDING_MAX_LEN];
+        input[..header.len()].copy_from_slice(header);
+        input[header.len()..][..hash.len()].copy_from_slice(hash);
+        let len = bun_base64::encode(out, &input[..header.len() + hash.len()]);
+        &out[..len]
+    }
+
     // Note: takes the password slice rather than `&mut PostgresSQLConnection` —
     // only `connection.password` is read, and `&mut PostgresSQLConnection` here
     // would alias the `&mut self.authentication_state` borrow live at the call
@@ -153,6 +364,3 @@ impl SASL {
         &self.nonce_base64_bytes[0..self.nonce_len as usize]
     }
 }
-
-// The only "deinit" site (`AuthenticationState::zero`) replaces the whole
-// enum variant by assignment, so no `reset()` is needed and nothing maps to Drop.

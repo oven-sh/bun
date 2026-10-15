@@ -1,18 +1,13 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, QueryStrings } from "./query";
-import type {
-  ArrayType,
-  DatabaseAdapter,
-  OnConnected,
-  SQLCommand as SharedSQLCommand,
-  SQLArrayParameter,
-} from "./shared";
+import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter } from "./shared";
 
 type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
-const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/shared");
+const { SQLResultArray, normalizeQuery, firstKeyword } = require("internal/sql/shared");
 const { SQLQueryResultMode } = require("internal/sql/query");
+const { closeTimeoutMs } = require("internal/sql/pool");
 const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
@@ -23,192 +18,24 @@ function getSQLiteModule() {
   return lazySQLiteModule;
 }
 
-const enum SQLCommand {
-  insert = 0,
-  update = 1,
-  updateSet = 2,
-  where = 3,
-  in = 4,
-  none = -1,
+function toSQLiteError(err: unknown) {
+  if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
+    const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
+    const errno = "errno" in err ? Number(err.errno) : 1;
+    const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
+    const message = "message" in err ? String(err.message) : "SQLite error";
+
+    return new SQLiteError(message, { code, errno, byteOffset });
+  }
+  return err;
 }
 
-interface SQLParsedInfo {
-  command: SQLCommand;
-  lastToken?: string;
-  canReturnRows: boolean;
-}
-
-function commandToString(command: SQLCommand, lastToken?: string): string {
-  switch (command) {
-    case SQLCommand.insert:
-      return "INSERT";
-    case SQLCommand.updateSet:
-    case SQLCommand.update:
-      return "UPDATE";
-    case SQLCommand.in:
-    case SQLCommand.where:
-      if (lastToken) return lastToken;
-      return "WHERE";
-    default:
-      if (lastToken) return lastToken;
-      return "";
-  }
-}
-
-/**
- * Parse the SQL query and return the command and the last token
- * @param query - The SQL query to parse
- * @param partial - Whether to stop on the first command we find
- * @returns The command, the last token, and whether it can return rows
- */
-function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = query.toUpperCase().trim();
-  const text_len = text.length;
-
-  let token = "";
-  let command = SQLCommand.none;
-  let lastToken = "";
-  let canReturnRows = false;
-  let quoted: false | "'" | '"' = false;
-  // we need to reverse search so we find the closest command to the parameter
-  for (let i = text_len - 1; i >= 0; i--) {
-    const char = text[i];
-    switch (char) {
-      case " ":
-      case "\n":
-      case "\t":
-      case "\r":
-      case "\f":
-      case "\v": {
-        switch (token) {
-          case "INSERT": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.insert;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "UPDATE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "WHERE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.where;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SET": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.updateSet;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "IN": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.in;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN":
-          case "RETURNING": {
-            lastToken = token;
-            canReturnRows = true;
-            token = "";
-            continue;
-          }
-          default: {
-            lastToken = token;
-            token = "";
-            continue;
-          }
-        }
-      }
-      default: {
-        // skip quoted commands
-        if (char === '"' || char === "'") {
-          if (quoted === char) {
-            quoted = false;
-          } else {
-            quoted = char;
-          }
-          continue;
-        }
-        if (!quoted) {
-          token = char + token;
-        }
-      }
-    }
-  }
-  if (token) {
-    lastToken = token;
-    switch (token) {
-      case "INSERT":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.insert;
-        }
-        break;
-      case "UPDATE":
-        if (command === SQLCommand.none) command = SQLCommand.update;
-        break;
-      case "WHERE":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.where;
-        }
-        break;
-      case "SET":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.updateSet;
-        }
-        break;
-      case "IN":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.in;
-        }
-        break;
-      case "SELECT":
-      case "PRAGMA":
-      case "WITH":
-      case "EXPLAIN":
-      case "RETURNING": {
-        canReturnRows = true;
-        break;
-      }
-      default:
-        command = SQLCommand.none;
-        break;
-    }
-  }
-  return { command, lastToken, canReturnRows };
+// SQLite's own white space: it reports U+00A0 and the like as a syntax error.
+const blank = /^[; \t\n\v\f\r]*$/;
+/// `false` also for a ";" in a literal or a comment: db.run() finds out what follows it.
+function isOneStatement(sql: string): boolean {
+  const end = sql.indexOf(";");
+  return end === -1 || blank.test(sql.slice(end + 1));
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -216,13 +43,12 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
   private readonly sql: string;
   private readonly values: unknown[] | Record<string, unknown>;
-  private readonly parsedInfo: SQLParsedInfo;
+  private readonly adapter: SQLiteAdapter;
 
-  public constructor(sql: string, values: unknown[] | Record<string, unknown>) {
+  public constructor(sql: string, values: unknown[] | Record<string, unknown>, adapter: SQLiteAdapter) {
     this.sql = sql;
     this.values = values;
-    // Parse the SQL query once when creating the handle
-    this.parsedInfo = parseSQLQuery(sql);
+    this.adapter = adapter;
   }
 
   setMode(mode: SQLQueryResultMode) {
@@ -237,60 +63,61 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       });
     }
 
-    const { sql, values, mode, parsedInfo } = this;
+    const { sql, values, mode, adapter } = this;
+    const command = firstKeyword(sql);
+    let result: SQLResultArray<unknown>;
     try {
-      const command = parsedInfo.command;
-      // For SELECT queries, we need to use a prepared statement
-      // For other queries, we can check if there are multiple statements and use db.run() if so
-      if (parsedInfo.canReturnRows) {
-        // SELECT queries must use prepared statements for results
-        const stmt = db.prepare(sql);
-        let result: unknown[] | undefined;
-
+      let rows: unknown[] | undefined;
+      let changes: BunSQLiteModule.Changes | undefined;
+      let readonly = false;
+      // Text without a statement is left to db.run(), which says so.
+      if (command !== "") {
+        // Compiles the first statement of the text and runs nothing.
+        const stmt = db.prepare<unknown, any[]>(sql);
         try {
-          // bun:sqlite binds from its first argument; spreading would let values[0] pose as the whole binding set.
-          if (mode === SQLQueryResultMode.values) {
-            result = stmt.values.$call(stmt, values);
-          } else if (mode === SQLQueryResultMode.raw) {
-            result = stmt.raw.$call(stmt, values);
-          } else {
-            result = stmt.all.$call(stmt, values);
+          if (stmt.native.columnsCount > 0) {
+            readonly = stmt.readonly;
+            if (mode === SQLQueryResultMode.values) {
+              rows = stmt.values(values);
+            } else if (mode === SQLQueryResultMode.raw) {
+              rows = stmt.raw(values);
+            } else {
+              const columnFrom = adapter.connectionInfo.transform?.column.from;
+              if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
+              rows = stmt.all(values);
+            }
+          } else if (isOneStatement(sql) && (stmt.paramsCount > 0 || (values as unknown[]).length === 0)) {
+            changes = stmt.run(values);
           }
         } finally {
           stmt.finalize();
         }
+      }
 
-        const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
-
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
-        sqlResult.count = $isArray(result) ? result.length : 1;
-
-        query.resolve(sqlResult);
+      if (rows !== undefined) {
+        result = new SQLResultArray(rows);
+        result.count = rows.length;
+        if (readonly) {
+          result.affectedRows = 0;
+        } else {
+          result.affectedRows = rows.length;
+          result.lastInsertRowid = db.query("SELECT last_insert_rowid()").values()[0][0] as number | bigint;
+        }
       } else {
-        // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$call(db, sql, values);
-        const sqlResult = new SQLResultArray();
-
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
-        sqlResult.count = changes.changes;
-        sqlResult.lastInsertRowid = changes.lastInsertRowid;
-
-        query.resolve(sqlResult);
+        // There may be more than one statement, or bindings that the statement has no place for.
+        changes ??= db.run<any>(sql, values);
+        result = new SQLResultArray();
+        result.count = result.affectedRows = changes.changes;
+        result.lastInsertRowid = changes.lastInsertRowid;
       }
     } catch (err) {
-      // Convert bun:sqlite errors to SQLiteError
-      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
-        // Extract SQLite error properties
-        const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
-        const errno = "errno" in err ? Number(err.errno) : 1;
-        const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
-        const message = "message" in err ? String(err.message) : "SQLite error";
-
-        throw new SQLiteError(message, { code, errno, byteOffset });
-      }
-      // Re-throw if it's not a SQLite error
-      throw err;
+      throw toSQLiteError(err);
+    } finally {
+      // bun:sqlite refuses a close() that `column.from` makes: the statement is on a row
+      if (adapter.closed) db.close();
     }
+    result.command = command;
+    query.resolve(result);
   }
 }
 
@@ -299,68 +126,38 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public db: BunSQLiteModule.Database | null = null;
   public storedError: Error | null = null;
   private _closed: boolean = false;
-  public queries: Set<Query<any, any>> = new Set();
+  /// A begin() has the database, and the ones that came after it wait in order. Plain queries do not wait: they join.
+  private inBegin: boolean = false;
+  private waitingBegins: OnConnected<BunSQLiteModule.Database>[] = [];
+  private closeHandlers: Set<(err: Error) => void> = new Set();
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
 
     try {
       const SQLiteModule = getSQLiteModule();
-      let { filename } = this.connectionInfo;
+      const { filename, readonly, create, readwrite, safeIntegers, strict } = connectionInfo;
 
-      if (filename instanceof URL) {
-        filename = filename.toString();
-      }
-
-      const options: BunSQLiteModule.DatabaseOptions = {};
-
-      if (this.connectionInfo.readonly) {
-        options.readonly = true;
-      } else {
-        options.create = this.connectionInfo.create !== false;
-        options.readwrite = true;
-      }
-
-      const connectionInfo = this.connectionInfo;
-      if ("safeIntegers" in connectionInfo) {
-        options.safeIntegers = connectionInfo.safeIntegers;
-      }
-      if ("strict" in connectionInfo) {
-        options.strict = connectionInfo.strict;
-      }
-
-      this.db = new SQLiteModule.Database(filename, options);
+      this.db = new SQLiteModule.Database(filename, { readonly, create, readwrite, safeIntegers, strict });
 
       try {
         const onconnect = this.connectionInfo.onconnect;
         if (onconnect) onconnect(null);
       } catch {}
     } catch (err) {
-      // Convert bun:sqlite initialization errors to SQLiteError
-      if (err && typeof err === "object" && "name" in err && err.name === "SQLiteError") {
-        const code = "code" in err ? String(err.code) : "SQLITE_ERROR";
-        const errno = "errno" in err ? Number(err.errno) : 1;
-        const byteOffset = "byteOffset" in err ? Number(err.byteOffset) : undefined;
-        const message = "message" in err ? String(err.message) : "SQLite error";
-
-        this.storedError = new SQLiteError(message, { code, errno, byteOffset });
-      } else {
-        this.storedError = err as Error;
-      }
-
+      // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
+      if (err instanceof TypeError) throw err;
+      this.storedError = toSQLiteError(err) as Error;
       this.db = null;
       try {
         const onconnect = this.connectionInfo.onconnect;
-        if (onconnect) onconnect(this.storedError ?? (err as Error));
+        if (onconnect) onconnect(this.storedError);
       } catch {}
     }
   }
 
-  createQueryHandle(
-    sql: string,
-    values: unknown[] | Record<string, unknown> | undefined | null = [],
-  ): SQLiteQueryHandle {
-    return new SQLiteQueryHandle(sql, values ?? []);
+  createQueryHandle(sql: string, values: unknown[] | Record<string, unknown>): SQLiteQueryHandle {
+    return new SQLiteQueryHandle(sql, values, this);
   }
   escapeIdentifier(str: string) {
     if (str.includes("\0")) {
@@ -392,8 +189,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       errno: 0,
     });
   }
-  normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
-    return normalizeQuery(this, strings, values, binding_idx);
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [string, unknown[]] {
+    return normalizeQuery(this, strings, values);
   }
 
   // SQLite uses ? for placeholders, not $1, $2, etc.
@@ -401,62 +198,49 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     return "?";
   }
 
-  bindParam(value: unknown, binding_values: unknown[], index: number): string {
-    return pushBindParam(this, value, binding_values, index);
-  }
-
-  getHelperCommand(query: string): SharedSQLCommand {
-    // when partial is true we stop on the first command we find
-    const { command } = parseSQLQuery(query, true);
-
-    // only selectIn, insert, update, updateSet are allowed
-    if (command === SQLCommand.none || command === SQLCommand.where) {
-      throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
-    }
-    // the local SQLCommand enum is numerically identical to the shared one
-    return command as unknown as SharedSQLCommand;
-  }
-
-  isUpsertUpdate(_query: string): boolean {
-    return false;
-  }
-
-  throwIfUpdateEmpty(_query: string, hasValues: boolean): void {
-    if (!hasValues) {
-      throw new SyntaxError("Update needs to have at least one column");
-    }
-  }
-
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
     if (this._closed) {
       return onConnected(this.connectionClosedError(), null);
     }
 
-    // SQLite doesn't support reserved connections since it doesn't have a connection pool
-    // Reserved connections are meant for exclusive use from a pool, which SQLite doesn't have
-    if (reserved) {
-      return onConnected(new Error("SQLite doesn't support connection reservation (no connection pool)"), null);
-    }
-
     // Since SQLite connection is synchronous, we immediately know the result
     const storedError = this.storedError;
-    let db;
+    const db = this.db;
     if (storedError) {
       onConnected(storedError, null);
-    } else if ((db = this.db)) {
-      onConnected(null, db);
-    } else {
+    } else if (!db) {
       onConnected(this.connectionClosedError(), null);
+    } else if (!reserved) {
+      onConnected(null, db);
+    } else if (this.inBegin) {
+      this.waitingBegins.push(onConnected);
+    } else {
+      this.inBegin = true;
+      onConnected(null, db);
     }
   }
 
-  release(_connection: BunSQLiteModule.Database, _connectingEvent?: boolean) {
-    // SQLite doesn't need to release connections since we don't pool. We
-    // shouldn't throw or prevent the user facing API from releasing connections
-    // so we can just no-op here
+  cancelConnect(onConnected: OnConnected<BunSQLiteModule.Database>): boolean {
+    const index = this.waitingBegins.indexOf(onConnected);
+    if (index === -1) {
+      return false;
+    }
+    this.waitingBegins.splice(index, 1);
+    return true;
   }
 
-  async close(_options?: { timeout?: number }) {
+  /// Pairs with a connect(onConnected, true) that got the database.
+  release(connection: BunSQLiteModule.Database) {
+    const next = this.waitingBegins.shift();
+    if (next) {
+      next(null, connection);
+    } else {
+      this.inBegin = false;
+    }
+  }
+
+  async close(options?: { timeout?: number }) {
+    closeTimeoutMs(options);
     if (this._closed) {
       return;
     }
@@ -472,6 +256,17 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       this.db = null;
     }
 
+    const waitingBegins = this.waitingBegins;
+    const closeHandlers = this.closeHandlers;
+    this.waitingBegins = [];
+    this.closeHandlers = new Set();
+    for (let i = 0; i < waitingBegins.length; i++) {
+      waitingBegins[i](this.connectionClosedError(), null);
+    }
+    for (const onClose of closeHandlers) {
+      onClose(this.connectionClosedError());
+    }
+
     try {
       const onclose = this.connectionInfo.onclose;
       if (onclose) onclose(this.storedError);
@@ -479,8 +274,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   flush() {
-    // SQLite executes queries synchronously, so there's nothing to flush
-    throw new Error("SQLite doesn't support flush() - queries are executed synchronously");
+    // Queries run synchronously, so nothing is ever buffered.
   }
 
   isConnected() {
@@ -492,12 +286,27 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   supportsReservedConnections(): boolean {
-    // SQLite doesn't have a connection pool, so it doesn't support reserved connections
+    // There is one connection and plain queries always run on it, so reserve() has nothing to give.
     return false;
   }
 
   getConnectionForQuery(connection: BunSQLiteModule.Database): BunSQLiteModule.Database {
+    if (connection !== this.db) {
+      throw this.connectionClosedError();
+    }
     return connection;
+  }
+
+  attachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.add(handler);
+  }
+
+  detachConnectionCloseHandler(_connection: BunSQLiteModule.Database, handler: (err: Error) => void): void {
+    this.closeHandlers.delete(handler);
+  }
+
+  isInTransaction(connection: BunSQLiteModule.Database): boolean {
+    return connection === this.db && connection.inTransaction;
   }
   array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
     throw new Error("SQLite doesn't support arrays");
@@ -510,9 +319,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       const upperOptions = options.toUpperCase();
       if (upperOptions === "DEFERRED" || upperOptions === "IMMEDIATE" || upperOptions === "EXCLUSIVE") {
         BEGIN = `BEGIN ${upperOptions}`;
-      } else if (upperOptions === "READONLY" || upperOptions === "READ") {
-        // SQLite doesn't support readonly transactions
-        throw new Error(`SQLite doesn't support '${options}' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE.`);
       } else {
         BEGIN = `BEGIN ${options}`;
       }
@@ -534,10 +340,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {
-    if (!options) {
-      return { valid: true };
-    }
-
     const upperOptions = options.toUpperCase();
     if (upperOptions === "READONLY" || upperOptions === "READ") {
       return {
@@ -557,13 +359,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
     // SQLite will handle validation of other options
     return { valid: true };
-  }
-
-  validateDistributedTransactionName(): { valid: boolean; error?: string } {
-    return {
-      valid: false,
-      error: "SQLite doesn't support distributed transactions.",
-    };
   }
 
   getCommitDistributedSQL(): string {

@@ -8,27 +8,30 @@ use crate::jsc::{
     webcore::AutoFlusher,
 };
 use crate::shared::CachedStructure;
+use crate::shared::cached_structure::{column_name_to_js, transform_name};
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
+use crate::shared::server_identity;
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
-use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
-use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
+use bun_sql::mysql::protocol::stack_reader::PacketReader;
 use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::mysql::protocol::any_mysql_error_jsc::{MaybeBytes, mysql_error_to_js};
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
 // the `pub use JSMySQLConnection as MySQLConnection` re-export below.
 use super::my_sql_connection::{self as my_sql_connection};
+use super::my_sql_request_queue::MySQLRequestQueue;
 use super::my_sql_statement::MySQLStatement;
+use super::my_sql_value::Value;
 use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
@@ -59,7 +62,7 @@ pub struct JSMySQLConnection {
     poll_ref: JsCell<KeepAlive>,
 
     // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
-    // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
+    // via a shared borrow; the inner protocol
     // struct's `get_js_connection()` recovers the embedding via
     // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
@@ -229,10 +232,10 @@ impl JSMySQLConnection {
     fn get_timeout_interval(&self) -> u32 {
         match self.connection.get().status {
             my_sql_connection::Status::Connected => {
-                if self.connection.get().is_idle() {
-                    return self.idle_timeout_interval_ms;
+                if self.connection.get().is_busy() {
+                    return 0;
                 }
-                0
+                self.idle_timeout_interval_ms
             }
             my_sql_connection::Status::Failed => 0,
             _ => self.connection_timeout_ms,
@@ -317,6 +320,34 @@ impl JSMySQLConnection {
         if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
+        if self.connection.get().is_busy() {
+            self.connection_mut().set_lifetime_exceeded();
+            self.notify_retiring();
+            return;
+        }
+        self.fail_lifetime_timeout();
+    }
+
+    /// Tells the pool to give this connection no more work.
+    fn notify_retiring(&self) {
+        let Some(on_retire) = self
+            .js_value
+            .get()
+            .try_get()
+            .and_then(|value| js::onretire_take_cached(value, &self.global_object))
+        else {
+            return;
+        };
+        self.event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
+            on_retire,
+            &self.global_object,
+            JSValue::UNDEFINED,
+            &[],
+        );
+    }
+
+    fn fail_lifetime_timeout(&self) {
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
         self.fail_fmt(
             AnyMySQLErrorT::LifetimeTimeout,
@@ -364,27 +395,54 @@ impl JSMySQLConnection {
 
     pub(crate) fn enqueue_request(&self, item: RefPtr<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
-        self.connection_mut().enqueue_request(item);
-        self.reset_connection_timeout();
+        let _entered = self.entered_from_js();
+        self.connection.get().queue.add(item);
+        MySQLRequestQueue::advance(self);
+        self.on_queue_changed();
+    }
+
+    /// Keeps a callback's exit from draining microtasks in the middle of the calling JS frame.
+    fn entered_from_js(&self) -> bun_jsc::event_loop::EventLoopEnterNoCheckpointGuard {
+        self.vm().enter_event_loop_scope_without_checkpoint()
+    }
+
+    /// Called wherever the connection can stop being busy. Returns whether it closed.
+    fn retire_if_due(&self) -> bool {
+        let is_due = self.connection.get().is_due_to_retire();
+        if is_due {
+            self.fail_lifetime_timeout();
+        }
+        is_due
+    }
+
+    fn on_queue_changed(&self) {
+        if self.retire_if_due() {
+            return;
+        }
+        if self.connection.get().status == my_sql_connection::Status::Connected {
+            self.reset_connection_timeout();
+        }
+        self.update_reference_type();
         self.register_auto_flusher();
     }
 
     fn drain_internal(&self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
-        // Raw-pointer RAII guard so no reference is live across the potential
-        // free.
         let _guard = self.ref_guard();
-        let _loop_guard = self.event_loop().entered();
-        self.ensure_js_value_is_alive();
-        if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
-            self.connection_mut().flush_queue()
         {
-            self.fail(
-                b"Authentication failed",
-                AnyMySQLErrorT::AuthenticationFailed,
-            );
-            return;
+            let _loop_guard = self.event_loop().entered();
+            self.ensure_js_value_is_alive();
+            if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
+                self.connection_mut().flush_queue()
+            {
+                self.fail(
+                    b"Authentication failed",
+                    AnyMySQLErrorT::AuthenticationFailed,
+                );
+            }
+            self.retire_if_due();
         }
+        self.on_queue_changed();
     }
 
     fn ensure_js_value_is_alive(&self) {
@@ -438,13 +496,12 @@ impl JSMySQLConnection {
             return Ok(JSValue::ZERO);
         };
         let (secure, tls_config) = (args.secure, args.tls_config);
-
-        let path_str = arguments[8].to_bun_string(global_object)?;
+        let check_server_identity = server_identity::callback_of(global_object, arguments[6])?;
 
         let username = args.username_str.to_owned_slice().into_boxed_slice();
         let password = args.password_str.to_owned_slice().into_boxed_slice();
         let database = args.database_str.to_owned_slice().into_boxed_slice();
-        let path = path_str.to_owned_slice().into_boxed_slice();
+        let path = args.path_str.to_owned_slice().into_boxed_slice();
 
         // Reject null bytes in connection parameters to prevent protocol injection
         // (null bytes act as field terminators in the MySQL wire protocol).
@@ -461,13 +518,9 @@ impl JSMySQLConnection {
 
         let on_connect = arguments[9];
         let on_close = arguments[10];
-        let idle_timeout = arguments[11].to_int32();
-        let connection_timeout = arguments[12].to_int32();
-        let max_lifetime = arguments[13].to_int32();
-        let use_unnamed_prepared_statements = arguments[14].as_boolean();
-        // MySQL doesn't support unnamed prepared statements
-        let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
+        let on_retire = callframe.argument(16);
+        let found_rows = callframe.argument(17).to_boolean();
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
@@ -485,11 +538,13 @@ impl JSMySQLConnection {
                 secure,
                 args.ssl_mode,
                 allow_public_key_retrieval,
+                !path.is_empty(),
+                found_rows,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+            idle_timeout_interval_ms: args.idle_timeout_ms,
+            connection_timeout_ms: args.connection_timeout_ms,
+            max_lifetime_interval_ms: args.max_lifetime_ms,
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::MySQLConnectionTimeout,
             )),
@@ -531,13 +586,21 @@ impl JSMySQLConnection {
             };
             let socket = match result {
                 Ok(s) => s,
-                Err(e) => {
+                Err(_) => {
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     unsafe { Self::deref(ptr) };
-                    return Err(global_object
-                        .throw_error(bun_jsc::CrateError::from(e), "failed to connect to mysql"));
+                    let mut message = b"Failed to connect".to_vec();
+                    if !path.is_empty() {
+                        message.extend_from_slice(b" to ");
+                        message.extend_from_slice(&path);
+                    }
+                    return Err(global_object.throw_value(mysql_error_to_js(
+                        global_object,
+                        &message,
+                        AnyMySQLErrorT::ConnectionRefused,
+                    )));
                 }
             };
             this.connection_mut()
@@ -551,18 +614,23 @@ impl JSMySQLConnection {
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
+        let column_transform = callframe.argument(19);
+        if column_transform.is_callable() {
+            js::column_transform_set_cached(js_value, global_object, column_transform);
+        }
         js::onclose_set_cached(js_value, global_object, on_close);
+        if on_retire.is_callable() {
+            js::onretire_set_cached(js_value, global_object, on_retire);
+        }
+        // Next to `rejectUnauthorized: false` it is not asked, as in Node.
+        if let Some(callback) =
+            check_server_identity.filter(|_| this.connection.get().verifies_certificate())
+        {
+            js::check_server_identity_set_cached(js_value, global_object, callback);
+        }
 
         Ok(js_value)
     }
-
-    bun_jsc::cached_prop_hostfns! {
-        crate::jsc::codegen::js_mysql_connection;
-        lazy_array(get_queries => queries_get_cached, queries_set_cached),
-        (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
-    }
-
-    bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
@@ -574,27 +642,33 @@ impl JSMySQLConnection {
         _global_object: &JSGlobalObject,
         _: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.stop_timers();
-
-        // R-2: `&Self` is `Copy`, so the scopeguard closure captures a shared
-        // reborrow and the body's `connection_mut()` borrow is non-overlapping.
-        scopeguard::defer! {
-            this.update_reference_type();
-        }
-        use my_sql_connection::Status as S;
-        match this.connection.get().status {
-            // The socket event this close raises would report a connect that
-            // failed; say what happened first.
-            S::Connecting
-            | S::Handshaking
-            | S::Authenticating
-            | S::AuthenticationAwaitingPk
-            | S::SessionSetup => {
-                this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
-            }
-            S::Connected | S::Disconnected | S::Failed => this.clean_queue_and_close(None),
-        }
+        let _entered = this.entered_from_js();
+        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
         Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn do_hold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.connection_mut().set_checked_out(true);
+        this.reset_connection_timeout();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn do_unhold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let _entered = this.entered_from_js();
+        this.connection_mut().set_checked_out(false);
+        this.on_queue_changed();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(self.connection.get().is_in_transaction())
+    }
+
+    pub(crate) fn check_server_identity_callback(&self) -> Option<JSValue> {
+        self.js_value
+            .get()
+            .try_get()
+            .and_then(js::check_server_identity_get_cached)
     }
 
     fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
@@ -611,28 +685,25 @@ impl JSMySQLConnection {
         None
     }
 
-    pub(crate) fn get_queries_array(&self) -> JSValue {
-        if let Some(value) = self.js_value.get().try_get() {
-            return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
-        }
-        JSValue::UNDEFINED
-    }
-
     #[inline]
     pub(crate) fn is_able_to_write(&self) -> bool {
         self.connection.get().is_able_to_write()
     }
     #[inline]
-    pub(crate) fn can_pipeline(&self) -> bool {
-        self.connection_mut().can_pipeline()
+    pub(crate) fn cached_statement(
+        &self,
+        query: &[u8],
+        params: &[Value<'_>],
+    ) -> Option<RefPtr<MySQLStatement>> {
+        self.connection_mut().cached_statement(query, params)
     }
     #[inline]
-    pub(crate) fn can_prepare_query(&self) -> bool {
-        self.connection_mut().can_prepare_query()
-    }
-    #[inline]
-    pub(crate) fn can_execute_query(&self) -> bool {
-        self.connection_mut().can_execute_query()
+    pub(crate) fn prepare_statement(
+        &self,
+        query: &[u8],
+        params: &[Value<'_>],
+    ) -> Result<RefPtr<MySQLStatement>, AnyMySQLErrorT> {
+        self.connection_mut().prepare_statement(query, params)
     }
     /// Connecting or connected: not failed, and not closed.
     #[inline]
@@ -644,7 +715,7 @@ impl JSMySQLConnection {
         self.connection_mut().writer()
     }
 
-    fn fail_fmt(&self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
+    pub(crate) fn fail_fmt(&self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
         let mut message: Vec<u8> = Vec::new();
         {
             use std::io::Write;
@@ -655,83 +726,72 @@ impl JSMySQLConnection {
         self.fail_with_js_value(err);
     }
 
-    /// Rejecting a query runs JS and closing the socket raises its close event. Both reach back
-    /// into the connection, so neither runs under a `connection_mut()` borrow.
-    fn clean_queue_and_close(&self, js_reason: Option<JSValue>) {
-        self.connection
-            .get()
-            .queue
-            .clean(js_reason, self.get_queries_array());
-        let socket = self.connection.get().socket();
-        socket.close_now();
-        self.connection_mut().discard_write_buffer();
-    }
-
+    /// In this order: the socket closes, `onclose` tells the pool, the requests are rejected.
     fn fail_with_js_value(&self, value: JSValue) {
-        // Runs on every exit path. Re-enter through a raw pointer so no
-        // reference is live across the potential free in `deref()`. LIFO drop
-        // order: the `defer!` body runs first, then `_guard` releases the count.
-        let p = ParentRef::new(self);
-        let _guard = self.ref_guard();
-        scopeguard::defer! {
-            // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
-            // yields a fresh `&Self` per access (R-2: every callee is `&self`).
-            p.clean_queue_and_close(Some(value));
-            p.update_reference_type();
-        }
-        self.stop_timers();
-
         if self.connection.get().status == my_sql_connection::Status::Failed {
             return;
         }
-
+        let _guard = self.ref_guard();
+        self.stop_timers();
+        self.connection_mut().quit();
         self.connection_mut().status = my_sql_connection::Status::Failed;
-        let Some(on_close) = self.consume_on_close_callback(&self.global_object) else {
-            return;
-        };
-        on_close.ensure_still_alive();
-        let loop_ = self.event_loop();
-        self.ensure_js_value_is_alive();
-        let mut js_error = value.to_error().unwrap_or(value);
-        if js_error.is_empty() {
-            js_error = mysql_error_to_js(
+        // Raises the socket's close event, which comes back here: no `connection_mut()` borrow is live.
+        let socket = self.connection.get().socket();
+        socket.close_now();
+        self.connection_mut().discard_write_buffer();
+
+        if let Some(on_close) = self.consume_on_close_callback(&self.global_object) {
+            on_close.ensure_still_alive();
+            self.ensure_js_value_is_alive();
+            let mut js_error = value.to_error().unwrap_or(value);
+            if js_error.is_empty() {
+                js_error = mysql_error_to_js(
+                    &self.global_object,
+                    b"Connection closed",
+                    AnyMySQLErrorT::ConnectionClosed,
+                );
+            }
+            js_error.ensure_still_alive();
+
+            self.event_loop().run_callback(
+                bun_event_loop::ContextId::NONE,
+                on_close,
                 &self.global_object,
-                b"Connection closed",
-                AnyMySQLErrorT::ConnectionClosed,
+                JSValue::UNDEFINED,
+                &[js_error],
             );
         }
-        js_error.ensure_still_alive();
 
-        let queries_array = self.get_queries_array();
-        queries_array.ensure_still_alive();
-        // self.global_object.queue_microtask(on_close, &[js_error, queries_array]);
-        loop_.run_callback(
-            bun_event_loop::ContextId::NONE,
-            on_close,
-            &self.global_object,
-            JSValue::UNDEFINED,
-            &[js_error, queries_array],
-        );
+        self.connection.get().queue.clean(value);
+        self.update_reference_type();
     }
 
-    fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
+    fn fail(&self, message: impl MaybeBytes, err: AnyMySQLErrorT) {
         let instance = mysql_error_to_js(&self.global_object, message, err);
         self.fail_with_js_value(instance);
     }
 
-    pub(crate) fn on_connection_estabilished(&self) {
+    /// Outside the packet parser, and synchronous like `onclose` so that the two keep their order.
+    fn notify_connected(&self) {
+        if !self.connection_mut().take_on_connect_pending()
+            || self.connection.get().status != my_sql_connection::Status::Connected
+        {
+            return;
+        }
+        self.setup_max_lifetime_timer_if_necessary();
         let Some(on_connect) = self.consume_on_connect_callback(&self.global_object) else {
             return;
         };
         on_connect.ensure_still_alive();
         let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
-        self.global_object
-            .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
-    }
-
-    pub(crate) fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
-        request.resolve(self.get_queries_array(), result);
+        self.event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
+            on_connect,
+            &self.global_object,
+            JSValue::UNDEFINED,
+            &[JSValue::NULL, js_value],
+        );
     }
 
     /// The client cannot turn one of `request`'s rows into a JS value. The
@@ -743,20 +803,66 @@ impl JSMySQLConnection {
         &self,
         request: &JSMySQLQuery,
         err: AnyMySQLErrorT,
-    ) -> Result<(), OnResultRowError> {
+    ) -> Result<(), AnyMySQLErrorT> {
         if self.global_object.has_pending_termination_exception() {
-            return Err(OnResultRowError::JSError);
+            return Err(AnyMySQLErrorT::JSError);
         }
-        request.reject_undecodable_row(self.get_queries_array(), err);
+        request.reject_undecodable_row(err);
         Ok(())
     }
 
-    pub(crate) fn on_result_row<C: bun_sql::mysql::protocol::ReaderContext>(
+    /// Runs `transform.column.from`, user code: the caller holds no reference to the statement.
+    pub(crate) fn on_column_name(
+        &self,
+        request: &JSMySQLQuery,
+        index: usize,
+    ) -> Result<(), AnyMySQLErrorT> {
+        let Some(transform) = self
+            .js_value
+            .get()
+            .try_get()
+            .and_then(js::column_transform_get_cached)
+        else {
+            return Ok(());
+        };
+        let Some(column) = request
+            .get_statement()
+            .and_then(|statement| statement.columns.get_mut(index))
+        else {
+            return Ok(());
+        };
+        if request.is_discarding_response() {
+            column.forget_name();
+            return Ok(());
+        }
+        let renamed = column_name_to_js(&self.global_object, &column.name_or_index)
+            .and_then(|name| transform_name(&self.global_object, transform, name));
+        // `None` when the function closed the client.
+        let column = request
+            .get_statement()
+            .and_then(|statement| statement.columns.get_mut(index));
+        match renamed {
+            Ok(renamed) => {
+                if let Some(column) = column {
+                    column.name_or_index = renamed;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                if let Some(column) = column {
+                    column.forget_name();
+                }
+                self.on_undecodable_row(request, crate::jsc::js_error_to_mysql(err))
+            }
+        }
+    }
+
+    pub(crate) fn on_result_row(
         &self,
         request: &JSMySQLQuery,
         statement: &mut MySQLStatement,
-        reader: NewReader<C>,
-    ) -> Result<(), OnResultRowError> {
+        reader: PacketReader<'_>,
+    ) -> Result<(), AnyMySQLErrorT> {
         if request.is_discarding_response() {
             return Ok(());
         }
@@ -791,9 +897,6 @@ impl JSMySQLConnection {
             values: Box::default(),
         };
         if let Err(e) = row.decode(reader) {
-            if e == AnyMySQLErrorT::ShortRead {
-                return Err(OnResultRowError::ShortRead);
-            }
             return self.on_undecodable_row(request, e);
         }
         let pending_value = request.get_pending_value().unwrap_or(JSValue::UNDEFINED);
@@ -825,23 +928,15 @@ impl JSMySQLConnection {
     pub(crate) fn on_error(&self, request: Option<&JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
             if let Some(err_) = self.global_object.try_take_exception() {
-                request.reject_with_js_value(self.get_queries_array(), err_);
+                request.reject_with_js_value(err_);
             } else {
-                request.reject(self.get_queries_array(), err);
+                request.reject(err);
             }
         } else {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                let message: &[u8] = match err {
-                    AnyMySQLErrorT::PublicKeyRetrievalNotAllowed => {
-                        b"The server requested RSA public key retrieval to complete \
-                          authentication, which is not allowed over an insecure connection. \
-                          Enable TLS or set allowPublicKeyRetrieval: true"
-                    }
-                    _ => b"Connection closed",
-                };
-                self.fail(message, err);
+                self.fail(None::<&[u8]>, err);
             }
         }
     }
@@ -849,10 +944,9 @@ impl JSMySQLConnection {
     pub(crate) fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if let Some(err_) = self.global_object.try_take_exception() {
-                request.reject_with_js_value(self.get_queries_array(), err_);
+                request.reject_with_js_value(err_);
             } else {
-                request
-                    .reject_with_js_value(self.get_queries_array(), err.to_js(&self.global_object));
+                request.reject_with_js_value(err.to_js(&self.global_object));
             }
         } else {
             if let Some(err_) = self.global_object.try_take_exception() {
@@ -861,14 +955,6 @@ impl JSMySQLConnection {
                 self.fail_with_js_value(err.to_js(&self.global_object));
             }
         }
-    }
-
-    pub(crate) fn get_statement_from_signature_name(
-        &self,
-        signature_name: &[u8],
-    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
-    {
-        self.connection_mut().statements.get_or_put(signature_name)
     }
 }
 
@@ -897,9 +983,12 @@ impl<const SSL: bool> SocketHandler<SSL> {
             // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
             this.connection_mut().status = my_sql_connection::Status::Handshaking;
             this.ref_(); // keep a ref for the socket
+            // The bound on a query whose peer is gone: no timer runs while one is in flight.
+            if !this.connection.get().is_unix_socket() {
+                let _ = s.set_keep_alive(true, 60);
+            }
         }
         // Only set up the timers after all status changes are complete — the timers rely on the status to determine timeouts.
-        this.setup_max_lifetime_timer_if_necessary();
         this.reset_connection_timeout();
         this.update_reference_type();
     }
@@ -910,16 +999,29 @@ impl<const SSL: bool> SocketHandler<SSL> {
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
-        let handshake_was_successful = match this.connection_mut().do_handshake(success, ssl_error)
-        {
-            Ok(v) => v,
-            Err(e) => {
-                return this.fail_fmt(e, format_args!("Failed to send handshake response"));
-            }
-        };
-        if !handshake_was_successful {
+        if !this.connection.get().awaits_tls_handshake() {
+            return;
+        }
+        if !this.connection_mut().do_handshake(success, ssl_error) {
             let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
-            this.fail_with_js_value(v);
+            return this.fail_with_js_value(v);
+        }
+        if let Some(callback) = this.check_server_identity_callback() {
+            // It can close this connection.
+            let _guard = this.ref_guard();
+            let socket = this.connection.get().socket();
+            let hostname = this.connection.get().server_name();
+            if let Err(reason) =
+                server_identity::check(&this.global_object, callback, &socket, hostname)
+            {
+                return this.fail_with_js_value(reason);
+            }
+            if this.connection.get().status != my_sql_connection::Status::Authenticating {
+                return;
+            }
+        }
+        if let Err(e) = this.connection_mut().send_handshake_response() {
+            this.fail_fmt(e, format_args!("Failed to send handshake response"));
         }
     }
 
@@ -941,6 +1043,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // the free.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
+        if this.connection.get().status == my_sql_connection::Status::Failed {
+            return;
+        }
         // A close before the handshake finished means the server (or an
         // intermediary like a container port proxy) accepted the TCP
         // connection but went away before completing startup — e.g. the
@@ -981,48 +1086,23 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        // Both guards re-enter via raw pointer so no reference is live across
-        // the potential free. Guard drop order is LIFO, so `_guard` (deref) runs
-        // last.
-        let p = ParentRef::new(this);
         let _guard = this.ref_guard();
+        {
+            let _loop_guard = this.event_loop().entered();
+            this.ensure_js_value_is_alive();
 
-        scopeguard::defer! {
-            // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
-            // yields a fresh `&JSMySQLConnection` per access (R-2: every
-            // callee is `&self`).
-            if p.connection.get().status == my_sql_connection::Status::Connected {
-                p.reset_connection_timeout();
+            if let Err(e) = this.connection_mut().read_and_process_data(data) {
+                this.on_error(None, e);
             }
-            p.update_reference_type();
-            p.register_auto_flusher();
+            this.notify_connected();
+            this.retire_if_due();
         }
-        let _loop_guard = this.event_loop().entered();
-        this.ensure_js_value_is_alive();
-
-        if let Err(e) = this.connection_mut().read_and_process_data(data) {
-            this.on_error(None, e);
-        }
+        this.on_queue_changed();
     }
 
     pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
         this.connection_mut().reset_backpressure();
         this.drain_internal();
-    }
-}
-
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum OnResultRowError {
-    ShortRead,
-    JSError,
-}
-bun_core::impl_tag_error!(OnResultRowError);
-impl From<OnResultRowError> for AnyMySQLErrorT {
-    fn from(e: OnResultRowError) -> Self {
-        match e {
-            OnResultRowError::ShortRead => AnyMySQLErrorT::ShortRead,
-            OnResultRowError::JSError => AnyMySQLErrorT::JSError,
-        }
     }
 }
 

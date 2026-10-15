@@ -119,7 +119,7 @@ test("postgres: a failing simple query leaves an unrelated cached prepared state
     signalCode: proc.signalCode,
     stderr,
   }).toEqual({
-    stdout: JSON.stringify({ first: [], failed: "ERR_POSTGRES_SYNTAX_ERROR", second: [], third: [], parses: ["P$0"] }),
+    stdout: JSON.stringify({ first: [], failed: "ERR_POSTGRES_SYNTAX_ERROR", second: [], third: [], parses: ["P0"] }),
     exitCode: 0,
     signalCode: null,
     stderr: expect.any(String),

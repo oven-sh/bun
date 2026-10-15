@@ -181,8 +181,8 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
-// `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig`
+// (this crate depends on it). Instead of Rust→Rust
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
 // layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
 // crate registers a `&'static` instance from [`crate::jsc_hooks::
@@ -269,20 +269,6 @@ mod sql_hooks {
         // SAFETY: `this` is a live boxed `SSLConfig`.
         unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
     }
-    unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
-        // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
-        // `Blob__fromJS`).
-        unsafe { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
-    }
-    unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
-        // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
-        unsafe {
-            crate::webcore::blob::Bun__Blob__sharedView(
-                this.cast::<crate::webcore::Blob>(),
-                out_len,
-            )
-        }
-    }
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
@@ -298,8 +284,6 @@ mod sql_hooks {
         ssl_config_as_usockets_client,
         ssl_config_server_name,
         ssl_config_reject_unauthorized,
-        blob_needs_to_read_file,
-        blob_shared_view,
     };
 }
 

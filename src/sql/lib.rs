@@ -33,8 +33,6 @@ pub mod mysql {
     pub mod capabilities;
     #[path = "ConnectionState.rs"]
     pub mod connection_state;
-    #[path = "MySQLParam.rs"]
-    pub mod mysql_param;
     #[path = "MySQLQueryResult.rs"]
     pub mod mysql_query_result;
     #[path = "MySQLRequest.rs"]
@@ -68,8 +66,6 @@ pub mod mysql {
         pub mod auth;
         #[path = "AuthSwitchRequest.rs"]
         pub mod auth_switch_request;
-        #[path = "AuthSwitchResponse.rs"]
-        pub mod auth_switch_response;
         #[path = "ColumnDefinition41.rs"]
         pub mod column_definition41;
         #[path = "EOFPacket.rs"]
@@ -80,8 +76,6 @@ pub mod mysql {
         pub mod handshake_response41;
         #[path = "HandshakeV10.rs"]
         pub mod handshake_v10;
-        #[path = "LocalInfileRequest.rs"]
-        pub mod local_infile_request;
         #[path = "NewReader.rs"]
         pub mod new_reader;
         #[path = "NewWriter.rs"]
@@ -104,8 +98,6 @@ pub mod mysql {
         // so surface them here as well as via their leaf modules.
         pub use any_mysql_error::Error;
         pub use column_definition41::ColumnDefinition41;
-        pub use new_reader::ReaderContext;
-        pub use result_set_header::ResultSetHeader;
         // `protocol::FieldType` (re-export of mysql_types.FieldType).
         pub use crate::mysql::mysql_types::FieldType;
     }

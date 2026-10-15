@@ -1,11 +1,13 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import path from "path";
+
+const largeRowCount = isDebug ? 100 : 1000;
 
 describe("Connection & Initialization", () => {
   describe("common default connection strings", () => {
@@ -108,6 +110,33 @@ describe("Connection & Initialization", () => {
     expect(onclose).toHaveBeenCalled();
 
     await rm(dir, { recursive: true });
+  });
+
+  test("a mistake in the open options throws from new SQL(); a file that cannot be opened rejects the queries", async () => {
+    using dir = tempDir("sqlite-open-mistakes", {});
+    const filename = join(String(dir), "missing.db");
+    const onconnect = mock();
+
+    for (const options of [
+      { readonly: true, create: true },
+      { readonly: true, readwrite: true },
+      { readwrite: false, create: true },
+    ]) {
+      expect(() => new SQL({ adapter: "sqlite", filename, onconnect, ...options })).toThrow(
+        new TypeError(
+          'A read-only database ("readonly: true" or "readwrite: false") cannot have "create: true" or "readwrite: true"',
+        ),
+      );
+    }
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(existsSync(filename)).toBe(false);
+
+    await using sql = new SQL({ adapter: "sqlite", filename, readonly: true, onconnect });
+    const cannotOpen = { name: "SQLiteError", code: "SQLITE_CANTOPEN" };
+    expect(onconnect.mock.calls).toEqual([[expect.objectContaining(cannotOpen)]]);
+    const error = await sql`select 1`.catch(e => e);
+    expect(error).toBeInstanceOf(SQL.SQLiteError);
+    expect(error).toMatchObject(cannotOpen);
   });
 
   test("should create database file if it doesn't exist", async () => {
@@ -366,7 +395,7 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
       const result = await sql`SELECT * FROM test`;
@@ -382,8 +411,6 @@ describe("Connection & Initialization", () => {
 
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.readonly).toBe(false);
-      expect(sql.options.create).toBe(true);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql`INSERT INTO test VALUES (1)`;
@@ -401,7 +428,7 @@ describe("Connection & Initialization", () => {
       // Note: Only mode is supported for SQLite, other params should be ignored
       const sql = new SQL(`sqlite://${dbPath}?mode=rwc&cache=shared&timeout=5000`);
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.create).toBe(true);
+      expect(sql.options.filename).toBe(dbPath);
 
       await sql`CREATE TABLE test (id INTEGER)`;
       await sql.close();
@@ -915,6 +942,64 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  // SQLite copies text that does not end in a NUL once per statement. The same text with a NUL is the control.
+  // On Linux without ASAN malloc is mimalloc, so heapStats() sees what SQLite allocates.
+  test.skipIf(!isLinux || isASAN || isDebug)(
+    "unsafe() and file() of 800 statements allocate nothing per statement in SQLite",
+    async () => {
+      const statement = "insert into t values (0);";
+      const text = "begin;" + Buffer.alloc(800 * statement.length, statement).toString() + "rollback;";
+      using dir = tempDir("sqlite-many-statements", {
+        "plain.sql": text,
+        "nul.sql": text + "\0",
+        "mallocs.fixture.mjs": `
+          import { SQL } from "bun";
+          import { heapStats } from "bun:jsc";
+          import { readFileSync } from "node:fs";
+          const count = () => heapStats().mimalloc.malloc_normal_count;
+          const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
+          await sql.unsafe("create table t (v)");
+          // The fewest of 5 runs: heapStats() and the other threads only add to a count.
+          const during = async fn => {
+            let fewest = Infinity;
+            for (let i = 0; i < 5; i++) {
+              const before = count();
+              await fn();
+              fewest = Math.min(fewest, count() - before);
+            }
+            return fewest;
+          };
+          const plain = readFileSync("plain.sql", "utf8");
+          const nul = readFileSync("nul.sql", "utf8");
+          console.log(JSON.stringify({
+            unsafe: [await during(() => sql.unsafe(plain)), await during(() => sql.unsafe(nul))],
+            file: [await during(() => sql.file("plain.sql")), await during(() => sql.file("nul.sql"))],
+          }));
+          await sql.close();
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "mallocs.fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+      const result: Record<string, unknown> = {};
+      for (const [api, [plain, withNul]] of Object.entries(JSON.parse(stdout) as Record<string, [number, number]>)) {
+        result[api] = { counted: withNul > 0, more: plain - withNul < 300 ? "under 300" : plain - withNul };
+      }
+      expect(result).toEqual({
+        unsafe: { counted: true, more: "under 300" },
+        file: { counted: true, more: "under 300" },
+      });
+    },
+  );
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
@@ -1078,7 +1163,7 @@ describe("Template Literal Security", () => {
     const sql = new SQL("sqlite://:memory:");
     expect(
       async () => await sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
-    ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
+    ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and IN commands"`);
     await sql.close();
   });
 
@@ -1819,11 +1904,12 @@ describe("Helper argument validation", () => {
     ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
-  test("ArrayBuffer (not a view) is invalid in helper", async () => {
-    const ab = new ArrayBuffer(8);
-    expect(
-      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute(),
-    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
+  test("ArrayBuffer (not a view) is a BLOB in helper", async () => {
+    const bytes = new Uint8Array([1, 2, 0, 255]);
+    await sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: bytes.buffer })}`;
+    expect(await sql`SELECT blob_val, typeof(blob_val) AS type FROM helper_invalid WHERE id = 9`).toEqual([
+      { blob_val: bytes, type: "blob" },
+    ]);
   });
 
   test("Promise, Date, RegExp are invalid in helper", async () => {
@@ -2063,6 +2149,63 @@ describe("Error handling", () => {
       expect((err as Error).message).toContain("FOREIGN KEY");
     }
   });
+
+  test("byteOffset counts from the start of the query text", async () => {
+    await sql`CREATE TABLE offsets (id, name)`;
+    // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+    const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+    const at = (text: string, token: string) => (hasErrorOffset ? Buffer.from(text).indexOf(token) : -1);
+    const byteOffsetOf = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => "no error",
+        error => error.byteOffset,
+      );
+
+    const indented = "\n      DELETE FROM offsets WHERE nmae = 1";
+    // the second and the third statement are compiled where the one before them ended
+    const second = "DELETE FROM offsets WHERE name = 'é'; DELETE FROM offsets WHERE nmae = 1";
+    const third = second.replace("nmae", "name") + ";\n  DELETE FROM offsets WHERE nmae = 2; DELETE FROM offsets";
+    const select = "\n      SELECT nmae FROM offsets";
+    using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
+
+    expect({
+      tagged: await byteOffsetOf(sql`
+      DELETE FROM offsets WHERE nmae = 1`),
+      unsafe: await byteOffsetOf(sql.unsafe(second)),
+      third: await byteOffsetOf(sql.unsafe(third)),
+      file: await byteOffsetOf(sql.file(join(String(dir), "statements.sql"))),
+      transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
+      select: await byteOffsetOf(sql.unsafe(select)),
+    }).toEqual({
+      tagged: at(indented, "nmae"),
+      unsafe: at(second, "nmae"),
+      third: at(third, "nmae"),
+      file: at(second, "nmae"),
+      transaction: at(second, "nmae"),
+      select: at(select, "nmae"),
+    });
+
+    const closed = new SQL("sqlite://:memory:");
+    await closed.close();
+    const error = await closed`SELECT 1`.catch(e => e);
+    expect({ code: error.code, hasByteOffset: "byteOffset" in error }).toEqual({
+      code: "ERR_SQLITE_CONNECTION_CLOSED",
+      hasByteOffset: false,
+    });
+  });
+
+  test("a text of several statements stops at the first one that fails", async () => {
+    await sql`CREATE TABLE stops (id INTEGER PRIMARY KEY)`;
+    const error = await sql
+      .unsafe("INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (1); INSERT INTO stops VALUES (2)")
+      .catch(e => e);
+    expect({ name: error.name, code: error.code }).toEqual({
+      name: "SQLiteError",
+      code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+    });
+    expect(error).toBeInstanceOf(SQL.SQLiteError);
+    expect(await sql`SELECT id FROM stops`).toEqual([{ id: 1 }]);
+  });
 });
 
 describe("Connection management", () => {
@@ -2108,14 +2251,80 @@ describe("Connection management", () => {
     await sql.close();
   });
 
-  test("flush throws for SQLite", async () => {
+  test("flush is a no-op for SQLite", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+
+    expect(sql.flush()).toBeUndefined();
+    await sql.begin(async tx => {
+      expect(tx.flush()).toBeUndefined();
+    });
+  });
+
+  test("close() checks its timeout like the other adapters", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    for (const timeout of [-1, NaN]) {
+      expect(await sql.close({ timeout }).catch(e => e.code)).toBe("ERR_INVALID_ARG_VALUE");
+    }
+    expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
+  });
+
+  const connectionClosed = { name: "SQLiteError", code: "ERR_SQLITE_CONNECTION_CLOSED", message: "Connection closed" };
+
+  test("a begin() waits for the begin() before it; a plain query joins", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`create table t (n integer primary key)`;
+    const order: string[] = [];
+    const firstMayEnd = Promise.withResolvers<void>();
+    const firstIsOpen = Promise.withResolvers<void>();
+
+    const first = sql.begin(async tx => {
+      order.push("first starts");
+      await tx`insert into t values (1)`;
+      firstIsOpen.resolve();
+      await firstMayEnd.promise;
+      await tx`insert into t values (2)`;
+      order.push("first ends");
+    });
+    const second = sql
+      .begin(async tx => {
+        order.push("second starts");
+        await tx`insert into t values (3)`;
+        throw new Error("second fails");
+      })
+      .catch(err => err.message);
+    const third = sql.begin(async tx => {
+      order.push("third starts");
+      await tx`insert into t values (4)`;
+    });
+
+    await firstIsOpen.promise;
+    // on the one connection, so inside the first transaction
+    expect(await sql`select n from t`).toEqual([{ n: 1 }]);
+    expect(order).toEqual(["first starts"]);
+    firstMayEnd.resolve();
+
+    expect(await Promise.all([first, second, third])).toEqual([undefined, "second fails", undefined]);
+    expect(order).toEqual(["first starts", "first ends", "second starts", "third starts"]);
+    expect(await sql`select n from t`).toEqual([{ n: 1 }, { n: 2 }, { n: 4 }]);
+  });
+
+  test("close() rejects the begin() calls that wait", async () => {
     const sql = new SQL("sqlite://:memory:");
+    const started = Promise.withResolvers<void>();
+    const running = sql
+      .begin(async () => {
+        started.resolve();
+        await new Promise(() => {});
+      })
+      .catch(err => err);
+    let ran = false;
+    const waiting = sql.begin(async () => void (ran = true)).catch(err => err);
 
-    expect(() => sql.flush()).toThrowErrorMatchingInlineSnapshot(
-      `"SQLite doesn't support flush() - queries are executed synchronously"`,
-    );
-
+    await started.promise;
     await sql.close();
+    expect(await waiting).toMatchObject(connectionClosed);
+    expect(await running).toMatchObject(connectionClosed);
+    expect(ran).toBe(false);
   });
 });
 
@@ -2125,7 +2334,7 @@ describe("Performance & Edge Cases", () => {
 
     await sql`CREATE TABLE large (id INTEGER PRIMARY KEY, data TEXT)`;
 
-    const rowCount = 1000;
+    const rowCount = largeRowCount;
     const data = Buffer.alloc(100, "x").toString();
 
     await sql.begin(async tx => {
@@ -2261,7 +2470,7 @@ describe("Memory and resource management", () => {
 
     // Debug builds run the serial awaited inserts 10-100x slower, so use a
     // smaller workload there to stay under the default timeout.
-    const iterations = isDebug ? 1000 : 10000;
+    const iterations = isDebug ? 400 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;
@@ -2290,14 +2499,14 @@ describe("Memory and resource management", () => {
     await sql`CREATE TABLE concurrent_test (id INTEGER, value TEXT)`;
 
     const promises: Promise<void>[] = [];
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < largeRowCount; i++) {
       promises.push(sql`INSERT INTO concurrent_test VALUES (${i}, ${"value" + i})`);
     }
 
     await Promise.all(promises);
 
     const result = await sql`SELECT COUNT(*) as count FROM concurrent_test`;
-    expect(result[0].count).toBe(1000);
+    expect(result[0].count).toBe(largeRowCount);
 
     const selectPromises: Promise<any>[] = [];
     for (let i = 0; i < 100; i++) {
@@ -2797,12 +3006,12 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
-    await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
-        const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
-        await tx`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
-      }
-    });
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      type: i < 900 ? "common" : i < 990 ? "uncommon" : "rare",
+      value: i + 1,
+    }));
+    await sql`INSERT INTO stats_test ${sql(rows)}`;
 
     await sql`ANALYZE`;
 
@@ -2844,11 +3053,8 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
-    await sql.begin(async tx => {
-      for (let i = 0; i < 1000; i++) {
-        await tx`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
-      }
-    });
+    const data = Buffer.alloc(100, "x").toString();
+    await sql`INSERT INTO vacuum_test ${sql(Array.from({ length: 1000 }, (_, id) => ({ id, data })))}`;
 
     await sql`DELETE FROM vacuum_test WHERE id % 2 = 0`;
 
@@ -4160,16 +4366,13 @@ describe("Query Explain and Optimization", () => {
       description TEXT
     )`;
 
-    await sql.begin(async tx => {
-      for (let i = 1; i <= 1000; i++) {
-        await tx`INSERT INTO large_table VALUES (
-          ${i},
-          ${"category" + (i % 10)},
-          ${i * 10},
-          ${"description for item " + i}
-        )`;
-      }
-    });
+    const rows = Array.from({ length: 1000 }, (_, i) => ({
+      id: i + 1,
+      category: "category" + ((i + 1) % 10),
+      value: (i + 1) * 10,
+      description: "description for item " + (i + 1),
+    }));
+    await sql`INSERT INTO large_table ${sql(rows)}`;
   });
 
   afterAll(async () => {
@@ -5406,30 +5609,8 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       const result = await sql`SELECT text_data, description FROM unicode_fuzz WHERE id = ${i}`;
       expect(result).toHaveLength(1);
 
-      // SQLite's actual behavior with problematic Unicode:
-      // - Lone surrogates (\uD800, \uDFFF) bind via sqlite3_bind_text16 and are
-      //   stored by SQLite as invalid UTF-8 (WTF-8, e.g. ED A0 80). On read-back
-      //   those invalid bytes decode leniently to U+FFFD, matching node:sqlite.
-      // - BOM inverse (\uFFFE) is dropped by SQLite itself (stored as 0 bytes),
-      //   so it reads back as an empty string.
-      // - Null characters are preserved (not truncated).
-      const lenientlyReplaced: Record<string, string> = {
-        // 3 invalid bytes -> 3 replacement characters (maximal-subpart replacement)
-        "High surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-        "Low surrogate (invalid alone)": "\uFFFD\uFFFD\uFFFD",
-      };
-      const droppedBySqlite = ["Byte order mark inverse"];
-
-      if (desc in lenientlyReplaced) {
-        // Invalid UTF-8 bytes decode leniently to U+FFFD rather than dropping the field.
-        expect(result[0].text_data).toBe(lenientlyReplaced[desc]);
-      } else if (droppedBySqlite.includes(desc)) {
-        // SQLite stores nothing for these, so they come back empty.
-        expect(result[0].text_data).toBe("");
-      } else {
-        // All other characters should be preserved exactly, including null bytes
-        expect(result[0].text_data).toBe(text);
-      }
+      // Text is bound as UTF-8: a lone surrogate is U+FFFD, everything else is kept, null characters included.
+      expect(result[0].text_data).toBe(text.toWellFormed());
       expect(result[0].description).toBe(desc);
     }
 
@@ -5664,5 +5845,188 @@ describe("Unicode & Encoding Fuzzing Tests", () => {
       expect(result[0].text_data).toBe(text);
       expect(Buffer.from(result[0].blob_data).toString()).toBe(text);
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/30811
+describe("rows or changes", () => {
+  async function seeded() {
+    const sql = new SQL("sqlite://:memory:");
+    await sql.unsafe(`
+      create table t (id integer primary key, v text);
+      insert into t (v) values ('a'), ('b"c'), ('d');
+    `);
+    return sql;
+  }
+
+  test.each([
+    [`select v from t where v like '%"%'`, "SELECT", [['b"c']]],
+    [`/*hdr*/select id from t`, "SELECT", [[1], [2], [3]]],
+    [`-- header\n  -- it's two\nselect id from t`, "SELECT", [[1], [2], [3]]],
+    [`select*from t where id = 1`, "SELECT", [[1, "a"]]],
+    [`select(id)from t where id = 1`, "SELECT", [[1]]],
+    [`values (1),(2)`, "VALUES", [[1], [2]]],
+    [`select 'x -- y' as a, 'x /* y */ z' as b`, "SELECT", [["x -- y", "x /* y */ z"]]],
+    [`with x as (select id from t where id > 1) select * from x`, "WITH", [[2], [3]]],
+    [`with x as (select replace (v, 'a', 'x') as "update" from t where id = 1) select * from x`, "WITH", [["x"]]],
+    [`pragma user_version`, "PRAGMA", [[0]]],
+    [`insert into t(v)values('x')returning id,v`, "INSERT", [[4, "x"]]],
+    [`update t set v = 'u' where id = 1 returning v`, "UPDATE", [["u"]]],
+    [`delete from t where id > 1 returning id`, "DELETE", [[2], [3]]],
+    [`with x as (select 9 as id) insert into t (id) select id from x returning id`, "WITH", [[9]]],
+  ])("%s returns its rows", async (text, command, rows) => {
+    await using sql = await seeded();
+    const result = await sql.unsafe(text).values();
+    expect([...result]).toEqual(rows);
+    expect({ command: result.command, count: result.count }).toEqual({ command, count: rows.length });
+  });
+
+  test.each([
+    [`insert into t (v) select v || '2' from t`, "INSERT", 3, 6],
+    [`with x as (select 'w' as v) insert into t (v) select v from x`, "WITH", 1, 4],
+    [`update t set v = 'z' where id in (\n  select id from t where id < 3\n)`, "UPDATE", 2, 3],
+    [`delete from t where id in (\n  select max(id) from t\n)`, "DELETE", 1, 2],
+    [`with x as (select id from t where id > 1) update t set v = 'z' where id in (select id from x)`, "WITH", 2, 3],
+    [`with x as (select id from t where id > 1) delete from t where id in (select id from x)`, "WITH", 2, 1],
+    [`/* tag=me */ insert into t (v) select v from t where id = 1`, "INSERT", 1, 4],
+    [`-- tag=me\ninsert into t (v) select v from t where id = 1`, "INSERT", 1, 4],
+    [`insert into t (v) values ('a -- b'), ('select /* d */ e')`, "INSERT", 2, 5],
+    [`insert into t (v) values ('x');`, "INSERT", 1, 4],
+    [`insert into t (v) values ('a;b')`, "INSERT", 1, 4],
+    [`insert into t (v) values ('x'); -- done\n/* end */`, "INSERT", 1, 4],
+    [`insert into t (id, v) values (1, 'x') on conflict (id) do update set v = excluded.v`, "INSERT", 1, 3],
+    [`replace into t (id, v) values (7, 'x')`, "REPLACE", 1, 4],
+    [`pragma user_version = 5`, "PRAGMA", 0, 3],
+    [`create table select_returning (id)`, "CREATE", 0, 3],
+    [`create trigger g after insert on t begin update t set v = 'x' where id = new.id; end`, "CREATE", 0, 3],
+    [`begin; delete from t where id = 1; commit`, "BEGIN", 1, 2],
+  ])("%s reports its changes", async (text, command, count, rowsAfter) => {
+    await using sql = await seeded();
+    const result = await sql.unsafe(text);
+    expect({
+      rows: result.length,
+      command: result.command,
+      count: result.count,
+      affectedRows: result.affectedRows,
+    }).toEqual({ rows: 0, command, count, affectedRows: count });
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: rowsAfter }]);
+  });
+
+  // The adapter compiles a text to learn whether it returns rows. Database#run compiles it again.
+  test("a write is compiled once, also with ';' and white space behind it", async () => {
+    await using sql = await seeded();
+    const prepare = spyOn(Database.prototype, "prepare");
+    const run = spyOn(Database.prototype, "run");
+    try {
+      const seen: Record<string, unknown> = {};
+      const expected: Record<string, unknown> = {};
+      for (const tail of ["", ";", "; ", ";\n  ", ";;", "; ;", ";\t\r\n\v\f"]) {
+        prepare.mockClear();
+        run.mockClear();
+        const { count } = await sql.unsafe(`insert into t (v) values (?)${tail}`, ["x"]);
+        seen[JSON.stringify(tail)] = { count, prepare: prepare.mock.calls.length, run: run.mock.calls.length };
+        expected[JSON.stringify(tail)] = { count: 1, prepare: 1, run: 0 };
+      }
+      expect(seen).toEqual(expected);
+    } finally {
+      prepare.mockRestore();
+      run.mockRestore();
+    }
+  });
+
+  test.each([
+    ["; insert into t (v) values ('y')", 2],
+    ["; ", 'near " ": syntax error'],
+    ["; ", 'near " ": syntax error'],
+    ["; x", 'near "x": syntax error'],
+  ])("what follows the ';' in %p is SQLite's to judge", async (tail, outcome) => {
+    await using sql = await seeded();
+    const settled = await sql.unsafe(`insert into t (v) values ('x')${tail}`).then(
+      result => result.count,
+      error => error.message,
+    );
+    expect(settled).toBe(outcome);
+  });
+
+  test("explain returns the plan and runs nothing", async () => {
+    await using sql = await seeded();
+    const plan = await sql.unsafe(`explain insert into t (v) values ('e')`);
+    expect(plan.command).toBe("EXPLAIN");
+    expect(plan[0]).toHaveProperty("opcode");
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+  });
+
+  test("objects, values() and raw() of a write that returns rows", async () => {
+    await using sql = await seeded();
+    expect([...(await sql`insert into t (v) values (${"x"}) returning id, v`)]).toEqual([{ id: 4, v: "x" }]);
+    expect([...(await sql`insert into t (v) values (${"x"}) returning id, v`.values())]).toEqual([[5, "x"]]);
+    expect([...(await sql`insert into t (v) values (${"x"}) returning v`.raw())]).toEqual([[Buffer.from("x")]]);
+  });
+
+  test("text without a statement", async () => {
+    await using sql = await seeded();
+    for (const text of ["   ", "-- noop", "/* placeholder */", "-- a\n-- b\n", ";", " ; /* x */ ;"]) {
+      expect(await sql.unsafe(text).catch(e => e.message)).toBe(
+        "Query contained no valid SQL statement; likely empty query.",
+      );
+    }
+  });
+
+  test("bindings that the statement has no place for", async () => {
+    await using sql = await seeded();
+    for (const text of ["insert into t (v) values ('x')", "insert into t (v) values ('x'); delete from t"]) {
+      expect(await sql.unsafe(text, [42]).catch(e => e.message)).toBe("SQLite query expected 0 values, received 1");
+    }
+    expect(await sql`select count(*) as n from t`).toEqual([{ n: 3 }]);
+  });
+
+  test("a statement that SQLite cannot compile rejects, it does not resolve empty", async () => {
+    using dir = tempDir("sqlite-sql-busy", {});
+    const filename = join(String(dir), "db.sqlite");
+    using holder = new Database(filename);
+    holder.run("create table t (v text)");
+    holder.run("insert into t values ('a')");
+    holder.run("begin exclusive");
+
+    await using sql = new SQL({ adapter: "sqlite", filename });
+    expect(await sql`select v from t`.catch(e => ({ name: e.name, code: e.code }))).toEqual({
+      name: "SQLiteError",
+      code: "SQLITE_BUSY",
+    });
+    holder.run("rollback");
+    expect(await sql`select v from t`).toEqual([{ v: "a" }]);
+  });
+
+  test("a scalar given to unsafe() is bound, also when it is falsy", async () => {
+    await using sql = await seeded();
+    const bound: unknown[] = [];
+    for (const value of [5, 0, "", false]) {
+      bound.push(...(await sql.unsafe("select ? as x, typeof(?1) as t", value as any)));
+    }
+    expect(bound).toEqual([
+      { x: 5, t: "integer" },
+      { x: 0, t: "integer" },
+      { x: "", t: "text" },
+      { x: 0, t: "integer" },
+    ]);
+  });
+
+  test("the rows are not spread into a call", async () => {
+    await using sql = await seeded();
+    // A spread is visible to user code, and a RangeError at about 640,000 rows.
+    const original = Array.prototype[Symbol.iterator];
+    let iteratedRows = 0;
+    Array.prototype[Symbol.iterator] = function (this: any[]) {
+      if (this.length === 3 && this[0]?.marker === 1) iteratedRows++;
+      return original.call(this);
+    };
+    let rows;
+    try {
+      rows = await sql`select id as marker from t`;
+    } finally {
+      Array.prototype[Symbol.iterator] = original;
+    }
+    expect(rows).toEqual([{ marker: 1 }, { marker: 2 }, { marker: 3 }]);
+    expect(iteratedRows).toBe(0);
   });
 });

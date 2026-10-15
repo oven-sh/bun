@@ -1,5 +1,25 @@
 import { SQL } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+const URL_VARIABLES = ["DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL", "SQLITE_URL", "SQLITEURL", "POSTGRES_URL"];
+const originalEnv = Object.fromEntries(URL_VARIABLES.map(name => [name, process.env[name]]));
+beforeEach(() => {
+  for (const name of URL_VARIABLES) delete process.env[name];
+});
+afterEach(() => {
+  for (const name of URL_VARIABLES) {
+    if (originalEnv[name] === undefined) delete process.env[name];
+    else process.env[name] = originalEnv[name];
+  }
+});
+
+// For the cases that are about the name alone: a read-only open creates no file, wherever the name points.
+function parse(url: string | URL | null | undefined, options: SQL.Options = {}) {
+  return new SQL(url as string, { readonly: true, ...options } as SQL.Options);
+}
 
 describe("SQLite URL Parsing Matrix", () => {
   const protocols = [
@@ -48,12 +68,12 @@ describe("SQLite URL Parsing Matrix", () => {
     test.each(testMatrix)("$protocolName with $pathName: $url", async testCase => {
       if (testCase.needsAdapter) {
         // Test with explicit adapter for no-protocol cases
-        await using sql = new SQL(testCase.url, { adapter: "sqlite" });
+        await using sql = parse(testCase.url, { adapter: "sqlite" });
         expect(sql.options.adapter).toBe("sqlite");
         expect(sql.options.filename).toBe(testCase.expected || ":memory:");
       } else {
         // Test without adapter (should auto-detect SQLite)
-        await using sql = new SQL(testCase.url);
+        await using sql = parse(testCase.url);
         expect(sql.options.adapter).toBe("sqlite");
 
         if (testCase.protocolName === "file://") {
@@ -79,21 +99,23 @@ describe("SQLite URL Parsing Matrix", () => {
   });
 
   describe("Query parameters matrix", () => {
-    const protocolsWithQuery = ["sqlite://test.db", "sqlite:test.db", "file://test.db", "file:test.db"];
+    const dir = tempDir("sqlite-url-query", {});
+    afterAll(() => dir[Symbol.dispose]());
+    const db = join(String(dir), "test.db");
+    const protocolsWithQuery = ["sqlite://", "sqlite:", "file://", "file:"];
 
     const queryParams = [
       { query: "", readonly: undefined, create: undefined, name: "no params" },
       { query: "?mode=ro", readonly: true, create: undefined, name: "readonly" },
-      { query: "?mode=rw", readonly: false, create: undefined, name: "read-write" },
-      { query: "?mode=rwc", readonly: false, create: true, name: "read-write-create" },
-      { query: "?mode=invalid", readonly: undefined, create: undefined, name: "invalid mode" },
+      { query: "?mode=rw", readonly: undefined, create: false, name: "read-write" },
+      { query: "?mode=rwc", readonly: undefined, create: undefined, name: "read-write-create" },
       { query: "?other=param", readonly: undefined, create: undefined, name: "other param" },
       { query: "?mode=ro&cache=shared", readonly: true, create: undefined, name: "multiple params" },
     ];
 
     const queryMatrix = protocolsWithQuery.flatMap(base =>
       queryParams.map(param => ({
-        url: base + param.query,
+        url: base + db + param.query,
         base: base,
         ...param,
       })),
@@ -107,8 +129,17 @@ describe("SQLite URL Parsing Matrix", () => {
       expect(sql.options.create).toBe(testCase.create!);
 
       if (!testCase.base.startsWith("file://")) {
-        expect(sql.options.filename).toBe("test.db");
+        expect(sql.options.filename).toBe(db);
       }
+    });
+
+    test.each(protocolsWithQuery)("%s with a mode that SQLite does not have", base => {
+      expect(() => new SQL(`${base}${db}?mode=invalid`)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_VALUE",
+          message: expect.stringContaining("must be one of: ro, rw, rwc, memory"),
+        }),
+      );
     });
   });
 
@@ -140,7 +171,7 @@ describe("SQLite URL Parsing Matrix", () => {
     );
 
     test.each(windowsMatrix)("Windows: $protocol with $pathName", async testCase => {
-      await using sql = new SQL(testCase.url);
+      await using sql = parse(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol.startsWith("file://")) {
@@ -180,7 +211,7 @@ describe("SQLite URL Parsing Matrix", () => {
     );
 
     test.each(unixMatrix)("Unix: $protocol with $pathName", async testCase => {
-      await using sql = new SQL(testCase.url);
+      await using sql = parse(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
 
       if (testCase.protocol === "file://") {
@@ -231,7 +262,7 @@ describe("SQLite URL Parsing Matrix", () => {
     ]);
 
     test.each(charMatrix)("$description", async testCase => {
-      await using sql = new SQL(testCase.url);
+      await using sql = parse(testCase.url);
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.filename).toBe(testCase.expected);
     });
@@ -242,7 +273,7 @@ describe("SQLite URL Parsing Matrix", () => {
       // Use import.meta.resolve() to get the actual format for the current platform
       const resolvedUrl = import.meta.resolve("./test.db");
 
-      await using sql = new SQL(resolvedUrl);
+      await using sql = parse(resolvedUrl);
       expect(sql.options.adapter).toBe("sqlite");
 
       const filename = sql.options.filename;
@@ -255,21 +286,19 @@ describe("SQLite URL Parsing Matrix", () => {
     test("handles very long paths", async () => {
       const longFilename = "a".repeat(255) + ".db";
       const longPath = `/tmp/${longFilename}`;
-      await using sql = new SQL(`sqlite://${longPath}`);
+      await using sql = parse(`sqlite://${longPath}`);
       expect(sql.options.filename).toBe(longPath);
     });
 
     test("handles database with .db in middle of name", async () => {
-      // Use a path that won't create a file in the project root
       const path = "/tmp/test.db.backup";
-      await using sql = new SQL(`sqlite://${path}`);
+      await using sql = parse(`sqlite://${path}`);
       expect(sql.options.filename).toBe(path);
     });
 
     test("handles path with multiple dots", async () => {
-      // Use a path that won't create a file in the project root
       const path = "/tmp/test...db";
-      await using sql = new SQL(`sqlite://${path}`);
+      await using sql = parse(`sqlite://${path}`);
       expect(sql.options.filename).toBe(path);
     });
 
@@ -307,5 +336,227 @@ describe("SQLite URL Parsing Matrix", () => {
       await using sql = new SQL(url);
       expect(sql.options.adapter).toBe("postgres");
     });
+  });
+});
+
+describe("which string names the database", () => {
+  const server = "postgres://pu:pp@pghost:5432/pgdb";
+
+  // [environment, arguments, the file name]
+  test.each<[Record<string, string>, [(string | null | SQL.Options)?, SQL.Options?], string]>([
+    [{}, [{ filename: "dev.db" }], "dev.db"],
+    [{}, [{ filename: "./dev.db" }], "./dev.db"],
+    [{}, [{ filename: "/abs/dev.db" }], "/abs/dev.db"],
+    [{}, [{ filename: "sqlite://dev.db" }], "dev.db"],
+    [{}, [{ filename: server }], server],
+    [{}, [{ filename: "dev.db", hostname: "h" } as never], "dev.db"],
+    [{ DATABASE_URL: server, SQLITE_URL: "env.db" }, [{ filename: "dev.db" }], "dev.db"],
+
+    [{}, [{ adapter: "sqlite", url: "sqlite://url.db" } as never], "url.db"],
+    [{}, [{ adapter: "sqlite", url: "url.db" } as never], "url.db"],
+    [{}, [{ url: "sqlite://url.db" }], "url.db"],
+    [{}, [{ adapter: "sqlite", url: "url.db", filename: "dev.db" } as never], "dev.db"],
+    [{}, ["sqlite://first.db", { adapter: "sqlite", url: "sqlite://url.db" } as never], "url.db"],
+    [
+      { SQLITE_URL: "env.db", DATABASE_URL: "sqlite://env.db" },
+      [{ adapter: "sqlite", url: "url.db" } as never],
+      "url.db",
+    ],
+
+    [{ SQLITE_URL: "env.db" }, [], "env.db"],
+    [{ SQLITE_URL: "dir/env.db" }, [], "dir/env.db"],
+    [{ SQLITE_URL: "/abs/env.db" }, [], "/abs/env.db"],
+    [{ SQLITE_URL: "sqlite://env.db" }, [], "env.db"],
+    [{ SQLITEURL: "env.db" }, [{ adapter: "sqlite" }], "env.db"],
+    [{ SQLITE_URL: "env.db", DATABASE_URL: server }, [{ adapter: "sqlite" }], "env.db"],
+    [{ SQLITE_URL: "env.db", DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "env.db"],
+    [{ SQLITE_URL: "env.db" }, [{ adapter: "sqlite", hostname: "h" } as never], "env.db"],
+    [{ SQLITE_URL: "env.db" }, ["", { adapter: "sqlite" }], "env.db"],
+
+    [{ DATABASE_URL: server }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASEURL: server }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ TLS_DATABASE_URL: server }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: "postgresql://h/d" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: " POSTGRES://h/d" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: "mysql://h/d" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: "mysql2://h/d" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: "mariadb://h/d" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: server }, [null, { adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: server, DATABASEURL: "next.db" }, [{ adapter: "sqlite" }], "next.db"],
+    [{ DATABASE_URL: "sqlite://generic.db" }, [{ adapter: "sqlite" }], "generic.db"],
+    [{ DATABASE_URL: "generic.db" }, [{ adapter: "sqlite" }], "generic.db"],
+    [{ DATABASE_URL: ":memory:" }, [{ adapter: "sqlite" }], ":memory:"],
+    [{ DATABASE_URL: "https://example.com/db" }, [{ adapter: "sqlite" }], "https://example.com/db"],
+    [{ DATABASE_URL: "libsql://example.com" }, [{ adapter: "sqlite" }], "libsql://example.com"],
+  ])("%j new SQL(...%j) opens %s", async (env, [first, second], filename) => {
+    Object.assign(process.env, env);
+    await using sql =
+      typeof first === "object" && first ? parse(undefined, { ...first, ...second }) : parse(first, second);
+    expect(sql.options).toMatchObject({ adapter: "sqlite", filename });
+  });
+
+  test("`filename` is not read next to a server adapter", () => {
+    expect(new SQL({ adapter: "postgres", filename: "dev.db" } as never).options).toMatchObject({
+      adapter: "postgres",
+      hostname: "localhost",
+    });
+  });
+
+  test.each(["SQLITE://Dev.db", "Sqlite:Dev.db", "FILE:Dev.db"])(
+    "the scheme of %s is matched in any case",
+    async url => {
+      for (const sql of [parse(url), parse(url, { adapter: "sqlite" }), parse(undefined, { filename: url })]) {
+        expect(sql.options).toMatchObject({ adapter: "sqlite", filename: "Dev.db" });
+        await sql.close();
+      }
+    },
+  );
+
+  test("a URL object", async () => {
+    await using sqlite = parse(new URL("sqlite://url.db?mode=ro"));
+    expect(sqlite.options).toMatchObject({ adapter: "sqlite", filename: "url.db", readonly: true });
+    await using file = parse(undefined, { filename: new URL("file:///abs/a%20b.db") });
+    expect(file.options).toMatchObject({ adapter: "sqlite", filename: Bun.fileURLToPath("file:///abs/a%20b.db") });
+  });
+
+  test.each(["what?.db", "data.db?mode=ro", "data.db?mode=bogus", "a?b#c.db"])(
+    "%s has no scheme, so it has no query",
+    async name => {
+      for (const sql of [
+        new SQL(name, { adapter: "sqlite", create: false }),
+        new SQL({ filename: name, create: false }),
+      ]) {
+        expect(sql.options.filename).toBe(name);
+        expect(sql.options.readonly).toBeUndefined();
+        await sql.close();
+      }
+    },
+  );
+
+  test("whitespace around the string is not a part of the name", async () => {
+    await using sql = parse("  sqlite://dev.db?mode=ro \n");
+    expect(sql.options).toMatchObject({ adapter: "sqlite", filename: "dev.db", readonly: true });
+  });
+});
+
+describe("?mode=", () => {
+  // [query, readonly, create, in memory]
+  test.each<[string, true | undefined, false | undefined, boolean?]>([
+    ["?mode=memory", undefined, undefined, true],
+    ["?mode=memory&cache=shared", undefined, undefined, true],
+    ["?cache=shared&mode=ro", true, undefined],
+    ["?mode=ro#fragment", true, undefined],
+    ["?cache=shared#&mode=ro", undefined, undefined],
+    ["?MODE=ro", undefined, undefined],
+    // Repeated: the most restrictive.
+    ["?mode=rw&mode=ro", true, undefined],
+    ["?mode=ro&mode=rw", true, undefined],
+    ["?mode=rwc&mode=rw", undefined, false],
+    ["?mode=rw&mode=rwc", undefined, false],
+  ])("%s", async (query, readonly, create, memory = false) => {
+    using dir = tempDir("sqlite-url-mode", {});
+    const db = join(String(dir), "mode.db");
+    await using sql = new SQL(`sqlite://${db}${query}`);
+    expect(sql.options.filename).toBe(memory ? ":memory:" : db);
+    expect(sql.options.readonly).toBe(readonly as boolean);
+    expect(sql.options.create).toBe(create as boolean);
+  });
+
+  test.each(["?mode=RO", "?mode=readonly", "?mode=", "?mode", "?mode=ro&mode=bogus", "?mode=ro%20"])(
+    "%s throws",
+    query => {
+      using dir = tempDir("sqlite-url-mode-throws", {});
+      expect(() => new SQL(`sqlite://${join(String(dir), "mode.db")}${query}`)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    },
+  );
+
+  // [query, options, what `sql.options` has]
+  test.each<[string, SQL.Options, Record<string, unknown>]>([
+    ["?mode=ro", { readonly: undefined }, { readonly: true }],
+    ["?mode=ro", { readonly: false }, { readonly: false }],
+    ["?mode=rw", { create: undefined }, { create: false }],
+    ["?mode=rw", { create: true }, { create: true }],
+    ["?mode=rw", { readonly: true }, { readonly: true, create: false }],
+    ["?mode=rwc", { readonly: true }, { readonly: true, create: undefined }],
+    ["?mode=rwc", { create: false }, { create: false }],
+    ["", { readwrite: false }, { readwrite: false, readonly: undefined, create: undefined }],
+    ["", { readwrite: true }, { readwrite: true, readonly: undefined, create: undefined }],
+    ["", { strict: true }, { strict: true, readonly: undefined, create: undefined, readwrite: undefined }],
+  ])("%s next to %p: an option that is given replaces the mode, field by field", async (query, options, expected) => {
+    using dir = tempDir("sqlite-url-mode-options", {});
+    await using sql = new SQL(`sqlite://${join(String(dir), "mode.db")}${query}`, options);
+    expect(Object.fromEntries(Object.keys(expected).map(key => [key, sql.options[key]]))).toEqual(expected);
+  });
+
+  test("`readOnly` is refused, as in bun:sqlite", () => {
+    expect(() => new SQL(":memory:", { readOnly: true } as never)).toThrow(
+      new TypeError('Misspelled option "readOnly" should be "readonly"'),
+    );
+  });
+
+  async function observe(exists: boolean, query: string, options: SQL.Options = {}) {
+    using dir = tempDir("sqlite-url-open", {});
+    const db = join(String(dir), "open.db");
+    if (exists) {
+      await using seed = new SQL(`sqlite://${db}`);
+      await seed`CREATE TABLE t (a)`;
+    }
+    await using sql = new SQL(`sqlite://${db}${query}`, options);
+    const attempt = (query: PromiseLike<unknown>) =>
+      query.then(
+        () => true,
+        () => false,
+      );
+    return {
+      reads: await attempt(sql`SELECT * FROM sqlite_master`),
+      writes: await attempt(sql`CREATE TABLE u (a)`),
+      files: readdirSync(String(dir)),
+    };
+  }
+  const readOnly = { reads: true, writes: false, files: ["open.db"] };
+  const readWrite = { reads: true, writes: true, files: ["open.db"] };
+  const cannotOpen = { reads: false, writes: false, files: [] };
+
+  test.each<[string, SQL.Options, object, object]>([
+    ["", {}, readWrite, readWrite],
+    ["?mode=ro", {}, readOnly, cannotOpen],
+    ["?mode=rw", {}, readWrite, cannotOpen],
+    ["?mode=rwc", {}, readWrite, readWrite],
+    ["?mode=rw&mode=ro", {}, readOnly, cannotOpen],
+    ["?mode=ro#fragment", {}, readOnly, cannotOpen],
+    ["?mode=ro", { readonly: undefined }, readOnly, cannotOpen],
+    ["?mode=rw", { create: true }, readWrite, readWrite],
+    ["", { create: false }, readWrite, cannotOpen],
+    ["", { readwrite: false }, readOnly, cannotOpen],
+    ["?mode=memory", {}, { ...readWrite, files: ["open.db"] }, { ...readWrite, files: [] }],
+  ])("sqlite://open.db%s %p opens the file in that mode", async (query, options, existing, missing) => {
+    expect({
+      existing: await observe(true, query, options),
+      missing: await observe(false, query, options),
+    }).toEqual({ existing, missing });
+  });
+
+  test.skipIf(isWindows)("a name with a question mark opens that file", async () => {
+    using dir = tempDir("sqlite-url-question-mark", {});
+    const db = join(String(dir), "what?.db");
+    await using sql = new SQL({ filename: db });
+    await sql`CREATE TABLE t (a)`;
+    expect(existsSync(db)).toBe(true);
+  });
+});
+
+describe("integers", () => {
+  test.each<[SQL.Options, boolean | undefined]>([
+    [{}, undefined],
+    [{ bigint: true } as never, true],
+    [{ bigint: false } as never, false],
+    [{ safeIntegers: true }, true],
+    [{ safeIntegers: false, bigint: true } as never, false],
+    [{ safeIntegers: undefined, bigint: true } as never, true],
+  ])("%p", async (options, safeIntegers) => {
+    await using sql = new SQL(":memory:", options);
+    expect(sql.options.safeIntegers).toBe(safeIntegers as boolean);
   });
 });

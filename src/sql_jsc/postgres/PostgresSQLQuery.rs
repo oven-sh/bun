@@ -1,10 +1,7 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::error::ThrowSqlError;
-use crate::jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
-};
+use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
@@ -16,11 +13,9 @@ use super::Signature;
 use super::command_tag_jsc::CommandTagJsc;
 use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
-use super::postgres_request::EncodeRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
 use bun_sql::postgres::CommandTag;
-use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
@@ -41,6 +36,8 @@ pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
 pub struct PostgresSQLQuery {
     /// Shared with the connection's named-statement map (each holder owns one ref).
     pub(crate) statement: JsCell<Option<RefPtr<PostgresSQLStatement>>>,
+    /// The connection whose queue it is in.
+    connection: JsCell<Option<RefPtr<PostgresSQLConnection>>>,
     pub(crate) query: BunString,
 
     pub(crate) this_value: JsCell<JsRef>,
@@ -59,6 +56,7 @@ impl Default for PostgresSQLQuery {
     fn default() -> Self {
         Self {
             statement: JsCell::new(None),
+            connection: JsCell::new(None),
             query: BunString::EMPTY,
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
@@ -74,17 +72,54 @@ impl Default for PostgresSQLQuery {
 // Bit-packing is not load-bearing here.
 #[derive(Clone, Copy)]
 pub struct Flags {
-    pub(crate) is_done: bool,
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// Parse + Describe go out first and Bind waits for the server's parameter types.
+    pub(crate) describe_first: bool,
     /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
+    pub(crate) cancel: Cancel,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
     pub(crate) counter: RequestCounter,
+    pub(crate) retry: Retry,
+    pub(crate) copy: CopyStream,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
+}
+
+/// The stream that `readable()` or `writable()` made for the request. See CopyStream.rs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CopyStream {
+    None,
+    Readable,
+    /// Between CopyOutResponse and CopyDone.
+    ReadableOpen,
+    Writable,
+    /// Between CopyInResponse and the CopyDone or CopyFail that the stream ends with.
+    WritableOpen,
+}
+
+/// What a CancelRequest has to do with a request that is written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Cancel {
+    No,
+    /// Written behind the request that the server is asked to stop. A CancelRequest names the
+    /// backend: if that request ends first, the backend stops this one.
+    Exposed,
+    /// `cancel()` was called and no CancelRequest could be sent for it so far.
+    Wanted,
+}
+
+/// A request that the server refused for a reason that is not its own, before it had an effect,
+/// runs once more: its statement was lost or stale, or it got the CancelRequest of another.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Retry {
+    No,
+    /// The ReadyForQuery of the failed batch puts the request back in the queue.
+    AtReadyForQuery,
+    Done,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,12 +134,15 @@ pub enum RequestCounter {
 impl Default for Flags {
     fn default() -> Self {
         Self {
-            is_done: false,
             binary: false,
             bigint: false,
             simple: false,
+            describe_first: false,
             discard_response: false,
+            cancel: Cancel::No,
             counter: RequestCounter::None,
+            retry: Retry::No,
+            copy: CopyStream::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }
@@ -152,8 +190,29 @@ impl PostgresSQLQuery {
     }
 
     #[inline]
-    pub(crate) fn release_statement(&self) {
+    pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
+        self.connection.get().clone()
+    }
+
+    /// Of a reply that ended early and is asked for again.
+    pub(crate) fn forget_rows(&self, global_object: &JSGlobalObject) {
+        unsafe extern "C" {
+            safe fn SQL__clearRows(global: &JSGlobalObject, rows: JSValue);
+        }
+        if let Some(rows) = self
+            .this_value
+            .get()
+            .try_get()
+            .and_then(js::pending_value_get_cached)
+        {
+            SQL__clearRows(global_object, rows);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn leave_queue(&self) {
         self.statement.set(None);
+        self.connection.set(None);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -176,50 +235,7 @@ impl PostgresSQLQuery {
         self.this_value.with_mut(|r| r.finalize());
     }
 
-    pub(crate) fn on_write_fail(
-        &self,
-        err: AnyPostgresError,
-        global_object: &JSGlobalObject,
-        queries_array: JSValue,
-    ) {
-        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
-        // is sufficient and `noalias` is suppressed. `RefPtr` brackets the
-        // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
-        // `*self` mid-body.
-        let _guard = self.ref_guard();
-        self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return;
-        };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else {
-            return;
-        };
-
-        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let function = vm
-            .sql_state()
-            .postgresql_context
-            .on_query_reject_fn
-            .get()
-            .unwrap();
-        let event_loop = vm.event_loop_mut();
-        let js_err = postgres_error_to_js(global_object, None, err);
-        event_loop.run_callback(
-            bun_event_loop::ContextId::NONE,
-            function,
-            global_object,
-            this_value,
-            &[
-                target_value,
-                js_err.to_error().unwrap_or(js_err),
-                queries_array,
-            ],
-        );
-    }
-
-    /// For a request that is owed no `ReadyForQuery`: `Fail` lets `advance()` drop it at once.
+    /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.status.set(Status::Fail);
         self.reject(err, global_object);
@@ -236,7 +252,10 @@ impl PostgresSQLQuery {
     }
 
     fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
+        // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
+        // is sufficient and `noalias` is suppressed. `RefPtr` brackets the
+        // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
+        // `*self` mid-body.
         let _guard = self.ref_guard();
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -264,17 +283,6 @@ impl PostgresSQLQuery {
         );
     }
 
-    pub(crate) fn on_error(
-        &self,
-        err: &super::postgres_sql_statement::Error,
-        global_object: &JSGlobalObject,
-    ) {
-        let Ok(e) = err.to_js(global_object) else {
-            return;
-        };
-        self.on_js_error(e, global_object);
-    }
-
     pub(crate) fn allow_gc(this_value: JSValue, global_object: &JSGlobalObject) {
         if this_value.is_empty() {
             return;
@@ -290,10 +298,9 @@ impl PostgresSQLQuery {
         &self,
         command_tag_str: &[u8],
         global_object: &JSGlobalObject,
-        connection: JSValue,
         is_last: bool,
     ) {
-        // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
+        // R-2: see `reject` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
         self.status.set(if is_last {
             Status::Success
@@ -313,6 +320,24 @@ impl PostgresSQLQuery {
             }
         };
         js_tag.ensure_still_alive();
+
+        // The last call ends the query and brings no result.
+        let statement = match self.statement_mut().filter(|_| !is_last) {
+            Some(statement) => {
+                let description = statement.description(global_object, &self.query);
+                if self.flags.get().simple {
+                    statement.clear_fields();
+                }
+                match description {
+                    Ok(description) => description,
+                    Err(e) => {
+                        let err = global_object.take_exception(e);
+                        return self.reject_in_flight(err, global_object);
+                    }
+                }
+            }
+            None => JSValue::NULL,
+        };
 
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -348,13 +373,8 @@ impl PostgresSQLQuery {
                     .unwrap_or(JSValue::UNDEFINED),
                 js_tag,
                 tag.to_js_number(),
-                if connection.is_empty() {
-                    JSValue::UNDEFINED
-                } else {
-                    postgres_sql_connection::js::queries_get_cached(connection)
-                        .unwrap_or(JSValue::UNDEFINED)
-                },
                 JSValue::from(is_last),
+                statement,
             ],
         );
     }
@@ -380,7 +400,6 @@ impl PostgresSQLQuery {
             query,
             values,
             pending_value,
-            columns,
             bigint,
             simple,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
@@ -392,10 +411,6 @@ impl PostgresSQLQuery {
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
-        // Note: `PostgresSQLQuery` implements `Drop`, so functional-record-update
-        // (`..Default::default()`) is forbidden (E0509). `ptr` was already
-        // `default()`-initialised by `Box::new` above, so just overwrite the
-        // three non-default fields in place.
         unsafe {
             (*ptr).query = query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
@@ -408,21 +423,8 @@ impl PostgresSQLQuery {
 
         js::binding_set_cached(this_value, global_this, values);
         js::pending_value_set_cached(this_value, global_this, pending_value);
-        if !columns.is_undefined() {
-            js::columns_set_cached(this_value, global_this, columns);
-        }
 
         Ok(this_value)
-    }
-
-    pub fn do_done(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let _ = global_object;
-        this.update_flags(|f| f.is_done = true);
-        Ok(JSValue::UNDEFINED)
     }
 
     pub fn set_pending_value_from_js(
@@ -469,20 +471,20 @@ impl PostgresSQLQuery {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices.
-        let arguments = callframe.arguments();
         // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
-        // is on-stack (rooted by `arguments[0]`) so GC cannot finalize it for the
+        // is on-stack (rooted by the call frame) so GC cannot finalize it for the
         // duration of this call, satisfying the `ParentRef` outlives-holder
         // invariant. R-2: shared borrow — every connection field accessed below is
         // `Cell`/`JsCell`.
-        let Some(connection) = postgres_sql_connection::js::from_js_ref(arguments[0]) else {
+        let Some(connection) = postgres_sql_connection::js::from_js_ref(callframe.argument(0))
+        else {
             return Err(
                 global_object.throw(format_args!("connection must be a PostgresSQLConnection"))
             );
         };
         let connection: &PostgresSQLConnection = &connection;
 
-        let query = arguments[1];
+        let query = callframe.argument(1);
 
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
@@ -490,372 +492,94 @@ impl PostgresSQLQuery {
 
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
-        let query_str = this.query.to_utf8();
-        let writer = connection.writer();
-        // The queue entry's ref: keeps the query alive until the server
-        // answers; dropped on every error return below.
-        let queued = this.ref_guard();
-        // Shared error tail: throw `err` as a postgres error unless an exception
-        // is already pending.
-        let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
-            if !global_object.has_exception() {
-                return global_object.throw_value(postgres_error_to_js(
-                    global_object,
-                    Some(msg),
-                    err,
-                ));
+        let unnamed = connection
+            .flags
+            .get()
+            .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS);
+        // Reading the values can run user code, so it comes before any look at the connection's state.
+        let mut declared = Vec::new();
+        if !this.flags.get().simple {
+            declared = Signature::declared_types(global_object, binding_value)?;
+            let describe_first =
+                !unnamed || PostgresRequest::needs_parameter_types(global_object, binding_value)?;
+            this.update_flags(|f| f.describe_first = describe_first);
+            // The server takes what is written behind a COPY FROM STDIN for its data. Nothing is
+            // written behind a simple query, and a COPY has no parameters to lose.
+            if declared.is_empty() && this.is_copy_statement() {
+                this.update_flags(|f| f.simple = true);
             }
-            JsError::Thrown
-        };
+        }
+        if declared.len() > u16::MAX as usize {
+            return Err(global_object.throw_value(postgres_error_to_js(
+                global_object,
+                None,
+                AnyPostgresError::TooManyParameters,
+            )));
+        }
+        // That code can have called `cancel()`.
+        if this.status.get() != Status::Pending {
+            return Err(global_object.throw_value(connection.cancelled_error(None)));
+        }
 
         // A connection that failed or closed answers nothing: a query queued on it would hold the
         // event loop for ever. The pool hears of a close through `onclose` and stops handing the
         // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
-        if matches!(
-            connection.status.get(),
-            bun_sql::postgres::Status::Failed | bun_sql::postgres::Status::Disconnected
-        ) {
-            return Err(throw_write_error(
-                b"Connection closed",
+        if connection.status.get().is_closed() {
+            return Err(global_object.throw_value(postgres_error_to_js(
+                global_object,
+                Some(b"Connection closed"),
                 AnyPostgresError::ConnectionClosed,
-            ));
+            )));
         }
 
-        if this.flags.get().simple {
-            bun_core::scoped_log!(Postgres, "executeQuery");
+        let new_statement =
+            |id: Option<u64>| PostgresSQLStatement::new(Signature::new(&declared, id));
+        this.statement.set(Some(if this.flags.get().simple {
+            let mut s = PostgresSQLStatement::default();
+            // It has no Parse of its own: the Query message is the whole request.
+            s.status = StatementStatus::Parsing;
+            RefPtr::new(s)
+        } else if unnamed {
+            new_statement(None)
+        } else {
+            let query_str = this.query.to_utf8();
+            connection.statements.with_mut(|cache| {
+                cache.get(query_str.slice(), &declared).unwrap_or_else(|| {
+                    let statement = new_statement(Some(connection.take_prepared_statement_id()));
+                    cache.insert(query_str.slice(), statement.clone());
+                    statement
+                })
+            })
+        }));
 
-            // NOTE: PostgresSQLStatement implements Drop, so functional-record-update
-            // (`..Default::default()`) is forbidden (E0509). Build + mutate instead.
-            let stmt = {
-                let mut s = PostgresSQLStatement::default();
-                s.signature = Signature::empty();
-                s.status = StatementStatus::Parsing;
-                RefPtr::new(s)
-            };
-            // Query is simple and it's the only owner of the statement
-            this.statement.set(Some(stmt));
-
-            let can_execute = !connection.has_query_running();
-            if can_execute {
-                if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    this.release_statement();
-                    return Err(throw_write_error(b"failed to execute query", err));
-                }
-                {
-                    let mut f = connection.flags.get();
-                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                    connection.flags.set(f);
-                }
-                connection
-                    .nonpipelinable_requests
-                    .set(connection.nonpipelinable_requests.get() + 1);
-                this.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
-                this.status.set(Status::Running);
-            } else {
-                this.status.set(Status::Pending);
-            }
-            connection.requests.with_mut(|q| q.push_back(queued));
-            if this.status.get() == Status::Pending {
-                connection.note_request_pending();
-            }
-
-            // Request is enqueued: keep the event loop alive until the server
-            // responds. KeepAlive is a flag (not a count), so taking this any
-            // earlier would leave it stuck Active on the synchronous-error
-            // returns above.
-            connection.poll_ref.with_mut(|r| {
-                r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
-
-            this.this_value.with_mut(|r| r.upgrade(global_object));
-            js::target_set_cached(this_value, global_object, query);
-            if this.status.get() == Status::Running {
-                connection.flush_data_and_reset_timeout();
-            } else {
-                connection.reset_connection_timeout();
-            }
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let columns_value: JSValue =
-            js::columns_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-
-        let mut signature = match Signature::generate(
-            global_object,
-            query_str.slice(),
-            binding_value,
-            columns_value,
-            connection.prepared_statement_id.get(),
-            connection
-                .flags
-                .get()
-                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
-        ) {
-            Ok(s) => s,
-            Err(err) => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_sql_error(err, "failed to generate signature"));
-                }
-                return Err(JsError::Thrown);
-            }
-        };
-
-        let has_params = signature.fields.len() > 0;
-        let mut did_write = false;
-        'enqueue: {
-            // Note: `connection_entry_value` is a *mut into connection.statements value slot;
-            // holding a `&mut` across other &mut connection borrows below trips borrowck, so
-            // store the raw slot pointer and re-dereference at use sites.
-            let mut connection_entry_value: Option<*mut Option<RefPtr<PostgresSQLStatement>>> =
-                None;
-            if !connection
-                .flags
-                .get()
-                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
-            {
-                // Zero-allocation hit probe: `get_or_put` below boxes the key
-                // bytes even when the entry already exists, and a hit (an
-                // already-prepared named statement) is the steady state.
-                let existing_stmt = connection
-                    .statements
-                    .get()
-                    .get(&signature.name[..])
-                    .and_then(|slot| slot.clone());
-                if let Some(existing_stmt) = existing_stmt {
-                    this.statement.set(Some(existing_stmt));
-                    let stmt = this.statement_mut().expect("statement set above");
-                    drop(signature);
-
-                    match stmt.status {
-                        StatementStatus::Failed => {
-                            // `error_response` is `Some` when status == Failed.
-                            let error_response =
-                                stmt.error_response.as_ref().unwrap().to_js(global_object);
-                            this.statement.set(None);
-                            return Err(global_object.throw_value(error_response?));
-                        }
-                        StatementStatus::Prepared => {
-                            // Only write ahead of the FIFO drain when every queued
-                            // request has already emitted its bytes; otherwise this
-                            // Bind+Execute would overtake an earlier unwritten
-                            // request on the wire while reply attribution stays FIFO.
-                            if (!connection.has_query_running() || connection.can_pipeline())
-                                && connection.pending_requests.get() == 0
-                            {
-                                this.update_flags(|f| f.binary = !stmt.fields.is_empty());
-                                bun_core::scoped_log!(Postgres, "bindAndExecute");
-
-                                // bindAndExecute will bind + execute, it will change to running after binding is complete
-                                if let Err(err) = connection.encode_request(
-                                    global_object,
-                                    EncodeRequest::BindAndExecute {
-                                        statement: stmt,
-                                        binding_value,
-                                        columns_value,
-                                    },
-                                ) {
-                                    this.release_statement();
-                                    return Err(throw_write_error(
-                                        b"failed to bind and execute query",
-                                        err,
-                                    ));
-                                }
-                                {
-                                    let mut f = connection.flags.get();
-                                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                                    connection.flags.set(f);
-                                }
-                                this.status.set(Status::Binding);
-                                this.update_flags(|f| f.counter = RequestCounter::Pipelined);
-                                connection
-                                    .pipelined_requests
-                                    .set(connection.pipelined_requests.get() + 1);
-
-                                did_write = true;
-                            }
-                        }
-                        StatementStatus::Parsing | StatementStatus::Pending => {}
-                    }
-
-                    break 'enqueue;
-                }
-                // `JsCell::with_mut` scopes the `&mut PreparedStatementsMap` to
-                // the `get_or_put` call (single-JS-thread; no re-entry into JS
-                // until after the raw value-slot ptr is captured). Extract the
-                // raw slot ptr while the borrow is live so the remainder of
-                // this block needs no further `&mut` to the map.
-                let entry_value_ptr = match connection.statements.with_mut(|s| {
-                    s.get_or_put(&signature.name)
-                        .map(|e| std::ptr::from_mut(e.value_ptr))
-                }) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        drop(signature);
-                        this.release_statement();
-                        return Err(global_object
-                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
-                    }
-                };
-                connection_entry_value = Some(entry_value_ptr);
-            }
-            let can_execute = !connection.has_query_running();
-
-            if can_execute {
-                // If it does not have params, we can write and execute immediately in one go
-                if !has_params {
-                    bun_core::scoped_log!(Postgres, "prepareAndQueryWithSignature");
-                    // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                    if let Err(err) = connection.encode_request(
-                        global_object,
-                        EncodeRequest::PrepareAndQuery {
-                            query: query_str.slice(),
-                            signature: &mut signature,
-                            binding_value,
-                        },
-                    ) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
-                        }
-                        drop(signature);
-                        this.release_statement();
-                        return Err(throw_write_error(b"failed to prepare and query", err));
-                    }
-                    {
-                        let mut f = connection.flags.get();
-                        f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                        f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
-                        connection.flags.set(f);
-                    }
-                    this.status.set(Status::Binding);
-                    did_write = true;
-                } else if !connection
-                    .flags
-                    .get()
-                    .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS)
-                {
-                    // Named prepared statements: send Parse+Describe+Sync now and wait
-                    // for ParameterDescription before sending Bind+Execute in advance().
-                    bun_core::scoped_log!(Postgres, "writeQuery");
-
-                    if let Err(err) = PostgresRequest::write_query(
-                        query_str.slice(),
-                        &signature.prepared_statement_name,
-                        &signature.fields,
-                        writer,
-                    ) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
-                        }
-                        drop(signature);
-                        this.release_statement();
-                        return Err(throw_write_error(b"failed to write query", err));
-                    }
-                    if let Err(err) = writer.write(&protocol::SYNC) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
-                        }
-                        drop(signature);
-                        this.release_statement();
-                        return Err(throw_write_error(b"failed to flush", err));
-                    }
-                    {
-                        let mut f = connection.flags.get();
-                        f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                        f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
-                        connection.flags.set(f);
-                    }
-                    did_write = true;
-                }
-                // Unnamed prepared statements with params: skip writeQuery+Sync here.
-                // advance() will send Parse+Describe+Bind+Execute atomically via
-                // parseAndBindAndExecute(), preventing PgBouncer from splitting them.
-            }
-            {
-                // we only have connection_entry_value if we are using named prepared statements
-                if let Some(entry_value) = connection_entry_value {
-                    connection
-                        .prepared_statement_id
-                        .set(connection.prepared_statement_id.get() + 1);
-                    // One ref for this.statement, one for the connection.statements map.
-                    let stmt = {
-                        let mut s = PostgresSQLStatement::default();
-                        s.signature = signature;
-                        s.status = if did_write {
-                            StatementStatus::Parsing
-                        } else {
-                            StatementStatus::Pending
-                        };
-                        RefPtr::new(s)
-                    };
-                    this.statement.set(Some(stmt.clone()));
-
-                    // SAFETY: `entry_value` points into `connection.statements` and the map has
-                    // not been mutated since `get_or_put`. `get_or_put` runs only after the
-                    // existing-entry probe missed, so the slot it hands back was
-                    // default-initialised to `None`.
-                    unsafe { *entry_value = Some(stmt) };
-                } else {
-                    let stmt = {
-                        let mut s = PostgresSQLStatement::default();
-                        s.signature = signature;
-                        s.status = if did_write {
-                            StatementStatus::Parsing
-                        } else {
-                            StatementStatus::Pending
-                        };
-                        RefPtr::new(s)
-                    };
-                    this.statement.set(Some(stmt));
-                }
-            }
-        }
-
-        connection.requests.with_mut(|q| q.push_back(queued));
-        if this.status.get() == Status::Pending {
-            connection.note_request_pending();
-        }
-        // Request is enqueued: keep the event loop alive until the server
-        // responds. See the matching call in the simple-query branch above
-        // for why this must come after every fallible step.
+        connection
+            .requests
+            .with_mut(|q| q.push_back(this.ref_guard()));
+        connection.note_request_pending();
+        this.connection.set(Some(connection.ref_guard()));
+        // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.with_mut(|r| {
             r.ref_(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
             ))
         });
-        // advance() below can reject this request with nothing sent, so no reply releases the ref.
-        scopeguard::defer! { connection.update_poll_ref(); }
-
         this.this_value.with_mut(|r| r.upgrade(global_object));
-
         js::target_set_cached(this_value, global_object, query);
-        if did_write {
-            connection.flush_data_and_reset_timeout();
-        } else {
-            connection.reset_connection_timeout();
-            // For unnamed prepared statements with params, we skip writeQuery+Sync
-            // in the enqueue path and let advance() handle it atomically.
-            connection.advance_and_flush();
-        }
+
+        connection.advance();
+        connection.flush_data_and_reset_timeout();
+        // advance() can reject this request with nothing sent: no reply releases the ref then.
+        connection.update_poll_ref();
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_cancel(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let _ = callframe;
-        let _ = global_object;
-        let _ = this;
-
+    pub fn do_cancel(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        match this.connection() {
+            Some(connection) => connection.cancel(this),
+            // `do_run` has not queued it: it refuses a query that is not `Pending`.
+            None if this.status.get() == Status::Pending => this.status.set(Status::Fail),
+            None => {}
+        }
         Ok(JSValue::UNDEFINED)
     }
 }

@@ -51,6 +51,10 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
   constructor(message: string, options: PostgresErrorOptions) {
     super(message);
 
+    // JSC's own source position, not PostgreSQL's fields of the same name
+    delete this.line;
+    delete this.column;
+
     this.name = "PostgresError";
     const {
       code,

@@ -79,7 +79,7 @@ export default [
       },
       setStreamClosing: {
         fn: "setStreamClosing",
-        length: 2,
+        length: 3,
       },
       getStreamContext: {
         fn: "getStreamContext",

@@ -331,8 +331,6 @@ describe("a request that is refused after close() or destroy()", () => {
     "a :path with a space": { ":path": "/a b" },
     "content-length on a DELETE": { ":method": "DELETE", "content-length": "1" },
   };
-  const nextTurn = () => new Promise(resolve => setImmediate(resolve));
-
   for (const [name, headers] of Object.entries(refused)) {
     for (const call of ["close", "destroy"] as const) {
       for (const listener of [true, false]) {
@@ -359,6 +357,7 @@ describe("a request that is refused after close() or destroy()", () => {
       }
     }
   }
+});
 
 // From here on the peer is a socket that speaks HTTP/2 frames by hand. It sends WINDOW_UPDATE
 // only when a test asks for it, so a body larger than the initial window stays partly unsent.
@@ -1088,29 +1087,6 @@ test("session.destroy() with an unsent response sends GOAWAY and no RST_STREAM",
     stream.session!.destroy();
     await peer.closed;
     assert.deepStrictEqual({ wire: peer.wire(1), goaway: peer.goaway }, { wire: STALLED, goaway: NGHTTP2_NO_ERROR });
-  });
-});
-
-// node sends this ":path". Bun refuses it one tick after request() returned: the request never
-// gets a stream id, and 'ready' is emitted for it all the same. (node has emitted 'ready' inside
-// request().)
-test("close() on a request whose ':path' has a space", async () => {
-  await withRawServer(async (session, accepted) => {
-    await (await accepted).settle();
-    const req = session.request({ ":path": "/a b" });
-    req.on("error", () => {});
-    let ready: { id: number | undefined } | undefined;
-    req.on("ready", () => (ready = { id: req.id }));
-    const closed = new Promise(resolve => req.on("close", resolve));
-    req.close();
-    await closed;
-    // The reset that close() scheduled at 'ready' finds no stream to reset. It must not throw.
-    await nextTurn();
-    await nextTurn();
-    assert.deepStrictEqual(
-      { destroyed: req.destroyed, ready },
-      { destroyed: true, ready: isBun ? { id: undefined } : undefined },
-    );
   });
 });
 

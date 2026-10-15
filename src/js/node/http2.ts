@@ -2226,25 +2226,22 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// close() and destroy() reset a stream through submitRstStream and rstStreamNT only.
+// close() and destroy() reset a stream through these three functions only.
 //
-// submitRstStream runs inside the call, or at 'ready' for a stream that had no id. At this point
-// node submits RST_STREAM to nghttp2, and nghttp2 treats the stream as closing from then on: it
-// ignores the frames that arrive for the stream and sends no more of its DATA. Here native
-// writes the frame one event loop turn later (rstStreamNT), so setStreamClosing puts the native
-// stream in that state now.
+// node submits RST_STREAM to nghttp2 inside the call, and nghttp2 treats the stream as closing
+// from then on. Here native writes the frame one event loop turn later (writeRstStream), so
+// setStreamClosing puts the native stream in that state now.
 function submitRstStream(session: Http2Session, stream: Http2Stream, code: number) {
-  session[bunHTTP2Native]?.setStreamClosing(stream.id, stream.destroyed);
-  setImmediate(rstStreamNT, session, stream, code);
+  session[bunHTTP2Native]?.setStreamClosing(stream.id, code, stream.destroyed);
+  setImmediate(writeRstStream, session, stream, code);
+  scheduleDestroyIfNotDestroyed(stream);
 }
-// Like node's submitRstStream, this does nothing for a stream that native does not have. The id
-// is read here: a pending stream gets it after close() ran, and a request that failed before it
-// reached native never gets one ('ready' is emitted for it all the same).
-function rstStreamNT(session: Http2Session, stream: Http2Stream, code: number) {
+function writeRstStream(session: Http2Session, stream: Http2Stream, code: number) {
   const id = stream.id;
   if (id) session[bunHTTP2Native]?.rstStream(id, code);
-  // Not node: when RST_STREAM dropped a write, node's stream waits for a 'finish' that cannot
-  // come and is never destroyed. This one emits 'close' and frees its concurrency slot.
+}
+function writeRstStreamOnFinish(session: Http2Session, stream: Http2Stream, code: number) {
+  writeRstStream(session, stream, code);
   scheduleDestroyIfNotDestroyed(stream);
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
@@ -2609,7 +2606,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           submitRstStream(session, this, code);
         }
       } else {
-        this.once("finish", rstStreamNT.bind(null, session, this, code));
+        this.once("finish", writeRstStreamOnFinish.bind(null, session, this, code));
       }
     }
   }
@@ -2619,6 +2616,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
+    const closedBefore = (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
     // closed by definition — closing it is not an abort and nothing must be sent on the wire.
@@ -2693,7 +2691,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      submitRstStream(session, this, rstCode);
+      // node's Http2Stream::Destroy: the RST_STREAM of an earlier close() leaves now, before
+      // 'close' frees the stream's slot for the next request.
+      if (closedBefore) writeRstStream(session, this, rstCode);
+      else submitRstStream(session, this, rstCode);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -3785,6 +3786,8 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     let error_instance: Error | number | undefined = undefined;
     if (stream.listenerCount("error") > 0) {
       if (typeof error === "number") {
+        // node's onStreamClose: a stream that user code closed keeps its code.
+        if (stream.closed) error = stream.rstCode;
         stream.rstCode = error;
         if (error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL) {
           error_instance = streamErrorFromCode(error);
@@ -4085,11 +4088,14 @@ class ServerHttp2Session extends Http2Session {
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
-      stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
-        stream[kAborted] = true;
-        stream.emit("aborted");
+      // node's onStreamClose: a stream that user code closed keeps its code.
+      if (!stream.closed) {
+        stream.rstCode = constants.NGHTTP2_CANCEL;
+        // if writable and not closed emit aborted
+        if (old_state != 5 && old_state != 7) {
+          stream[kAborted] = true;
+          stream.emit("aborted");
+        }
       }
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
@@ -4310,6 +4316,7 @@ class ServerHttp2Session extends Http2Session {
       if ((status & StreamState.WantTrailer) !== 0) return;
 
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
+      if ((status & StreamState.Closed) !== 0) return;
 
       if (stream.listenerCount("wantTrailers") === 0) {
         self[bunHTTP2Native]?.noTrailers(stream.id);
@@ -4969,7 +4976,9 @@ function streamSocketClosed(stream: Http2Stream) {
 // peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
   if (typeof stream?.id === "number" && stream.id > lastStreamId) {
-    streamRejectedByGoawaySession(stream);
+    // node's onStreamClose: a stream that user code closed keeps its code.
+    if (stream.closed) stream.destroy();
+    else streamRejectedByGoawaySession(stream);
   }
 }
 function streamRejectedByGoawaySession(stream: Http2Stream) {
@@ -5091,11 +5100,14 @@ class ClientHttp2Session extends Http2Session {
     ),
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
-      stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
-        stream[kAborted] = true;
-        stream.emit("aborted");
+      // node's onStreamClose: a stream that user code closed keeps its code.
+      if (!stream.closed) {
+        stream.rstCode = constants.NGHTTP2_CANCEL;
+        // if writable and not closed emit aborted
+        if (old_state != 5 && old_state != 7) {
+          stream[kAborted] = true;
+          stream.emit("aborted");
+        }
       }
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -5318,6 +5330,7 @@ class ClientHttp2Session extends Http2Session {
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
+      if ((status & StreamState.Closed) !== 0) return;
       if (stream.listenerCount("wantTrailers") === 0) {
         self[bunHTTP2Native]?.noTrailers(stream.id);
       } else {

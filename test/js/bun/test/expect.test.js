@@ -3710,6 +3710,11 @@ describe("expect()", () => {
       expect([{ id: 1 }, { id: 2 }]).toMatchObject([m, m]);
       expect([{ id: 1 }, { id: "2" }]).not.toMatchObject([m, m]);
 
+      // reused received object, a matcher at each place
+      const user = { id: 1 };
+      expect({ a: user, b: user }).not.toMatchObject({ a: { id: expect.any(Number) }, b: { id: expect.any(String) } });
+      expect({ a: user, b: user }).toMatchObject({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } });
+
       // the same object on both sides at two places
       expect({ a: o, b: o }).toMatchObject({ a: o, b: o });
     });

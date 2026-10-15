@@ -81,3 +81,46 @@ describe("toMatchSnapshot errors", () => {
     }).toThrow();
   });
 });
+
+// https://github.com/oven-sh/bun/issues/45126
+describe("property matchers on an object that appears more than once", () => {
+  it("checks the value at every place and records the matcher at every place", () => {
+    const user = { id: 1, name: "ann" };
+    expect({ current: user, previous: user }).toMatchInlineSnapshot(
+      { current: { id: expect.any(Number) }, previous: { id: expect.any(Number) } },
+      `
+      {
+        "current": {
+          "id": Any<Number>,
+          "name": "ann",
+        },
+        "previous": {
+          "id": Any<Number>,
+          "name": "ann",
+        },
+      }
+    `,
+    );
+    const m = { id: expect.any(Number) };
+    expect([{ id: 1 }, { id: 2 }]).toMatchInlineSnapshot(
+      [m, m],
+      `
+      [
+        {
+          "id": Any<Number>,
+        },
+        {
+          "id": Any<Number>,
+        },
+      ]
+    `,
+    );
+    expect(() => expect([{ id: 1 }, { id: "2" }]).toMatchSnapshot([m, m])).toThrow();
+  });
+
+  it("leaves the received object unchanged when the match fails", () => {
+    const received = { a: { id: 1 }, b: { id: "2" } };
+    expect(() => expect(received).toMatchSnapshot({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } })).toThrow();
+    expect(received.a.id).toBe(1);
+  });
+});

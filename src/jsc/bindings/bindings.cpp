@@ -258,7 +258,7 @@ template bool Bun__deepMatch<true>(
     ThrowScope& throwScope,
     MarkedArgumentBuffer& gcBuffer,
     Vector<std::pair<JSValue, JSValue>, 16>& stack,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 template bool Bun__deepMatch<false>(
@@ -268,7 +268,7 @@ template bool Bun__deepMatch<false>(
     ThrowScope& throwScope,
     MarkedArgumentBuffer& gcBuffer,
     Vector<std::pair<JSValue, JSValue>, 16>& stack,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
@@ -560,7 +560,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             if (otherProp.isObject()) {
                 Vector<std::pair<JSValue, JSValue>, 16> stack;
                 MarkedArgumentBuffer gcBuffer;
-                bool match = Bun__deepMatch<true>(otherProp, patternObject, globalObject, throwScope, gcBuffer, stack, false, true);
+                bool match = Bun__deepMatch<true>(otherProp, patternObject, globalObject, throwScope, gcBuffer, stack, nullptr, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -2161,14 +2161,23 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // only reached from `Bun.deepEquals(a, b, true, true)` in BunObject.cpp.
 template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>&, ThrowScope&, bool);
 
+void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    for (size_t i = 0; i < keys.size(); i++) {
+        JSObject* target = values.at(i * 2).getObject();
+        target->putDirectMayBeIndex(globalObject, keys[i], values.at(i * 2 + 1));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
  * @note
  * `stack` holds the (object, subset) pairs on the current recursion path.
- * A pair that is already on the path is a cycle through both values, and
- * counts as a match. A value that appears again under a different partner is
- * compared again: the same object can sit under several keys.
+ * A subset object that is already on the path is a cycle in the pattern. It
+ * matches only the object it was paired with on the path. Any other pair is
+ * compared: the same object can sit under several keys.
  *
  * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
  * properties currently within those stacks. Likely unnecessary, but better to
@@ -2181,7 +2190,7 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
  * @param throwScope
  * @param gcBuffer
  * @param stack
- * @param replacePropsWithAsymmetricMatchers
+ * @param matcherWrites
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -2195,7 +2204,7 @@ bool Bun__deepMatch(
     ThrowScope& throwScope,
     MarkedArgumentBuffer& gcBuffer,
     Vector<std::pair<JSValue, JSValue>, 16>& stack,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining)
 {
 
@@ -2211,8 +2220,10 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
 
+    // A subset object that is already on the path is a cycle in the pattern.
+    // It matches only the object it was paired with when the cycle started.
     for (const auto& [ancestorObj, ancestorSubset] : stack) {
-        if (ancestorObj == objValue && ancestorSubset == subsetValue) return true;
+        if (ancestorSubset == subsetValue) return ancestorObj == objValue;
     }
 
     const size_t stackLength = stack.size();
@@ -2274,10 +2285,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    if (matcherWrites) matcherWrites->append(obj, property, subsetProp);
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2288,10 +2296,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    if (matcherWrites) matcherWrites->append(subsetObj, property, prop);
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2311,7 +2316,7 @@ bool Bun__deepMatch(
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!eql) return false;
             } else {
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, gcBuffer, stack, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, gcBuffer, stack, matcherWrites, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
@@ -3289,7 +3294,14 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, subset, globalObject, scope, gcBuffer, stack, replacePropsWithAsymmetricMatchers, false));
+    Bun::DeferredMatcherWrites matcherWrites;
+    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, gcBuffer, stack, replacePropsWithAsymmetricMatchers ? &matcherWrites : nullptr, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (matched) {
+        matcherWrites.apply(globalObject, scope);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return matched;
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)

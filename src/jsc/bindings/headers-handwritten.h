@@ -3,6 +3,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/Identifier.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
@@ -433,6 +434,26 @@ extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::E
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
+namespace Bun {
+/// Asymmetric matchers that passed in `Bun__deepMatch`, and the property each
+/// one is written over once the whole match has passed. A write during the
+/// walk would make a second visit of the same object compare the matcher
+/// instead of the value.
+struct DeferredMatcherWrites {
+    JSC::MarkedArgumentBuffer values; // (target object, matcher) pairs
+    Vector<JSC::Identifier, 4> keys;
+
+    void append(JSC::JSObject* target, const JSC::Identifier& key, JSC::JSValue matcher)
+    {
+        values.append(target);
+        values.append(matcher);
+        keys.append(key);
+    }
+
+    void apply(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope);
+};
+}
+
 /**
  * @brief `Bun.deepMatch(a, b)`
  *
@@ -445,6 +466,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * recursion path, like the `stack` of `Bun__deepEquals`. It is how a cycle is
  * detected. `gcBuffer` keeps every value on that stack alive.
  *
+ * When `matcherWrites` is not null, every asymmetric matcher that passes is
+ * recorded there instead of being written over the value it matched. The
+ * caller applies the writes once the whole match has passed.
+ *
  * @tparam enableAsymmetricMatchers
  * @param objValue
  * @param subsetValue
@@ -452,7 +477,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
  * @param Scope
  * @param gcBuffer
  * @param stack
- * @param replacePropsWithAsymmetricMatchers
+ * @param matcherWrites
  * @param isMatchingObjectContaining
  *
  * @return true
@@ -466,7 +491,7 @@ bool Bun__deepMatch(
     JSC::ThrowScope& throwScope,
     JSC::MarkedArgumentBuffer& gcBuffer,
     Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeferredMatcherWrites* matcherWrites,
     bool isMatchingObjectContaining);
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);

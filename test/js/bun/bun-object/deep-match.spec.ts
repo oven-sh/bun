@@ -214,6 +214,26 @@ describe("Bun.deepMatch", () => {
       expect(Bun.deepMatch({ a: pattern, b: pattern }, { a: node, b: node })).toBe(true);
       expect(Bun.deepMatch({ a: pattern, b: pattern }, { a: node, b: { id: 2 } })).toBe(false);
     });
+
+    it("a cyclic subset does not match a finite object", () => {
+      const pattern = { id: 1 } as any;
+      pattern.self = pattern;
+      expect(Bun.deepMatch(pattern, { id: 1, self: { id: 1, self: { id: 1 } } })).toBe(false);
+    });
+
+    it("rings of different lengths do not loop forever", () => {
+      function ring(length: number) {
+        const nodes = Array.from({ length }, (_, i) => ({ id: i % 2, next: undefined as any }));
+        for (let i = 0; i < length; i++) nodes[i].next = nodes[(i + 1) % length];
+        return nodes[0];
+      }
+      expect(Bun.deepMatch(ring(4), ring(4))).toBe(true);
+      // the subset ring closes on a node that was paired with a different object
+      expect(Bun.deepMatch(ring(2), ring(4))).toBe(false);
+      expect(Bun.deepMatch(ring(1000), ring(999))).toBe(false);
+      // the object ring unrolls into the subset ring
+      expect(Bun.deepMatch(ring(4), ring(2))).toBe(true);
+    });
   });
 
   describe("array inputs", () => {

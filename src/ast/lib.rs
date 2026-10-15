@@ -594,8 +594,7 @@ pub struct Location {
     // TODO: move to `bun.Ordinal`
     pub line: i32,
     // TODO: figure out how this is interpreted, convert to `bun.Ordinal`
-    // original docs: 0-based, in bytes.
-    // but there is a place where this is emitted in output, implying one based character offset
+    // 1-based, in UTF-16 code units, when `init_or_null` computes it from a `Source`.
     pub column: i32,
 }
 
@@ -689,17 +688,16 @@ impl Location {
                     offset: 0,
                 });
             }
+            let offset = error_stop_offset(&source.contents, r.loc);
             let data = match tracker {
-                Some(tracker) => tracker.error_position(source, r.loc),
-                None => source.init_error_position(r.loc),
+                Some(tracker) => tracker.error_position(source, offset),
+                None => source.init_error_position(offset),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
             // an error in the last 80 bytes) so `write_format`'s caret aligns.
-            let offset_in_line = clamp_error_offset(&source.contents, r.loc)
-                .saturating_sub(data.line_start)
-                .min(full_line.len());
+            let offset_in_line = offset.saturating_sub(data.line_start).min(full_line.len());
             if full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
@@ -714,6 +712,7 @@ impl Location {
                 full_line = &full_line[lo..hi];
             }
 
+            debug_assert!(data.column_count >= 1);
             return Some(Location {
                 file,
                 namespace,
@@ -2141,10 +2140,7 @@ impl Default for ErrorPositionState {
 }
 
 impl ErrorPositionState {
-    /// Consume the codepoints of `contents[from..to]`, updating line/column
-    /// exactly the way `Source::init_error_position` always has (`\r` resets
-    /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
-    /// are line breaks). Returns `true` if a line break was crossed.
+    /// Consume the codepoints of `contents[from..to]`. Returns `true` if a line break was crossed.
     fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
         use bun_core::strings::{CodepointIterator, Cursor};
         let iter_ = CodepointIterator::init(&contents[from..to]);
@@ -2164,7 +2160,7 @@ impl ErrorPositionState {
                 }
                 0x0D => {
                     // '\r'
-                    self.column_number = 0;
+                    self.column_number = 1;
                     self.line_start = from + iter.width as usize + iter.i as usize;
                     self.line_count += 1;
                     crossed_line_break = true;
@@ -2220,11 +2216,20 @@ fn scan_line_end(contents: &[u8], offset: usize) -> usize {
     contents.len()
 }
 
-/// Clamp a diagnostic `Loc` into `contents` the way `init_error_position`
-/// always has.
+/// The `\n` of a `\r\n` pair and a UTF-8 continuation byte have no line and column: their unit's first byte has.
 #[inline]
-fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
-    (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
+fn error_stop_offset(contents: &[u8], offset_loc: Loc) -> usize {
+    use bun_core::strings;
+    debug_assert!(!offset_loc.is_empty());
+    let offset =
+        (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1);
+    match contents.get(offset) {
+        Some(b'\n') if strings::js_line_break_len_back(&contents[..=offset]) == 2 => offset - 1,
+        Some(&byte) if !strings::is_utf8_char_boundary(byte) => {
+            strings::wtf8_codepoint_start(contents, offset)
+        }
+        _ => offset,
+    }
 }
 
 /// Incremental line/column scanner for diagnostics (the esbuild
@@ -2275,21 +2280,17 @@ impl LineColumnTracker {
 
     /// [`Source::init_error_position`], resuming from the previous call's
     /// offset when possible instead of rescanning from the start.
-    pub(crate) fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
-        debug_assert!(!offset_loc.is_empty());
+    pub(crate) fn error_position(&mut self, source: &Source, offset: usize) -> ErrorPosition {
         let contents: &[u8] = &source.contents;
-        let offset = clamp_error_offset(contents, offset_loc);
+        // A cursor left inside a unit would decode the rest of it as a unit of its own.
+        debug_assert_eq!(offset, error_stop_offset(contents, usize2loc(offset)));
 
         if !self.matches(source) {
             self.reset_for(source);
         }
 
-        if offset < contents.len() && contents[offset] & 0xC0 == 0x80 {
-            return source.init_error_position(offset_loc);
-        }
-
         let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
-            return source.init_error_position(offset_loc);
+            return source.init_error_position(offset);
         };
         let cursor = &mut self.cursors[index];
 
@@ -2469,10 +2470,9 @@ impl<'a> Source<'a> {
         Range { loc, len: 0 }
     }
 
-    pub(crate) fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        debug_assert!(!offset_loc.is_empty());
+    /// The line and column of `offset`, a stop from [`error_stop_offset`].
+    pub(crate) fn init_error_position(&self, offset: usize) -> ErrorPosition {
         let contents: &[u8] = &self.contents;
-        let offset = clamp_error_offset(contents, offset_loc);
 
         let mut state = ErrorPositionState::default();
         state.advance(contents, 0, offset);
@@ -3117,6 +3117,19 @@ mod location_tests {
 mod line_column_tracker_tests {
     use super::*;
 
+    /// The position of the `Loc` at `at`, from a scan from byte 0 and from `tracker`.
+    fn locate(
+        source: &Source,
+        tracker: &mut LineColumnTracker,
+        at: usize,
+    ) -> (ErrorPosition, ErrorPosition) {
+        let offset = error_stop_offset(source.contents(), usize2loc(at));
+        (
+            source.init_error_position(offset),
+            tracker.error_position(source, offset),
+        )
+    }
+
     fn check_corpus_entry(contents: &[u8]) {
         let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents);
         let len = contents.len();
@@ -3124,10 +3137,12 @@ mod line_column_tracker_tests {
         // Non-decreasing offsets (the parser/lexer pattern): every result must
         // match a from-scratch scan.
         let mut tracker = LineColumnTracker::default();
-        for offset in 0..len.max(1) {
-            let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+        for offset in 0..=len + 1 {
+            let (expected, got) = locate(&source, &mut tracker, offset);
+            assert!(
+                got.column_count >= 1,
+                "column 0 at offset {offset} of {contents:?}"
+            );
             assert_eq!(
                 (
                     expected.line_start,
@@ -3151,9 +3166,7 @@ mod line_column_tracker_tests {
         offsets.extend((0..len.max(1)).rev().step_by(7));
         offsets.extend([0, len.max(1) - 1, 0, len / 2, len / 2]);
         for offset in offsets {
-            let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+            let (expected, got) = locate(&source, &mut tracker, offset);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3186,6 +3199,15 @@ mod line_column_tracker_tests {
             "unicode \u{2028} separator \u{2029} and emoji \u{1F600}\u{1F600} plus \u{00E9}\u{4E2D}\u{6587}\nsecond line \u{00E9}\n".as_bytes(),
             b"mixed\ninvalid \xff\xfe bytes \x80 here\r\nlast line",
             b"[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":",
+            b"crlf\r\nend\r\n",
+            b"cr crlf\r\r\n",
+            "ls end\u{2028}".as_bytes(),
+            "2 bytes \u{00E9}".as_bytes(),
+            "3 bytes \u{4E2D}".as_bytes(),
+            "4 bytes \u{1F600}".as_bytes(),
+            b"cut short \xE4\xB8A",
+            b"\xF0\x9F\xE4\xB8\xAD",
+            b"lone lead \xC3",
         ];
         for contents in corpus {
             check_corpus_entry(contents);
@@ -3218,9 +3240,7 @@ mod line_column_tracker_tests {
 
         let mut tracker = LineColumnTracker::default();
         for offset in offsets {
-            let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(&source, loc);
+            let (expected, got) = locate(&source, &mut tracker, offset);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3256,9 +3276,7 @@ mod line_column_tracker_tests {
             (&b, 45),
             (&a, 2),
         ] {
-            let loc = usize2loc(offset);
-            let expected = source.init_error_position(loc);
-            let got = tracker.error_position(source, loc);
+            let (expected, got) = locate(source, &mut tracker, offset);
             assert_eq!(
                 (
                     expected.line_start,
@@ -3285,14 +3303,134 @@ mod line_column_tracker_tests {
         // and this returned 17.
         let src = "const a = \"\u{1F600}\u{1F600}\"; ]".as_bytes();
         let source = Source::init_path_string(b"t.js" as &[u8], src);
-        let pos = source.init_error_position(usize2loc(src.len() - 1));
+        let pos = source.init_error_position(src.len() - 1);
         assert_eq!(pos.column_count, 19);
 
         // BMP-only control: `é` is one UTF-16 unit, so astral vs BMP lines
         // with the same layout must agree.
         let bmp = "const a = \"\u{00E9}\u{00E9}\u{00E9}\u{00E9}\"; ]".as_bytes();
         let bmp_source = Source::init_path_string(b"t.js" as &[u8], bmp);
-        let bmp_pos = bmp_source.init_error_position(usize2loc(bmp.len() - 1));
+        let bmp_pos = bmp_source.init_error_position(bmp.len() - 1);
         assert_eq!(bmp_pos.column_count, 19);
+    }
+
+    /// The line, column and line text that a diagnostic at `at` reports.
+    fn located(contents: &[u8], at: usize) -> (i32, i32, bstr::BString) {
+        let source = Source::init_path_string(b"t.js" as &[u8], contents);
+        let range = Range {
+            loc: usize2loc(at),
+            len: 0,
+        };
+        let location = Location::init_or_null(Some(&source), range).unwrap();
+        (
+            location.line,
+            location.column,
+            location.line_text.unwrap().into_vec().into(),
+        )
+    }
+
+    fn with_line_break(lf: &[u8], line_break: &[u8]) -> Vec<u8> {
+        let mut spelled = Vec::new();
+        for &byte in lf {
+            if byte == b'\n' {
+                spelled.extend_from_slice(line_break);
+            } else {
+                spelled.push(byte);
+            }
+        }
+        spelled
+    }
+
+    #[test]
+    fn crlf_and_lone_cr_are_located_like_lf() {
+        let sources = [
+            "a;\nf(",
+            "a;\nf(\n",
+            "a;\nf(\n\n",
+            "\n\nf(a,\n",
+            "s = '\u{00E9}\u{4E2D}\u{1F600}';\n];\n",
+        ];
+        for lf in sources.map(str::as_bytes) {
+            let crlf = with_line_break(lf, b"\r\n");
+            let cr = with_line_break(lf, b"\r");
+            let source = bstr::BStr::new(lf);
+            let mut line_breaks_before = 0;
+            // Through `lf.len()`, the `Loc` of an error at the end of the file.
+            for at in 0..=lf.len() {
+                let expected = located(lf, at);
+                let in_crlf = at + line_breaks_before;
+                assert_eq!(
+                    located(&cr, at),
+                    expected,
+                    "lone CR, Loc {at} of {source:?}"
+                );
+                assert_eq!(
+                    located(&crlf, in_crlf),
+                    expected,
+                    "CR LF, Loc {at} of {source:?}"
+                );
+                if lf.get(at) == Some(&b'\n') {
+                    assert_eq!(
+                        located(&crlf, in_crlf + 1),
+                        expected,
+                        "the LF of a CR LF pair, Loc {at} of {source:?}"
+                    );
+                    line_breaks_before += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_loc_inside_a_unit_is_located_at_its_first_byte() {
+        // As after a final `\n`, the end of the file is the end of the last line.
+        let separator = "const port = 3000;\nfunction start() {\u{2028}".as_bytes();
+        assert_eq!(
+            located(separator, separator.len()),
+            (2, 19, "function start() {".into())
+        );
+
+        // With no final line break it is the last character.
+        let cjk = "foo(\u{4E2D}".as_bytes();
+        assert_eq!(located(cjk, cjk.len()), (1, 5, "foo(\u{4E2D}".into()));
+
+        let text = "f(\u{00E9}\u{4E2D}\u{1F600})".as_bytes();
+        for (first, len) in [(2, 2), (4, 3), (7, 4)] {
+            for inside in first + 1..first + len {
+                assert_eq!(located(text, inside), located(text, first), "Loc {inside}");
+            }
+        }
+
+        // No sequence holds these continuation bytes, so each has a column of its own.
+        let stray = b"a\x80\x80b";
+        assert_eq!([1, 2, 3].map(|at| located(stray, at).1), [2, 3, 4]);
+    }
+
+    /// The bytes `tracker` scans for every `Loc` of `contents` in order, and its scans from byte 0.
+    fn scan_cost(contents: &[u8]) -> (usize, usize) {
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents);
+        let mut tracker = LineColumnTracker::default();
+        let (mut scanned, mut rescans) = (0, 0);
+        for at in 0..=contents.len() {
+            let offset = error_stop_offset(contents, usize2loc(at));
+            let before: usize = tracker.cursors.iter().map(|cursor| cursor.offset).sum();
+            tracker.error_position(&source, offset);
+            if tracker.cursors.iter().any(|cursor| cursor.offset == offset) {
+                let after: usize = tracker.cursors.iter().map(|cursor| cursor.offset).sum();
+                scanned += after - before;
+            } else {
+                scanned += offset;
+                rescans += 1;
+            }
+        }
+        (scanned, rescans)
+    }
+
+    #[test]
+    fn locs_in_order_are_located_in_one_pass() {
+        let crlf = b"const a = 1;\r\n".repeat(32);
+        assert_eq!(scan_cost(&crlf), (crlf.len() - b"\r\n".len(), 0));
+        let cjk = "\u{4E2D}".repeat(32).into_bytes();
+        assert_eq!(scan_cost(&cjk), (cjk.len() - "\u{4E2D}".len(), 0));
     }
 }

@@ -2564,10 +2564,20 @@ describe("several writes to a handed-off socket in one task", () => {
     ...(isWindows
       ? []
       : [
-          ["a signal to itself that is ignored by default leaves the others for the end of the task", "SIGWINCH"],
-          ["a signal to itself that is set to be ignored leaves the others for the end of the task", "SIGPIPE"],
+          [
+            "a signal to itself that is ignored by default leaves the others for the end of the task",
+            "process.kill(process.pid, 'SIGWINCH');",
+          ],
+          [
+            "a signal to itself that is set to be ignored leaves the others for the end of the task",
+            "process.kill(process.pid, 'SIGPIPE');",
+          ],
+          [
+            "a signal to itself that kill() refuses leaves the others for the end of the task",
+            "try { process.kill(process.pid, 999); } catch {}",
+          ],
         ]),
-  ])("%s", async (_, signal) => {
+  ])("%s", async (_, afterTheWrites) => {
     using dir = tempDir("node-http-upgrade-write-batch", {
       "server.js": `
         const http = require("node:http");
@@ -2578,7 +2588,7 @@ describe("several writes to a handed-off socket in one task", () => {
         server.on("upgrade", (req, socket) => {
           socket.write("<first>");
           for (let i = 0; i < 40; i++) socket.write("<piece " + i + ">");
-          ${signal && `process.kill(process.pid, "${signal}");`}
+          ${afterTheWrites}
           Atomics.store(state, WRITTEN, 1);
           Atomics.notify(state, WRITTEN);
           Atomics.wait(state, READ, 0);

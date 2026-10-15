@@ -4814,12 +4814,14 @@ static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
 #endif
 }
 
-// Whether the signal does nothing to the process: it is set to be ignored, or left at a default action that ignores it.
+// Whether the signal does nothing to the process: kill() refuses it, it is set to be ignored, or its default action ignores it.
 static bool signalIsIgnored(int signal)
 {
 #if OS(WINDOWS)
     return false;
 #else
+    if (signal >= NSIG)
+        return true;
     struct sigaction current;
     if (sigaction(signal, nullptr, &current) || (current.sa_flags & SA_SIGINFO))
         return false;

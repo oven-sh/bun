@@ -1,6 +1,6 @@
 #![warn(unused_must_use)]
 use crate::compat::Feature;
-use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use crate::css_values::number::NonNegative;
 use crate::generics::ToCss as _;
 use crate::logical::PropertyCategory;
@@ -29,10 +29,15 @@ impl_size_shorthand!(
     inline_start,
     inline_end
 );
-impl_size_shorthand!(PaddingBlock, LengthPercentageOrAuto, block_start, block_end);
+impl_size_shorthand!(
+    PaddingBlock,
+    NonNegative<LengthPercentage>,
+    block_start,
+    block_end
+);
 impl_size_shorthand!(
     PaddingInline,
-    LengthPercentageOrAuto,
+    NonNegative<LengthPercentage>,
     inline_start,
     inline_end
 );
@@ -155,9 +160,9 @@ define_rect_shorthand! {
 #[derive(Clone, PartialEq)]
 pub struct PaddingBlock {
     /// The block start value.
-    pub(crate) block_start: LengthPercentageOrAuto,
+    pub(crate) block_start: NonNegative<LengthPercentage>,
     /// The block end value.
-    pub(crate) block_end: LengthPercentageOrAuto,
+    pub(crate) block_end: NonNegative<LengthPercentage>,
 }
 
 impl PaddingBlock {
@@ -169,9 +174,9 @@ impl PaddingBlock {
 #[derive(Clone, PartialEq)]
 pub struct PaddingInline {
     /// The inline start value.
-    pub(crate) inline_start: LengthPercentageOrAuto,
+    pub(crate) inline_start: NonNegative<LengthPercentage>,
     /// The inline end value.
-    pub(crate) inline_end: LengthPercentageOrAuto,
+    pub(crate) inline_end: NonNegative<LengthPercentage>,
 }
 
 impl PaddingInline {
@@ -181,7 +186,7 @@ impl PaddingInline {
 
 define_rect_shorthand! {
     /// A value for the [padding](https://drafts.csswg.org/css-box-4/#propdef-padding) shorthand property.
-    Padding, LengthPercentageOrAuto,
+    Padding, NonNegative<LengthPercentage>,
     top: PaddingTop,
     right: PaddingRight,
     bottom: PaddingBottom,
@@ -303,8 +308,43 @@ pub trait SizeHandlerSpec {
     const SPEC: &'static SizeSpec;
 }
 
-type Extract = fn(&Property) -> &LengthPercentageOrAuto;
+type Extract = fn(&Property) -> LengthPercentageOrAuto;
 type Make = fn(LengthPercentageOrAuto) -> Property;
+
+/// Conversion between a spec's `Property` payload and the handler's slot type, so
+/// one `SizeHandlerImpl` body serves payloads that do and do not allow `auto`.
+trait SlotValue {
+    fn load(&self) -> LengthPercentageOrAuto;
+    fn store(value: LengthPercentageOrAuto) -> Self;
+}
+
+impl SlotValue for LengthPercentageOrAuto {
+    #[inline(never)]
+    fn load(&self) -> LengthPercentageOrAuto {
+        self.clone()
+    }
+
+    #[inline]
+    fn store(value: LengthPercentageOrAuto) -> Self {
+        value
+    }
+}
+
+impl SlotValue for NonNegative<LengthPercentage> {
+    #[inline(never)]
+    fn load(&self) -> LengthPercentageOrAuto {
+        LengthPercentageOrAuto::Length(self.0.clone())
+    }
+
+    #[inline(never)]
+    fn store(value: LengthPercentageOrAuto) -> Self {
+        match value {
+            LengthPercentageOrAuto::Length(value) => NonNegative(value),
+            // A slot of this payload type is only filled by `load`, which never yields `auto`.
+            LengthPercentageOrAuto::Auto => unreachable!(),
+        }
+    }
+}
 
 pub struct SizeSpec {
     top: PropertyIdTag,
@@ -338,10 +378,10 @@ pub struct SizeSpec {
     extract_inline_start: Extract,
     extract_inline_end: Extract,
     /// `[top, right, bottom, left]` of the 4-field shorthand.
-    extract_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 4],
+    extract_shorthand: fn(&Property) -> [LengthPercentageOrAuto; 4],
     /// `[start, end]`.
-    extract_block_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 2],
-    extract_inline_shorthand: fn(&Property) -> [&LengthPercentageOrAuto; 2],
+    extract_block_shorthand: fn(&Property) -> [LengthPercentageOrAuto; 2],
+    extract_inline_shorthand: fn(&Property) -> [LengthPercentageOrAuto; 2],
 
     make_top: Make,
     make_bottom: Make,
@@ -557,10 +597,11 @@ impl SizeHandlerImpl {
                 context,
             );
         } else if tag == spec.block_start {
+            let val = (spec.extract_block_start)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::BlockStart,
-                (spec.extract_block_start)(property),
+                &val,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -569,15 +610,16 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::BlockStart,
-                (spec.make_block_start)((spec.extract_block_start)(property).clone()),
+                (spec.make_block_start)(val),
                 dest,
                 context,
             );
         } else if tag == spec.block_end {
+            let val = (spec.extract_block_end)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::BlockEnd,
-                (spec.extract_block_end)(property),
+                &val,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -585,15 +627,16 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::BlockEnd,
-                (spec.make_block_end)((spec.extract_block_end)(property).clone()),
+                (spec.make_block_end)(val),
                 dest,
                 context,
             );
         } else if tag == spec.inline_start {
+            let val = (spec.extract_inline_start)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::InlineStart,
-                (spec.extract_inline_start)(property),
+                &val,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -601,15 +644,16 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::InlineStart,
-                (spec.make_inline_start)((spec.extract_inline_start)(property).clone()),
+                (spec.make_inline_start)(val),
                 dest,
                 context,
             );
         } else if tag == spec.inline_end {
+            let val = (spec.extract_inline_end)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::InlineEnd,
-                (spec.extract_inline_end)(property),
+                &val,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -617,16 +661,16 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::InlineEnd,
-                (spec.make_inline_end)((spec.extract_inline_end)(property).clone()),
+                (spec.make_inline_end)(val),
                 dest,
                 context,
             );
         } else if tag == spec.block_shorthand {
-            let val = (spec.extract_block_shorthand)(property);
+            let [start, end] = (spec.extract_block_shorthand)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::BlockStart,
-                val[0],
+                &start,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -634,7 +678,7 @@ impl SizeHandlerImpl {
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::BlockEnd,
-                val[1],
+                &end,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -642,23 +686,23 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::BlockStart,
-                (spec.make_block_start)(val[0].clone()),
+                (spec.make_block_start)(start),
                 dest,
                 context,
             );
             self.logical_property_helper(
                 spec,
                 LogicalSlot::BlockEnd,
-                (spec.make_block_end)(val[1].clone()),
+                (spec.make_block_end)(end),
                 dest,
                 context,
             );
         } else if tag == spec.inline_shorthand {
-            let val = (spec.extract_inline_shorthand)(property);
+            let [start, end] = (spec.extract_inline_shorthand)(property);
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::InlineStart,
-                val[0],
+                &start,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -666,7 +710,7 @@ impl SizeHandlerImpl {
             self.flush_helper_logical(
                 spec,
                 LogicalSlot::InlineEnd,
-                val[1],
+                &end,
                 PropertyCategory::Logical,
                 dest,
                 context,
@@ -674,23 +718,23 @@ impl SizeHandlerImpl {
             self.logical_property_helper(
                 spec,
                 LogicalSlot::InlineStart,
-                (spec.make_inline_start)(val[0].clone()),
+                (spec.make_inline_start)(start),
                 dest,
                 context,
             );
             self.logical_property_helper(
                 spec,
                 LogicalSlot::InlineEnd,
-                (spec.make_inline_end)(val[1].clone()),
+                (spec.make_inline_end)(end),
                 dest,
                 context,
             );
         } else if tag == spec.shorthand {
-            let val = (spec.extract_shorthand)(property);
+            let [top, right, bottom, left] = (spec.extract_shorthand)(property);
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Top,
-                val[0],
+                &top,
                 spec.shorthand_category,
                 dest,
                 context,
@@ -698,7 +742,7 @@ impl SizeHandlerImpl {
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Right,
-                val[1],
+                &right,
                 spec.shorthand_category,
                 dest,
                 context,
@@ -706,7 +750,7 @@ impl SizeHandlerImpl {
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Bottom,
-                val[2],
+                &bottom,
                 spec.shorthand_category,
                 dest,
                 context,
@@ -714,15 +758,15 @@ impl SizeHandlerImpl {
             self.flush_helper_physical(
                 spec,
                 PhysicalSlot::Left,
-                val[3],
+                &left,
                 spec.shorthand_category,
                 dest,
                 context,
             );
-            self.top = Some(val[0].clone());
-            self.right = Some(val[1].clone());
-            self.bottom = Some(val[2].clone());
-            self.left = Some(val[3].clone());
+            self.top = Some(top);
+            self.right = Some(right);
+            self.bottom = Some(bottom);
+            self.left = Some(left);
             self.block_start = None;
             self.block_end = None;
             self.inline_start = None;
@@ -787,13 +831,13 @@ impl SizeHandlerImpl {
         &mut self,
         spec: &'static SizeSpec,
         field: PhysicalSlot,
-        val: &LengthPercentageOrAuto,
+        val: LengthPercentageOrAuto,
         category: PropertyCategory,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        self.flush_helper_physical(spec, field, val, category, dest, context);
-        *self.physical_slot(field) = Some(val.clone());
+        self.flush_helper_physical(spec, field, &val, category, dest, context);
+        *self.physical_slot(field) = Some(val);
         self.category = category;
         self.has_any = true;
     }
@@ -976,10 +1020,10 @@ impl SizeHandlerImpl {
     fn logical_prop_helper(
         val: &mut Option<Property>,
         logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
-        make_ltr: fn(LengthPercentageOrAuto) -> Property,
+        extract_logical: Extract,
+        make_ltr: Make,
         ltr: PropertyId,
-        make_rtl: fn(LengthPercentageOrAuto) -> Property,
+        make_rtl: Make,
         rtl: PropertyId,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
@@ -990,7 +1034,7 @@ impl SizeHandlerImpl {
             // Raw discriminant comparison.
             if v_.variant_tag() == logical {
                 let v = extract_logical(v_);
-                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v.clone()));
+                context.add_logical_rule(make_ltr(v.clone()), make_rtl(v));
             } else if let Property::Unparsed(v) = v_ {
                 context.add_logical_rule(
                     Property::Unparsed(v.with_property_id(bump, ltr)),
@@ -1037,16 +1081,12 @@ impl SizeHandlerImpl {
         {
             // The ≤2-field invariant is upheld structurally by `make_*_shorthand`.
             let start_v = match pair {
-                LogicalSidePair::Block => {
-                    (spec.extract_block_start)(start.as_ref().unwrap()).clone()
-                }
-                LogicalSidePair::Inline => {
-                    (spec.extract_inline_start)(start.as_ref().unwrap()).clone()
-                }
+                LogicalSidePair::Block => (spec.extract_block_start)(start.as_ref().unwrap()),
+                LogicalSidePair::Inline => (spec.extract_inline_start)(start.as_ref().unwrap()),
             };
             let end_v = match pair {
-                LogicalSidePair::Block => (spec.extract_block_end)(end.as_ref().unwrap()).clone(),
-                LogicalSidePair::Inline => (spec.extract_inline_end)(end.as_ref().unwrap()).clone(),
+                LogicalSidePair::Block => (spec.extract_block_end)(end.as_ref().unwrap()),
+                LogicalSidePair::Inline => (spec.extract_inline_end)(end.as_ref().unwrap()),
             };
             let prop = match pair {
                 LogicalSidePair::Block => (spec.make_block_shorthand)(start_v, end_v),
@@ -1067,8 +1107,8 @@ impl SizeHandlerImpl {
     fn prop(
         val: &mut Option<Property>,
         logical: PropertyIdTag,
-        extract_logical: fn(&Property) -> &LengthPercentageOrAuto,
-        make_physical: fn(LengthPercentageOrAuto) -> Property,
+        extract_logical: Extract,
+        make_physical: Make,
         physical: PropertyId,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
@@ -1079,9 +1119,7 @@ impl SizeHandlerImpl {
         if let Some(v) = val.as_ref() {
             // Raw discriminant comparison.
             if v.variant_tag() == logical {
-                // Clone instead of moving out of `&Property`;
-                // `LengthPercentageOrAuto` is small.
-                dest.push(make_physical(extract_logical(v).clone()));
+                dest.push(make_physical(extract_logical(v)));
             } else if let Property::Unparsed(u) = v {
                 dest.push(Property::Unparsed(u.with_property_id(bump, physical)));
             }
@@ -1130,75 +1168,77 @@ macro_rules! size_handler_spec {
             feature: $feature,
             shorthand_feature: $shorthand_feature,
             extract_top: |p| match p {
-                Property::$Top(v) => v,
+                Property::$Top(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_bottom: |p| match p {
-                Property::$Bottom(v) => v,
+                Property::$Bottom(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_left: |p| match p {
-                Property::$Left(v) => v,
+                Property::$Left(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_right: |p| match p {
-                Property::$Right(v) => v,
+                Property::$Right(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_block_start: |p| match p {
-                Property::$BlockStart(v) => v,
+                Property::$BlockStart(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_block_end: |p| match p {
-                Property::$BlockEnd(v) => v,
+                Property::$BlockEnd(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_inline_start: |p| match p {
-                Property::$InlineStart(v) => v,
+                Property::$InlineStart(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_inline_end: |p| match p {
-                Property::$InlineEnd(v) => v,
+                Property::$InlineEnd(v) => v.load(),
                 _ => unreachable!(),
             },
             extract_shorthand: |p| match p {
-                Property::$Shorthand(v) => [&v.top, &v.right, &v.bottom, &v.left],
+                Property::$Shorthand(v) => {
+                    [v.top.load(), v.right.load(), v.bottom.load(), v.left.load()]
+                }
                 _ => unreachable!(),
             },
             extract_block_shorthand: |p| match p {
-                Property::$BlockShorthand(v) => [&v.block_start, &v.block_end],
+                Property::$BlockShorthand(v) => [v.block_start.load(), v.block_end.load()],
                 _ => unreachable!(),
             },
             extract_inline_shorthand: |p| match p {
-                Property::$InlineShorthand(v) => [&v.inline_start, &v.inline_end],
+                Property::$InlineShorthand(v) => [v.inline_start.load(), v.inline_end.load()],
                 _ => unreachable!(),
             },
-            make_top: Property::$Top,
-            make_bottom: Property::$Bottom,
-            make_left: Property::$Left,
-            make_right: Property::$Right,
-            make_block_start: Property::$BlockStart,
-            make_block_end: Property::$BlockEnd,
-            make_inline_start: Property::$InlineStart,
-            make_inline_end: Property::$InlineEnd,
+            make_top: |v| Property::$Top(SlotValue::store(v)),
+            make_bottom: |v| Property::$Bottom(SlotValue::store(v)),
+            make_left: |v| Property::$Left(SlotValue::store(v)),
+            make_right: |v| Property::$Right(SlotValue::store(v)),
+            make_block_start: |v| Property::$BlockStart(SlotValue::store(v)),
+            make_block_end: |v| Property::$BlockEnd(SlotValue::store(v)),
+            make_inline_start: |v| Property::$InlineStart(SlotValue::store(v)),
+            make_inline_end: |v| Property::$InlineEnd(SlotValue::store(v)),
             make_shorthand: |top, bottom, left, right| {
                 Property::$Shorthand($Shorthand {
-                    top,
-                    right,
-                    bottom,
-                    left,
+                    top: SlotValue::store(top),
+                    right: SlotValue::store(right),
+                    bottom: SlotValue::store(bottom),
+                    left: SlotValue::store(left),
                 })
             },
             make_block_shorthand: |block_start, block_end| {
                 Property::$BlockShorthand($BlockShorthand {
-                    block_start,
-                    block_end,
+                    block_start: SlotValue::store(block_start),
+                    block_end: SlotValue::store(block_end),
                 })
             },
             make_inline_shorthand: |inline_start, inline_end| {
                 Property::$InlineShorthand($InlineShorthand {
-                    inline_start,
-                    inline_end,
+                    inline_start: SlotValue::store(inline_start),
+                    inline_end: SlotValue::store(inline_end),
                 })
             },
         };

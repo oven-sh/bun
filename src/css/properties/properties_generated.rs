@@ -1802,14 +1802,14 @@ pub enum Property {
     MarginBlock(margin_padding::MarginBlock),
     MarginInline(margin_padding::MarginInline),
     Margin(margin_padding::Margin),
-    PaddingTop(css::css_values::length::LengthPercentageOrAuto),
-    PaddingBottom(css::css_values::length::LengthPercentageOrAuto),
-    PaddingLeft(css::css_values::length::LengthPercentageOrAuto),
-    PaddingRight(css::css_values::length::LengthPercentageOrAuto),
-    PaddingBlockStart(css::css_values::length::LengthPercentageOrAuto),
-    PaddingBlockEnd(css::css_values::length::LengthPercentageOrAuto),
-    PaddingInlineStart(css::css_values::length::LengthPercentageOrAuto),
-    PaddingInlineEnd(css::css_values::length::LengthPercentageOrAuto),
+    PaddingTop(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingBottom(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingLeft(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingRight(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingBlockStart(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingBlockEnd(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingInlineStart(NonNegative<css::css_values::length::LengthPercentage>),
+    PaddingInlineEnd(NonNegative<css::css_values::length::LengthPercentage>),
     PaddingBlock(margin_padding::PaddingBlock),
     PaddingInline(margin_padding::PaddingInline),
     Padding(margin_padding::Padding),
@@ -3388,58 +3388,58 @@ impl Property {
                 }
             }
             PropertyId::PaddingTop => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingTop(c));
                 }
             }
             PropertyId::PaddingBottom => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingBottom(c));
                 }
             }
             PropertyId::PaddingLeft => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingLeft(c));
                 }
             }
             PropertyId::PaddingRight => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingRight(c));
                 }
             }
             PropertyId::PaddingBlockStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingBlockStart(c));
                 }
             }
             PropertyId::PaddingBlockEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingBlockEnd(c));
                 }
             }
             PropertyId::PaddingInlineStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingInlineStart(c));
                 }
             }
             PropertyId::PaddingInlineEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
-                {
+                if let Some(c) = parse_value::<NonNegative<css::css_values::length::LengthPercentage>>(
+                    input, options,
+                ) {
                     return Ok(Property::PaddingInlineEnd(c));
                 }
             }

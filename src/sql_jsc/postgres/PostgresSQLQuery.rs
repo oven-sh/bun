@@ -100,12 +100,15 @@ pub enum Cancel {
 }
 
 /// A request that the server refused for a reason that is not its own, before it had an effect,
-/// runs once more: its statement was lost or stale, or it got the CancelRequest of another.
+/// runs again: its statement was lost or stale, or it got the CancelRequest of another.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Retry {
     No,
     /// The ReadyForQuery of the failed batch puts the request back in the queue.
     AtReadyForQuery,
+    /// It came back. A statement that was parsed for another request can be lost again by now.
+    CameBack,
+    /// It came back and parsed its statement itself. Nothing is written between that and its Bind.
     Done,
 }
 

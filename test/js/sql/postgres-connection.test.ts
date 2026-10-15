@@ -314,6 +314,24 @@ describe.concurrent("a Bind that finds its prepared statement lost", () => {
     expect(server.wire).toEqual(["P P0", "B P0", "B P0", "C P0", "P P1", "B P1", "C P1", "P P2", "B P2"]);
   });
 
+  // Each goes on until it has parsed the statement itself.
+  test("ends for every query of a burst on a server that keeps no statement", async () => {
+    let forgetful = false;
+    using server = await statementServer(statement => (forgetful ? lost(statement) : undefined));
+    await using sql = new SQL(server.url, { max: 1 });
+    const echo = (v: string) => settled(sql`select ${v} as v`);
+    expect(await echo("a")).toEqual([{ v: "a" }]);
+
+    forgetful = true;
+    expect(await Promise.all([echo("b"), echo("c"), echo("d")])).toMatchObject([
+      { errno: "26000", message: lost("P1").M },
+      { errno: "26000", message: lost("P2").M },
+      { errno: "26000", message: lost("P3").M },
+    ]);
+    forgetful = false;
+    expect(await echo("e")).toEqual([{ v: "e" }]);
+  });
+
   // 0A000 is the code of every feature that is not supported.
   test("is told from another error by the routine that reports 0A000", async () => {
     let error: Parameters<typeof pgErrorResponse>[0] | undefined;
@@ -1570,6 +1588,32 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         } finally {
           await sql`drop table ${table}`;
         }
+      });
+
+      // A query holds the statement that was current when it was handed over. The last one here binds that, then the
+      // one that was prepared for the query in the middle, which is lost or stale too by then.
+      test.each([
+        ["DEALLOCATE ALL twice", "deallocate all", "deallocate all", {}, {}],
+        [
+          "ALTER TABLE twice",
+          "alter table altered add column b int",
+          "alter table altered add column c int",
+          { b: null },
+          { b: null, c: null },
+        ],
+        ["DEALLOCATE ALL and ALTER TABLE", "deallocate all", "alter table altered add column b int", {}, { b: null }],
+      ])("is prepared again for a query that is handed over before %s", async (_, first, second, middle, last) => {
+        await using sql = await connect();
+        const select = await altered(sql);
+        await select();
+        const row = { id: 1, a: 1 };
+        expect(
+          await Promise.all(
+            [select(), sql.unsafe(first).simple(), select(), sql.unsafe(second).simple(), select()].map(settled),
+          ),
+        ).toEqual([[row], [], [{ ...row, ...middle }], [], [{ ...row, ...last }]]);
+        expect(await settled(select())).toEqual([{ ...row, ...last }]);
+        expect(await onServer(sql)).toHaveLength(1);
       });
 
       // A retry would get 25P02 in place of the reason.

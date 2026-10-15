@@ -73,6 +73,26 @@ test("$ argv: standalone: only 10", async () => {
   expect(out.split("\n")).toEqual([script, "a", "bb", "c", "d", "e", "f", "g", "h", "i", "a0", ""]);
 });
 
+// `$10` is `$1` and a `0`; `${10}` is the tenth argument.
+test.each([
+  [
+    ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
+    ["a j a0", "b none", ""],
+  ],
+  [[], ["0", "x none", ""]],
+])("argv: standalone: braced positionals and operators with %j", async (args, lines) => {
+  const script = path.join(import.meta.dir, "fixtures", "positionals3.bun.sh");
+  await using proc = spawn({
+    cmd: [bunExe(), "run", script, ...args],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: out.split("\n"), err, exitCode }).toEqual({ out: lines, err: "", exitCode: 0 });
+});
+
 test("$ argv: standalone: non-ascii", async () => {
   const script = path.join(import.meta.dir, "fixtures", "positionals2.bun.sh");
   const { stdout, stderr, exited } = spawn({

@@ -821,6 +821,90 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  const words = (...word: object[]) => [{ Text: "echo" }, { Delimit: {} }, ...word, { Eof: {} }];
+  test.each([
+    ["$?", "echo $?", words({ SpecialParam: "$?" })],
+    [
+      "$? ends at the ?",
+      "echo $?x y",
+      words({ SpecialParam: "$?" }, { Text: "x" }, { Delimit: {} }, { Text: "y" }, { Delimit: {} }),
+    ],
+    ["$$", "echo $$x", words({ SpecialParam: "$$" }, { Text: "x" }, { Delimit: {} })],
+    ["${NAME} is $NAME", "echo ${PORT}", words({ Var: "PORT" })],
+    ["the brace ends the name", "echo ${FOO}bar", words({ Var: "FOO" }, { Text: "bar" }, { Delimit: {} })],
+    [
+      "${N} has more than one digit, $N has one",
+      "echo ${10} $10",
+      words({ VarArgv: 10 }, { Delimit: {} }, { VarArgv: 1 }, { Text: "0" }, { Delimit: {} }),
+    ],
+    ["${?} and ${$}", "echo ${?}${$}", words({ SpecialParam: "$?" }, { SpecialParam: "$$" })],
+    [
+      "an operator word",
+      "echo ${X:-a b}",
+      words(
+        { ParamBegin: { op: ":-", quoted: false } },
+        { Var: "X" },
+        { Text: "a" },
+        { ParamSpace: " " },
+        { Text: "b" },
+        { ParamEnd: {} },
+      ),
+    ],
+    [
+      "an operator word in double quotes",
+      'echo "${X:+a b}" z',
+      words(
+        { ParamBegin: { op: ":+", quoted: true } },
+        { Var: "X" },
+        { DoubleQuotedText: "a b" },
+        { ParamEnd: {} },
+        { Delimit: {} },
+        { Text: "z" },
+        { Delimit: {} },
+      ),
+    ],
+    [
+      "an operator on a positional, a variable in the word",
+      "echo ${1-$Y}",
+      words({ ParamBegin: { op: "-", quoted: false } }, { VarArgv: 1 }, { Var: "Y" }, { ParamEnd: {} }),
+    ],
+    [
+      "an operator word in an operator word",
+      "echo ${X:-${Y:+z}}",
+      words(
+        { ParamBegin: { op: ":-", quoted: false } },
+        { Var: "X" },
+        { ParamBegin: { op: ":+", quoted: false } },
+        { Var: "Y" },
+        { Text: "z" },
+        { ParamEnd: {} },
+        { ParamEnd: {} },
+      ),
+    ],
+    [
+      "operators are text in the word",
+      "echo ${X:-a;b|c>d}",
+      words({ ParamBegin: { op: ":-", quoted: false } }, { Var: "X" }, { Text: "a;b|c>d" }, { ParamEnd: {} }),
+    ],
+    [
+      "an operator word with no closing brace is text",
+      "echo ${X:-a",
+      words({ Text: "$" }, { BraceBegin: {} }, { Text: "X:-a" }, { Delimit: {} }),
+    ],
+    [
+      "$$( is a $ and a $(",
+      "echo $$(true)",
+      words({ Text: "$" }, { CmdSubstBegin: {} }, { Text: "true" }, { Delimit: {} }, { CmdSubstEnd: {} }),
+    ],
+    [
+      "an escaped $ or { is text",
+      "echo \\$? $\\{X}",
+      words({ Text: "$?" }, { Delimit: {} }, { Text: "$" }, { Text: "{X" }, { BraceEnd: {} }),
+    ],
+  ])("parameter expansion: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

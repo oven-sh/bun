@@ -17,7 +17,8 @@ use core::fmt::{self, Write};
 use super::parse::SmolList;
 use super::parse::ast::{
     Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
-    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    ParamTarget, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt,
+    Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -263,6 +264,25 @@ fn write_simple_atom(w: &mut impl Write, s: &SimpleAtom<'_>) -> fmt::Result {
         }
         SimpleAtom::VarArgv(n) => {
             write!(w, "{{\"VarArgv\":{}", n)?;
+        }
+        SimpleAtom::SpecialParam(param) => {
+            write!(w, "{{\"special_param\":\"{}\"", param.as_str())?;
+        }
+        SimpleAtom::ParamBegin(head) => {
+            w.write_str("{\"param_begin\":{\"param\":")?;
+            match head.target {
+                ParamTarget::Name(name) => encode_json_string(w, name)?,
+                ParamTarget::Positional(n) => write!(w, "{}", n)?,
+                ParamTarget::Special(param) => write!(w, "\"{}\"", param.as_str())?,
+            }
+            write!(w, ",\"op\":\"{}\",\"quoted\":", head.op.as_str())?;
+            write_bool(w, head.quoted)?;
+            write!(w, ",\"skip\":{}}}", head.skip)?;
+        }
+        SimpleAtom::ParamEnd => w.write_str("{\"param_end\":{}")?,
+        SimpleAtom::ParamSpace(space) => {
+            w.write_str("{\"param_space\":")?;
+            encode_json_string(w, space)?;
         }
         SimpleAtom::Text(t) => {
             w.write_str("{\"Text\":")?;

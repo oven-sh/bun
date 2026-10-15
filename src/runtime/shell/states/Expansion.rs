@@ -40,9 +40,7 @@ pub(crate) struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
-    /// The atom is an assignment value (`A=v`, `export A=v`), so
-    /// command-substitution output is not field split (POSIX 2.9.1).
-    pub(crate) assign_ctx: bool,
+    pub(crate) field_split: FieldSplit,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
@@ -68,6 +66,28 @@ pub enum ExpansionState {
     Err(Box<ShellErr>),
 }
 
+/// Which results of an [`Expansion`] split into more than one word.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldSplit {
+    /// A command argument or a redirect target: unquoted `$(...)` output and `${param:-word}` whitespace.
+    All,
+    /// A `[[ ]]` operand: unquoted `$(...)` output only.
+    CmdSubst,
+    /// An assignment value (`A=v`, `export A=v`): nothing (POSIX 2.9.1).
+    None,
+}
+
+/// What the atom walk in [`Expansion::next`] does after one atom.
+enum Step {
+    Next,
+    /// The atom is a `$(...)`: run it.
+    CmdSubst,
+    /// The result of a `${param<op>word}` is not its word: jump this many atoms, to its `ParamEnd`.
+    Skip(u32),
+    /// A word ends here.
+    EndField,
+}
+
 #[derive(Default)]
 pub(crate) struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
@@ -90,7 +110,7 @@ impl Expansion {
         shell: *mut ShellExecEnv,
         node: *const ast::Atom,
         parent: NodeId,
-        assign_ctx: bool,
+        field_split: FieldSplit,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(parent, shell),
@@ -107,7 +127,7 @@ impl Expansion {
             meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
-            assign_ctx,
+            field_split,
             has_quoted_empty: false,
             out_exit_code: 0,
         }))
@@ -176,20 +196,35 @@ impl Expansion {
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 let shell = me.base.shell();
-                let is_cmd_subst = Self::expand_simple_no_io(
+                let step = Self::expand_simple_no_io(
                     shell,
                     simple,
                     &mut me.current_out,
                     &mut me.meta_offsets,
                     &mut me.has_quoted_empty,
                     true,
+                    me.field_split,
                     event_loop,
                     command_ctx,
                     vm_args_utf8,
                 );
-                if !is_cmd_subst {
-                    me.word_idx += 1;
-                    continue;
+                match step {
+                    Step::Next => {
+                        me.word_idx += 1;
+                        continue;
+                    }
+                    Step::Skip(atoms) => {
+                        me.word_idx += atoms + 1;
+                        continue;
+                    }
+                    Step::EndField => {
+                        if !me.current_out.is_empty() {
+                            Self::push_current_out(me);
+                        }
+                        me.word_idx += 1;
+                        continue;
+                    }
+                    Step::CmdSubst => {}
                 }
                 // ── Command substitution: spawn a Script with stdout piped
                 //    into a fresh owned buffer.
@@ -261,7 +296,10 @@ impl Expansion {
             if atom.has_glob_expansion() {
                 return Self::transition_to_glob_state(interp, this);
             }
-            Self::push_current_out(me);
+            // After the word break of a `${param:-word }` there is no last word to push.
+            if !me.current_out.is_empty() || me.out.buf.is_empty() {
+                Self::push_current_out(me);
+            }
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
@@ -464,7 +502,7 @@ impl Expansion {
     }
 
     /// Appends the no-IO expansion of
-    /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` so the
+    /// one [`ast::SimpleAtom`] to `out`. Returns [`Step::CmdSubst`] for `CmdSubst` so the
     /// caller spawns a `Script` for it.
     fn expand_simple_no_io(
         shell: &ShellExecEnv,
@@ -473,11 +511,11 @@ impl Expansion {
         meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
+        field_split: FieldSplit,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
-    ) -> bool {
-        use crate::shell::env_str::EnvStr;
+    ) -> Step {
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
@@ -488,19 +526,47 @@ impl Expansion {
                 *has_quoted_empty = true;
             }
             ast::SimpleAtom::Var(label) => {
-                // Spec `expandVar`: shell_env first, then export_env, else "".
-                let key = EnvStr::init_slice(label);
-                if let Some(v) = shell.shell_env.get(key) {
-                    out.extend_from_slice(v.slice());
-                    v.deref();
-                } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
-                    out.extend_from_slice(v.slice());
-                    v.deref();
-                }
+                Self::append_var(shell, label, out);
             }
             ast::SimpleAtom::VarArgv(int) => {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+            }
+            ast::SimpleAtom::SpecialParam(param) => Self::append_special_param(shell, *param, out),
+            ast::SimpleAtom::ParamBegin(head) => {
+                // `"${x:-}"` is one word even when it is empty.
+                *has_quoted_empty |= head.quoted;
+                let len = out.len();
+                let set = match head.target {
+                    ast::ParamTarget::Name(name) => Self::append_var(shell, name, out),
+                    // SAFETY: as for `VarArgv` above.
+                    ast::ParamTarget::Positional(int) => Interpreter::append_var_argv(
+                        out,
+                        int,
+                        event_loop,
+                        command_ctx,
+                        vm_args_utf8,
+                    ),
+                    ast::ParamTarget::Special(param) => {
+                        Self::append_special_param(shell, param, out);
+                        true
+                    }
+                };
+                if head.op.selects_word(set, out.len() == len) {
+                    out.truncate(len);
+                    return Step::Next;
+                }
+                if !head.op.falls_back_to_value() {
+                    out.truncate(len);
+                }
+                return Step::Skip(head.skip);
+            }
+            ast::SimpleAtom::ParamEnd => {}
+            ast::SimpleAtom::ParamSpace(space) => {
+                if field_split == FieldSplit::All {
+                    return Step::EndField;
+                }
+                out.extend_from_slice(space);
             }
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);
@@ -534,9 +600,35 @@ impl Expansion {
                     out.push(b'~');
                 }
             }
-            ast::SimpleAtom::CmdSubst(_) => return true,
+            ast::SimpleAtom::CmdSubst(_) => return Step::CmdSubst,
         }
-        false
+        Step::Next
+    }
+
+    /// Appends the value of `$name` (a shell variable, else an exported one). Returns whether it is set.
+    fn append_var(shell: &ShellExecEnv, name: &[u8], out: &mut Vec<u8>) -> bool {
+        use crate::shell::env_str::EnvStr;
+        let Some(value) = shell
+            .shell_env
+            .get(EnvStr::init_slice(name))
+            .or_else(|| shell.export_env.get(EnvStr::init_slice(name)))
+        else {
+            return false;
+        };
+        out.extend_from_slice(value.slice());
+        value.deref();
+        true
+    }
+
+    fn append_special_param(shell: &ShellExecEnv, param: ast::SpecialParam, out: &mut Vec<u8>) {
+        use std::io::Write as _;
+        let value = match param {
+            ast::SpecialParam::ExitCode => u32::from(shell.last_exit_code),
+            // The shell runs in the Bun process, also for `(...)` and `$(...)`.
+            ast::SpecialParam::Pid => std::process::id(),
+        };
+        // A write to a `Vec` cannot fail.
+        let _ = write!(out, "{value}");
     }
 
     /// Flush `current_out` into `out`
@@ -639,7 +731,7 @@ impl Expansion {
 
         let no_split = {
             let me = interp.as_expansion(this);
-            me.cmd_subst_quoted || me.assign_ctx
+            me.cmd_subst_quoted || me.field_split == FieldSplit::None
         };
         {
             let me = interp.as_expansion_mut(this);

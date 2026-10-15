@@ -130,6 +130,10 @@ pub(crate) mod test {
         CloseParen,
         Var(&'a [u8]),
         VarArgv(u8),
+        SpecialParam(ast::SpecialParam),
+        ParamBegin { op: ast::ParamOp, quoted: bool },
+        ParamEnd,
+        ParamSpace(&'a [u8]),
         Text(&'a [u8]),
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
@@ -145,6 +149,12 @@ pub(crate) mod test {
             match the_token {
                 Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
                 Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::SpecialParam(param) => TestToken::SpecialParam(param),
+                Token::ParamBegin { op, quoted } => TestToken::ParamBegin { op, quoted },
+                Token::ParamEnd => TestToken::ParamEnd,
+                Token::ParamSpace(txt) => {
+                    TestToken::ParamSpace(&buf[txt.start as usize..txt.end as usize])
+                }
                 Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
                 Token::SingleQuotedText(txt) => {
                     TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
@@ -217,6 +227,21 @@ pub(crate) mod test {
                     w.write_char('}')
                 }
                 T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::SpecialParam(param) => {
+                    write!(w, "{{\"SpecialParam\":\"{}\"}}", param.as_str())
+                }
+                T::ParamBegin { op, quoted } => write!(
+                    w,
+                    "{{\"ParamBegin\":{{\"op\":\"{}\",\"quoted\":{}}}}}",
+                    op.as_str(),
+                    quoted
+                ),
+                T::ParamEnd => unit!("ParamEnd"),
+                T::ParamSpace(s) => {
+                    w.write_str("{\"ParamSpace\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
                 T::Text(s) => {
                     w.write_str("{\"Text\":")?;
                     encode_json_string(w, s)?;
@@ -577,7 +602,7 @@ impl<'a> ShellSrcBuilder<'a> {
             // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(&bunstr)
                 || is_if_clause_keyword_bunstr(&bunstr)
-                || self.outbuf_ends_with_var_ref()
+                || bun_shell_parser::ends_in_param_ref(self.outbuf)
             {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -607,7 +632,7 @@ impl<'a> ShellSrcBuilder<'a> {
         if ALLOW_ESCAPE {
             if needs_escape_utf8_ascii_latin1(utf8)
                 || IfClauseTok::from_text(utf8).is_some()
-                || self.outbuf_ends_with_var_ref()
+                || bun_shell_parser::ends_in_param_ref(self.outbuf)
             {
                 self.append_js_str_ref(BunString::clone_utf8(utf8))?;
                 return Ok(true);
@@ -616,17 +641,6 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
-    }
-
-    fn outbuf_ends_with_var_ref(&self) -> bool {
-        match self
-            .outbuf
-            .iter()
-            .rposition(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
-        {
-            Some(i) => self.outbuf[i] == b'$',
-            None => false,
-        }
     }
 
     pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {

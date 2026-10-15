@@ -327,6 +327,75 @@ const foo = "bar123; rm -rf /tmp";
 await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
 ```
 
+### Reading variables
+
+Bun Shell expands these forms:
+
+| Form                 | Expands to                                                             |
+| -------------------- | ---------------------------------------------------------------------- |
+| `$NAME`, `${NAME}`   | The value of `NAME`, or nothing when `NAME` is not set                 |
+| `${NAME:-word}`      | `word` when `NAME` is not set or is empty, the value of `NAME` if not  |
+| `${NAME-word}`       | `word` when `NAME` is not set, the value of `NAME` if not              |
+| `${NAME:+word}`      | `word` when `NAME` is set and is not empty, nothing if not             |
+| `${NAME+word}`       | `word` when `NAME` is set, nothing if not                              |
+| `$0` to `$9`, `${N}` | An argument of the script. `${10}` is the tenth: `$10` is `$1` and `0` |
+| `$?`                 | The exit code of the command that ran last                             |
+| `$$`                 | The process ID of Bun                                                  |
+
+The four operators also take an argument number, `?` or `$` in place of `NAME`: `${1:-word}`.
+
+```sh build.sh icon="file-code"
+OUT=${OUT:-dist}
+mkdir -p ${OUT}/assets
+echo "port ${PORT:-3000}"
+```
+
+```sh terminal icon="terminal"
+bun ./build.sh
+```
+
+```txt
+port 3000
+```
+
+In a `` $`...` `` template, JavaScript reads `${...}` as an interpolation, so these braced forms are for shell scripts, `bun exec`, and the `package.json` scripts that Bun Shell runs. `$?` and `$$` have no braces:
+
+```js
+import { $ } from "bun";
+
+await $`false; echo $?`; // 1
+```
+
+Bun Shell expands a form inside double quotes. Single quotes or a backslash keep the characters:
+
+```sh
+NAME=bun
+echo "${NAME}" '${NAME}' \${NAME}
+# bun ${NAME} ${NAME}
+```
+
+`word` can hold quotes, variables, command substitutions, and other forms. Bun Shell runs a command substitution in `word` only when it uses `word`.
+
+Whitespace that you write in `word` separates arguments. Bun Shell never splits the value of a variable. Inside double quotes, and in an assignment, the whitespace in `word` is part of the value.
+
+```sh
+# With TOKEN=abc, `echo` gets the two arguments `--token` and `abc`.
+# When TOKEN is not set, `echo` gets no argument.
+echo ${TOKEN:+--token $TOKEN}
+```
+
+Bun Shell does not expand a glob or braces in `word`: `${NAME:-*}` is `*`.
+
+`$?` is the exit code that Bun Shell gave the statement, or the `&&` or `||` operand, that ran last. Bun Shell does not give the same exit code as other shells in these cases:
+
+- An assignment from a command substitution reports `0`: after `x=$(false)`, `$?` is `0`.
+- A command that Bun Shell cannot find reports `1`.
+- `exit` does not end the script ([#20368](https://github.com/oven-sh/bun/issues/20368)).
+
+`$$` is the process ID of Bun. It is the same in a subshell and in a command substitution, because Bun Shell runs in the Bun process.
+
+In a shell script that you run with `bun script.sh a b`, `$1` is `a`. In a `` $`...` `` template, `$N` is `process.argv[N]`.
+
 ### Changing the environment variables
 
 By default, all commands use `process.env` as their environment variables.

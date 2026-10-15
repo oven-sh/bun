@@ -5,7 +5,7 @@ use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
-use crate::shell::states::expansion::Expansion;
+use crate::shell::states::expansion::{Expansion, FieldSplit};
 use crate::shell::yield_::Yield;
 
 pub(crate) struct CondExpr {
@@ -66,7 +66,7 @@ impl CondExpr {
                         return Self::command_impl_start(interp, this, n.op);
                     }
                     let atom: *const ast::Atom = n.args.get_const(idx as usize);
-                    let child = Expansion::init(interp, shell, atom, this, false);
+                    let child = Expansion::init(interp, shell, atom, this, FieldSplit::CmdSubst);
                     return Expansion::start(interp, child);
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),

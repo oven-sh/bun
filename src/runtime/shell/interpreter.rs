@@ -567,6 +567,7 @@ impl Interpreter {
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
                 cwd_fd,
+                last_exit_code: 0,
             }),
             root_io: JsCell::new(IO {
                 stdin: crate::shell::io::InKind::Fd(stdin_reader),
@@ -1667,7 +1668,7 @@ impl Interpreter {
 
     /// Appends the value of `$N` to
     /// `out`. Takes the relevant interpreter fields by-part so callers can
-    /// split-borrow alongside the node arena.
+    /// split-borrow alongside the node arena. Returns whether `$N` is set.
     ///
     /// # Safety
     /// `command_ctx` must be null or point to a live `ContextData` that
@@ -1678,15 +1679,16 @@ impl Interpreter {
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
-    ) {
+    ) -> bool {
         let mut int = original_int;
         match event_loop {
             EventLoopHandle::Js { .. } => {
                 if int == 0 {
-                    if let Ok(p) = bun_core::self_exe_path() {
-                        out.extend_from_slice(p.as_bytes());
-                    }
-                    return;
+                    let Ok(p) = bun_core::self_exe_path() else {
+                        return false;
+                    };
+                    out.extend_from_slice(p.as_bytes());
+                    return true;
                 }
                 int -= 1;
 
@@ -1694,7 +1696,7 @@ impl Interpreter {
                     .bun_vm()
                     .cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 if vm_ptr.is_null() {
-                    return;
+                    return false;
                 }
                 // SAFETY: `bun_vm()` on a JS event loop returns the live
                 // `*VirtualMachine` owning that loop.
@@ -1703,7 +1705,7 @@ impl Interpreter {
                 if !main.is_empty() {
                     if int == 0 {
                         out.extend_from_slice(main);
-                        return;
+                        return true;
                     }
                     int -= 1;
                 }
@@ -1714,7 +1716,7 @@ impl Interpreter {
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
-                        return;
+                        return false;
                     }
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
@@ -1724,30 +1726,34 @@ impl Interpreter {
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());
-                    return;
+                    return true;
                 }
 
-                if (int as usize) < vm.argv.len() {
-                    out.extend_from_slice(&vm.argv[int as usize]);
-                }
+                let Some(arg) = vm.argv.get(int as usize) else {
+                    return false;
+                };
+                out.extend_from_slice(arg);
+                true
             }
             EventLoopHandle::Mini(_) => {
                 if command_ctx.is_null() {
-                    return;
+                    return false;
                 }
                 // SAFETY: `command_ctx` is the process-global `ContextData`
                 // (see `init`); it outlives the interpreter.
                 let ctx = unsafe { &*command_ctx };
                 if int as usize > ctx.passthrough.len() {
-                    return;
+                    return false;
                 }
                 if int == 0 {
-                    if let Some(last) = ctx.positionals.last() {
-                        out.extend_from_slice(last);
-                    }
-                    return;
+                    let Some(last) = ctx.positionals.last() else {
+                        return false;
+                    };
+                    out.extend_from_slice(last);
+                    return true;
                 }
                 out.extend_from_slice(&ctx.passthrough[int as usize - 1]);
+                true
             }
         }
     }
@@ -1804,6 +1810,8 @@ pub(crate) struct ShellExecEnv {
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
     pub(crate) cwd_fd: Fd,
+    /// What `$?` expands to. `dupe_for_subshell` copies it: a `$(...)` or `(...)` does not write it back.
+    pub(crate) last_exit_code: ExitCode,
 }
 
 pub(crate) enum Bufio {
@@ -1965,6 +1973,7 @@ impl ShellExecEnv {
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
+            last_exit_code: self.last_exit_code,
         });
         Ok(bun_core::heap::into_raw(duped))
     }

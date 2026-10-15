@@ -42,6 +42,22 @@ describe("bun exec", () => {
     )
     .runAsTest("write a lot of data");
 
+  describe("parameter expansion", () => {
+    const exec = (script: string) =>
+      TestBuilder.command`${BUN} exec ${script}`.env({ ...bunEnv, NAME: "value", OUT: "build" }).ensureTempDir();
+
+    exec("echo ${NAME}").stdout("value\n").runAsTest("${NAME}");
+    exec('echo "${NAME}"/x').stdout("value/x\n").runAsTest("${NAME} in double quotes");
+    exec("echo ${SHELL_TEST_UNSET:-default} ${NAME:+alt}")
+      .stdout("default alt\n")
+      .runAsTest("${NAME:-word} and ${NAME:+word}");
+    exec("false; echo $?").stdout("1\n").runAsTest("$?");
+    exec("mkdir -p ${OUT}/dist; ls").stdout("build\n").runAsTest("${NAME} in a path");
+    exec("echo ${NAME:-$(touch ran)}; ls")
+      .stdout("value\n")
+      .runAsTest("a $(...) in a word that is not used does not run");
+  });
+
   describe("--help works", () => {
     // prettier-ignore
     const programs = [

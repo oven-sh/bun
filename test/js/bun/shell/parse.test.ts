@@ -126,6 +126,37 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("parameter expansion", () => {
+    const result = JSON.parse(parse({ raw: ['echo a${X:-b c}d "${1:+x}" $? ${$}'] }));
+    expect(result.stmts[0].exprs[0].cmd.name_and_args).toEqual([
+      { simple: { Text: "echo" } },
+      {
+        compound: {
+          atoms: [
+            { Text: "a" },
+            { param_begin: { param: "X", op: ":-", quoted: false, skip: 4 } },
+            { Text: "b" },
+            { param_space: " " },
+            { Text: "c" },
+            { param_end: {} },
+            { Text: "d" },
+          ],
+          brace_expansion_hint: false,
+          glob_hint: false,
+        },
+      },
+      {
+        compound: {
+          atoms: [{ param_begin: { param: 1, op: ":+", quoted: true, skip: 2 } }, { Text: "x" }, { param_end: {} }],
+          brace_expansion_hint: false,
+          glob_hint: false,
+        },
+      },
+      { simple: { special_param: "$?" } },
+      { simple: { special_param: "$$" } },
+    ]);
+  });
+
   test("pipelines", () => {
     const expected = {
       stmts: [

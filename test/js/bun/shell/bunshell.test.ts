@@ -1274,6 +1274,189 @@ booga"
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
     });
+
+    // `${...}` in the template is a JS interpolation, and `\${` gives the shell
+    // an escaped `$`. `{ raw }` is how the shell gets to see `${`.
+    describe("parameter expansion", () => {
+      const sh = (src: string) => TestBuilder.command`${{ raw: src }}`;
+
+      describe("${NAME}", () => {
+        sh("FOO=bar; echo ${FOO}").stdout("bar\n").runAsTest("is $NAME");
+        sh('FOO=bar; echo "${FOO}"/x').stdout("bar/x\n").runAsTest("in double quotes");
+        sh("FOO=bar; echo ${FOO}baz").stdout("barbaz\n").runAsTest("the brace ends the name");
+        sh("echo a${SHELL_TEST_UNSET}b").stdout("ab\n").runAsTest("unset is empty");
+        sh("FOO=a; BAR=${FOO}b; echo $BAR").stdout("ab\n").runAsTest("in an assignment");
+        sh("FOO=out.txt; echo hi > ${FOO}; cat out.txt")
+          .ensureTempDir()
+          .stdout("hi\n")
+          .runAsTest("as a redirect target");
+        sh("FOO=bar; [[ ${FOO} == bar ]] && echo yes").stdout("yes\n").runAsTest("in [[ ]]");
+        sh("FOO=bar; echo '${FOO}' \\${FOO} $\\{FOO}")
+          .stdout("${FOO} ${FOO} ${FOO}\n")
+          .runAsTest("quoted or escaped stays text");
+
+        test("reads the variable when the command runs", async () => {
+          const { stdout } = await $`echo ${{ raw: "${SHELL_TEST_LATE}" }}`.env({ ...bunEnv, SHELL_TEST_LATE: "late" });
+          expect(stdout.toString()).toBe("late\n");
+        });
+      });
+
+      describe("$?", () => {
+        sh("echo $?").stdout("0\n").runAsTest("is 0 at the start");
+        sh("false; echo $?").stdout("1\n").runAsTest("after a builtin");
+        sh('false; echo "$?" a$?b ${?}').stdout("1 a1b 1\n").runAsTest("quoted, in a word, braced");
+        TestBuilder.command`${BUN} -e "process.exit(42)"; echo $?`.stdout("42\n").runAsTest("after a command");
+        sh("false || echo $?").stdout("1\n").runAsTest("right of ||");
+        sh("true && false; echo $?").stdout("1\n").runAsTest("after &&");
+        sh("true | false; echo $?; false | true; echo $?").stdout("1\n0\n").runAsTest("after a pipeline");
+        sh("if false; then echo no; else echo $?; fi").stdout("1\n").runAsTest("in an else branch");
+        sh("false; if false; then echo no; fi; echo $?").stdout("0\n").runAsTest("after an if that takes no branch");
+        sh("(false); echo $?; false; (echo $?)").stdout("1\n1\n").runAsTest("out of and into a subshell");
+        sh("false; echo $(echo $?)").stdout("1\n").runAsTest("into a command substitution");
+        // dash prints 1 here and bash prints 0.
+        sh("false; echo $(true)$?").stdout("1\n").runAsTest("a $(...) in the same command does not set it");
+        sh("false; echo '$?' \\$?").stdout("$? $?\n").runAsTest("quoted or escaped stays text");
+      });
+
+      describe("$$", () => {
+        sh('echo $$ "$$" ${$} $$x')
+          .stdout(`${process.pid} ${process.pid} ${process.pid} ${process.pid}x\n`)
+          .runAsTest("is the bun process id");
+        sh("echo $(echo $$); (echo $$)")
+          .stdout(`${process.pid}\n${process.pid}\n`)
+          .runAsTest("also in $(...) and (...)");
+        sh("echo $$(echo hi)").stdout("$hi\n").runAsTest("$$( is still a $ and a $(...)");
+        sh("echo '$$' \\$$").stdout("$$ $$\n").runAsTest("quoted or escaped stays text");
+      });
+
+      test("${param:-word}, ${param-word}, ${param:+word}, ${param+word}", async () => {
+        // [the word in the script, the arguments it becomes]. SET=set, EMPTY is empty, NONE is unset.
+        const cases: [string, string[]][] = [
+          ["${NONE:-d}", ["d"]],
+          ["${SET:-d}", ["set"]],
+          ["${EMPTY:-d}", ["d"]],
+          ["${NONE-d}", ["d"]],
+          ["${EMPTY-d}", []],
+          ["${NONE:+alt}", []],
+          ["${SET:+alt}", ["alt"]],
+          ["${EMPTY:+alt}", []],
+          ["${NONE+alt}", []],
+          ["${EMPTY+alt}", ["alt"]],
+          ["a${NONE:-d}b", ["adb"]],
+          ["x${NONE:-}y", ["xy"]],
+          // A quoted form that is empty is still one argument.
+          ["${NONE:-}", []],
+          ['"${NONE:-}"', [""]],
+          ['"${NONE:+alt}"', [""]],
+          ["${NONE:-''}", [""]],
+          // The word holds quotes, variables, command substitutions and other forms.
+          ['${NONE:-"a b"}', ["a b"]],
+          ["${NONE:-'a b'}", ["a b"]],
+          ['"${NONE:-"a b"}"', ["a b"]],
+          ["\"${NONE:-'q'}\"", ["'q'"]],
+          ["${NONE:-a\\ b}", ["a b"]],
+          ["${NONE:-$SET}", ["set"]],
+          ["${NONE:-${SET}}", ["set"]],
+          ["${NONE:-${NONE:-${NONE:-deep}}}", ["deep"]],
+          ["${NONE:-$(echo hi)}", ["hi"]],
+          ['${SET:+"$SET"}', ["set"]],
+          // Whitespace written unquoted in the word separates arguments.
+          ["${NONE:-a b}", ["a", "b"]],
+          ["${NONE:-a  b   c}", ["a", "b", "c"]],
+          ["a${NONE:- b}", ["a", "b"]],
+          ["${NONE:-a }b", ["a", "b"]],
+          ["${NONE:-a }", ["a"]],
+          ["${NONE:- }", []],
+          ["pre${NONE:-a b}post", ["prea", "bpost"]],
+          ["${SET:+--flag $SET}", ["--flag", "set"]],
+          ["${NONE:-x $(echo a b) y}", ["x", "a", "b", "y"]],
+          ['"pre ${NONE:-a b} post"', ["pre a b post"]],
+          // The value of a variable is never split.
+          ["${NONE:-$SPACED}", ["a b"]],
+          ["${SPACED:-d}", ["a b"]],
+          // Operators, braces and glob characters in the word are text.
+          ["${NONE:-a;b|c&d>e<f(g)#h}", ["a;b|c&d>e<f(g)#h"]],
+          ["${NONE:-*}", ["*"]],
+          ["${NONE:-{a,b}}", ["{a,b}"]],
+          ["${NONE:-a}}", ["a}"]],
+          ["${NONE:-\\}}", ["}"]],
+          // On `$?`, `$$` and positionals.
+          ["${?:-x}", ["0"]],
+          ["${$:+pid}", ["pid"]],
+          ["${200:-none}", ["none"]],
+        ];
+        const env = { ...bunEnv, SET: "set", EMPTY: "", SPACED: "a b" };
+        delete env.NONE;
+        const { stdout } = await $`${BUN} -e ${"console.log(JSON.stringify(process.argv.slice(1)))"} ${{
+          raw: cases.map(([word]) => word).join(" --- "),
+        }}`.env(env);
+        const args: string[] = JSON.parse(stdout.toString());
+        const got: [string, string[]][] = [];
+        for (const [word] of cases) {
+          const end = args.indexOf("---");
+          got.push([word, args.splice(0, end === -1 ? args.length : end)]);
+          args.shift();
+        }
+        expect(Object.fromEntries(got)).toEqual(Object.fromEntries(cases));
+      });
+
+      describe("${param:-word}", () => {
+        sh('A=${SHELL_TEST_UNSET:-c  d}; echo "[$A]"')
+          .stdout("[c  d]\n")
+          .runAsTest("an assignment keeps the whitespace");
+        sh('export A=${SHELL_TEST_UNSET:-c d}; echo "[$A]"')
+          .stdout("[c d]\n")
+          .runAsTest("an export operand keeps the whitespace");
+        sh("[[ ${SHELL_TEST_UNSET:-a b} == 'a b' ]] && echo yes")
+          .stdout("yes\n")
+          .runAsTest("a [[ ]] operand is one word");
+        sh("SET=1; echo ${SET:-$(touch ran)}; ls")
+          .ensureTempDir()
+          .stdout("1\n")
+          .runAsTest("a $(...) in a word that is not used does not run");
+        sh("echo ${SHELL_TEST_UNSET:-${SET%x}} ${SHELL_TEST_UNSET:-a${#SET}b}")
+          .stdout("${SET%x} a${#SET}b\n")
+          .runAsTest("a form the shell does not expand stays text in the word");
+        sh("echo ${SHELL_TEST_UNSET:-a b")
+          .stdout("${SHELL_TEST_UNSET:-a b\n")
+          .runAsTest("without a closing brace it is text");
+        sh("echo ${A:-${B:-${C:-x").stdout("${A:-${B:-${C:-x\n").runAsTest("nested without a closing brace it is text");
+        sh("echo '${X:-d}' \\${X:-d} $\\{X:-d}")
+          .stdout("${X:-d} ${X:-d} ${X:-d}\n")
+          .runAsTest("quoted or escaped stays text");
+        // The lexer nests 128 deep. A form past that is text, with its brace.
+        sh(`echo ${"${SHELL_TEST_UNSET:-".repeat(130)}x${"}".repeat(130)}`)
+          .stdout("${SHELL_TEST_UNSET:-${SHELL_TEST_UNSET:-x}}\n")
+          .runAsTest("nested past the depth limit");
+      });
+
+      // An interpolated value is data. It does not name a parameter or an operator.
+      describe("an interpolated value in a braced form stays text", () => {
+        const env = { ...bunEnv, SHELL_TEST_SECRET: "hunter2" };
+        test("after ${", async () => {
+          const { stdout } = await $`echo ${{ raw: "${" }}${"SHELL_TEST_SECRET"}${{ raw: "}" }}`.env(env);
+          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET}\n");
+        });
+        test("after ${NAME", async () => {
+          const { stdout } = await $`echo ${{ raw: "${SHELL_TEST_" }}${"SECRET"}${{ raw: "}" }}`.env(env);
+          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET}\n");
+        });
+        test("as the operator", async () => {
+          const { stdout } =
+            await $`echo ${{ raw: "${SHELL_TEST_SECRET" }}${":+found"}${{ raw: "}" }} ${{ raw: "${SHELL_TEST_SECRET:" }}${"+found"}${{ raw: "}" }}`.env(
+              env,
+            );
+          expect(stdout.toString()).toBe("${SHELL_TEST_SECRET:+found} ${SHELL_TEST_SECRET:+found}\n");
+        });
+        test("in the word it is one argument", async () => {
+          const { stdout } =
+            await $`${BUN} -e ${"console.log(JSON.stringify(process.argv.slice(1)))"} ${{ raw: "${SHELL_TEST_UNSET:-" }}${"a b $HOME }"}${{ raw: "}" }}`.env(
+              env,
+            );
+          expect(JSON.parse(stdout.toString())).toEqual(["a b $HOME }"]);
+        });
+      });
+    });
   });
 
   describe("cd & pwd", () => {

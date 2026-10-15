@@ -667,10 +667,91 @@ pub mod ast {
         }
     }
 
+    /// `$?` and `$$`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SpecialParam {
+        /// `$?`: the exit status of the last statement or `&&`/`||` operand.
+        ExitCode,
+        /// `$$`: the process id.
+        Pid,
+    }
+
+    impl SpecialParam {
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                SpecialParam::ExitCode => "$?",
+                SpecialParam::Pid => "$$",
+            }
+        }
+    }
+
+    /// The operator of `${param<op>word}`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum ParamOp {
+        /// `:-`
+        DefaultIfEmpty,
+        /// `-`
+        DefaultIfUnset,
+        /// `:+`
+        AlternateIfNotEmpty,
+        /// `+`
+        AlternateIfSet,
+    }
+
+    impl ParamOp {
+        pub const fn as_str(self) -> &'static str {
+            match self {
+                ParamOp::DefaultIfEmpty => ":-",
+                ParamOp::DefaultIfUnset => "-",
+                ParamOp::AlternateIfNotEmpty => ":+",
+                ParamOp::AlternateIfSet => "+",
+            }
+        }
+
+        /// Whether the result is the word, for a parameter that is `set` and whose value is `empty`.
+        pub const fn selects_word(self, set: bool, empty: bool) -> bool {
+            match self {
+                ParamOp::DefaultIfEmpty => !set || empty,
+                ParamOp::DefaultIfUnset => !set,
+                ParamOp::AlternateIfNotEmpty => set && !empty,
+                ParamOp::AlternateIfSet => set,
+            }
+        }
+
+        /// Whether the result is the parameter's value when it is not the word. If not, it is nothing.
+        pub const fn falls_back_to_value(self) -> bool {
+            matches!(self, ParamOp::DefaultIfEmpty | ParamOp::DefaultIfUnset)
+        }
+    }
+
+    /// The parameter of `${param<op>word}`.
+    #[derive(Clone, Copy)]
+    pub enum ParamTarget<'arena> {
+        Name(&'arena [u8]),
+        Positional(u8),
+        Special(SpecialParam),
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct ParamHead<'arena> {
+        pub target: ParamTarget<'arena>,
+        pub op: ParamOp,
+        /// The `${` is inside double quotes: an empty result is still one word.
+        pub quoted: bool,
+        /// Distance from the `ParamBegin` atom to its `ParamEnd`.
+        pub skip: u32,
+    }
+
     #[derive(Clone)]
     pub enum SimpleAtom<'arena> {
         Var(&'arena [u8]),
         VarArgv(u8),
+        SpecialParam(SpecialParam),
+        /// `${param<op>word}`: the atoms of `word` follow inline, up to the matching `ParamEnd`.
+        ParamBegin(&'arena ParamHead<'arena>),
+        ParamEnd,
+        /// Unquoted whitespace in the word of a `ParamBegin`: a word break, or these bytes where nothing splits.
+        ParamSpace(&'arena [u8]),
         Text(&'arena [u8]),
         /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
         /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
@@ -683,6 +764,8 @@ pub mod ast {
         Tilde,
         CmdSubst(CmdSubst<'arena>),
     }
+
+    const _: () = assert!(size_of::<SimpleAtom<'static>>() == 24);
 
     #[derive(Clone)]
     pub struct CmdSubst<'arena> {
@@ -1489,6 +1572,8 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_close = false;
         let mut has_comma = false;
         let mut has_glob_syntax = false;
+        // Each open `ParamBegin`: its index in `atoms`, and the head that its `ParamEnd` allocates with `skip`.
+        let mut open_params: Vec<(usize, ast::ParamTarget<'bump>, ast::ParamOp, bool)> = Vec::new();
         {
             while match self.peek() {
                 Token::Delimit => {
@@ -1623,6 +1708,52 @@ impl<'bump> Parser<'bump> {
                     Token::VarArgv(int) => {
                         let _ = self.expect(TokenTag::VarArgv);
                         atoms.push(ast::SimpleAtom::VarArgv(int));
+                        if next_delimits {
+                            let _ = self.r#match(TokenTag::Delimit);
+                            if should_break {
+                                break;
+                            }
+                        }
+                    }
+                    Token::SpecialParam(param) => {
+                        let _ = self.expect(TokenTag::SpecialParam);
+                        atoms.push(ast::SimpleAtom::SpecialParam(param));
+                        if next_delimits {
+                            let _ = self.r#match(TokenTag::Delimit);
+                            if should_break {
+                                break;
+                            }
+                        }
+                    }
+                    Token::ParamBegin { op, quoted } => {
+                        let _ = self.expect(TokenTag::ParamBegin);
+                        // The lexer pushes the parameter right after `ParamBegin`.
+                        let target = match self.advance() {
+                            Token::Var(range) => ast::ParamTarget::Name(self.text(range)),
+                            Token::VarArgv(int) => ast::ParamTarget::Positional(int),
+                            Token::SpecialParam(param) => ast::ParamTarget::Special(param),
+                            _ => unreachable!(),
+                        };
+                        open_params.push((atoms.len(), target, op, quoted));
+                        // Replaced by the `ParamBegin` atom at the matching `ParamEnd`.
+                        atoms.push(ast::SimpleAtom::ParamEnd);
+                    }
+                    Token::ParamSpace(range) => {
+                        let _ = self.expect(TokenTag::ParamSpace);
+                        atoms.push(ast::SimpleAtom::ParamSpace(self.text(range)));
+                    }
+                    Token::ParamEnd => {
+                        let _ = self.expect(TokenTag::ParamEnd);
+                        if let Some((begin, target, op, quoted)) = open_params.pop() {
+                            let head = ast::ParamHead {
+                                target,
+                                op,
+                                quoted,
+                                skip: u32::try_from(atoms.len() - begin).expect("int cast"),
+                            };
+                            atoms[begin] = ast::SimpleAtom::ParamBegin(self.allocate(head));
+                        }
+                        atoms.push(ast::SimpleAtom::ParamEnd);
                         if next_delimits {
                             let _ = self.r#match(TokenTag::Delimit);
                             if should_break {
@@ -1978,6 +2109,10 @@ pub enum TokenTag {
     CloseParen,
     Var,
     VarArgv,
+    SpecialParam,
+    ParamBegin,
+    ParamEnd,
+    ParamSpace,
     Text,
     SingleQuotedText,
     DoubleQuotedText,
@@ -2029,6 +2164,16 @@ pub enum Token {
 
     Var(TextRange),
     VarArgv(u8),
+    /// `$?`, `$$`, `${?}`, `${$}`
+    SpecialParam(ast::SpecialParam),
+    /// `${param<op>`: the next token is the parameter, then the tokens of the word up to the `ParamEnd`.
+    ParamBegin {
+        op: ast::ParamOp,
+        quoted: bool,
+    },
+    ParamEnd,
+    /// A run of unquoted whitespace in the word of a `ParamBegin`.
+    ParamSpace(TextRange),
     Text(TextRange),
     /// Quotation information is lost from the lexer -> parser stage and it is
     /// helpful to disambiguate from regular text and quoted text
@@ -2042,6 +2187,8 @@ pub enum Token {
     Delimit,
     Eof,
 }
+
+const _: () = assert!(size_of::<Token>() == 12);
 
 #[derive(Clone, Copy)]
 pub struct TextRange {
@@ -2086,7 +2233,12 @@ impl Token {
             Token::OpenParen => b"`(`",
             Token::CloseParen => b"`)",
             Token::Var(r) => &strpool[r.start as usize..r.end as usize],
-            Token::VarArgv(n) => VARARGV_STRINGS[n as usize],
+            // `${N}` reaches past `$9`.
+            Token::VarArgv(n) => VARARGV_STRINGS.get(n as usize).copied().unwrap_or(b"${N}"),
+            Token::SpecialParam(param) => param.as_str().as_bytes(),
+            Token::ParamBegin { .. } => b"`${`",
+            Token::ParamEnd => b"`}`",
+            Token::ParamSpace(r) => &strpool[r.start as usize..r.end as usize],
             Token::Text(r) => &strpool[r.start as usize..r.end as usize],
             Token::SingleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
             Token::DoubleQuotedText(r) => &strpool[r.start as usize..r.end as usize],
@@ -2156,12 +2308,24 @@ pub enum SubShellKind {
     Backtick,
     /// $(echo hi; echo hello)
     Dollar,
+    /// The word of `${param<op>word}`, up to the `}` at the quote level of its `${` (`quoted`: double quotes).
+    ParamWord { quoted: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RedirectDirection {
     Out,
     In,
+}
+
+/// What `Lexer::eat_param` found after a `$`.
+enum ParamLex {
+    /// A parameter expansion: its tokens are pushed.
+    Matched,
+    /// No form the lexer expands: the `$` is text.
+    Text,
+    /// A `${param<op>word` that the input ends in: it is text, and so is each one that holds it.
+    Unclosed,
 }
 
 /// Whether `Lexer::break_word` follows the text it flushes with a `Token::Delimit`.
@@ -2213,6 +2377,12 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
+
+    /// Sorted source offsets of each `${param<op>word` with no `}`, so that it is not lexed as a word again.
+    pub(crate) param_unclosed: bun_alloc::ArenaVec<'bump, u32>,
+
+    /// In a `ParamWord`: how many `${` were left as text, whose `}` is text too.
+    pub(crate) param_text_braces: u32,
 }
 
 impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
@@ -2235,6 +2405,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
+            param_unclosed: bun_alloc::ArenaVec::new_in(bump),
+            param_text_braces: 0,
         }
     }
 
@@ -2280,6 +2452,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             delimit_quote: false,
             string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
+            param_unclosed: core::mem::replace(
+                &mut self.param_unclosed,
+                bun_alloc::ArenaVec::new_in(bump),
+            ),
+            param_text_braces: 0,
         };
         sublexer.chars.state = CharState::Normal;
         sublexer
@@ -2293,6 +2470,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
         self.js_string_ranges = core::mem::replace(
             &mut sublexer.js_string_ranges,
+            bun_alloc::ArenaVec::new_in(bump),
+        );
+        self.param_unclosed = core::mem::replace(
+            &mut sublexer.param_unclosed,
             bun_alloc::ArenaVec::new_in(bump),
         );
 
@@ -2422,9 +2603,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         // possibly double bracket open
                         c if c == u32::from(b'[') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'[' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             if let Some(p) = self.peek() {
@@ -2466,9 +2645,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b']') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b']' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             if let Some(p) = self.peek() {
@@ -2517,9 +2694,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'#') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'#' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             let whitespace_preceding = if let Some(prev) = self.chars.prev {
@@ -2536,9 +2711,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b';') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b';' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterText)?;
@@ -2552,6 +2725,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
+                            if let Some(SubShellKind::ParamWord { quoted }) = self.in_subshell {
+                                if quoted {
+                                    break 'escaped;
+                                }
+                                self.eat_param_space(char)?;
+                                fell_through = true;
+                                break 'escaped;
+                            }
                             self.break_word(AddDelimiter::AfterWord)?;
                             self.tokens.push(Token::Newline);
                             fell_through = true;
@@ -2559,9 +2740,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         // glob asterisks
                         c if c == u32::from(b'*') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'*' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             if let Some(next) = self.peek() {
@@ -2580,9 +2759,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         // brace expansion syntax
                         c if c == u32::from(b'{') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'{' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::No)?;
@@ -2591,9 +2768,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b',') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b',' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::No)?;
@@ -2602,6 +2777,23 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'}') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'}' as usize));
+                            if let Some(SubShellKind::ParamWord { quoted }) = self.in_subshell {
+                                let word_state = if quoted {
+                                    CharState::Double
+                                } else {
+                                    CharState::Normal
+                                };
+                                if self.chars.state != word_state {
+                                    break 'escaped;
+                                }
+                                if self.param_text_braces > 0 {
+                                    self.param_text_braces -= 1;
+                                    break 'escaped;
+                                }
+                                self.break_word(AddDelimiter::No)?;
+                                self.tokens.push(Token::ParamEnd);
+                                return Ok(());
+                            }
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
                             {
@@ -2655,8 +2847,30 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
                             match var_tok.len() {
                                 0 => {
-                                    self.append_char_to_str_pool(u32::from(b'$'))?;
-                                    self.break_word(AddDelimiter::No)?;
+                                    let in_param_word = matches!(
+                                        self.in_subshell,
+                                        Some(SubShellKind::ParamWord { .. })
+                                    );
+                                    match self.eat_param()? {
+                                        ParamLex::Matched => {}
+                                        // A word that holds an unclosed word has no `}` either.
+                                        ParamLex::Unclosed if in_param_word => {
+                                            self.tokens.push(Token::Eof);
+                                            return Ok(());
+                                        }
+                                        ParamLex::Text | ParamLex::Unclosed => {
+                                            // The `}` of a `${` that stays text does not end the word.
+                                            if in_param_word
+                                                && self.peek().is_some_and(|next| {
+                                                    !next.escaped && next.char == u32::from(b'{')
+                                                })
+                                            {
+                                                self.param_text_braces += 1;
+                                            }
+                                            self.append_char_to_str_pool(u32::from(b'$'))?;
+                                            self.break_word(AddDelimiter::No)?;
+                                        }
+                                    }
                                 }
                                 1 => 'blk: {
                                     let c = self.strpool[var_tok.start as usize];
@@ -2675,9 +2889,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'(') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'(' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterText)?;
@@ -2686,9 +2898,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b')') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b')' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             if self.in_subshell != Some(SubShellKind::Dollar)
@@ -2723,7 +2933,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            if self.chars.state != CharState::Normal {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             let snapshot = self.make_snapshot();
@@ -2739,9 +2949,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         // Operators
                         c if c == u32::from(b'|') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'|' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
@@ -2767,9 +2975,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'>') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'>' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
@@ -2779,9 +2985,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'<') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'<' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
@@ -2791,9 +2995,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         }
                         c if c == u32::from(b'&') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'&' as usize));
-                            if self.chars.state == CharState::Single
-                                || self.chars.state == CharState::Double
-                            {
+                            if self.operator_is_text() {
                                 break 'escaped;
                             }
                             self.break_word(AddDelimiter::AfterWord)?;
@@ -2859,7 +3061,14 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         c if c == u32::from(b' ') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b' ' as usize));
                             if self.chars.state == CharState::Normal {
-                                self.break_word(AddDelimiter::AfterWord)?;
+                                if let Some(SubShellKind::ParamWord { quoted }) = self.in_subshell {
+                                    if quoted {
+                                        break 'escaped;
+                                    }
+                                    self.eat_param_space(char)?;
+                                } else {
+                                    self.break_word(AddDelimiter::AfterWord)?;
+                                }
                                 fell_through = true;
                                 break 'escaped;
                             }
@@ -2877,7 +3086,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // Treat newline preceded by backslash as whitespace
             else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
-                if self.chars.state != CharState::Double {
+                if self.chars.state != CharState::Double
+                    && !matches!(self.in_subshell, Some(SubShellKind::ParamWord { .. }))
+                {
                     self.break_word(AddDelimiter::AfterWord)?;
                 }
                 continue;
@@ -2892,6 +3103,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     self.add_error(b"Unclosed command substitution")
                 }
                 SubShellKind::Normal => self.add_error(b"Unclosed subshell"),
+                // No `}`: `eat_braced_param` sees this `Eof` and lexes the `${` again as text.
+                SubShellKind::ParamWord { .. } => self.tokens.push(Token::Eof),
             }
             return Ok(());
         }
@@ -2967,6 +3180,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             && match self.tokens[self.tokens.len() - 1].tag() {
                 TokenTag::Var
                 | TokenTag::VarArgv
+                | TokenTag::SpecialParam
+                | TokenTag::ParamEnd
                 | TokenTag::Text
                 | TokenTag::SingleQuotedText
                 | TokenTag::DoubleQuotedText
@@ -2986,6 +3201,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Newline
                 | TokenTag::CmdSubstBegin
                 | TokenTag::CmdSubstQuoted
+                | TokenTag::ParamBegin
+                | TokenTag::ParamSpace
                 | TokenTag::OpenParen
                 | TokenTag::CloseParen
                 | TokenTag::JSObjRef
@@ -3132,6 +3349,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
             }
             SubShellKind::Normal => self.tokens.push(Token::OpenParen),
+            SubShellKind::ParamWord { .. } => unreachable!("lexed by eat_braced_param"),
         }
         let prev_quote_state = self.chars.state;
         let mut sublexer = self.make_sublexer(kind);
@@ -3389,6 +3607,176 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             return false;
         }
         true
+    }
+
+    /// Whether an unquoted operator byte is text here: in quotes, or in the word of `${param<op>word}`.
+    #[inline]
+    fn operator_is_text(&self) -> bool {
+        self.chars.state != CharState::Normal
+            || matches!(self.in_subshell, Some(SubShellKind::ParamWord { .. }))
+    }
+
+    /// One token for a run of unquoted spaces and newlines in a `ParamWord`. `first` was just eaten.
+    fn eat_param_space(&mut self, first: u32) -> Result<(), LexerError> {
+        self.break_word(AddDelimiter::No)?;
+        let start = self.j;
+        self.append_char_to_str_pool(first)?;
+        while let Some(next) = self.peek() {
+            if next.escaped || !(next.char == u32::from(b' ') || next.char == u32::from(b'\n')) {
+                break;
+            }
+            let _ = self.eat();
+            self.append_char_to_str_pool(next.char)?;
+        }
+        self.tokens
+            .push(Token::ParamSpace(TextRange { start, end: self.j }));
+        self.word_start = self.j;
+        Ok(())
+    }
+
+    /// After a `$` with no name: lexes `$?`, `$$`, `${param}` and `${param<op>word}`, or consumes nothing.
+    fn eat_param(&mut self) -> Result<ParamLex, LexerError> {
+        let mut chars = self.chars;
+        let Some(first) = chars.eat() else {
+            return Ok(ParamLex::Text);
+        };
+        if first.escaped {
+            return Ok(ParamLex::Text);
+        }
+        let special = match u8::try_from(first.char) {
+            Ok(b'?') => ast::SpecialParam::ExitCode,
+            // `$$(cmd)` stays a `$` followed by `$(cmd)`.
+            Ok(b'$')
+                if !chars
+                    .peek()
+                    .is_some_and(|next| !next.escaped && next.char == u32::from(b'(')) =>
+            {
+                ast::SpecialParam::Pid
+            }
+            Ok(b'{') => return self.eat_braced_param(chars),
+            _ => return Ok(ParamLex::Text),
+        };
+        self.chars = chars;
+        self.tokens.push(Token::SpecialParam(special));
+        Ok(ParamLex::Matched)
+    }
+
+    /// `chars` is past the `${`. Consumes and writes nothing unless the form is complete.
+    fn eat_braced_param(
+        &mut self,
+        mut chars: ShellCharIter<'bump, ENCODING>,
+    ) -> Result<ParamLex, LexerError> {
+        fn byte(c: Option<InputChar>) -> Option<u8> {
+            let c = c.filter(|c| !c.escaped)?;
+            u8::try_from(c.char).ok()
+        }
+
+        let name_start = chars.cursor_pos();
+        let param: Token = match byte(chars.peek()) {
+            Some(b'?') => {
+                let _ = chars.eat();
+                Token::SpecialParam(ast::SpecialParam::ExitCode)
+            }
+            Some(b'$') => {
+                let _ = chars.eat();
+                Token::SpecialParam(ast::SpecialParam::Pid)
+            }
+            Some(b'0'..=b'9') => {
+                let mut n: u32 = 0;
+                while let Some(digit @ b'0'..=b'9') = byte(chars.peek()) {
+                    let _ = chars.eat();
+                    n = n * 10 + u32::from(digit - b'0');
+                    if n > u32::from(u8::MAX) {
+                        return Ok(ParamLex::Text);
+                    }
+                }
+                Token::VarArgv(n as u8)
+            }
+            Some(b'a'..=b'z' | b'A'..=b'Z' | b'_') => {
+                while let Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') = byte(chars.peek())
+                {
+                    let _ = chars.eat();
+                }
+                // A range in the source until `push_param` copies the name.
+                Token::Var(TextRange {
+                    start: name_start as u32,
+                    end: chars.cursor_pos() as u32,
+                })
+            }
+            _ => return Ok(ParamLex::Text),
+        };
+        let op = match byte(chars.eat()) {
+            Some(b'}') => None,
+            Some(b':') => match byte(chars.eat()) {
+                Some(b'-') => Some(ast::ParamOp::DefaultIfEmpty),
+                Some(b'+') => Some(ast::ParamOp::AlternateIfNotEmpty),
+                _ => return Ok(ParamLex::Text),
+            },
+            Some(b'-') => Some(ast::ParamOp::DefaultIfUnset),
+            Some(b'+') => Some(ast::ParamOp::AlternateIfSet),
+            _ => return Ok(ParamLex::Text),
+        };
+
+        let Some(op) = op else {
+            self.chars = chars;
+            self.push_param(param);
+            return Ok(ParamLex::Matched);
+        };
+
+        // The position after the `$` names this word in `param_unclosed`.
+        let dollar = self.chars.cursor_pos() as u32;
+        if self.subshell_depth >= MAX_SUBSHELL_DEPTH
+            || self.param_unclosed.binary_search(&dollar).is_ok()
+        {
+            return Ok(ParamLex::Text);
+        }
+        let before = self.make_snapshot();
+        let tokens_len = self.tokens.len();
+        let strpool_len = self.strpool.len();
+        let errors_len = self.errors.len();
+        let js_string_ranges_len = self.js_string_ranges.len();
+
+        let quote_state = self.chars.state;
+        let quoted = quote_state == CharState::Double;
+        self.chars = chars;
+        self.tokens.push(Token::ParamBegin { op, quoted });
+        self.push_param(param);
+        self.word_start = self.j;
+
+        let mut sublexer = self.make_sublexer(SubShellKind::ParamWord { quoted });
+        sublexer.chars.state = quote_state;
+        sublexer.lex()?;
+        self.continue_from_sublexer(&mut sublexer);
+        self.chars.state = quote_state;
+
+        // A `ParamWord` lexer that found no `}` ends with `Eof`.
+        if matches!(self.tokens.last(), Some(Token::Eof)) {
+            self.tokens.truncate(tokens_len);
+            self.strpool.truncate(strpool_len);
+            self.errors.truncate(errors_len);
+            self.js_string_ranges.truncate(js_string_ranges_len);
+            self.backtrack(&before);
+            if let Err(at) = self.param_unclosed.binary_search(&dollar) {
+                self.param_unclosed.insert(at, dollar);
+            }
+            return Ok(ParamLex::Unclosed);
+        }
+        Ok(ParamLex::Matched)
+    }
+
+    /// Pushes a parameter token. A `Var` from `eat_braced_param` is a source range: its name is copied here.
+    fn push_param(&mut self, param: Token) {
+        let param = match param {
+            Token::Var(source) => {
+                let name = &self.chars.src_bytes()[source.start as usize..source.end as usize];
+                let start = self.j;
+                self.strpool.extend_from_slice(name);
+                self.j += name.len() as u32;
+                Token::Var(TextRange { start, end: self.j })
+            }
+            other => other,
+        };
+        self.tokens.push(param);
     }
 
     fn eat_var(&mut self) -> Result<TextRange, LexerError> {
@@ -3778,6 +4166,29 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 }
 
 // ───────────────────────────── var-name / eq helpers ─────────────────────────────
+
+/// Whether text appended to `src` would change a parameter it ends in: `$NAME`, `${`, `${param`, `${param:`.
+pub fn ends_in_param_ref(src: &[u8]) -> bool {
+    let (head, colon) = match src.split_last() {
+        Some((b':', head)) => (head, true),
+        _ => (src, false),
+    };
+    let name_len = head
+        .iter()
+        .rev()
+        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_')
+        .count();
+    let before_name = &head[..head.len() - name_len];
+    if !colon && before_name.last() == Some(&b'$') {
+        return true;
+    }
+    let before_param = match (name_len, before_name) {
+        (0, [rest @ .., b'?' | b'$']) => rest,
+        (0, _) if colon => return false,
+        _ => before_name,
+    };
+    before_param.ends_with(b"${")
+}
 
 /// Only these characters allowed:
 /// - a-zA-Z

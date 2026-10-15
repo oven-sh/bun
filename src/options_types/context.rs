@@ -469,8 +469,7 @@ pub struct TestOptions {
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
-    /// `[[test.projects]]`, in file order. A file belongs to the first
-    /// project whose `testMatch` matches it.
+    /// `[[test.projects]]` in file order. The first `testMatch` hit wins.
     pub projects: Vec<TestProject>,
 }
 

@@ -320,6 +320,9 @@ describe("the callback of a PerformanceObserver", () => {
           sharedFunctions: described(list.getEntriesByName("shared", "function")),
           otherFunctions: described(list.getEntriesByName("other", "function")),
           unknownName: described(list.getEntriesByName("no such name")),
+          // The type is compared as it is: null is no type, and what is not a string is the type of no entry.
+          sharedOfNullType: described(list.getEntriesByName("shared", null)),
+          sharedOfObjectType: described(list.getEntriesByName("shared", { toString: () => "mark" })),
         },
         {
           all: ["function:shared", "function:shared", "mark:other", "mark:shared", "measure:shared"],
@@ -333,6 +336,8 @@ describe("the callback of a PerformanceObserver", () => {
           sharedFunctions: ["function:shared", "function:shared"],
           otherFunctions: [],
           unknownName: [],
+          sharedOfNullType: ["function:shared", "function:shared", "mark:shared", "measure:shared"],
+          sharedOfObjectType: [],
         },
       );
       // In the order they started.
@@ -368,6 +373,8 @@ describe("the callback of a PerformanceObserver", () => {
           byName: names(list.getEntriesByName("only marks: a")),
           byNameAndType: names(list.getEntriesByName("only marks: b", "mark")),
           byNameAndOtherType: names(list.getEntriesByName("only marks: b", "measure")),
+          byNameAndNullType: names(list.getEntriesByName("only marks: b", null)),
+          byNameAndObjectType: names(list.getEntriesByName("only marks: b", { toString: () => "mark" })),
         },
         {
           all: ["only marks: a", "only marks: b", "only marks: a"],
@@ -378,6 +385,8 @@ describe("the callback of a PerformanceObserver", () => {
           byName: ["only marks: a", "only marks: a"],
           byNameAndType: ["only marks: b"],
           byNameAndOtherType: [],
+          byNameAndNullType: ["only marks: b"],
+          byNameAndObjectType: [],
         },
       );
     } finally {
@@ -742,6 +751,41 @@ describe("the delivery of Node's entry types", () => {
       again.disconnect();
       other.disconnect();
       performance.clearMarks("for the one made 1st");
+    }
+  });
+
+  test("a buffered observe() takes a place in that order, and an observe() in a callback moves no observer", async () => {
+    const order: string[] = [];
+    const plain = new PerformanceObserver(() => void order.push("plain"));
+    const buffered = new PerformanceObserver(() => void order.push("buffered"));
+    let calls = 0;
+    const caller = new PerformanceObserver(() => {
+      order.push("caller");
+      // `waiting` still has its entry of this delivery. observe() does not make it the first of the next one.
+      if (++calls === 1) waiting.observe({ entryTypes: ["function"] });
+    });
+    const waiting = new PerformanceObserver(() => void order.push("waiting"));
+    try {
+      plain.observe({ type: "function" });
+      buffered.observe({ type: "function", buffered: true });
+      timed();
+      await delivery();
+      plain.disconnect();
+      buffered.disconnect();
+      assert.deepStrictEqual(order.splice(0), ["buffered", "plain"]);
+
+      caller.observe({ entryTypes: ["function"] });
+      waiting.observe({ entryTypes: ["function"] });
+      timed();
+      await delivery();
+      timed();
+      await delivery();
+      assert.deepStrictEqual(order, ["caller", "waiting", "caller", "waiting"]);
+    } finally {
+      plain.disconnect();
+      buffered.disconnect();
+      caller.disconnect();
+      waiting.disconnect();
     }
   });
 

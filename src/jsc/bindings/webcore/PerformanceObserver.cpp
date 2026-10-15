@@ -43,6 +43,8 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     : m_callback(WTF::move(callback))
 {
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
+    auto* context = m_callback->scriptExecutionContext();
+    m_isOfModuleGraph = context && context->isForModuleGraph();
 }
 
 ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
@@ -73,10 +75,12 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
     if (!m_performance)
         return Exception { TypeError };
 
-    auto* context = scriptExecutionContext();
     // What a disposed Bun.ModuleGraph had queued still runs: its observers observe nothing more (Performance::disconnectObserversOf).
-    if (context && context->isForModuleGraph() && context->isStopped())
-        return {};
+    if (m_isOfModuleGraph) {
+        auto* context = scriptExecutionContext();
+        if (!context || context->isStopped())
+            return {};
+    }
 
     auto& vm = globalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -146,6 +150,7 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
     }
 
     auto previousFilter = m_registered ? m_typeFilter : OptionSet<PerformanceEntry::Type> {};
+    bool wasDeliveredOnImmediate = deliversOnImmediate();
     m_typeFilter = filter;
     if (!m_registered) {
         m_performance->registerPerformanceObserver(*this);
@@ -153,8 +158,9 @@ ExceptionOr<void> PerformanceObserver::observe(JSDOMGlobalObject& globalObject, 
     }
     m_performance->observedTypesDidChange(previousFilter, filter);
 
-    // Also for what was queued before this call changed how the observer is delivered.
-    if (pendingEntries())
+    // A buffered observe() takes its place in the next delivery, as in node. Any other observe() leaves the place as it is, unless it moved queued entries to the other kind of delivery.
+    bool needsDelivery = init.type && init.buffered ? deliversOnImmediate() || pendingEntries() : pendingEntries() && wasDeliveredOnImmediate != deliversOnImmediate();
+    if (needsDelivery)
         m_performance->scheduleDelivery(*this);
 
     return {};
@@ -213,9 +219,11 @@ void PerformanceObserver::deliver()
     if (!pendingEntries())
         return;
 
-    auto* context = m_callback->scriptExecutionContext();
-    if (!context)
+    // Its context is gone: nothing can call it, so it holds no queue and no place in the counts.
+    if (!m_callback->scriptExecutionContext()) {
+        disconnect();
         return;
+    }
 
     auto* entries = takeRecords();
     JSC::EnsureStillAliveScope keepEntries(entries);

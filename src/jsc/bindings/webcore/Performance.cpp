@@ -457,15 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionQueueNodePerformanceEntry, (JSC::JSGlobalObje
     if (!performance || !entry || !typeIndex.isUInt32() || typeIndex.asUInt32() >= PerformanceEntry::numberOfNodeTypes) [[unlikely]]
         return JSC::JSValue::encode(JSC::jsUndefined());
     auto type = PerformanceEntry::nodeTypeAtIndex(typeIndex.asUInt32());
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-#if ASSERT_ENABLED
-    // The caller passes the kEntryType* constant of the entry's own entryType.
-    if (JSC::JSValue entryType = entry->getDirect(vm, JSC::Identifier::fromString(vm, "entryType"_s)); entryType && entryType.isString()) {
-        auto entryTypeString = asString(entryType)->tryGetValue();
-        ASSERT(entryTypeString->isNull() || PerformanceEntry::parseEntryTypeString(entryTypeString) == type);
-    }
-#endif
-    performance->queueEntry(vm, *entry, type);
+    performance->queueEntry(JSC::getVM(lexicalGlobalObject), *entry, type);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

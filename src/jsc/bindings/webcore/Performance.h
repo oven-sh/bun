@@ -174,7 +174,7 @@ private:
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;
-    // In the order they got their first entry since the last immediate, which is the order node calls them in.
+    // In the order they got their first entry, or made a buffered observe(), since the last immediate: the order node calls them in.
     ListHashSet<RefPtr<PerformanceObserver>> m_observersPendingOnImmediate;
     // Registered observers per Node entry type, by PerformanceEntry::nodeTypeIndex.
     std::array<uint32_t, 7> m_nodeObserverCounts {};

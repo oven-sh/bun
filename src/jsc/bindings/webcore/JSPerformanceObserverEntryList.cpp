@@ -352,8 +352,11 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto type = argument1.value().isUndefined() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
+    // Node compares this `type` as it is: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/observe.js#L199-L213
+    JSValue typeValue = callFrame->argument(1);
+    if (!typeValue.isUndefinedOrNull() && !typeValue.isString())
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(constructEmptyArray(castedThis->globalObject(), nullptr)));
+    auto type = typeValue.isUndefinedOrNull() ? String() : convert<IDLDOMString>(*lexicalGlobalObject, typeValue);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(performanceObserverEntryListEntries(*lexicalGlobalObject, *castedThis, name, type)));
 }

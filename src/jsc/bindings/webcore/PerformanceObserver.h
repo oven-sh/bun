@@ -103,6 +103,8 @@ private:
     OptionSet<PerformanceEntry::Type> m_typeFilter;
     Mode m_mode { Mode::Unset };
     bool m_registered { false };
+    // Its context is a Bun.ModuleGraph's: once that graph is disposed, or collected, it observes nothing more.
+    bool m_isOfModuleGraph { false };
 };
 
 } // namespace WebCore

@@ -428,6 +428,26 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("an entry goes to the observers of the type its producer made, whatever script wrote on it since", async () => {
+    // (In a process of its own: the setter is on Object.prototype.)
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+       const observer = new PerformanceObserver(() => {});
+       observer.observe({ entryTypes: ["function"] });
+       Object.defineProperty(Object.prototype, 0, {
+         set() { if (this.entryType === "function") this.entryType = "mark"; },
+         configurable: true,
+       });
+       performance.timerify(function work() {})(1);
+       delete Object.prototype[0];
+       console.log(JSON.stringify(observer.takeRecords().map(entry => entry.name + " is a " + entry.entryType)));`,
+    ]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["work is a mark"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node: module times its work only while an observer observes its entry type", async () => {
     const server = net.createServer(socket => socket.end());
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -565,15 +585,23 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
         const turn = () => new Promise(resolve => setImmediate(resolve));
         const turns = async count => { while (count-- > 0) await turn(); };
         const tenantFile = import.meta.dir + "/tenant.mjs";
+        // How many graphs are alive once the event loop has nothing more of a disposed graph to stop.
+        const settled = async () => {
+          let count = graphs();
+          for (let same = 0; same < 3; ) {
+            await turn();
+            const now = graphs();
+            same = now === count ? same + 1 : 0;
+            count = now;
+          }
+          return count;
+        };
         // How many of the graphs that \`use\` makes (after one that is not counted) stay alive.
         const kept = async (count, use) => {
           await use();
-          let none = graphs();
-          for (let before = -1; before !== none; await turn()) [before, none] = [none, graphs()];
+          const none = await settled();
           for (let i = 0; i < count; i++) await use();
-          let more = graphs() - none;
-          for (let tries = 0; more > 0 && tries < 100; tries++, await turn()) more = graphs() - none;
-          return more;
+          return (await settled()) - none;
         };
         const result = {};
         const storage = new AsyncLocalStorage();
@@ -628,6 +656,22 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
         result.lateObservers = late.flat();
         result.observedAfterLateObserve = observed();
 
+        // The same once the disposed graph is collected too: here the callback is the host's, so nothing keeps the graph.
+        let callsAfterCollection = 0;
+        let orphan;
+        (() => {
+          const graph = new Bun.ModuleGraph();
+          graph.run(() => void (orphan = new PerformanceObserver(() => callsAfterCollection++)));
+          graph.dispose();
+        })();
+        await settled();
+        orphan.observe({ entryTypes: ["function"] });
+        result.observedByAnObserverOfACollectedGraph = observed();
+        hostWork();
+        result.queuedForAnObserverOfACollectedGraph = orphan.takeRecords().length;
+        await turns(3);
+        result.callsOfAnObserverOfACollectedGraph = callsAfterCollection;
+
         // The host's callback gets the entries that a graph's script queued. What it starts then
         // (here, something that keeps its async context) does not keep that graph or its stores.
         const snapshots = [];
@@ -660,6 +704,9 @@ describe("PerformanceObserver and the entry types that only Node has", () => {
         observedAfterDispose: "0 0 0 0 0 0 0",
         lateObservers: ["observe() returned", "observe() returned", "observe() returned"],
         observedAfterLateObserve: "0 0 0 0 0 0 0",
+        observedByAnObserverOfACollectedGraph: "0 0 0 0 0 0 0",
+        queuedForAnObserverOfACollectedGraph: 0,
+        callsOfAnObserverOfACollectedGraph: 0,
         keptByTheCallbackOfTheHost: 0,
         callbacksOfTheHost: 4,
         storesInTheCallbackOfTheHost: ["undefined"],

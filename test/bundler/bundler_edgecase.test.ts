@@ -1866,6 +1866,30 @@ describe("bundler", () => {
     },
     run: { stdout: "late B\nentry A B" },
   }));
+  // An HTML file that server-side code imports is an entry point of the browser
+  // graph. The import is not an import of that module's exports, also when the
+  // HTML file is in memory (the `files` option).
+  test("edgecase/InMemoryHtmlFileImportedByServerSideCode", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/server.js"],
+      target: "bun",
+      throw: false,
+      files: {
+        "/server.js": `import page from "./page.html"; console.log(page);`,
+        "/page.html": `<!doctype html><html><body>hello</body></html>`,
+      },
+    });
+
+    expect({
+      success: result.success,
+      logs: result.logs.map(log => log.message),
+      outputs: result.outputs.map(output => output.path.replace(/-[a-z0-9]+\./, "-[hash].")).sort(),
+    }).toEqual({
+      success: true,
+      logs: [],
+      outputs: ["./chunk-[hash].js", "./page.html", "./server.js"],
+    });
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

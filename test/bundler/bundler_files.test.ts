@@ -602,30 +602,6 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
-  // The HTML file is an entry point of the browser graph. The server-side
-  // import of it is not an import of that module's exports.
-  test("in-memory HTML file imported by server-side code", async () => {
-    const result = await Bun.build({
-      entrypoints: ["/server.js"],
-      target: "bun",
-      throw: false,
-      files: {
-        "/server.js": `import page from "./page.html"; console.log(page);`,
-        "/page.html": `<!doctype html><html><body>hello</body></html>`,
-      },
-    });
-
-    expect({
-      success: result.success,
-      logs: result.logs.map(log => log.message),
-      outputs: result.outputs.map(output => output.path.replace(/-[a-z0-9]+\./, "-[hash].")).sort(),
-    }).toEqual({
-      success: true,
-      logs: [],
-      outputs: ["./chunk-[hash].js", "./page.html", "./server.js"],
-    });
-  });
-
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

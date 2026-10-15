@@ -1591,8 +1591,7 @@ describe("Bun.Image", () => {
             }
             least.set(key, best);
           }
-          const got =
-            (r - back[i]) ** 2 + (g - back[i + 1]) ** 2 + (b - back[i + 2]) ** 2 + (a - back[i + 3]) ** 2;
+          const got = (r - back[i]) ** 2 + (g - back[i + 1]) ** 2 + (b - back[i + 2]) ** 2 + (a - back[i + 3]) ** 2;
           if (got !== best) count++;
         }
         return count;
@@ -1618,6 +1617,22 @@ describe("Bun.Image", () => {
         // One colour per entry: white holds one entry, not several.
         expect(new Set(palette.map(e => e.join())).size).toBe(colors);
         expect(countNotNearest(rgba, palette, (await decode(out)).data)).toBe(0);
+      });
+
+      test("the palette does not depend on the order of the pixels", async () => {
+        // The same colours in the same amounts, in reverse. With most of the
+        // white first the colours repeat from the start and are counted in
+        // the table. With most of it last they do not: the pixels are sorted.
+        const [w, h] = [400, 375];
+        const whiteFirst = whiteThenDark(w * h, 130000, 17000);
+        const whiteLast = whiteFirst.slice();
+        new Uint32Array(whiteLast.buffer).reverse();
+        const [first, last] = await Promise.all(
+          [whiteFirst, whiteLast].map(rgba =>
+            new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors: 16 }).bytes(),
+          ),
+        );
+        expect(pngPlte(last).entries).toEqual(pngPlte(first).entries);
       });
 
       // The table's hash is fixed: the top bits of key * 0x9E3779B1. Every

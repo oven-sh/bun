@@ -10,7 +10,7 @@
 
 import type { Dependency } from "../source.ts";
 
-const HDRHISTOGRAM_COMMIT = "be60a9987ee48d0abf0d7b6a175bad8d6c1585d1";
+const HDRHISTOGRAM_COMMIT = "18c7a324383dded1451d15621cd018b0048057d0";
 
 export const hdrhistogram: Dependency = {
   name: "hdrhistogram",
@@ -21,13 +21,19 @@ export const hdrhistogram: Dependency = {
     commit: HDRHISTOGRAM_COMMIT,
   }),
 
-  patches: ["patches/hdrhistogram/bitscan-type.patch"],
+  // no-avx2-dispatch: the percentile scan's AVX2 path is selected with
+  // __builtin_cpu_supports(), which links compiler-rt's cpu-model constructor
+  // (runs before main; not in clang-cl's default link). Gate it on a define.
+  patches: ["patches/hdrhistogram/bitscan-type.patch", "patches/hdrhistogram/no-avx2-dispatch.patch"],
 
   build: cfg => ({
     kind: "direct",
     sources: ["src/hdr_encoding.c", "src/hdr_histogram.c", "src/hdr_histogram_log_no_op.c"],
     includes: ["include"],
-    defines: cfg.windows ? { _CRT_SECURE_NO_WARNINGS: true } : { _GNU_SOURCE: true },
+    defines: {
+      HDR_NO_AVX2_DISPATCH: true,
+      ...(cfg.windows ? { _CRT_SECURE_NO_WARNINGS: true } : { _GNU_SOURCE: true }),
+    },
   }),
 
   provides: () => ({

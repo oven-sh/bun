@@ -7,9 +7,12 @@
 //! `bun_install` (via `bun_transpiler` → `bun_bundler`), so no cycle is
 //! introduced; this only makes the existing edge direct.
 
-#![allow(non_snake_case)]
 pub mod arguments;
 pub mod bunfig;
+pub mod error;
 
-pub use arguments::{load_config, load_config_path, load_config_with_cmd_args};
-pub use bunfig::Bunfig;
+pub use arguments::{
+    Above, ToolReader, load_config, load_config_above_for_tool, load_config_for_tool,
+    load_config_path, load_config_with_cmd_args,
+};
+pub use error::{Error, Result};

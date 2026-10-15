@@ -1831,7 +1831,6 @@ function lazyMinimatch() {
           const flags = (this.#options.nocase ? "i" : "") + (uflag ? "u" : "");
           return Object.assign(new RegExp(`^${re}$`, flags), {
             _src: re,
-            _glob: glob,
           });
         }
         get options() {
@@ -2320,7 +2319,7 @@ function lazyMinimatch() {
       }
       return false;
     }
-    debug(..._) {}
+    debug(..._args) {}
     make() {
       const pattern = this.pattern;
       const options = this.options;
@@ -2341,7 +2340,7 @@ function lazyMinimatch() {
       const rawGlobParts = this.globSet.map(s => this.slashSplit(s));
       this.globParts = this.preprocess(rawGlobParts);
       this.debug(this.pattern, this.globParts);
-      let set = this.globParts.map((s, _, __) => {
+      let set = this.globParts.map(s => {
         if (this.isWindows && this.windowsNoMagicRoot) {
           const isUNC = s[0] === "" && s[1] === "" && (s[2] === "?" || !globMagic.test(s[2])) && !globMagic.test(s[3]);
           const isDrive = /^[a-z]:/i.test(s[0]);

@@ -51,11 +51,6 @@ pub trait PathChar: strings::PathByte + Ord {
         }
     }
 
-    #[inline]
-    fn is_ascii_alphabetic(self) -> bool {
-        matches!(self.to_ascii(), Some(b) if b.is_ascii_alphabetic())
-    }
-
     /// `bun.strings.literal(T, "...")` — yields a `&'static [Self]` for an
     /// ASCII byte literal. `u8` returns the input slice; `u16` const-widens
     /// the **closed set** of literals actually passed by callers (see the

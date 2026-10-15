@@ -6,29 +6,27 @@ use crate::mysql::my_sql_statement::Param;
 
 #[derive(Default)]
 pub struct Signature {
-    pub fields: Box<[Param]>,
+    pub(crate) fields: Box<[Param]>,
     pub name: Box<[u8]>,
-    pub query: Box<[u8]>,
 }
 
 impl Signature {
-    pub fn empty() -> Signature {
+    pub(crate) fn empty() -> Signature {
         Signature {
             fields: Box::default(),
             name: Box::default(),
-            query: Box::default(),
         }
     }
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
-    // Errors are collapsed into the crate-wide `bun_core::Error` currency.
-    pub fn generate(
+    // Errors are collapsed into the crate-wide `crate::Error` currency.
+    pub(crate) fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,
         columns: JSValue,
-    ) -> Result<Signature, bun_core::Error> {
+    ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_mysql;
         use crate::shared::query_binding_iterator::QueryBindingIterator;
 
@@ -74,13 +72,12 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(bun_core::err!("InvalidQueryBinding"));
+            return Err(crate::Error::InvalidQueryBinding);
         }
 
         Ok(Signature {
             name: name.into_boxed_slice(),
             fields: fields.into_boxed_slice(),
-            query: Box::<[u8]>::from(query),
         })
     }
 }

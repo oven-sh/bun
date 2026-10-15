@@ -35,12 +35,6 @@ impl JSONOptions {
     };
 }
 
-impl Default for JSONOptions {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
@@ -96,7 +90,7 @@ fn parse_impl(
     log: &mut bun_ast::Log,
     opts: JSONOptions,
     check_len: bool,
-) -> Result<ParseOutput, bun_core::Error> {
+) -> crate::Result<ParseOutput> {
     parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
 }
 
@@ -106,7 +100,7 @@ fn parse_impl_in(
     opts: JSONOptions,
     check_len: bool,
     tape_alloc: E::TapeAlloc,
-) -> Result<ParseOutput, bun_core::Error> {
+) -> crate::Result<ParseOutput> {
     let contents: &[u8] = &source.contents;
 
     let mut opts = opts;
@@ -162,7 +156,7 @@ fn parse_impl_in(
                 drop_stage2_errors(log);
                 return Err(report_index_error(e, source, log));
             }
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
     }
     if !opts.allow_comments
@@ -179,10 +173,10 @@ fn parse_impl_in(
                 ..Default::default()
             },
         );
-        return Err(bun_core::err!("SyntaxError"));
+        return Err(crate::Error::SyntaxError);
     }
     if sidx.index_error.is_some() || (result.is_ok() && log.errors > log_mark.0) {
-        return Err(bun_core::err!("SyntaxError"));
+        return Err(crate::Error::SyntaxError);
     }
     result
 }
@@ -194,7 +188,7 @@ fn run_stage2<'s>(
     opts: JSONOptions,
     check_len: bool,
     tape_alloc: E::TapeAlloc,
-) -> Result<ParseOutput, bun_core::Error> {
+) -> crate::Result<ParseOutput> {
     let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
@@ -218,7 +212,7 @@ fn report_index_error(
     err: IndexError,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-) -> bun_core::Error {
+) -> crate::Error {
     match err {
         IndexError::UnterminatedBlockComment { .. } => {
             log.add_error_fmt_opts(
@@ -251,10 +245,10 @@ fn report_index_error(
             );
         }
     }
-    bun_core::err!("SyntaxError")
+    crate::Error::SyntaxError
 }
 
-fn guess_indentation(s: &[u8]) -> Indentation {
+pub fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
         if s[i] == b'"' || s[i] == b'\'' {
@@ -315,7 +309,7 @@ pub fn parse_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     parse_utf8_impl::<false>(source, log, bump)
 }
 
@@ -324,7 +318,7 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
@@ -337,7 +331,7 @@ fn parse_classic(
     bump: &Bump,
     opts: JSONOptions,
     check_len: bool,
-) -> Result<ParseOutput, bun_core::Error> {
+) -> crate::Result<ParseOutput> {
     let opts = JSONOptions {
         record_value_locs: true,
         ..opts
@@ -361,41 +355,69 @@ fn parse_classic(
     Ok(out)
 }
 
+/// For a tree that outlives the next reset of the thread-local `Store`.
+pub fn clone_out_of_store(
+    root: &Expr,
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Expr> {
+    root.deep_clone(bump).map_err(|err| {
+        if let bun_ast::Error::Alloc(err) = err {
+            return err.into();
+        }
+        log.add_error_fmt(
+            source,
+            root.loc,
+            format_args!("JSON document is too deeply nested"),
+        );
+        crate::Error::StackOverflow
+    })
+}
+
 impl ParsedJson {
     /// Strict JSON.
     pub fn parse_json(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-    ) -> Result<ParsedJson, bun_core::Error> {
-        parse_to_rows(source, log, JSON_OPTS)
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, JSON_OPTS, false)
     }
 
     /// JSONC (comments and trailing commas).
     pub fn parse_jsonc(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-    ) -> Result<ParsedJson, bun_core::Error> {
-        parse_to_rows(source, log, TSCONFIG_OPTS)
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, TSCONFIG_OPTS, false)
+    }
+
+    /// JSONC, with nothing but whitespace and comments after the value.
+    pub fn parse_jsonc_document(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, TSCONFIG_OPTS, true)
     }
 
     /// package.json (comments & trailing commas allowed).
     pub fn parse_package_json(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-    ) -> Result<ParsedJson, bun_core::Error> {
-        parse_to_rows(source, log, PACKAGE_JSON_OPTS)
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
     pub fn parse_npm_manifest(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
-    ) -> Result<ParsedJson, bun_core::Error> {
+    ) -> crate::Result<ParsedJson> {
         const MANIFEST_OPTS: JSONOptions = JSONOptions {
             json_warn_duplicate_keys: false,
             ..JSONOptions::DEFAULT
         };
-        parse_to_rows(source, log, MANIFEST_OPTS)
+        parse_to_rows(source, log, MANIFEST_OPTS, false)
     }
 }
 
@@ -404,7 +426,7 @@ pub fn parse_json_into_arena(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     arena: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, JSON_OPTS, arena)
 }
 
@@ -413,7 +435,7 @@ pub fn parse_jsonc_into_arena(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     arena: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     parse_to_rows_in(source, log, TSCONFIG_OPTS, arena)
 }
 
@@ -421,7 +443,8 @@ fn parse_to_rows(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
-) -> Result<ParsedJson, bun_core::Error> {
+    check_len: bool,
+) -> crate::Result<ParsedJson> {
     if source.contents.is_empty() {
         let mut tape = Box::new(E::JsonTape::empty());
         let root = Expr::init(
@@ -435,7 +458,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts, check_len)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -447,7 +470,7 @@ fn parse_to_rows_in(
     log: &mut bun_ast::Log,
     opts: JSONOptions,
     arena: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
     if source.contents.is_empty() {
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
@@ -466,7 +489,7 @@ pub fn parse_package_json_utf8(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
@@ -485,7 +508,7 @@ pub fn parse_package_json_utf8_with_opts(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<JsonResult, bun_core::Error> {
+) -> crate::Result<JsonResult> {
     if source.contents.is_empty() {
         return Ok(JsonResult {
             root: empty_object_expr(),
@@ -503,7 +526,7 @@ pub fn parse_for_macro(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
@@ -516,7 +539,7 @@ pub fn parse_ts_config(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     if source.contents.is_empty() {
         return Ok(empty_object_expr());
     }
@@ -528,7 +551,7 @@ pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
     if contents.is_empty() {
         return Ok(empty_object_expr());
@@ -612,7 +635,7 @@ fn parse_auto_quoted_string(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
     let loc = bun_ast::Loc { start: 0 };
 
@@ -647,8 +670,8 @@ pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
 
-    pub found_version_buf: [u8; 1024],
-    pub found_name_buf: [u8; 1024],
+    pub(crate) found_version_buf: [u8; 1024],
+    pub(crate) found_name_buf: [u8; 1024],
     found_name_len: usize,
     found_version_len: usize,
     pub has_found_name: bool,
@@ -686,8 +709,8 @@ impl<'a> PackageJSONVersionChecker<'a> {
     }
 
     /// Parse the document and record its first top-level string-valued `name` and `version`.
-    pub fn parse(&mut self) -> Result<(), bun_core::Error> {
-        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
+    pub fn parse(&mut self) -> crate::Result<()> {
+        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS, false)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
@@ -735,7 +758,7 @@ pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_
 
 /// [`property_value_loc`] with the key's location as the fallback.
 #[inline]
-pub fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
+pub(crate) fn property_value_loc_or_key(contents: &[u8], key_loc: bun_ast::Loc) -> bun_ast::Loc {
     property_value_loc(contents, key_loc).unwrap_or(key_loc)
 }
 
@@ -912,10 +935,10 @@ pub fn materialize(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     materialize_impl(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
-            format_args!("JSON document is too deeply nested"),
+            format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
                 source: Some(source),
                 loc: root.loc,
@@ -930,7 +953,7 @@ fn materialize_impl(
     source: &bun_ast::Source,
     bump: &Bump,
     was_originally_macro: bool,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     let m = Materializer {
         contents: &source.contents,
         bump,
@@ -940,7 +963,7 @@ fn materialize_impl(
     };
     let out = m.expr(root, root.loc);
     if m.overflowed.get() {
-        return Err(bun_core::err!("StackOverflow"));
+        return Err(crate::Error::StackOverflow);
     }
     Ok(out)
 }
@@ -1088,8 +1111,12 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
+            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &mut log).map(|p| {
+                tape = p.tape;
+                p.root
+            }),
             Which::Immutable => {
-                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT).map(|mut p| {
+                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT, false).map(|mut p| {
                     tape = p.tape.take();
                     p.root
                 })
@@ -1118,6 +1145,7 @@ mod tests {
         Env,
         PackageJson,
         Jsonc,
+        JsoncDocument,
         Immutable,
     }
 
@@ -1316,6 +1344,44 @@ mod tests {
             "{\n  \"p\": {\n    \"m\": \"l\"\n  }\n}",
             "{\"p\":{\"m\":\"l\"}}",
         );
+    }
+
+    #[test]
+    fn jsonc_document_is_one_value() {
+        for src in [
+            "{} // c",
+            "{} /* c */ \n",
+            "\u{FEFF}{}\u{FEFF}",
+            "// c\n[1,]\n\t",
+            "\"semi\"",
+            "1 ",
+            "null\u{2028}",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(
+                p.root.is_some() && p.errors == 0,
+                "{src:?}: {}",
+                p.first_msg
+            );
+        }
+        for src in [
+            "{} x",
+            "{} {}",
+            "{},",
+            "[] 1",
+            "\"semi\": false",
+            "1 2",
+            "true false",
+            "{}\0",
+            "{} /* c",
+            "{} /",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(p.root.is_none() && p.errors > 0, "{src:?} is accepted");
+        }
+        for src in ["{} x", "\"semi\": false", "{}\0"] {
+            assert!(run(src.as_bytes(), Which::Jsonc).root.is_some(), "{src:?}");
+        }
     }
 
     #[test]
@@ -1849,14 +1915,19 @@ mod tests {
                 out.push('\n');
             }
 
-            writeln!(out, "bool={:?}", Expr::get_boolean(&root, b"private")).unwrap();
+            writeln!(
+                out,
+                "bool={:?}",
+                root.get(b"private").and_then(|e| e.as_bool())
+            )
+            .unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
                 out,
                 "str={:?}",
-                root.get_string(bump, b"name")
-                    .unwrap()
-                    .map(|(s, _)| std::string::String::from_utf8_lossy(s).into_owned())
+                root.get(b"name")
+                    .and_then(|e| e.as_string(bump))
+                    .map(|s| std::string::String::from_utf8_lossy(s).into_owned())
             )
             .unwrap();
             writeln!(
@@ -1907,20 +1978,13 @@ mod tests {
             assert!(root.get(b"empty_arr").unwrap().as_array().is_none());
             assert!(root.get_array(b"empty_obj").is_none());
 
-            for path in [
-                &b"deps.a"[..],
-                b"files[0]",
-                b"files[4]",
-                b"files[5][0]",
-                b"files[99]",
-                b"deps.zzz",
-            ] {
-                write!(out, "{}=", std::str::from_utf8(path).unwrap()).unwrap();
-                match root.get_path_may_be_index(bump, path) {
-                    Some(e) => describe(&e, bump, &mut out),
-                    None => out.push_str("none"),
+            let mut files = root.get_array(b"files").unwrap();
+            while let Some(item) = files.next() {
+                if let Some(mut nested) = item.as_array() {
+                    out.push_str("files[5][0]=");
+                    describe(&nested.next().unwrap(), bump, &mut out);
+                    out.push('\n');
                 }
-                out.push('\n');
             }
 
             out
@@ -1929,7 +1993,7 @@ mod tests {
         let full = probe(doc, Which::Utf8);
         let immutable = probe(doc, Which::Immutable);
         assert_eq!(full, immutable);
-        let name_key_offset = doc.windows(6).position(|w| w == b"\"name\"").unwrap();
+        let name_key_offset = bun_core::strings::index_of(doc, b"\"name\"").unwrap();
         assert!(
             full.starts_with(&format!("name@{name_key_offset}=\"pkg\"\n")),
             "{full:?}"
@@ -1940,10 +2004,8 @@ mod tests {
             full.contains("deps_map=[(\"a\", \"^1\"), (\"b\", \"~2.0\"), (\"empty\", \"\")]\n")
         );
         assert!(full.contains("files=[\"lib\",3,true,null,{object},[array],]\n"));
-        assert!(full.contains("files[4]={object}\n"));
         assert!(full.contains("files[5][0]=\"nested\"\n"));
         assert!(full.contains("deps.a=\"^1\"\n"));
-        assert!(full.contains("files[99]=none\n"));
     }
 
     #[test]

@@ -16,10 +16,11 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
-pub struct ClientContext {
+pub(crate) struct ClientContext {
     // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
     sessions: Vec<*mut ClientSession>,
@@ -53,7 +54,7 @@ impl ClientContext {
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
     /// Callers reborrow per-access — PORTING.md §Global mutable state.
-    pub fn get() -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get() -> Option<NonNull<ClientContext>> {
         INSTANCE.load()
     }
 
@@ -64,13 +65,13 @@ impl ClientContext {
     /// is the sole live borrow for its (caller-chosen) lifetime. Mirrors the
     /// `client_mut`/`stream_mut` backref-upgrade helpers in `client_session`.
     #[inline]
-    pub fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
+    pub(crate) fn as_mut<'a>(this: NonNull<Self>) -> &'a mut Self {
         // SAFETY: see INVARIANT above — leaked Box, process-lifetime,
         // HTTP-thread-confined singleton.
         unsafe { &mut *this.as_ptr() }
     }
 
-    pub fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
+    pub(crate) fn get_or_create(loop_: NonNull<UwsLoop>) -> Option<NonNull<ClientContext>> {
         if let Some(i) = INSTANCE.load() {
             return Some(i);
         }
@@ -104,14 +105,15 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
-    pub fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
+    /// `false` leaves `client` on no session, for the caller to fail.
+    pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
             let s = session_mut(s);
-            if s.matches(hostname, port, reject) && s.has_headroom() {
+            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
@@ -128,10 +130,11 @@ impl ClientContext {
         // it as a C string so an interior NUL truncates on the C side. This is
         // deliberately not `CString::new`, which would reject interior NUL
         // and diverge by returning `false`.
-        let mut host_buf = hostname.to_vec();
+        // Resolution and certificate verification name an IPv6 literal without its brackets.
+        let mut host_buf = bun_url::strip_ipv6_brackets(hostname).to_vec();
         host_buf.push(0);
         let host_z = std::ffi::CStr::from_bytes_until_nul(&host_buf).expect("nul appended above");
-        let session = ClientSession::new(hostname.to_vec(), port, reject);
+        let session = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
@@ -174,15 +177,20 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
+                // `fail_session` fails what is queued, and that dispatch frees
+                // the `AsyncHTTP` the caller still holds. Queue nothing.
+                if let Some(stream) = client.h3 {
+                    session_mut(session).detach(stream.as_ptr());
+                }
                 self.unregister(session_mut(session));
-                PendingConnect::fail_session(session, bun_core::err!(ConnectionRefused));
+                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
             }
         }
         true
     }
 
-    pub fn unregister(&mut self, session: &mut ClientSession) {
+    pub(crate) fn unregister(&mut self, session: &mut ClientSession) {
         let i = session.registry_index as usize;
         if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i], session) {
             return;
@@ -195,7 +203,7 @@ impl ClientContext {
         session.registry_index = u32::MAX;
     }
 
-    pub fn abort_by_http_id(async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
         let Some(this) = Self::get() else {
             return false;
         };
@@ -213,7 +221,19 @@ impl ClientContext {
         false
     }
 
-    pub fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    /// Close the connections of fetch session `pool_id` that carry no request.
+    pub(crate) fn close_idle_sessions(pool_id: u64) {
+        let Some(this) = Self::get() else {
+            return;
+        };
+        // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
+        let ctx = bun_ptr::BackRef::from(this);
+        for &s in ctx.sessions.iter() {
+            session_mut(s).close_if_idle(pool_id);
+        }
+    }
+
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -221,11 +241,13 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            session_mut(s).stream_body_by_http_id(async_http_id, ended);
+            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
+                return;
+            }
         }
     }
 
-    pub fn resume_receive_by_http_id(async_http_id: u32) {
+    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
         let Some(this) = Self::get() else {
             return;
         };

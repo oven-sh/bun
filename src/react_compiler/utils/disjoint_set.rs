@@ -7,23 +7,20 @@
 //!
 //! Ported from TypeScript `src/Utils/DisjointSet.ts`.
 
-use std::collections::HashSet;
-use std::hash::Hash;
-
-use crate::collections::IndexMap;
+use crate::collections::IdMap;
 
 /// A Union-Find data structure for grouping items into disjoint sets.
 ///
 /// Corresponds to TS `DisjointSet<T>` in `src/Utils/DisjointSet.ts`.
-/// Uses `IndexMap` to preserve insertion order (matching TS `Map` behavior).
-pub struct DisjointSet<K: Copy + Eq + Hash> {
-    entries: IndexMap<K, K>,
+/// Uses `IdMap` to preserve insertion order (matching TS `Map` behavior).
+pub(crate) struct DisjointSet<K> {
+    entries: IdMap<K, K>,
 }
 
-impl<K: Copy + Eq + Hash> DisjointSet<K> {
-    pub fn new() -> Self {
+impl<K: Copy + Eq + Into<u32> + From<u32>> DisjointSet<K> {
+    pub(crate) fn new() -> Self {
         DisjointSet {
-            entries: IndexMap::new(),
+            entries: IdMap::new(),
         }
     }
 
@@ -31,7 +28,7 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// linking any previous sets that the items were part of into a single set.
     ///
     /// Corresponds to TS `union(items: Array<T>): void`.
-    pub fn union(&mut self, items: &[K]) {
+    pub(crate) fn union(&mut self, items: &[K]) {
         if items.is_empty() {
             return;
         }
@@ -49,19 +46,27 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     ///
     /// Note: callers that need null/None semantics for missing items should
     /// use `find_opt()` instead.
-    pub fn find(&mut self, item: K) -> K {
-        let parent = match self.entries.get(&item) {
-            Some(&p) => p,
-            None => {
-                self.entries.insert(item, item);
-                return item;
+    pub(crate) fn find(&mut self, item: K) -> K {
+        let mut root = item;
+        let mut child_of_root = item;
+        loop {
+            match self.entries.get(root) {
+                Some(&parent) if parent != root => {
+                    child_of_root = root;
+                    root = parent;
+                }
+                Some(_) => break,
+                None => {
+                    self.entries.insert(root, root);
+                    break;
+                }
             }
-        };
-        if parent == item {
-            return item;
         }
-        let root = self.find(parent);
-        self.entries.insert(item, root);
+        let mut current = item;
+        while current != child_of_root {
+            let parent = self.entries.insert(current, root);
+            current = parent.unwrap_or(child_of_root);
+        }
         root
     }
 
@@ -69,80 +74,25 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// was never added to the set.
     ///
     /// Corresponds to TS `find(item: T): T | null`.
-    pub fn find_opt(&mut self, item: K) -> Option<K> {
-        if !self.entries.contains_key(&item) {
+    pub(crate) fn find_opt(&mut self, item: K) -> Option<K> {
+        if !self.entries.contains_key(item) {
             return None;
         }
         Some(self.find(item))
-    }
-
-    /// Returns true if the item is present in the set.
-    ///
-    /// Corresponds to TS `has(item: T): boolean`.
-    pub fn has(&self, item: K) -> bool {
-        self.entries.contains_key(&item)
-    }
-
-    /// Forces the set into canonical form (all items pointing directly to their
-    /// root) and returns a map of items to their roots.
-    ///
-    /// Corresponds to TS `canonicalize(): Map<T, T>`.
-    pub fn canonicalize(&mut self) -> IndexMap<K, K> {
-        let mut result = IndexMap::new();
-        let keys: Vec<K> = self.entries.keys().copied().collect();
-        for item in keys {
-            let root = self.find(item);
-            result.insert(item, root);
-        }
-        result
     }
 
     /// Calls the provided callback once for each item in the disjoint set,
     /// passing the item and the group root to which it belongs.
     ///
     /// Corresponds to TS `forEach(fn: (item: T, group: T) => void): void`.
-    pub fn for_each<F>(&mut self, mut f: F)
+    pub(crate) fn for_each<F>(&mut self, mut f: F)
     where
         F: FnMut(K, K),
     {
-        let keys: Vec<K> = self.entries.keys().copied().collect();
+        let keys: Vec<K> = self.entries.keys().collect();
         for item in keys {
             let group = self.find(item);
             f(item, group);
         }
-    }
-
-    /// Groups all items by their root and returns the groups as a list of sets.
-    ///
-    /// Corresponds to TS `buildSets(): Array<Set<T>>`.
-    pub fn build_sets(&mut self) -> Vec<HashSet<K>> {
-        let mut group_to_index: IndexMap<K, usize> = IndexMap::new();
-        let mut sets: Vec<HashSet<K>> = Vec::new();
-        let keys: Vec<K> = self.entries.keys().copied().collect();
-        for item in keys {
-            let group = self.find(item);
-            let idx = match group_to_index.get(&group) {
-                Some(&idx) => idx,
-                None => {
-                    let idx = sets.len();
-                    group_to_index.insert(group, idx);
-                    sets.push(HashSet::new());
-                    idx
-                }
-            };
-            sets[idx].insert(item);
-        }
-        sets
-    }
-
-    /// Returns the number of items in the set.
-    ///
-    /// Corresponds to TS `get size(): number`.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }

@@ -13,6 +13,8 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -21,6 +23,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -32,13 +35,14 @@ using namespace Bun::WebStreams;
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_constructor);
+static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom);
 
 class JSTransformStreamPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static JSTransformStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTransformStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSTransformStreamPrototype>(vm)) JSTransformStreamPrototype(vm, structure);
+        JSTransformStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTransformStreamPrototype))) JSTransformStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -52,7 +56,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -97,36 +101,15 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTransformStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTransformStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTransformStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTransformStreamConstructor, m_subspaceForTransformStreamConstructor));
 }
 
 template<> void JSTransformStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TransformStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTransformStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TransformStream"_s, JSTransformStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSTransformStream>(vm, globalObject));
-}
-
-static Structure* structureForNewTarget(JSC::VM& vm, JSTransformStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSTransformStream>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
 }
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTransformStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -200,11 +183,27 @@ static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
 
 const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsTransformStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSTransformStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "backpressure"_s, jsBoolean(thisObject->m_backpressure));
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStream"_s, data));
+}
+
 void JSTransformStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSTransformStream::info(), JSTransformStreamPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsTransformStreamPrototype_inspectCustom);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSTransformStream
@@ -231,7 +230,7 @@ JSTransformStream* JSTransformStream::create(VM& vm, Structure* structure)
 
 Structure* JSTransformStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTransformStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -253,12 +252,7 @@ JSValue JSTransformStream::getConstructor(VM& vm, const JSGlobalObject* globalOb
 
 GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTransformStream, m_subspaceForTransformStream));
 }
 
 DEFINE_VISIT_CHILDREN(JSTransformStream);
@@ -269,10 +263,29 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_readable);
-    visitor.append(thisObject->m_writable);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_backpressureChangePromise);
+    visitor.appendHidden(thisObject->m_readable);
+    visitor.appendHidden(thisObject->m_writable);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_backpressureChangePromise);
+    visitor.appendHidden(thisObject->m_pendingWriteChunk);
+    visitor.appendHidden(thisObject->m_nativeSinkCell);
+    visitor.appendHidden(thisObject->m_nativeSinkReadyPromise);
+    visitor.appendHidden(thisObject->m_codecPromise);
+}
+
+void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSTransformStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_readable, "readable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writable, "writable"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingWriteChunk, "pendingWriteChunk"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkCell, "nativeSinkCell"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkReadyPromise, "nativeSinkReadyPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_codecPromise, "codecPromise"_s);
 }
 
 // Prototype host functions
@@ -287,11 +300,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_constructor, (JSGlobal
     return JSValue::encode(JSTransformStream::getConstructor(vm, prototype->globalObject()));
 }
 
+// Web IDL brand check: exact classInfo match, not a chain walk, so the native
+// C++ subclasses (JSCompressionStream etc.) are rejected like Chrome/Node do.
+static ALWAYS_INLINE JSTransformStream* toTransformStreamExact(JSValue thisValue)
+{
+    if (!thisValue.isCell()) [[unlikely]]
+        return nullptr;
+    auto* cell = thisValue.asCell();
+    if (cell->classInfo() != JSTransformStream::info()) [[unlikely]]
+        return nullptr;
+    return static_cast<JSTransformStream*>(cell);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
+    auto* stream = toTransformStreamExact(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_readable.get());
@@ -301,7 +326,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamPrototypeGetter_writable, (JSGlobalObj
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSTransformStream>(JSValue::decode(thisValue));
+    auto* stream = toTransformStreamExact(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TransformStream"_s);
     return JSValue::encode(stream->m_writable.get());

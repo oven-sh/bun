@@ -52,6 +52,7 @@ bun_core::comptime_string_map! {
     /// hot path hits the uppercase entries; the all-lower entries exist only
     /// for `new Request("get", …)` JS-side convenience (mixed-case still
     /// rejects).
+    #[inline]
     static METHOD_MAP: Method = {
         b"ACL" => Method::ACL,
         b"acl" => Method::ACL,
@@ -176,11 +177,11 @@ impl Method {
         !matches!(self, Method::HEAD | Method::TRACE)
     }
 
+    /// RFC 9110: GET/HEAD have no defined body semantics; TRACE "MUST NOT
+    /// send content" (§9.3.8). OPTIONS MAY include content (§9.3.7) so it is
+    /// not excluded here; servers must read it and clients must frame it.
     pub fn has_request_body(self) -> bool {
-        !matches!(
-            self,
-            Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE
-        )
+        !matches!(self, Method::GET | Method::HEAD | Method::TRACE)
     }
 
     /// Per RFC 7231 §4.2.2, idempotent methods are safe to retry on
@@ -230,23 +231,6 @@ pub enum Optional {
 }
 
 impl Optional {
-    pub fn contains(&self, other: &Optional) -> bool {
-        if matches!(self, Optional::Any) {
-            return true;
-        }
-        if matches!(other, Optional::Any) {
-            return true;
-        }
-
-        let Optional::Method(this_set) = self else {
-            unreachable!()
-        };
-        let Optional::Method(other_set) = other else {
-            unreachable!()
-        };
-        this_set.intersection(*other_set).len() > 0
-    }
-
     pub fn insert(&mut self, method: Method) {
         match self {
             Optional::Any => {}
@@ -263,7 +247,7 @@ impl Optional {
 #[unsafe(no_mangle)]
 /// # Safety
 /// `str` must point to `len` initialised bytes for the duration of the call.
-pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
+unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
     // pointer to `len` initialised bytes. The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not

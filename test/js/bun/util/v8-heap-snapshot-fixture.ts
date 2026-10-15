@@ -20,7 +20,7 @@ function describeSnapshot(json: any) {
 }
 
 // Runs the snapshot through a third-party parser, then walks every node and edge.
-async function parseAndWalk(json: unknown) {
+async function parseAndWalk(json: object) {
   const v8HeapSnapshot: typeof import("v8-heapsnapshot") = require("v8-heapsnapshot");
   const parsed = await v8HeapSnapshot.parseSnapshot(json);
 
@@ -100,6 +100,67 @@ switch (mode) {
   case "write-path": {
     const returnedPath = require("node:v8").writeHeapSnapshot(pathArg);
     result = { returnedPath, ...describeSnapshot(await Bun.file(pathArg).json()) };
+    break;
+  }
+
+  case "stream-edges": {
+    // Build a graph touching the main Web Streams cell classes and keep every
+    // handle live across the snapshot so analyzeHeap can see the edges.
+    const rs = new ReadableStream({ start() {} });
+    const reader = rs.getReader();
+    const ws = new WritableStream({ write() {} });
+    const writer = ws.getWriter();
+    const ts = new TransformStream({ transform() {} });
+    const pipePromise = ts.readable
+      .pipeTo(new WritableStream({ write() {} }))
+      .catch(() => {});
+
+    const json = JSON.parse(Bun.generateHeapSnapshot("v8"));
+    // Referenced after the snapshot so nothing above is dead before it runs.
+    void (rs as unknown, reader, ws, writer, ts, pipePromise);
+
+    const meta = json.snapshot.meta;
+    const nodeStride = meta.node_fields.length;
+    const edgeStride = meta.edge_fields.length;
+    const nameIdx = meta.node_fields.indexOf("name");
+    const edgeCountIdx = meta.node_fields.indexOf("edge_count");
+    const edgeTypeIdx = meta.edge_fields.indexOf("type");
+    const edgeNameIdx = meta.edge_fields.indexOf("name_or_index");
+    const propertyType = meta.edge_types[edgeTypeIdx].indexOf("property");
+
+    const wanted = new Set([
+      "ReadableStream",
+      "WritableStream",
+      "TransformStream",
+      "ReadableStreamDefaultController",
+      "ReadableStreamDefaultReader",
+      "WritableStreamDefaultController",
+      "WritableStreamDefaultWriter",
+      "TransformStreamDefaultController",
+      "StreamPipeToOperation",
+    ]);
+    const edgesByClass: Record<string, string[]> = {};
+    for (const name of wanted) edgesByClass[name] = [];
+
+    let e = 0;
+    for (let n = 0; n < json.nodes.length; n += nodeStride) {
+      const className = json.strings[json.nodes[n + nameIdx]];
+      const edgeCount = json.nodes[n + edgeCountIdx];
+      if (wanted.has(className)) {
+        for (let k = 0; k < edgeCount; k++) {
+          const base = e + k * edgeStride;
+          if (json.edges[base + edgeTypeIdx] === propertyType) {
+            const edgeName = json.strings[json.edges[base + edgeNameIdx]];
+            if (!edgesByClass[className].includes(edgeName)) {
+              edgesByClass[className].push(edgeName);
+            }
+          }
+        }
+      }
+      e += edgeCount * edgeStride;
+    }
+    for (const name of wanted) edgesByClass[name].sort();
+    result = edgesByClass;
     break;
   }
 

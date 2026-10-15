@@ -3,8 +3,7 @@
     clippy::disallowed_methods,
     reason = "ported from facebook/react upstream; uses std collections by design"
 )]
-#![allow(unreachable_pub)]
 
-pub mod disjoint_set;
+pub(crate) mod disjoint_set;
 
-pub use disjoint_set::DisjointSet;
+pub(crate) use disjoint_set::DisjointSet;

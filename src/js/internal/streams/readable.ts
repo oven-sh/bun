@@ -1135,13 +1135,15 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
-  // Deliberate divergence from Node 26: upstream early-returns here (and in
-  // pause()) when the stream is destroyed. Legacy Readable subclasses like
-  // fd-slicer assign `this.destroyed = true` (the prototype setter) right
-  // before push(null), so with the guard a piped destination's drain can no
-  // longer resume the source and the final buffered chunk is never delivered —
-  // silently truncating yauzl/extract-zip/puppeteer downloads. Keep the
-  // Node 24 behavior of letting destroyed streams flush their buffer.
+  // Node 26 (nodejs/node#62557) early-returns on kDestroyed. We narrow it to
+  // kDestroyed && kEndEmitted: fd-slicer-style readables set `destroyed` right
+  // before push(null), and the full guard strands their buffered tail when a
+  // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
+  // nothing left to flush, so becoming a no-op restores readableFlowing /
+  // isPaused() parity for consumers that resume() past EOF (Readable.toWeb).
+  if ((state[kState] & (kDestroyed | kEndEmitted)) === (kDestroyed | kEndEmitted)) {
+    return this;
+  }
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1181,7 +1183,9 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
-  // No destroyed early-return: see the comment in resume() above.
+  if ((state[kState] & kDestroyed) !== 0) {
+    return this;
+  }
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");
@@ -1312,12 +1316,16 @@ Readable.prototype.compose = function compose(stream, options) {
   return composedStream;
 };
 
+interface StreamAsyncIterator extends AsyncGenerator<any, void, unknown> {
+  stream?: import("node:stream").Readable;
+}
+
 function streamToAsyncIterator(stream, options?) {
   if (typeof stream.read !== "function") {
     stream = Readable.wrap(stream, { objectMode: true });
   }
 
-  const iter = createAsyncIterator(stream, options);
+  const iter: StreamAsyncIterator = createAsyncIterator(stream, options);
   iter.stream = stream;
   return iter;
 }
@@ -1336,7 +1344,7 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error: Error | null;
+  let error: Error | null | undefined;
   const cleanup = eos(stream, { writable: false }, err => {
     error = err ? aggregateTwoErrors(error as Error, err) : null;
     callback();
@@ -1709,7 +1717,7 @@ Readable.toWeb = function (streamReadable, options) {
   return lazyWebStreams().newReadableStreamFromStreamReadable(streamReadable, options);
 };
 
-Readable.wrap = function (src, options) {
+Readable.wrap = function (src, options?) {
   return new Readable({
     objectMode: src.readableObjectMode ?? src.objectMode ?? true,
     ...options,
@@ -1720,4 +1728,7 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-export default Readable as unknown as typeof import("node:stream").Readable;
+export default Readable as unknown as typeof import("node:stream").Readable & {
+  ReadableState: typeof ReadableState;
+  wrap: typeof Readable.wrap;
+};

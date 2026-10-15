@@ -17,20 +17,17 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // `to_slice()` owns its buffer and frees it on Drop.
-
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::js_number_from_int32(0));
@@ -69,18 +66,17 @@ pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::FALSE);
@@ -89,12 +85,10 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         return Ok(JSValue::FALSE);
     }
 
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    if left_result.wildcard != query::token::Wildcard::None {
+    let Some(left_version) = Version::parse_exact(SlicedString::init(left.slice(), left.slice()))
+    else {
         return Ok(JSValue::FALSE);
-    }
-
-    let left_version = left_result.version.min();
+    };
 
     // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
@@ -114,4 +108,19 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         right.slice(),
         left.slice(),
     )))
+}
+
+/// `bun:internal-for-testing`: `Group::intersects` on two range strings.
+#[bun_jsc::host_fn]
+pub fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let left = frame.argument(0).to_utf8(global)?;
+    let right = frame.argument(1).to_utf8(global)?;
+    let (Ok(left_group), Ok(right_group)) = (
+        query::parse(&left, SlicedString::init(&left, &left)),
+        query::parse(&right, SlicedString::init(&right, &right)),
+    ) else {
+        return Err(global.throw_out_of_memory());
+    };
+    let intersects = left_group.intersects(&left, &right_group, &right);
+    Ok(JSValue::js_boolean(intersects))
 }

@@ -13,6 +13,7 @@ const {
   areIdentical,
   isSrcSubdir,
   fsCpSubdirOfSelfError,
+  hasParentSegment,
   newCpWalk,
   isOwnOutput,
   followedLink,
@@ -75,7 +76,7 @@ async function checkPaths(src, dest, opts, walk?, frame?, dirent?) {
 
   if (srcStat.isDirectory()) {
     let own = isSrcSubdir(src, dest);
-    if (!own && walk !== undefined) {
+    if (!own && walk !== undefined && frame !== undefined) {
       if (followedLink(dirent, opts)) {
         for (let f = frame; f !== null; f = f.up) f.stat ??= await lstat(f.path, { bigint: true });
       } else {
@@ -117,15 +118,7 @@ async function checkParentPaths(src, srcStat, dest) {
     if (err.code === "ENOENT") return;
     throw err;
   }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
+  if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
   return checkParentPaths(src, srcStat, destParent);
 }
 
@@ -143,11 +136,17 @@ async function resolveExistingRealpath(p: string) {
   }
 }
 
-// The native walker has no own-output check, so a dest that resolves into src must not reach it.
+// The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
 async function nativeDirCopyIsSafe(src: string, dest: string) {
-  const realSrc = await resolveExistingRealpath(src);
+  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
+  let realSrc: string;
+  try {
+    realSrc = await realpath(src);
+  } catch {
+    return false;
+  }
   const realDestParent = await resolveExistingRealpath(dirname(dest));
-  if (realSrc === undefined || realDestParent === undefined) return false;
+  if (realDestParent === undefined) return false;
   if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
   return true;
 }

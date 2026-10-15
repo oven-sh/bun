@@ -327,16 +327,17 @@ function checkParentPathsSync(src, srcStat, dest) {
     if (err.code === "ENOENT") return;
     throw err;
   }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
+  if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
   return checkParentPathsSync(src, srcStat, destParent);
+}
+
+// realpath collapses ".." as text, which names another directory when it follows a symlink.
+function hasParentSegment(path: string) {
+  const segments = StringPrototypeSplit.$call(path, sep);
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i] === "..") return true;
+  }
+  return false;
 }
 
 function resolveExistingRealpathSync(p: string) {
@@ -353,11 +354,17 @@ function resolveExistingRealpathSync(p: string) {
   }
 }
 
-// The native walker has no own-output check, so a dest that resolves into src must not reach it.
+// The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
 function nativeDirCopyIsSafeSync(src: string, dest: string) {
-  const realSrc = resolveExistingRealpathSync(src);
+  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
+  let realSrc: string;
+  try {
+    realSrc = realpathSync(src);
+  } catch {
+    return false;
+  }
   const realDestParent = resolveExistingRealpathSync(dirname(dest));
-  if (realSrc === undefined || realDestParent === undefined) return false;
+  if (realDestParent === undefined) return false;
   if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
   return true;
 }
@@ -443,12 +450,7 @@ function checkParentDir(destStat, src, dest, opts, walk?: CpWalk, srcStat?: BigI
     if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
     return getStats(destStat, src, dest, opts, walk, null);
   }
-  let parent: BigIntStats | undefined;
-  try {
-    parent = statSync(destParent, { bigint: true, throwIfNoEntry: false });
-  } catch {
-    // Like existsSync before it: mkdirSync below reports what is wrong with the path.
-  }
+  let parent = statSync(destParent, { bigint: true, throwIfNoEntry: false });
   if (parent === undefined) {
     mkdirSync(destParent, { recursive: true });
     parent = statSync(destParent, { bigint: true });
@@ -666,6 +668,7 @@ export default {
   areIdentical,
   isSrcSubdir,
   fsCpSubdirOfSelfError,
+  hasParentSegment,
   newCpWalk,
   isOwnOutput,
   followedLink,

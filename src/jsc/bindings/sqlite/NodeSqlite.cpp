@@ -1436,7 +1436,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     auto pathUtf8 = path.utf8();
 
-    WTF::CString entryUtf8;
+    WTF::UTF8CString entryUtf8;
     const char* entryPtr = nullptr;
     JSValue entryVal = callFrame->argument(1);
     if (!entryVal.isUndefined()) {
@@ -1446,7 +1446,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
         auto entry = entryVal.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         entryUtf8 = entry.utf8();
-        entryPtr = entryUtf8.data();
+        entryPtr = entryUtf8.legacyCStringPointer();
     }
 
     char* errmsg = nullptr;

@@ -219,11 +219,10 @@ describe.skip("given a strlen(cstring) function", () => {
     const arr = new Uint8Array(buf);
     const cstr = new CString(ptr(arr));
 
-    expect(library.symbols.strlen(cstr)).toBe(5);
+    expect<number | bigint>(library.symbols.strlen(cstr)).toBe(5);
   });
 
   it("given a JSString, throws", () => {
-    // @ts-expect-error
     expect(() => library.symbols.strlen("hello")).toThrow(TypeError);
   });
 }); // </given a strlen(cstring) function>

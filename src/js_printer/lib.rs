@@ -67,15 +67,6 @@ use renamer as rename;
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 
-/// The namespace the printed specifier of `record` starts with (`namespace:path`), if any.
-fn printed_namespace(record: &ImportRecord) -> Option<&'static [u8]> {
-    (record
-        .flags
-        .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
-        && !record.path.is_file())
-    .then_some(record.path.namespace)
-}
-
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
@@ -707,16 +698,6 @@ pub mod analyze_transpiled_module {
             // PERF: owned-key dupe; revisit with a raw-entry API.
             self.strings_map.insert(value.to_vec(), idx);
             StringID(idx)
-        }
-
-        /// Interns the specifier `print_import_record_path` prints for `record`, so the
-        /// module record requests the same module as the printed source.
-        pub(crate) fn str_for_import_record(&mut self, record: &super::ImportRecord) -> StringID {
-            let path = record.path.text;
-            match super::printed_namespace(record) {
-                Some(namespace) => self.str(&[namespace, b":".as_slice(), path].concat()),
-                None => self.str(path),
-            }
         }
 
         pub(crate) fn request_module(
@@ -5621,7 +5602,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO {
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str_for_import_record(import_record);
+                            let irp_id = mi.str(import_record.path.text);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5805,7 +5786,7 @@ pub(crate) mod __gated_printer {
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str_for_import_record(import_record);
+                            let id = mi.str(import_record.path.text);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6332,7 +6313,7 @@ pub(crate) mod __gated_printer {
                         use analyze_transpiled_module::FetchParameters as FP;
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str_for_import_record(record);
+                            let irp_id = mi.str(record.path.text);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6515,10 +6496,6 @@ pub(crate) mod __gated_printer {
 
             let quote = best_quote_char_for_string(import_record.path.text, false);
             self.print(quote);
-            if let Some(namespace) = printed_namespace(import_record) {
-                self.print_string_characters_utf8(namespace, quote);
-                self.print(b":");
-            }
             self.print_string_characters_utf8(import_record.path.text, quote);
             self.print(quote);
         }
@@ -6911,7 +6888,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if value.is_nan() {
+            if IS_JSON && !value.is_finite() {
+                // JSON has no token for these. As JSON.stringify.
+                self.print_space_before_identifier();
+                self.print(b"null");
+            } else if value.is_nan() {
                 self.print_space_before_identifier();
                 self.print(b"NaN");
             } else if value.is_infinite() {
@@ -6932,7 +6913,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");

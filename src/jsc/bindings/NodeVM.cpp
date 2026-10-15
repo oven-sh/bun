@@ -1053,7 +1053,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     }
 
     // A context decides for itself, as in Node.js, unless nothing in the process may.
-    setEvalEnabled(m_contextOptions.allowStrings && !Bun::mayNotMakeScriptFromStrings(), Bun::codeGenerationFromStringsDisallowedMessage);
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
     if (!m_contextOptions.allowWasm) {
@@ -1442,8 +1442,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-    RETURN_IF_EXCEPTION(scope, {});
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
 
     // Step 1: Argument validation
     // Get code argument (required)

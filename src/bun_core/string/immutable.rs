@@ -22,10 +22,40 @@ pub mod escape_html;
 #[path = "immutable/exact_size_matcher.rs"]
 pub mod exact_size_matcher;
 pub use escape_html::{html_escape_entity, xml_escape_entity};
+#[path = "immutable/whitespace.rs"]
+mod whitespace;
+pub use whitespace::{
+    JsLines, contains_js_line_break, crlf_as_lf, find_js_line_break, is_all_js_whitespace,
+    is_all_unicode_whitespace, is_js_line_terminator, is_js_whitespace, js_line_break_len,
+    js_line_break_len_back, js_lines, js_whitespace_len, js_whitespace_len_back, push_crlf_as_lf,
+    split_crlf_lines, split_unicode_whitespace, trim_js_whitespace, trim_js_whitespace_end,
+    trim_js_whitespace_start, trim_unicode_whitespace, trim_unicode_whitespace_end,
+    trim_unicode_whitespace_start, without_js_whitespace,
+};
+#[path = "immutable/icu_collation.rs"]
+mod icu_collation;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
+pub use icu_collation::{locale_compare, locale_compare_numeric_base};
+#[path = "immutable/utf16_offsets.rs"]
+mod utf16_offsets;
+pub use utf16_offsets::Utf16OffsetTable;
 #[path = "immutable/visible.rs"]
 mod visible_impl;
+
+/// `\w` of a regular expression without flags.
+#[inline]
+pub const fn is_regexp_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+#[path = "immutable/wtf8_text.rs"]
+mod wtf8_text;
+pub use wtf8_text::{
+    Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
+    push_wtf8_well_formed, utf8_decoded_len_utf16, utf8_lossy_len_utf16, wtf8_codepoint_at,
+    wtf8_codepoint_count, wtf8_codepoints, wtf8_first_codepoint, wtf8_has_surrogate,
+    wtf8_len_utf16, wtf8_offset_of_utf16_index, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
+};
 
 // UTF-16 surrogate primitives. The single implementation lives in the
 // tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
@@ -39,9 +69,9 @@ pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
     copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
-    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf8_codepoint_with_fffd,
-    utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
+    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, push_codepoint_wtf8,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    utf8_codepoint_with_fffd, utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -488,7 +518,8 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub(crate) use crate::strings_impl::{
-    find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
+    find_authority_password, find_url_password, is_uuid, next_url_password, starts_with_npm_secret,
+    starts_with_secret, starts_with_uuid,
 };
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
@@ -617,6 +648,7 @@ pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &
     Some((&self_[..i], &self_[i + delimiter.len()..]))
 }
 
+#[derive(Clone)]
 pub struct SplitIterator<'a> {
     pub(crate) buffer: &'a [u8],
     pub(crate) index: Option<usize>,
@@ -963,6 +995,18 @@ pub fn is_on_char_boundary(self_: &[u8], idx: usize) -> bool {
 pub fn is_utf8_char_boundary(c: u8) -> bool {
     // This is bit magic equivalent to: b < 128 || b >= 192
     (c as i8) >= -0x40
+}
+
+/// Longest prefix of `self_` within `max_len` bytes that does not split a UTF-8 sequence.
+pub fn truncate_to_char_boundary(self_: &[u8], max_len: usize) -> &[u8] {
+    if self_.len() <= max_len {
+        return self_;
+    }
+    let mut end = max_len;
+    while !is_on_char_boundary(self_, end) {
+        end -= 1;
+    }
+    &self_[..end]
 }
 
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
@@ -1415,6 +1459,8 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 }
 
 pub use highway::contains_newline_or_non_ascii_or_quote;
+pub use highway::line_starts;
+pub use highway::{ScannerStops, ScannerStopsBuffer};
 
 /// Supports:
 /// - `"`
@@ -1452,7 +1498,7 @@ pub(crate) fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
         return Some(0);
     }
 
-    // PERF: scalar loop; consider portable_simd or a highway entry point if hot.
+    // PERF: scalar loop; consider a highway entry point if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127
             || char < 0x20
@@ -1876,7 +1922,7 @@ pub fn get_lines_in_text<const LINE_RANGE_COUNT: usize>(
 }
 
 pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
-    // PERF: scalar loop; consider portable_simd or a simdutf utf16 validator if hot.
+    // PERF: scalar loop; consider a highway kernel or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
             // Wrapping cast.
@@ -1935,6 +1981,21 @@ pub fn order(a: &[u8], b: &[u8]) -> Ordering {
 #[inline]
 pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
     a.cmp(b)
+}
+
+/// `a < b`, `a === b` or `a > b` of JavaScript, for UTF-8 and WTF-8: the order of the UTF-16 code
+/// units, which is not [`order`] where a character outside the BMP meets one from U+D800.
+pub fn order_utf16(a: &[u8], b: &[u8]) -> Ordering {
+    let common = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    match (a.get(common), b.get(common)) {
+        (Some(0xF0..), Some(0xEE | 0xEF)) => Ordering::Less,
+        (Some(0xEE | 0xEF), Some(0xF0..)) => Ordering::Greater,
+        // U+D000 to U+D7FF, or a lone surrogate, which can be after the first unit of the other.
+        (Some(0xF0..), Some(0xED)) | (Some(0xED), Some(0xF0..)) => {
+            wtf8_to_utf16_alloc(&a[common..]).cmp(&wtf8_to_utf16_alloc(&b[common..]))
+        }
+        (x, y) => x.cmp(&y),
+    }
 }
 
 pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
@@ -2120,22 +2181,6 @@ pub fn without_prefix_comptime<'a>(input: &'a [u8], prefix: &'static [u8]) -> &'
     input
 }
 
-pub fn without_prefix_comptime_z<'a>(
-    input: &'a crate::string::ZStr,
-    prefix: &'static [u8],
-) -> &'a crate::string::ZStr {
-    if has_prefix_comptime(input.as_bytes(), prefix) {
-        // `as_bytes_with_nul()[prefix.len()..]` keeps the trailing NUL at
-        // index `input.len() - prefix.len()` of the sub-slice; `from_buf`
-        // debug-asserts it.
-        return crate::string::ZStr::from_buf(
-            &input.as_bytes_with_nul()[prefix.len()..],
-            input.len() - prefix.len(),
-        );
-    }
-    input
-}
-
 pub fn without_prefix_if_possible_comptime<'a>(
     input: &'a [u8],
     prefix: &'static [u8],
@@ -2195,6 +2240,38 @@ pub fn percent_encode_write(
     // Write the rest of the string
     writer.extend_from_slice(remaining);
     Ok(())
+}
+
+/// JavaScript's `encodeURIComponent` on bytes: every byte but `A-Z a-z 0-9 - _ . ! ~ * ' ( )` becomes `%XX`.
+pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
+    for &byte in input {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+        {
+            writer.push(byte);
+        } else {
+            let h = crate::fmt::hex2_upper(byte);
+            writer.extend_from_slice(&[b'%', h[0], h[1]]);
+        }
+    }
+}
+
+/// Levenshtein's distance: how many elements have to be replaced, added or removed to make `b` of `a`.
+pub fn edit_distance<T: PartialEq>(a: impl Iterator<Item = T>, b: &[T]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, y) in b.iter().enumerate() {
+            let substituted = diagonal + usize::from(x != *y);
+            diagonal = row[j + 1];
+            row[j + 1] = substituted.min(row[j] + 1).min(diagonal + 1);
+        }
+    }
+    row[b.len()]
 }
 
 // ───────────── re-exports from sibling modules ─────────────
@@ -2752,6 +2829,51 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn truncate_to_char_boundary_never_splits_a_sequence() {
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 4), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abcd", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 0), b"");
+        // "aé" is `61 C3 A9`: a cut at byte 2 would land inside `é`.
+        assert_eq!(super::truncate_to_char_boundary("aéz".as_bytes(), 2), b"a");
+        assert_eq!(
+            super::truncate_to_char_boundary("aéz".as_bytes(), 3),
+            "aé".as_bytes()
+        );
+        // A 4-byte sequence that does not fit at all yields the empty prefix.
+        assert_eq!(super::truncate_to_char_boundary("😀".as_bytes(), 3), b"");
+    }
+
+    #[test]
+    fn order_utf16_is_the_order_of_the_code_units() {
+        // Each with the units that it is: lone surrogates, and what is around them in both orders.
+        let texts: &[(&[u8], &[u16])] = &[
+            (b"", &[]),
+            (b"a", &[0x61]),
+            (b"\xED\x9F\xBF", &[0xD7FF]),
+            (b"\xED\xA0\x80", &[0xD800]),
+            (b"\xED\xA0\x80a", &[0xD800, 0x61]),
+            (b"\xED\xA0\x80\xEE\x80\x80", &[0xD800, 0xE000]),
+            (b"\xF0\x90\x80\x80", &[0xD800, 0xDC00]),
+            (b"\xED\xAF\xBF", &[0xDBFF]),
+            (b"\xF4\x8F\xBF\xBF", &[0xDBFF, 0xDFFF]),
+            (b"\xED\xB0\x80", &[0xDC00]),
+            (b"\xED\xBF\xBF", &[0xDFFF]),
+            (b"\xEE\x80\x80", &[0xE000]),
+            (b"\xEF\xBF\xBF", &[0xFFFF]),
+        ];
+        for (a, a_units) in texts {
+            for (b, b_units) in texts {
+                assert_eq!(
+                    super::order_utf16(a, b),
+                    a_units.cmp(b_units),
+                    "{a:x?} {b:x?}"
+                );
+            }
+        }
     }
 
     #[test]

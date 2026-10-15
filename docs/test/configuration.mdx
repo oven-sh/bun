@@ -85,6 +85,26 @@ mock.module("./external-api", () => ({
 }));
 ```
 
+### Projects
+
+A `[[test.projects]]` table scopes a preload to a subset of test files. Files that match a project's `testMatch` run in their own global with `[test] preload` first, then the project's `preload`. Files that match no project run with `[test] preload` only. Use it when one part of the suite needs globals that the rest must not see, such as a DOM registration:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+preload = ["./test/server-preload.ts"]
+
+[[test.projects]]
+name = "dom"
+testMatch = ["**/*.dom.test.tsx"]
+preload = ["./test/dom-preload.ts"]
+```
+
+- `name` is required and must be unique.
+- `testMatch` is a glob or an array of globs, matched against the path relative to the project root, like `pathIgnorePatterns`. A file belongs to the first project that matches it.
+- `preload` is a script or an array of scripts, loaded after `[test] preload`.
+
+`bun test` runs the files of each project together and replaces the global object between projects, the same way `--isolate` does between files. Preload-level `beforeAll` and `afterAll` hooks run once per project. `--randomize` and `--shard` apply inside each project. With `--isolate`, every file still gets a fresh global with its base and project preloads. With `--parallel`, a worker replaces its global when the next file belongs to another project.
+
 ### Path Ignore Patterns
 
 `pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.

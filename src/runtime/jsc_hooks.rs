@@ -888,16 +888,11 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `_protected` drops here → unprotect.
     }
 
-    // Under --isolate each test file gets
-    // a fresh global, so preloads must re-execute for every file. Otherwise,
-    // only load preloads once.
-    // SAFETY: per fn contract.
-    if !unsafe { &*vm }.test_isolation_enabled {
-        // `Vec::clear` drops the `Box<[u8]>`
-        // payloads but keeps capacity.
-        // SAFETY: per fn contract — `vm` is the live per-thread VM.
-        unsafe { (*vm).preload.clear() };
-    }
+    // The list is consumed once per global. The test runner refills it
+    // after it swaps the global (`--isolate`, `[[test.projects]]`).
+    // `Vec::clear` drops the `Box<[u8]>` payloads but keeps capacity.
+    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+    unsafe { (*vm).preload.clear() };
 
     Ok(ptr::null_mut())
 }

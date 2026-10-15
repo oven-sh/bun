@@ -110,6 +110,7 @@ Many other Jest settings are irrelevant in `bun test`.
 Many other settings have an equivalent in the `[test]` section of `bunfig.toml`. For example:
 
 - `setupFiles`/`setupFilesAfterEnv` → `preload`
+- `projects` (per-project `testMatch` and setup files) → `[[test.projects]]` with `testMatch` and `preload`
 - `testPathIgnorePatterns` → `pathIgnorePatterns`
 - `rootDir` → `root`
 - `coverageDirectory` → `coverageDir`

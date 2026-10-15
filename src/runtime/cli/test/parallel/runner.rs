@@ -22,6 +22,7 @@ use super::frame::{self, Frame};
 use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
+use crate::cli::test::projects::{BASE_KEY, ProjectKey};
 use crate::test_runner::bun_test::FirstLast;
 use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -90,6 +91,9 @@ pub(crate) fn run_as_coordinator(
             bun_core::order(a.as_bytes(), b.as_bytes())
         });
     }
+    // Keep each project's files contiguous so a worker swaps its global
+    // (and re-runs the preloads) as rarely as possible.
+    reporter.projects.group(&mut sorted);
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
@@ -556,6 +560,12 @@ impl<'a> WorkerLoop<'a> {
         wf.begin(frame::Kind::Ready);
         self.cmds.send(wf.finish());
 
+        let isolate = self.reporter.jest.test_options.isolate;
+        // `fresh`: the global has not loaded its preloads yet. `cur_key`:
+        // the project whose preloads the current global loaded.
+        let mut fresh = true;
+        let mut cur_key: ProjectKey = BASE_KEY;
+
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
                 vm.event_loop_ref().tick();
@@ -579,6 +589,18 @@ impl<'a> WorkerLoop<'a> {
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
 
+            // Without --isolate a worker keeps its global across files and
+            // swaps it only when the next file belongs to another project.
+            let key = self.reporter.projects.key_for(&self.cmds.pending_path);
+            if !fresh && key != cur_key {
+                TestCommand::swap_global(self.reporter, vm);
+                fresh = true;
+            }
+            if fresh {
+                vm.preload = self.reporter.projects.preloads_for(key);
+                cur_key = key;
+            }
+
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
                 self.reporter,
@@ -591,14 +613,11 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            if vm.test_isolation_enabled {
-                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-                vm.swap_global_for_test_isolation();
-                self.reporter
-                    .jest
-                    .bun_test_root
-                    .reset_hook_scope_for_test_isolation();
+            if isolate {
+                TestCommand::swap_global(self.reporter, vm);
+                fresh = true;
             } else {
+                fresh = false;
                 Global::mimalloc_cleanup(false);
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
@@ -645,8 +664,9 @@ pub(crate) fn run_as_worker(
 ) -> ! {
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
     let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
-    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    let swaps_globals = ctx.test_options.isolate || !ctx.test_options.projects.is_empty();
+    vm_ref.test_isolation_enabled = swaps_globals;
+    vm_ref.auto_killer.enabled = swaps_globals;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its

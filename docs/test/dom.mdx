@@ -42,6 +42,22 @@ test("dom test", () => {
 });
 ```
 
+### Mixing DOM and server tests
+
+`GlobalRegistrator.register()` replaces `fetch`, `Request`, `Response`, `URL` and the timers for the whole process. A test that needs Bun's own versions of those, such as a route handler test, breaks when the happy-dom preload runs before it. To run both kinds of test in one `bun test`, put the happy-dom preload in a [project](/docs/test/configuration#projects) instead of the top-level `preload`:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+preload = ["./server-setup.ts"]
+
+[[test.projects]]
+name = "dom"
+testMatch = ["**/*.dom.test.tsx"]
+preload = ["./happydom.ts"]
+```
+
+Files that match `testMatch` run together in their own global with the happy-dom globals. The other files never see them.
+
 ### TypeScript Support
 
 Depending on your `tsconfig.json` setup, you may see a "Cannot find name 'document'" type error in the earlier code. To load the types for `document` and other browser APIs, add the following triple-slash directive to the top of any test file.

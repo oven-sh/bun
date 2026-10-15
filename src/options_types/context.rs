@@ -469,6 +469,20 @@ pub struct TestOptions {
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
+    /// `[[test.projects]]` in bunfig.toml, in file order. A test file belongs
+    /// to the first project whose `testMatch` matches it, else to the base
+    /// run. Each project runs in its own global with `[test] preload` plus
+    /// its own `preload`.
+    pub projects: Vec<TestProject>,
+}
+
+/// One `[[test.projects]]` entry.
+pub struct TestProject {
+    pub name: Box<[u8]>,
+    /// Globs matched against the test file path relative to the project
+    /// root, like `pathIgnorePatterns`.
+    pub test_match: Vec<Box<[u8]>>,
+    pub preloads: Vec<Box<[u8]>>,
 }
 
 #[derive(Copy, Clone)]
@@ -534,6 +548,7 @@ impl Default for TestOptions {
             update_timings: false,
             reporters: Reporters::default(),
             reporter_outfile: None,
+            projects: Vec::new(),
         }
     }
 }

@@ -3825,6 +3825,9 @@ describe("rmdirSync", () => {
     expect(() => rmdirSync(file, { recursive: true, retryDelay: "1" })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
+    expect(() => rmdirSync(file, { recursive: true, retryDelay: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
     expect(existsSync(file)).toBe(true);
   });
   it.skipIf(isWindows)("does not remove a symlink to a directory with recursive: true", () => {
@@ -5073,6 +5076,13 @@ describe("fs/promises", () => {
       await rmdir(link, { recursive: true });
       expect(readdirSync(String(dir))).toEqual(["target"]);
       expect(existsSync(join(String(dir), "target/inner.txt"))).toBe(true);
+    });
+    it("runs the plain rmdir when recursive is only inherited", async () => {
+      using dir = tempDir("rmdir-recursive-promises-inherited", { "full/f.txt": "x", "empty": {} });
+      const inherited = () => Object.create({ recursive: true });
+      await expect(rmdir(join(String(dir), "full"), inherited())).rejects.toMatchObject({ syscall: "rmdir" });
+      await rmdir(join(String(dir), "empty"), inherited());
+      expect(readdirSync(String(dir))).toEqual(["full"]);
     });
   });
 

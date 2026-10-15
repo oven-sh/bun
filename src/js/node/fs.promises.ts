@@ -369,10 +369,10 @@ const exports = {
     if (options?.recursive) {
       path = getValidatedFsPath(path);
       validateObject(options, "options");
-      options = validateRmdirRecursiveOptions(options);
-      // stat, not the lstat of fs.rmdir: a symlink to a directory goes to rm, which unlinks it.
-      if (!(await fs.stat(path)).isDirectory()) return fs.rmdir(path);
-      return exports.rm(path, options);
+      const rmOptions = validateRmdirRecursiveOptions(options);
+      // stat, not lstat, so rm unlinks a symlink to a directory. An inherited `recursive` is false here, as in node.
+      if (rmOptions.recursive && (await fs.stat(path)).isDirectory()) return exports.rm(path, rmOptions);
+      return fs.rmdir(path);
     }
     return fs.rmdir(path, options);
   },

@@ -5,8 +5,9 @@ use bun_alloc::ArenaVecExt as _;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
-use crate::css_values::number::CSSNumberFns;
+use crate::css_values::number::{CSSNumberFns, NonNegative};
 use crate::css_values::percentage::NumberOrPercentage;
+use crate::generics::Parse as _;
 use crate::prefixes;
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
@@ -135,7 +136,7 @@ pub enum Transform {
     /// A skew along the Y axis.
     SkewY(Angle),
     /// A perspective transform.
-    Perspective(Length),
+    Perspective(NonNegative<Length>),
     /// A 2D matrix transform.
     Matrix(Matrix<f32>),
     /// A 3D matrix transform.
@@ -306,7 +307,7 @@ impl Transform {
                     Ok(Transform::SkewY(angle))
                 },
                 b"perspective" => {
-                    let len = Length::parse(i)?;
+                    let len = NonNegative::<Length>::parse(i)?;
                     Ok(Transform::Perspective(len))
                 },
                 _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
@@ -511,7 +512,7 @@ impl Transform {
             }
             Transform::Perspective(len) => {
                 dest.write_str("perspective(")?;
-                len.to_css(dest)?;
+                len.0.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Matrix(m) => {
@@ -652,7 +653,7 @@ pub enum Perspective {
     /// No perspective transform is applied.
     None,
     /// Distance to the center of projection.
-    Length(Length),
+    Length(NonNegative<Length>),
 }
 
 impl Perspective {

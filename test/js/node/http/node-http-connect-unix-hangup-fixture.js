@@ -34,8 +34,9 @@ function measure(nth) {
     const cpuMs = (cpu.user + cpu.system) / 1000;
     // A spin burns the whole of every window; half leaves room for GC on debug/ASAN builds. The teardown of
     // the sockets that the hangup closed is a one-time cost that can pass half of the first window on a debug
-    // build, so a busy window is measured again.
-    const idle = cpuMs < WINDOW_MS / 2;
+    // build, so a busy window is measured again. No teardown is left in a later window, so its limit is a
+    // quarter: a spin that a loaded machine slows to about half a CPU must not pass there.
+    const idle = cpuMs < WINDOW_MS / (nth === 1 ? 2 : 4);
     if (!idle && nth < MAX_WINDOWS) return measure(nth + 1);
     verdict = idle ? "idle" : `spun ${Math.round(cpuMs)}ms cpu in ${WINDOW_MS}ms, ${nth} windows in a row`;
     for (const socket of held) if (!socket.destroyed) socket.end();

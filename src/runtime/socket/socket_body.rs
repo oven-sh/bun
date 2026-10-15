@@ -1388,6 +1388,57 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
+    /// The errno of a `connect()` that node's handle refuses when it still owns a
+    /// socket. `None`: the caller dials. Nothing is closed or dialed for an answer.
+    pub(crate) fn connect_refusal(
+        &self,
+        connection: &super::listener::UnixOrHost,
+    ) -> Option<sys::SystemErrno> {
+        use super::listener::UnixOrHost;
+        use sys::SystemErrno as E;
+        let socket = self.socket.get();
+        if socket.is_detached() {
+            return None;
+        }
+        // libuv opens an fd only on a handle that has none.
+        if matches!(connection, UnixOrHost::Fd(_)) {
+            return Some(E::EBUSY);
+        }
+        let is_tcp = matches!(
+            socket.local_address(&mut [0u8; 64]).map(<[u8]>::len),
+            Some(4 | 16)
+        );
+        if !is_tcp {
+            // A pipe handle reports what connect(2) says for the new path: EISCONN when it is a socket.
+            return Some(E::EISCONN);
+        }
+        // TCPWrap::Connect parses its address as IPv4 before libuv sees the handle:
+        // https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L433-L465
+        if let UnixOrHost::Unix(path) = connection {
+            if !matches!(
+                bun_core::ip_address::parse_uv_inet_pton(path),
+                Some(core::net::IpAddr::V4(_))
+            ) {
+                return Some(E::EINVAL);
+            }
+        }
+        if !socket.is_established() {
+            // One connect per handle: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
+            // libuv has no such check on Windows, where ConnectEx answers EISCONN.
+            return Some(if cfg!(windows) {
+                E::EISCONN
+            } else {
+                E::EALREADY
+            });
+        }
+        // A client socket that has not sent its FIN: connect(2) answers 0 for it once on
+        // Linux, and node emits 'connect' again. `connect_finish` swaps the connection.
+        if !self.is_server() && !socket.is_shutdown() {
+            return None;
+        }
+        Some(E::EISCONN)
+    }
+
     /// Discard a still-live native socket so this wrapper can be reused for a
     /// fresh connect. `node:net` permits `socket.connect()` on an
     /// already-connected socket; without this the previous `us_socket_t`'s

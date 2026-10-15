@@ -2,7 +2,7 @@
 import { plugin } from "bun";
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -430,8 +430,19 @@ describe("onLoad contents accepts BufferSource", () => {
 async function contentsFixture(args: string[], env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), resolve(import.meta.dir, "plugin-buffer-contents-fixture.ts"), ...args],
-    // A debug build then aborts on an exception that no scope checked.
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", ...env },
+    env: {
+      ...bunEnv,
+      // A debug build then aborts on an exception that no scope checked.
+      BUN_JSC_validateExceptionChecks: "1",
+      // With the system allocator, ASAN reports a read of the source after it is freed.
+      // symbolize=0: a report with symbols takes longer than the test timeout.
+      // detect_leaks=0: with Malloc=1, LeakSanitizer sees what JSC never frees.
+      ...(isASAN && {
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+      }),
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

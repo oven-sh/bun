@@ -780,8 +780,9 @@ describe("o + Enter", () => {
     try {
       // The shortcut hint is the last line of the banner, so the URL line is complete by then.
       await waitFor("h + Enter");
-      // ConPTY can put an escape sequence right after the text of a line.
-      const url = Bun.stripANSI(text).match(/(?:url:|➜) (\S+)/)?.[1];
+      // ConPTY can move the cursor where a terminal gets a line break, so an escape sequence
+      // is a separator here: to strip it would join the URL to the next line.
+      const url = text.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, " ").match(/(?:url:|➜)\s+(\S+)/)?.[1];
       if (!url) throw new Error(`no URL on the banner: ${JSON.stringify(text)}`);
       return {
         proc,

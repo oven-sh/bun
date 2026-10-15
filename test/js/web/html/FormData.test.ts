@@ -242,6 +242,28 @@ describe("FormData", () => {
       expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="override.txt"', 'filename="blob"']);
     });
 
+    it("a slice of a File is a Blob, so its entry is named 'blob'", async () => {
+      const file = new File(["0123456789"], "report.pdf", { type: "application/pdf", lastModified: 1234 });
+      const form = new FormData();
+      form.append("chunk", file.slice(0, 5));
+      form.append("whole", file);
+
+      expect(await entry(form, "chunk")).toEqual({
+        isFile: true,
+        name: "blob",
+        type: "application/pdf",
+        text: "01234",
+      });
+      const whole = form.get("whole") as File;
+      expect({ name: whole.name, lastModified: whole.lastModified, text: await whole.text() }).toEqual({
+        name: "report.pdf",
+        lastModified: 1234,
+        text: "0123456789",
+      });
+      const text = await new Response(form).text();
+      expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="blob"', 'filename="report.pdf"']);
+    });
+
     it("a WebSocket Blob message has no name, so its entry is named 'blob'", async () => {
       await using server = Bun.serve({
         port: 0,

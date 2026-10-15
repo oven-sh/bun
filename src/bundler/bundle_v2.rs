@@ -3399,7 +3399,7 @@ pub mod bv2_impl {
                 };
             this.linker
                 .options
-                .exclude_features
+                .compile_exclude_features
                 .clone_from(&this.transpiler.options.compile_exclude_features);
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;

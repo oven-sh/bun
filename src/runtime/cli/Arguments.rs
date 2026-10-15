@@ -440,7 +440,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
-            "--compile-exclude-features <STR>... Leave features of the runtime out of the standalone executable, e.g. --compile-exclude-features=lint,fmt"
+            "--compile-exclude-features <STR>... Leave features of the runtime and built-in modules out of the standalone executable, e.g. --compile-exclude-features=lint,fmt,node:http2"
         ),
         parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"

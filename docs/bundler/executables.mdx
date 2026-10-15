@@ -1114,7 +1114,7 @@ The machine code of an excluded feature is not in the executable, whatever its s
 
 Code that the rest of the runtime uses as well stays, and code that only several features use goes once all of them are excluded. `check`, `lint` and `fmt` share a lot: `fmt` uses most of what `lint` is made of, so excluding one of the two alone removes the command but little code. Excluding all three takes a small program on Linux x64 from 109 MB to 85 MB.
 
-A command is only reachable in an executable that [acts as the Bun CLI](#act-as-the-bun-cli). An excluded command prints `error: this executable was built without this command` and exits with a non-zero code. An excluded API is `undefined`.
+A command is only reachable in an executable that [acts as the Bun CLI](#act-as-the-bun-cli). An excluded command prints `error: this executable was built without this command` and exits with a non-zero code. An excluded API is `undefined`. A method that needs one, like `Bun.file().image()`, throws.
 
 A name that does not exist is an error. The error message lists the names that the targeted Bun supports.
 
@@ -1126,13 +1126,18 @@ You can also exclude a built-in module by name, like `node:http2` or `node:repl`
 bun build --compile ./index.ts --outfile myapp --compile-exclude-features=node:http2,node:repl
 ```
 
-Bun removes the module's JavaScript source from the executable. Internal modules that only the excluded modules import go with it. With `--bytecode`, Bun generates no bytecode for them either.
+Bun removes the module's JavaScript source from the executable, along with every internal module that nothing can load anymore. With `--bytecode`, Bun generates no bytecode for them either.
 
-Importing an excluded module throws `TypeError: this executable was built without node:http2`. `bun:sql` is the module behind `Bun.sql` and `Bun.SQL`. Without it, reading either property throws the same error.
+Importing an excluded module throws `Error: this executable was built without node:http2`. `bun:sql` is the module behind `Bun.sql` and `Bun.SQL`. Without it, reading either property throws the same error.
 
-Bun does not check that nothing else needs the module. Built-in modules import each other: without `node:events`, importing `node:stream` or `node:http2` throws too. The error names the module that is missing.
+You can exclude a module that is written in JavaScript and that Bun itself never loads:
 
-This applies to modules written in JavaScript, which is most of them. A few are native code and have no name to exclude, like `node:buffer`, `node:module` and `bun:jsc`. Native code that an excluded module calls stays in the executable.
+- Bun loads `node:util` to format what `console.log` prints, and `node:fs`, `node:events` and `node:stream` for `process.stdout`. You cannot exclude those, or the modules they import.
+- A few modules are native code, like `node:buffer`, `node:module` and `bun:jsc`. You cannot exclude those either.
+
+Other built-in modules can still import the module you exclude. Without `node:tls`, importing `node:http2` throws too. The error names the module that is missing.
+
+Native code that an excluded module calls stays in the executable.
 
 ### Supported targets
 

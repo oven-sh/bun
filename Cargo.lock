@@ -606,6 +606,7 @@ name = "bun_exe_format"
 version = "0.0.0"
 dependencies = [
  "bstr",
+ "bun_collections",
  "bun_core",
  "bun_sha_hmac",
  "bun_sys",

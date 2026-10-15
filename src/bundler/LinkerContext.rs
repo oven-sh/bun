@@ -1426,7 +1426,7 @@ pub struct LinkerOptions {
     /// See `CompileTargetBuiltins::Target`.
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     /// `--compile-exclude-features`
-    pub(crate) exclude_features: Vec<Box<[u8]>>,
+    pub(crate) compile_exclude_features: Vec<Box<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
@@ -1480,7 +1480,7 @@ impl Default for LinkerOptions {
             generate_bytecode_cache: false,
             generate_internal_module_bytecode: false,
             target_builtins: None,
-            exclude_features: Vec::new(),
+            compile_exclude_features: Vec::new(),
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             bytecode_order: None,

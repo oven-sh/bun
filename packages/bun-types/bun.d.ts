@@ -3752,12 +3752,12 @@ declare module "bun" {
     assets?: string[];
     /**
      * Features of the Bun runtime to remove from the executable. An excluded
-     * command reports that the executable was built without it, and an
-     * excluded API is `undefined`.
+     * command reports that the executable was built without it, an excluded
+     * API is `undefined`, and a method that needs one throws.
      *
-     * A built-in module written in JavaScript can be excluded by name, like
-     * `"node:http2"`. Importing it then throws. Bun does not check whether
-     * another built-in module needs it.
+     * A built-in module that is written in JavaScript and that Bun itself
+     * never loads can be excluded by name, like `"node:http2"`. Importing it
+     * then throws, also from another built-in module.
      *
      * Passing a name that does not exist fails and lists the ones that do.
      *

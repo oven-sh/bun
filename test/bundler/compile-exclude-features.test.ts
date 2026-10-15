@@ -47,6 +47,7 @@ console.log(JSON.stringify({
   verified: await Bun.password.verify("a", await Bun.password.hash("a", { algorithm: "bcrypt", cost: 4 })),
 }));
 `;
+const png = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8Dwn4GBgYGJAQoAHxcCAr7B8sAAAAAASUVORK5CYII=";
 const working = {
   sqlite: { x: 42 },
   posted: 42,
@@ -148,13 +149,18 @@ test.skipIf(canExclude)("a bun that cannot exclude features says so", async () =
 // Such an executable is ten times the size, so there is one.
 test.skipIf(!canExclude || !(isDebug || isASAN))("a debug build", async () => {
   using dir = tempDir("exclude-features", { "app.ts": app, "one.ts": "export const one = 1;\n" });
-  const compiled = await compile(String(dir), "app", "--compile-exclude-features=check,lint,fmt,semver,csrf");
+  const compiled = await compile(
+    String(dir),
+    "app",
+    "--compile-exclude-features=check,lint,fmt,semver,csrf,image,node:http2",
+  );
   expect(compiled.stderr).not.toContain("error");
   const ran = await run([join(String(dir), exe("app"))], String(dir));
   expect(JSON.parse(ran.stdout)).toEqual(working);
   expect((await asBun(String(dir), "app", "lint", "one.ts")).stderr).toContain("built without this command");
-  expect((await asBun(String(dir), "app", "-p", "typeof Bun.semver + typeof Bun.CSRF")).stdout).toBe(
-    "undefinedundefined\n",
+  const types = `typeof Bun.semver + typeof Bun.CSRF + typeof Bun.Image + (await import("node:http2").catch(e => e.message))`;
+  expect((await asBun(String(dir), "app", "-p", types)).stdout).toBe(
+    "undefinedundefinedundefinedthis executable was built without node:http2\n",
   );
 });
 
@@ -174,11 +180,11 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
   // What two features share goes only once both are excluded, so a set of them is an executable of its own. `check,lint` and
   // `check,fmt` leave out nothing that `check` and `fmt` do not.
   const sets: string[][] = [[], ["check"], ["lint"], ["fmt"], ["lint", "fmt"], [...features]];
-  const apis = { semver: "Bun.semver", csrf: "Bun.CSRF", image: "Bun.Image" };
-  const typeOf = { "Bun.semver": "object", "Bun.CSRF": "object", "Bun.Image": "function" };
-  const several = ["csrf", "image", "node:http2", "node:dgram"];
+  const apis = { semver: ["Bun.semver", "object"], csrf: ["Bun.CSRF", "object"], image: ["Bun.Image", "function"] };
+  // The last is the only module to import something that a builtin function loads too.
+  const several = ["csrf", "image", "node:http2", "bun:sql", "node:v8"];
   // The last is a module that other builtin modules import.
-  const executables = [...sets, ["semver"], several, ["node:events"]];
+  const executables = [...sets, ["semver"], several, ["node:tls"]];
   const without = (...set: string[]) => "without-" + (set.join("-").replaceAll(":", "_") || "nothing");
   const expectToWork = async (name: string) => {
     const ran = await run([join(cwd, exe(name))], cwd);
@@ -196,6 +202,7 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
       "tsconfig.json": `{ "files": ["one.ts"] }`,
       // `bun fmt` runs this in a process of its own, with what `bun lint` runs its plugins with.
       "prettier.config.mjs": "export default { semi: true };\n",
+      "two.png": Buffer.from(png, "base64"),
     });
     cwd = String(dir);
     // Given several times, or separated by commas.
@@ -203,18 +210,13 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     const [fromTheApi, ...compiled] = await Promise.all([
       Bun.build({
         entrypoints: [join(cwd, "app.ts")],
-        compile: { outfile: join(cwd, without("lint")), excludeFeatures: ["lint"] },
+        bytecode: true,
+        format: "esm",
+        compile: { outfile: join(cwd, without(...several)), excludeFeatures: several },
       }),
       ...executables
-        .filter(set => set.join() !== "lint")
-        .map(set =>
-          compile(
-            cwd,
-            without(...set),
-            ...flags(set).map(names => `--compile-exclude-features=${names}`),
-            ...(set === several ? ["--bytecode", "--format=esm"] : []),
-          ),
-        ),
+        .filter(set => set !== several)
+        .map(set => compile(cwd, without(...set), ...flags(set).map(names => `--compile-exclude-features=${names}`))),
     ]);
     expect(fromTheApi.success).toBe(true);
     expect(compiled.map(c => c.stderr).join("")).not.toContain("error");
@@ -277,9 +279,12 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
     "without %s",
     async (_, set) => {
       await expectToWork(without(...set));
-      const types = `JSON.stringify({ ${Object.values(apis).map(api => `"${api}": typeof ${api}`)} })`;
+      const types = `JSON.stringify({ ${Object.values(apis).map(([api]) => `"${api}": typeof ${api}`)} })`;
       const { stdout, exitCode } = await asBun(cwd, without(...set), "-p", types);
-      const expected = Object.entries(apis).map(([name, api]) => [api, set.includes(name) ? "undefined" : typeOf[api]]);
+      const expected = Object.entries(apis).map(([name, [api, type]]) => [
+        api,
+        set.includes(name) ? "undefined" : type,
+      ]);
       expect(JSON.parse(stdout)).toEqual(Object.fromEntries(expected));
       expect(exitCode).toBe(0);
     },
@@ -287,15 +292,13 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
 
   // A class, C++, three libraries of C and what an assembler made of one of them.
   test.concurrent("Bun.Image", async () => {
-    const png =
-      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGP8z8Dwn4GBgYGJAQoAHxcCAr7B8sAAAAAASUVORK5CYII=";
     const script = `
       const png = Buffer.from("${png}", "base64");
       const attempt = async f => { try { return await f(); } catch (e) { return e.message; } };
       console.log(JSON.stringify({
         jpeg: await attempt(async () => (await new Bun.Image(png).resize(4, 4).jpeg().bytes())[0]),
         body: await attempt(async () => (await new Response(new Bun.Image(png).webp()).blob()).type),
-        file: await attempt(async () => (await Bun.write("two.png", png), (await Bun.file("two.png").image().metadata()).width)),
+        file: await attempt(async () => (await Bun.file("two.png").image().metadata()).width),
         other: await new Response("still").text(),
       }));`;
     const [full, slim] = await Promise.all(
@@ -308,38 +311,63 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
       file: "this executable was built without Bun.Image",
       other: "still",
     });
+    expect([full.exitCode, slim.exitCode]).toEqual([0, 0]);
   });
 
   test.concurrent("builtin modules", async () => {
     const script = `
-      const attempt = async name => { try { return typeof (await import(name)).default; } catch (e) { return e.message; } };
-      console.log(JSON.stringify(Object.fromEntries(await Promise.all(
-        ["node:http2", "node:dgram", "node:events", "node:path", "node:stream"].map(async name => [name, await attempt(name)]),
-      ))));`;
+      const attempt = async f => { try { return await f(); } catch (e) { return e.message; } };
+      const names = ["node:http2", "node:v8", "node:tls", "node:path"];
+      console.log(JSON.stringify(Object.fromEntries(await Promise.all([
+        ...names.map(async name => [name, await attempt(async () => typeof (await import(name)).default)]),
+        ["Bun.sql", await attempt(() => typeof Bun.sql)],
+      ]))));`;
     const results = await Promise.all(
-      [[], several, ["node:events"]].map(set => asBun(cwd, without(...set), "-e", script)),
+      [[], several, ["node:tls"]].map(set => asBun(cwd, without(...set), "-e", script)),
     );
-    const all = { "node:http2": "object", "node:dgram": "object", "node:events": "function", "node:path": "object", "node:stream": "function" }; // prettier-ignore
+    const all = { "node:http2": "object", "node:v8": "object", "node:tls": "object", "node:path": "object", "Bun.sql": "function" }; // prettier-ignore
     expect(results.map(it => JSON.parse(it.stdout))).toEqual([
       all,
       {
         ...all,
         "node:http2": "this executable was built without node:http2",
-        "node:dgram": "this executable was built without node:dgram",
+        "node:v8": "this executable was built without node:v8",
+        "Bun.sql": "this executable was built without bun:sql",
       },
       // What imports it says what is missing.
       {
         ...all,
-        "node:http2": "this executable was built without node:events",
-        "node:dgram": "this executable was built without node:events",
-        "node:events": "this executable was built without node:events",
-        "node:stream": "this executable was built without node:events",
+        "node:http2": "this executable was built without node:tls",
+        "node:tls": "this executable was built without node:tls",
       },
     ]);
-    // In the source of node:http2 and in bytecode made of it, which this program would have had.
+    expect(results.map(it => it.exitCode)).toEqual([0, 0, 0]);
+
+    // In the source of node:http2, and in the bytecode that this program would have had of it.
     const text = "HTTP2_HEADER_ACCEPT_CHARSET";
     expect(readFileSync(join(cwd, exe(without()))).includes(text)).toBe(true);
     expect(readFileSync(join(cwd, exe(without(...several)))).includes(text)).toBe(false);
+  });
+
+  // console.log loads node:util, process.nextTick what else only node:async_hooks imports.
+  test.concurrent("what Bun itself loads cannot be excluded", async () => {
+    for (const name of ["node:util", "node:async_hooks", "node:events", "internal:debugger"]) {
+      const { stdout, stderr, exitCode } = await compile(cwd, "nope", `--compile-exclude-features=${name}`);
+      expect(stdout + stderr).toContain(`there is no feature called "${name}"`);
+      expect(exitCode).not.toBe(0);
+    }
+  });
+
+  // An internal module stays for as long as something can load it, and that need not be a module.
+  test.concurrent("what builtin functions load stays", async () => {
+    const script = `
+      const child = Bun.spawn([process.execPath, "-e", "process.send(1)"], { ipc: message => console.log("ipc", message) });
+      await child.exited;
+      new console.Console(process.stdout).log("a Console");
+      process.nextTick(() => console.log("a tick", Buffer.from("x")));`;
+    const { stdout, exitCode } = await asBun(cwd, without(...several), "-e", script);
+    expect(stdout).toBe("ipc 1\na Console\na tick <Buffer 78>\n");
+    expect(exitCode).toBe(0);
   });
 
   // Also of what is too small to make the file smaller. On Windows an island has code only.
@@ -435,8 +463,10 @@ describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", 
   });
 
   // On Windows no compiled executable can: it has a `.bun` section already.
+  // The program imports a module that it is without, which there is then no bytecode to make of.
   test.skipIf(isWindows).concurrent("the executable can compile in its turn", async () => {
-    const compiled = await asBun(cwd, without(...features), "build", "--compile", "app.ts", "--outfile", "in-its-turn");
+    const flags = ["--compile", "--bytecode", "--format=esm", "app.ts", "--outfile", "in-its-turn"];
+    const compiled = await asBun(cwd, without(...several), "build", ...flags);
     expect(compiled.stderr).not.toContain("error");
     expect(compiled.exitCode).toBe(0);
     await expectToWork("in-its-turn");

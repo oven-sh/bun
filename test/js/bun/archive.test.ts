@@ -977,7 +977,14 @@ describe("Bun.Archive", () => {
       // With `fs.protected_symlinks`, the kernel answers EACCES for another
       // user's symlink in a sticky, world-writable directory. It does so before
       // it looks at how the path is to be resolved.
-      const protectedSymlinks = isLinux && readFileSync("/proc/sys/fs/protected_symlinks", "utf8").trim() === "1";
+      const protectedSymlinks = (() => {
+        try {
+          return readFileSync("/proc/sys/fs/protected_symlinks", "utf8").trim() === "1";
+        } catch {
+          // Not Linux, or a sandbox without this sysctl.
+          return false;
+        }
+      })();
       describe.skipIf(!protectedSymlinks || !isRoot)("another user's symlink in a sticky directory", () => {
         test.each(extractModes)(
           "is in the way for the %s extraction, which names the entry",

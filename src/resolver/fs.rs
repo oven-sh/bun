@@ -351,6 +351,10 @@ pub mod dir_entry {
     pub struct Err {
         pub original_err: crate::Error,
         pub canonical_error: crate::Error,
+        /// The directory opened and the read of it failed. The cache holds
+        /// nothing for this error, so the next lookup reads the directory
+        /// again.
+        pub read_failed: bool,
     }
 }
 

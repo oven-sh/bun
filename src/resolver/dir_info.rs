@@ -239,11 +239,23 @@ impl DirInfo {
     /// `&'static mut` returned by `entries_at_locked` is sound and needs no
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
-    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        fs::FileSystem::instance()
+    ///
+    /// `Err` when the listing is from an earlier generation and the read that
+    /// refreshes it failed. The cache keeps the earlier listing, and the next
+    /// call reads the directory again.
+    #[inline]
+    pub fn get_entries_ref_locked(
+        &self,
+        generation: Generation,
+    ) -> crate::CrateResult<Option<&'static fs::DirEntry>> {
+        match fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?
-            .as_entries()
+            .entries_at_locked(self.entries, generation)
+        {
+            Some(fs::EntriesOption::Entries(entries)) => Ok(Some(entries)),
+            Some(fs::EntriesOption::Err(err)) if err.read_failed => Err(err.original_err),
+            Some(fs::EntriesOption::Err(_)) | None => Ok(None),
+        }
     }
 
     /// Generation-checked lookup of one basename in this directory's cached
@@ -253,19 +265,18 @@ impl DirInfo {
     /// drops the old `data` map's buckets), so probing the map after the lock
     /// is released can walk freed buckets. The returned lookup wraps a raw
     /// pointer into the process-lifetime `EntryStore`, which stays valid after
-    /// the lock is dropped.
+    /// the lock is dropped. `Err` is that of
+    /// [`get_entries_ref_locked`](Self::get_entries_ref_locked).
+    #[inline]
     pub(crate) fn get_entry(
         &self,
         generation: Generation,
         query: &[u8],
-    ) -> Option<fs::EntryLookup<'static>> {
-        let rfs = &mut fs::FileSystem::instance().fs;
-        // `MutexGuard` stores the mutex by raw pointer, so holding it does not
-        // keep `rfs` borrowed.
-        let _lock = rfs.entries_mutex.lock_guard();
-        rfs.entries_at_locked(self.entries, generation)?
-            .as_entries()?
-            .get(query)
+    ) -> crate::CrateResult<Option<fs::EntryLookup<'static>>> {
+        let _lock = fs::FileSystem::instance().fs.entries_mutex.lock_guard();
+        Ok(self
+            .get_entries_ref_locked(generation)?
+            .and_then(|entries| entries.get(query)))
     }
 
     /// As-cached listing access with no generation check and no locking.

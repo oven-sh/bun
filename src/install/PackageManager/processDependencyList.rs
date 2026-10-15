@@ -528,6 +528,8 @@ impl PackageManager {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             batch.push(peer_dependency_id);
         }
+        self.look_ahead.in_peer_pass = true;
+        self.look_ahead.deferred_peers_seen = 0;
         for i in self.peer_batch_order(&mut batch) {
             (self.lockfile.scratch.dependency_list_queue).push(QueuedRows {
                 rows: DependencySlice::new(batch[i as usize], 1),

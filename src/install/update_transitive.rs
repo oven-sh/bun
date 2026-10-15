@@ -429,7 +429,7 @@ pub(crate) fn refresh_children_of(
         .collect())
 }
 
-/// Only the synchronous resolve sees the cleared peer bit (the manifest callback re-reads the buffer row), so callers fetch the manifest first.
+/// Resolves the row again as if it were not a peer. The row in the lockfile keeps its peer bit.
 fn reresolve(manager: &mut PackageManager, dep_id: DependencyID) -> crate::Result<()> {
     let mut dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     dep.behavior = dep.behavior.with(Behavior::PEER, false);

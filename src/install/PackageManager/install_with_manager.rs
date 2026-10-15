@@ -2279,6 +2279,8 @@ fn refresh_children_of_named(
 }
 
 fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
+    // What was queued since the last peer pass can provide a peer, so it is resolved first.
+    manager.look_ahead.in_peer_pass = false;
     if manager.pending_task_count() > 0 {
         wait_until_ready_for_peers(manager)?;
     }

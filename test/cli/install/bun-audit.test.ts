@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, readlink } from "fs/promises";
+import { exists, readlink, rm } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -1629,6 +1629,34 @@ describe("`bun audit fix`", () => {
     expectClean(recheck, 1);
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("fixes to the lowest safe version while another dependency waits for its manifest", async () => {
+    await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1")] });
+    const root = (aDep: string) => ({
+      name: "foo",
+      workspaces: ["packages/*"],
+      catalog: { "basic-1": "1.0.0", "no-deps": "1.0.0" },
+      dependencies: { "a-dep": aDep, "basic-1": "catalog:", "no-deps": "catalog:" },
+    });
+    using dir = await setup(server, root("1.0.2"));
+    await reinstall(dir, root("^1.0.2"));
+    expect(await lock(dir)).toContain('"a-dep@1.0.2"');
+    // The fix of no-deps edits the catalog, so basic-1 is resolved again, and has to ask the registry.
+    await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+
+    const { stdout, stderr, exitCode } = await auditFix(dir);
+    expect(stdout).toContain("  ^ a-dep 1.0.2 -> 1.0.4");
+    expect(stdout).toContain("  ^ no-deps 1.0.0 -> 1.0.1");
+    expect(stderr).not.toContain("error:");
+
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"a-dep@1.0.4"');
+    expect(lockfile).not.toContain('"a-dep@1.0.10"');
+    expect(lockfile).toContain('"basic-1@1.0.0"');
+    expect(lockfile).toContain('"no-deps@1.0.1"');
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("fixes a transitive dependency and leaves its dependent alone", async () => {

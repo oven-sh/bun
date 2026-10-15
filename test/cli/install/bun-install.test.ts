@@ -5588,6 +5588,29 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("requests the peers of a package that a peer installed while another peer waits for its manifest", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const registry = {
+        first: { "1.0.0": { peerDependencies: { near: "1.0.0" } } },
+        second: { "1.0.0": { peerDependencies: { slow: "1.0.0" } } },
+        near: { "1.0.0": { peerDependencies: { far: "1.0.0" } } },
+        far: { "1.0.0": {} },
+        slow: { "1.0.0": {} },
+      };
+      setContextHandler(ctx, heldRegistry(ctx, [], registry, { slow: "far" }));
+      await writeProject(ctx, {
+        "package.json": { name: "foo", dependencies: { first: "1.0.0", second: "1.0.0" } },
+      });
+      expect(await installAndReadLock(ctx, "--lockfile-only")).toEqual({
+        "far": "far@1.0.0",
+        "first": "first@1.0.0",
+        "near": "near@1.0.0",
+        "second": "second@1.0.0",
+        "slow": "slow@1.0.0",
+      });
+    });
+  });
+
   it("reports a registry URL that cannot be used once, when two dependencies ask for the same package", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeProject(

@@ -381,6 +381,11 @@ pub(crate) struct LookAhead {
     pub(crate) waiting: HashMap<Task::Id, Wanted, bun_collections::IdentityContext<Task::Id>>,
     /// The manifest tasks that have finished since `request_ahead` last ran.
     pub(crate) arrived: Vec<Task::Id>,
+    /// The peer pass has started. The peers of a package that it adds wait in
+    /// `PackageManager::peer_dependencies` for the queue to empty, but may ask for their manifests.
+    pub(crate) in_peer_pass: bool,
+    /// How many entries of `PackageManager::peer_dependencies` `request_ahead` has looked at.
+    pub(crate) deferred_peers_seen: usize,
 }
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified

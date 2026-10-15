@@ -2750,6 +2750,9 @@ pub(crate) struct DependencyQueue {
     /// What the command wants resolved. All of it comes before anything in `found`, as it does
     /// when every manifest is cached and a command's dependencies are resolved on the spot.
     commanded: Lane,
+    /// What `push_commanded` was asked to resolve. It can differ from the row in the lockfile:
+    /// `bun audit fix` asks for one exact version of a dependency that declares a range.
+    asked_as: BunHashMap<DependencyID, Dependency>,
     /// The dependencies of the packages that were resolved.
     found: Lane,
     /// The task that fetches the manifest of the dependency at the front, once it was tried.
@@ -2760,9 +2763,34 @@ impl DependencyQueue {
     fn init() -> DependencyQueue {
         DependencyQueue {
             commanded: Lane::init(),
+            asked_as: BunHashMap::default(),
             found: Lane::init(),
             waits_for: None,
         }
+    }
+
+    /// Queues one dependency that the command wants resolved, as the caller describes it.
+    pub(crate) fn push_commanded(
+        &mut self,
+        id: DependencyID,
+        dependency: Dependency,
+        install_peer: bool,
+    ) -> Result<(), AllocError> {
+        self.asked_as.put(id, dependency)?;
+        self.push(QueuedRows {
+            rows: DependencySlice::new(id, 1),
+            install_peer,
+            from_command: true,
+        })
+    }
+
+    /// What to resolve in place of the lockfile's row `id`, if `push_commanded` queued it.
+    #[inline]
+    pub(crate) fn asked_as(&self, id: DependencyID) -> Option<&Dependency> {
+        if self.asked_as.is_empty() {
+            return None;
+        }
+        self.asked_as.get(&id)
     }
 
     pub(crate) fn push(&mut self, item: QueuedRows) -> Result<(), AllocError> {
@@ -2803,6 +2831,11 @@ impl DependencyQueue {
     #[inline]
     pub(crate) fn finish_rows_before(&mut self, head: QueuedRows, next: DependencyID) {
         if head.from_command {
+            if !self.asked_as.is_empty() {
+                for id in head.rows.begin()..next {
+                    drop(self.asked_as.remove(&id));
+                }
+            }
             self.commanded.finish_rows_before(next);
         } else {
             self.found.finish_rows_before(next);
@@ -2818,6 +2851,7 @@ impl DependencyQueue {
 
     pub(crate) fn clear(&mut self) {
         self.commanded.clear();
+        self.asked_as.clear();
         self.found.clear();
         self.waits_for = None;
     }

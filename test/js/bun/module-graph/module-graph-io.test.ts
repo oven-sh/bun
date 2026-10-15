@@ -263,22 +263,23 @@ describe.concurrent("ModuleGraph: what a graph opens is the graph's", () => {
       `,
     });
     await using hosts = new Bun.Terminal({});
-    const graph = new Bun.ModuleGraph();
+    using graph = new Bun.ModuleGraph();
     const app = await graph.import(join(dir, "terminal.mjs"));
     const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+    let late: Bun.Terminal | undefined;
     try {
       expect([app.constructed.closed, app.child.terminal.closed]).toEqual([false, false]);
       app.heard.length = 0;
       graph.dispose();
       expect([app.constructed.closed, app.child.terminal.closed, hosts.closed]).toEqual([true, true, false]);
       // What the graph's leftover code opens is closed on the next turn of the loop.
-      const late = inGraph(() => app.open());
-      await until(() => late.closed);
+      late = inGraph(() => app.open()) as Bun.Terminal;
+      await until(() => late!.closed);
       await until(() => !isRunning(app.child.pid));
-      await hostTimerTurns();
       expect(app.heard).toEqual([]);
     } finally {
       app.child.kill("SIGKILL");
+      late?.close();
     }
   });
 

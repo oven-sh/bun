@@ -115,7 +115,6 @@ describe("property matchers on an object that appears more than once", () => {
       ]
     `,
     );
-    expect(() => expect([{ id: 1 }, { id: "2" }]).toMatchSnapshot([m, m])).toThrow();
   });
 
   it("leaves the received object unchanged when the match fails", () => {

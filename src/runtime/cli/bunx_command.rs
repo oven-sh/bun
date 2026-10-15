@@ -672,6 +672,7 @@ impl BunxCommand {
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
+            root_dir_info,
             this_transpiler,
             None,
             root_dir_info.abs_path,
@@ -1020,7 +1021,7 @@ impl BunxCommand {
         );
         env_loader
             .map
-            .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
+            .put(b"BUN_INTERNAL_BUNX_INSTALL", bunx_cache_dir)
             .expect("oom");
         let has_copy: &[u8] = if finished_package_json.is_some() && look_for_existing_bin {
             b"true"

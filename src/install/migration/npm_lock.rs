@@ -231,7 +231,7 @@ pub(super) fn migrate_packages(
             Some(source),
             entry.key_loc,
             format_args!(
-                "this entry has no integrity and {} is not under a registry bun is configured with: bun downloads the same version from the configured registry{}",
+                "no integrity: downloaded from the configured registry, not from {}{}",
                 bun_core::fmt::for_terminal(bstr::BStr::new(url)),
                 more,
             ),

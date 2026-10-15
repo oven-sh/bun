@@ -532,10 +532,9 @@ describe.concurrent("syntax", () => {
       { field: "resolutions", value: "no-deps@2.0.0" },
       { field: "resolutions", value: ["no-deps@2.0.0"] },
       { field: "resolutions", value: null },
-      { field: "resolutions", value: ["no-deps@2.0.0"], overrides: { "no-deps": "2.0.0" } },
-    ])("a non-object field %j", ({ field, value, ...rest }) => {
+    ])("a non-object field %j", ({ field, value }) => {
       test("fails the install with an error that points at the value", async () => {
-        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...rest, [field]: value });
+        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, [field]: value });
         const { err, exitCode } = await install(dir);
         const column =
           (await packageJsonText(dir)).indexOf(`"${field}":${JSON.stringify(value)}`) + `"${field}":`.length;
@@ -722,6 +721,23 @@ describe.concurrent("version-scoped targets", () => {
     await installOk(dir);
     expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
     await installNoChanges(dir, "--frozen-lockfile");
+  });
+
+  // Both resolve the `latest` tag, which no selector matches, and write a range that one does.
+  test.each([
+    ["bun add no-deps", { "a-dep": "1.0.1" }, ["add", "no-deps"]],
+    ["bun update --latest", { "no-deps": "^1.0.0" }, ["update", "--latest"]],
+  ])("%s installs what the rule gives the range it writes", async (_, dependencies, command) => {
+    const dir = await project({ dependencies, overrides: { "no-deps@2": "1.0.0" } });
+    await installOk(dir);
+    const { err, exitCode } = await run(dir, ...command);
+    expect(diagnostics(err)).toEqual([]);
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(await packageJsonText(dir)).dependencies["no-deps"]).toBe("^2.0.0");
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
+    expect(await lock(dir)).not.toContain("no-deps@2.0.0");
+    await installNoChanges(dir, "--frozen-lockfile");
+    await installNoChanges(dir);
   });
 
   describe.concurrent.each([
@@ -1407,6 +1423,22 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
     expect(await lock(dir)).toBe(first);
     expect(await versionSeenBy(dir, "peer-deps", "no-deps")).toBe("1.1.0");
+  });
+
+  test.each([
+    ["a plain rule", { "no-deps": "1.0.0" }],
+    ["a rule for the parent", { "peer-deps>no-deps": "1.0.0" }],
+  ])("%s added after the install moves a package that only a peer holds", async (_, overrides) => {
+    const pkg = { name: "nested-overrides", dependencies: { "peer-deps": "1.0.0" } };
+    const dir = await project(pkg, linker);
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "peer-deps", "no-deps")).toBe("2.0.0");
+
+    await write(join(dir, "package.json"), JSON.stringify({ ...pkg, overrides }));
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "peer-deps", "no-deps")).toBe("1.0.0");
+    expect(await lock(dir)).not.toContain("no-deps@2.0.0");
+    await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
   });
 
   // The root's "no-deps" is an alias of a-dep. peer-deps-fixed has the peer no-deps@^1.0.0, which a-dep@1.0.1 fits.
@@ -2535,6 +2567,35 @@ describe.concurrent("flat override fixes", () => {
       await write(join(dir, "package.json"), withCatalog("1.0.1", deps, overrides));
       await installOk(dir);
       await expectVersionsSeenBy(dir, "no-deps", { "one-dep": "1.0.1", ofd2: "2.0.0" });
+    });
+  });
+
+  describe.concurrent("a catalog: rule without an entry is pointed out where it is in package.json", () => {
+    const needsWorkspaces = ': catalogs require a "workspaces" field in the root package.json';
+    test.each([
+      ["no workspaces field", { catalog: { "no-deps": "1.0.0" } }, "catalog:", needsWorkspaces],
+      ["no entry", { workspaces: [], catalog: { "a-dep": "1.0.1" } }, "catalog:", ""],
+      ["no such catalog", { workspaces: [], catalog: { "no-deps": "1.0.0" } }, "catalog:x", ""],
+    ])("%s", async (_, catalogs, rule, why) => {
+      const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...catalogs, overrides: { "no-deps": rule } });
+      const { err, exitCode } = await install(dir);
+      expect(diagnostics(err)).toEqual([
+        `warn: no-deps@${rule} is not in the catalog${why}`,
+        "error: no-deps@1.0.1 failed to resolve",
+      ]);
+      expect(err).toMatch(/package\.json:\d+:\d+/);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a package that only a peer asks for", async () => {
+      const dir = await project({
+        dependencies: { "peer-deps": "1.0.0" },
+        catalog: { "no-deps": "1.0.0" },
+        overrides: { "no-deps": "catalog:" },
+      });
+      const { err, exitCode } = await install(dir);
+      expect(diagnostics(err)).toEqual([`warn: no-deps@catalog: is not in the catalog${needsWorkspaces}`]);
+      expect(exitCode).toBe(0);
     });
   });
 });

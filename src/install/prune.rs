@@ -2241,7 +2241,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
 fn push_store_entry_names(
     lockfile: &Lockfile,
     store: &Store,
-    wanted: Option<&DynamicBitSet>,
+    wanted: &DynamicBitSet,
     names: &mut Vec<Box<[u8]>>,
 ) {
     let pkg_res = lockfile.packages.items_resolution();
@@ -2255,7 +2255,7 @@ fn push_store_entry_names(
             pkg_res[pkg_id].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || entry_nested_folder[entry_idx]
-            || wanted.is_some_and(|wanted| !wanted.is_set(pkg_id))
+            || !wanted.is_set(pkg_id)
         {
             continue;
         }
@@ -2270,8 +2270,7 @@ fn push_store_entry_names(
     }
 }
 
-// The store of this run's `--production`/`--omit`, whole: a peer can need what no other row of the run
-// leads to. And what is `wanted` of a full install's, for the members a `--filter` does not select.
+// Peer hashes differ between a full install and one narrowed by `--production`/`--omit`; entries laid out by either stay.
 fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
     if manager.lockfile.packages.len() == 0 {
         return Vec::new();
@@ -2284,7 +2283,6 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
         .flatten()
     {
         let store = build_store_with(manager, features);
-        let wanted = (features == full).then_some(wanted);
         push_store_entry_names(&manager.lockfile, &store, wanted, &mut names);
     }
     sort_names(&mut names);
@@ -2901,8 +2899,10 @@ fn hand_over_names(plan: &Plan, layout: Layout, manager: &PackageManager) {
     };
     let link_bins = |path: &[u8], mut placed: Vec<(LinkOrder<'_>, PackageID)>| {
         index_sort::sort_vec_unstable_by(&mut placed, |a, b| a.cmp(b));
-        let placed = (placed.iter()).map(|(order, pkg_id)| (order.dependency_name, *pkg_id));
-        link_free_bins(lockfile, path, None, placed);
+        let placed: Vec<(&[u8], PackageID)> = (placed.iter())
+            .map(|(order, pkg_id)| (order.dependency_name, *pkg_id))
+            .collect();
+        link_free_bins(lockfile, path, None, &placed);
     };
 
     if layout == Layout::Hoisted {

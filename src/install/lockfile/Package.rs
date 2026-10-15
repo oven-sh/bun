@@ -827,8 +827,6 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
-    /// Likewise for the root's `name`.
-    pub(crate) root_name_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -851,7 +849,6 @@ impl DiffSummary {
             || self.removed_trusted_dependencies
             || self.patched_dependencies_changed
             || self.workspace_versions_changed
-            || self.root_name_changed
     }
 
     #[inline]
@@ -1039,7 +1036,6 @@ impl Diff {
                             || from.tag.build.slice(from_buf!()) != to.tag.build.slice(to_buf!())
                     })
                 });
-            summary.root_name_changed = from.name.slice(from_buf!()) != to.name.slice(to_buf!());
         }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();

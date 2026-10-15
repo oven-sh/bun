@@ -365,7 +365,6 @@ pub fn install_with_manager(
                     maybe_root
                         .scripts
                         .count(&lockfile.buffers.string_bytes, builder);
-                    builder.count(maybe_root.name.slice(&lockfile.buffers.string_bytes));
 
                     let off = lf.dependencies.len() as u32;
                     let len = (new_dependencies.len() + kept_pruned.len()) as u32;
@@ -441,10 +440,6 @@ pub fn install_with_manager(
                     lf.packages.items_scripts_mut()[0] = maybe_root
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
-                    lf.packages.items_name_mut()[0] = builder.append::<SemverString>(
-                        maybe_root.name.slice(&lockfile.buffers.string_bytes),
-                    );
-                    lf.packages.items_name_hash_mut()[0] = maybe_root.name_hash;
 
                     // Update workspace paths
                     {
@@ -2350,9 +2345,18 @@ fn reresolve_rows_outside_overrides(
 ) -> crate::Result<Vec<PackageID>> {
     // As in `enqueue_named_updates`: a peer with a provider only follows it.
     let plannable_peers = plannable_peer_rows(&manager.lockfile, &DirectDependencies::default());
-    outside.retain(|&(row, _)| {
+    // So does a peer next to another peer that has no rule against the package they share.
+    let mut held = DynamicBitSet::init_empty(manager.lockfile.packages.len())?;
+    let mut outside_rows = outside.iter().map(|&(row, _)| row as usize).peekable();
+    for (row, &package_id) in manager.lockfile.buffers.resolutions.iter().enumerate() {
+        if outside_rows.next_if_eq(&row).is_none() && (package_id as usize) < held.bit_length() {
+            held.set(package_id as usize);
+        }
+    }
+    outside.retain(|&(row, package_id)| {
         let behavior = manager.lockfile.buffers.dependencies[row as usize].behavior;
-        !behavior.is_peer() || plannable_peers.is_set(row as usize)
+        !behavior.is_peer()
+            || (plannable_peers.is_set(row as usize) && !held.is_set(package_id as usize))
     });
     let Some(&(first_row, first_package)) = outside.first() else {
         return Ok(Vec::new());

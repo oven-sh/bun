@@ -3148,7 +3148,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-no-resolved: yar
 
 exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 0,
   "workspaces": {
     "": {
@@ -3171,7 +3171,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "full-git-url": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, "isaacs-abbrev-js-3f9802e"],
 
-    "ghshort": ["ghshort@3.0.1", "https://codeload.github.com/isaacs/abbrev-js/tar.gz/3f9802e56ff878761a338e43ecacbfed39d2181d", {}, ""],
+    "ghshort": ["ghshort@https://codeload.github.com/isaacs/abbrev-js/tar.gz/3f9802e56ff878761a338e43ecacbfed39d2181d", {}],
 
     "old": ["abbrev@1.0.9", "", {}, "sha512-LEyx4aLEC3x6T0UguF6YILf+ntvmOaWsVfENmIW0E9H09vKlLDGelMjjSm0jkDHALj8A8quZ/HapKNigzwge+Q=="],
 

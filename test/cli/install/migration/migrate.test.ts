@@ -628,85 +628,8 @@ test.concurrent(
   },
 );
 
-// The bun.lock parser fails closed on a tarball URL outside the configured registry that has no `integrity`;
-// migration applies the same rule instead of importing an unverifiable URL.
-test.concurrent(
-  "package-lock.json migration requires integrity for tarball URLs outside the configured registry",
-  async () => {
-    using registry = localRegistry();
-    let tarballRequests = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch() {
-        tarballRequests++;
-        return new Response("not found", { status: 404 });
-      },
-    });
-
-    const root = { name: "off-registry-tarball-test", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
-    using dir = synthetic(
-      "migrate-off-registry-tarball",
-      {
-        "package.json": JSON.stringify(root),
-        "package-lock.json": npmLock(
-          root.name,
-          {
-            "": root,
-            // off-registry tarball URL and no "integrity" field
-            "node_modules/no-deps": {
-              version: "1.0.0",
-              resolved: `http://localhost:${server.port}/no-deps-1.0.0.tgz`,
-              license: "MIT",
-            },
-          },
-          { version: "1.0.0" },
-        ),
-      },
-      registry.url,
-    );
-
-    const { stdout, stderr, exitCode } = await install(dir);
-    // The migration is rejected; the install ignores the lockfile and resolves no-deps@1.0.0 from the registry.
-    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "InvalidNPMLockfile: failed to migrate lockfile: 'package-lock.json'
-
-    warn: Ignoring lockfile
-    Resolving dependencies
-    Resolved, downloaded and extracted [4]
-    Saved lockfile"
-  `);
-    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "bun install <version> (<revision>)
-
-    + no-deps@1.0.0 (v2.0.0 available)
-
-    1 package installed"
-  `);
-    expect(exitCode).toBe(0);
-    expect(tarballRequests).toBe(0);
-    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.0.0.tgz"]);
-    expect(nodeModules(dir)).toEqual({ "no-deps": "1.0.0" });
-    expect(await lockSnapshot(dir, { [registry.url]: "<registry>/" })).toMatchInlineSnapshot(`
-    "{
-      "lockfileVersion": 2,
-      "configVersion": 1,
-      "workspaces": {
-        "": {
-          "name": "off-registry-tarball-test",
-          "dependencies": {
-            "no-deps": "1.0.0",
-          },
-        },
-      },
-      "packages": {
-        "no-deps": ["no-deps@1.0.0", "<registry>/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
-      }
-    }"
-  `);
-  },
-);
-
-// Nothing checks what that host would send, so the pinned version comes from the configured registry.
+// The bun.lock parser fails closed on a tarball URL outside the configured registry that has no `integrity`.
+// The migration does not import such a URL either: the pinned version comes from the configured registry.
 test.concurrent("a package-lock.json entry of another host without an integrity keeps every version", async () => {
   using registry = localRegistry();
   let otherHostRequests = 0;
@@ -738,9 +661,7 @@ test.concurrent("a package-lock.json entry of another host without an integrity 
   );
 
   const { stderr, exitCode } = await install(dir);
-  expect(stderr).toContain(
-    `warn: this entry has no integrity and ${url} is not under a registry bun is configured with: bun downloads the same version from the configured registry\n`,
-  );
+  expect(stderr).toContain(`warn: no integrity: downloaded from the configured registry, not from ${url}\n`);
   expect(stderr).toContain("package-lock.json:1:");
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(nodeModules(dir)).toEqual({ "a-dep": "1.0.1", "no-deps": "1.0.0" });

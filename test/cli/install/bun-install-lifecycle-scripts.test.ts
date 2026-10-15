@@ -2449,33 +2449,6 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a s
   });
 });
 
-// The copy in node_modules has hard links to the files of the folder, and a file that is written in place keeps
-// its inode: nothing shows that it changed.
-test.concurrent.each(["hoisted", "isolated"] as const)(
-  "a trusted file: folder is built again after one of its files was written in place (%s)",
-  async linker => {
-    using ctx = await setupScriptPackages(linker, {});
-    const source = join(ctx.packageDir, "addon", "addon.c");
-    ctx.env.BUILT = join(ctx.packageDir, "built.c");
-    await mkdir(join(ctx.packageDir, "addon"));
-    await writeFile(source, "int v = 1;\n");
-    await writeFile(
-      join(ctx.packageDir, "addon", "package.json"),
-      JSON.stringify({ name: "addon", version: "1.0.0", scripts: { install: 'cp addon.c "$BUILT"' } }),
-    );
-    await writeFile(
-      ctx.packageJson,
-      JSON.stringify({ name: "root", dependencies: { addon: "file:./addon" }, trustedDependencies: ["addon"] }),
-    );
-    expect(await ctx.bun("install")).toMatchObject({ exitCode: 0 });
-    expect(readFileSync(ctx.env.BUILT, "utf8")).toBe("int v = 1;\n");
-
-    await writeFile(source, "int v = 2;\n");
-    expect(await ctx.bun("install")).toMatchObject({ exitCode: 0 });
-    expect(readFileSync(ctx.env.BUILT, "utf8")).toBe("int v = 2;\n");
-  },
-);
-
 describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)", linker => {
   // The isolated linker decides on its task threads whether a package is trusted. Under ASAN
   // this is also the shape that caught those threads growing the trusted set they read.

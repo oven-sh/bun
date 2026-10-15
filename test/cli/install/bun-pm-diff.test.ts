@@ -2183,7 +2183,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     });
     expect(text).toMatch(/\nsame\.css ─+ formatting only\n/);
     expect(text).toMatch(/\nmoved\.css ─+ normalized \+1 -1\n/);
-    expect(changedLines(text).map(line => line.replace(/^.*│/, ""))).toEqual([
+    expect(changed(text)).toEqual([
       '-   background: url("a.png");',
       '+   background: url("https://example.com/b.png");',
     ]);

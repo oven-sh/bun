@@ -1935,19 +1935,9 @@ impl<'a> PackageInstaller<'a> {
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
         let inside_replaced_folder =
             self.trees[self.current_tree_id as usize].inside_replaced_folder;
-        // Its scripts build from its files. One written in place keeps its inode.
-        let builds_folder = resolution.tag == resolution::Tag::Folder
-            && self.manager().options.do_.run_scripts()
-            && !self.lockfile().is_folder_inside_declarer(dependency_id)
-            && self.lockfile().has_trusted_dependency(
-                alias.slice(string_buf!()),
-                pkg_name.slice(string_buf!()),
-                resolution,
-            );
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
-            || builds_folder
             || !installer.verify(
                 resolution,
                 &self.metas[package_id as usize].integrity,

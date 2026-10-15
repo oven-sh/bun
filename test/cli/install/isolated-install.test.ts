@@ -5739,10 +5739,10 @@ describe.concurrent("bin links of a failed optional dependency (hoisted)", () =>
     const { stderr, exitCode } = await installCounted(packageDir);
 
     expect(stderr).not.toContain("error:");
-    // `one` is the link of a1, so the failure of z1 leaves it. `two` was the link of a2. It is not
-    // linked again for z2, which is a gap: z2 declares it. npm leaves the same state.
-    expect(await linkedBins(join(nodeModules, ".bin"))).toEqual(["one", "z2-own"]);
-    expect(binOwner(nodeModules, "one")).toBe("a1");
+    // `one` is the link of a1, so the failure of z1 leaves it. `two` was the link of a2. The bins are
+    // linked once more after the scripts, so it goes to z2, which declares it too.
+    expect(await linkedBins(join(nodeModules, ".bin"))).toEqual(["one", "two", "z2-own"]);
+    expect({ one: binOwner(nodeModules, "one"), two: binOwner(nodeModules, "two") }).toEqual({ one: "a1", two: "z2" });
     expect(exitCode).toBe(0);
   });
 

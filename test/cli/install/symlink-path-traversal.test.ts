@@ -1870,7 +1870,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
     const { stderr, exitCode } = await bun(repo, "prune");
 
-    expect(stderr).toContain("error: node_modules/.bun is a symlink, so nothing was pruned");
+    expect(stderr.replaceAll("\\", "/")).toContain("error: node_modules/.bun is a symlink, so nothing was pruned");
     await expectVictimUntouched(victim, "stray@1.0.0");
     expect(exitCode).toBe(1);
   });

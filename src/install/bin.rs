@@ -1909,18 +1909,19 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = dependencies.get(lockfile.buffers.dependencies.as_slice());
     let resolutions = resolutions.get(lockfile.buffers.resolutions.as_slice());
-    let placed = (dependencies.iter().zip(resolutions))
-        .map(|(dependency, &package_id)| (dependency.name.slice(string_buf), package_id));
-    link_free_bins(lockfile, b"node_modules", Some(global_bin_path), placed);
+    let placed: Vec<(&[u8], crate::PackageID)> = (dependencies.iter().zip(resolutions))
+        .map(|(dependency, &package_id)| (dependency.name.slice(string_buf), package_id))
+        .collect();
+    link_free_bins(lockfile, b"node_modules", Some(global_bin_path), &placed);
 }
 
 /// Links the bins of `placed`, packages of `node_modules` (from the top-level dir) by folder, in
 /// that order and under free names only. Without a `global_bin_path`, into its `.bin`.
-pub(crate) fn link_free_bins<'a>(
+pub(crate) fn link_free_bins(
     lockfile: &Lockfile,
     node_modules: &[u8],
     global_bin_path: Option<&ZStr>,
-    placed: impl Iterator<Item = (&'a [u8], crate::PackageID)>,
+    placed: &[(&[u8], crate::PackageID)],
 ) {
     // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
     let abs_node_modules = || -> AbsPath {
@@ -1960,7 +1961,7 @@ pub(crate) fn link_free_bins<'a>(
     let mut abs_target_buf = path::path_buffer_pool::get();
     let mut abs_dest_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
-    for (folder, package_id) in placed {
+    for &(folder, package_id) in placed {
         let Some(&bin) = lockfile.packages.items_bin().get(package_id as usize) else {
             continue;
         };

@@ -2114,6 +2114,60 @@ describe("a cached tree", () => {
     expect(await box.run(["env-probe"])).toMatchObject({ stdout: "[]\n", exitCode: 0 });
   });
 
+  describe("what the install bunx spawns is told is for it alone", () => {
+    const files = {
+      "package.json": `{ "name": "root",   "workspaces": ["packages/*"] }`,
+      "packages/member/package.json": `{ "name": "member",   "dependencies": { "dep": "1.0.0" } }`,
+    };
+    /** After `bun install` in the member. */
+    const installedLikeAnyOther = async (project: string) => {
+      const found: Record<string, string | boolean> = {};
+      for (const file in files) found[file] = await Bun.file(join(project, file)).text();
+      for (const file of ["bun.lock", "packages/member/bun.lock"]) found[file] = existsSync(join(project, file));
+      expect(found).toEqual({ ...files, "bun.lock": true, "packages/member/bun.lock": false });
+    };
+
+    it.concurrent("a script of the package that runs bun install in a project", async () => {
+      using registry = await localRegistry(
+        { name: "dep", version: "1.0.0", files: { "index.js": "" } },
+        {
+          name: "tool",
+          version: "1.0.0",
+          bin: { tool: "cli.js" },
+          scripts: { postinstall: "node postinstall.js" },
+          files: {
+            "cli.js": `#!/usr/bin/env node\nconsole.log("the script saw", require("./saw.json"));\n`,
+            "postinstall.js": `
+const saw = Object.keys(process.env).filter(key => key.startsWith("BUN_INTERNAL_BUNX_"));
+require("fs").writeFileSync("saw.json", JSON.stringify(saw));
+require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: process.env.MEMBER, stdio: "inherit" });
+`,
+          },
+        },
+      );
+      using box = sandbox(registry, { project: files });
+      const project = join(box.dir, "project");
+
+      const env = { ...box.env, BUN_EXE: bunExe(), MEMBER: join(project, "packages", "member") };
+      expect(await box.run(["--trust", "tool"], { env })).toMatchObject({ stdout: "the script saw []\n", exitCode: 0 });
+      await installedLikeAnyOther(project);
+    });
+
+    it.concurrent("bun install in a project with the variable in the environment", async () => {
+      using registry = await localRegistry({ name: "dep", version: "1.0.0", files: { "index.js": "" } });
+      using box = sandbox(registry, { project: files });
+      const project = join(box.dir, "project");
+
+      const result = await box.run(["install"], {
+        bunx: [bunExe()],
+        cwd: join(project, "packages", "member"),
+        env: { ...box.env, BUN_INTERNAL_BUNX_INSTALL: "true", BUN_INTERNAL_BUNX_HAS_COPY: "true" },
+      });
+      expect(result.exitCode).toBe(0);
+      await installedLikeAnyOther(project);
+    });
+  });
+
   const outcomes = (results: { stdout: string; exitCode: number }[]) =>
     results.map(({ stdout, exitCode }) => ({ stdout, exitCode }));
 
@@ -2434,29 +2488,6 @@ describe("a package in node_modules", () => {
       exitCode: 1,
     });
   });
-});
-
-// As for npm: `node_modules/.bin` of the directory and of those above it, then what PATH was.
-it.concurrent("a file beside package.json is no command in the directories below", async () => {
-  using box = sandbox(undefined, {
-    cwd: {
-      "package.json": JSON.stringify({ name: "app", scripts: { call: "zz-beside" } }),
-      [isWindows ? "zz-beside.cmd" : "zz-beside"]: isWindows ? "@echo ran\r\n" : "#!/bin/sh\necho ran\n",
-      src: {},
-    },
-  });
-  if (!isWindows) chmodSync(join(box.cwd, "zz-beside"), 0o755);
-  const cwd = join(box.cwd, "src");
-
-  expect(await box.run(["--no-install", "zz-beside"], { cwd })).toMatchObject({
-    stdout: "",
-    stderr: expect.stringContaining("Could not find an existing 'zz-beside' binary to run."),
-    exitCode: 1,
-  });
-  // The script runs beside package.json, where Windows looks for a command first.
-  if (!isWindows) {
-    expect(await box.run(["call"], { cwd, bunx: [bunExe(), "run"] })).toMatchObject({ stdout: "", exitCode: 127 });
-  }
 });
 
 describe("flags", () => {

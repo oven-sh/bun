@@ -795,7 +795,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Whether the scripts of a dependency's entry may run. Main and task threads.
-    pub(crate) fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
+    fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
         if dep_id == invalid_dependency_id {
             return false;

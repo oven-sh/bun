@@ -32,11 +32,12 @@ function __fish__get_bun_bun_js_files
 	string split ' ' (bun getcompletes j)
 end
 
-set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
-set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
+set -l bun_install_boolean_flags yarn production no-save dry-run force no-cache silent verbose global
+set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl check lint fmt
-set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune publish init pm x repl check lint fmt
+# The package manager commands and `bun x` reject a flag they do not have.
+set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -152,6 +153,12 @@ for i in (seq (count $bun_install_boolean_flags))
 end
 
 complete -c bun \
+	-n "__fish_seen_subcommand_from install add" -l 'optional' -d 'Add dependency to optionalDependencies'
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from install add" -l 'development' -d 'Add dependency to devDependencies'
+
+complete -c bun \
 	-n "__fish_seen_subcommand_from install add remove update dedupe" -l 'cwd' -d 'Change working directory'
 
 complete -c bun \
@@ -176,7 +183,7 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm prune pack unpack' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from licenses" -l 'json' -d 'Output as JSON' -f
@@ -385,11 +392,13 @@ complete -c bun -n "__fish_seen_subcommand_from audit" -l "ignore" -r -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from audit" -l "prod" -d "Omit devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "omit" -r -a "dev optional peer" -d "Omit the given dependency type" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "dry-run" -d "Print what would change without changing anything" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "check" -d "Exit with code 1 if node_modules has packages that can be removed, without deleting anything" -f
 complete -c bun -n "__fish_seen_subcommand_from audit; and __fish_seen_subcommand_from fix" -s "L" -l "latest" -d "Also apply fixes that fall outside the ranges declared in package.json or catalogs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "p" -l "production" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "P" -l "prod" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "os" -r -d "Prune for a different operating system than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for a different CPU architecture than the current one" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "libc" -r -a "glibc musl" -d "Prune for a different libc than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Linker to assume when node_modules mixes isolated and hoisted installs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
@@ -414,6 +423,29 @@ complete -c bun -n "__fish_seen_subcommand_from update" -l "no-cache" -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from update" -l "silent" -d "Don't log anything" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -l "verbose" -d "Excessively verbose logging" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -s "r" -l "recursive" -d "Publish every workspace package whose version is not on the registry" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -s "F" -l "filter" -r -d "Publish each matching workspace package" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "access" -r -a "public restricted" -d "Set access level for scoped packages" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "tag" -r -d "Tag the release. Default is \"latest\"" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "otp" -r -d "Provide a one-time password for authentication" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "auth-type" -r -a "web legacy" -d "Specify the type of one-time password authentication" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "gzip-level" -r -d "Specify a custom compression level for gzip. Default is 9." -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "tolerate-republish" -d "Don't exit with code 1 when republishing over an existing version number" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "dry-run" -d "Perform a dry run without making changes" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "ignore-scripts" -d "Skip lifecycle scripts" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "registry" -r -d "Use a specific registry by default" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "silent" -d "Don't log anything" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "verbose" -d "Excessively verbose logging" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "cwd" -r -d "Set a specific cwd"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "bun" -d "Force the command to run with Bun instead of Node.js" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -s "p" -l "package" -r -d "Package to install when the binary name differs from the package name" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "no-install" -d "Skip installation if the package is not already installed" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "cwd" -r -d "Set the working directory"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "env-file" -r -d "Load environment variables from the specified file(s)"
+complete -c bun -n "__fish_seen_subcommand_from x" -l "minimum-release-age" -r -d "Only install packages published at least N seconds ago" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "trust" -d "Run the lifecycle scripts of the package and of ALL of its dependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "verbose" -d "Enable verbose output during installation" -f
+complete -c bun -n "__fish_seen_subcommand_from x" -l "silent" -d "Suppress output during installation" -f
 complete -c bun -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "Evaluate argument as a script, print the result, then exit" -f

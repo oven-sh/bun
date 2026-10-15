@@ -86,12 +86,10 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         return Ok(JSValue::FALSE);
     }
 
-    let left_result = Version::parse(SlicedString::init(left.slice(), left.slice()));
-    if left_result.wildcard != query::token::Wildcard::None {
+    let Some(left_version) = Version::parse_exact(SlicedString::init(left.slice(), left.slice()))
+    else {
         return Ok(JSValue::FALSE);
-    }
-
-    let left_version = left_result.version.min();
+    };
 
     // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
@@ -111,4 +109,19 @@ fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         right.slice(),
         left.slice(),
     )))
+}
+
+/// `bun:internal-for-testing`: `Group::intersects` on two range strings.
+#[bun_core::feature::behind(bun_runtime::features::semver_intersects_for_testing, semver)]
+fn intersects_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let left = frame.argument(0).to_utf8(global)?;
+    let right = frame.argument(1).to_utf8(global)?;
+    let (Ok(left_group), Ok(right_group)) = (
+        query::parse(&left, SlicedString::init(&left, &left)),
+        query::parse(&right, SlicedString::init(&right, &right)),
+    ) else {
+        return Err(global.throw_out_of_memory());
+    };
+    let intersects = left_group.intersects(&left, &right_group, &right);
+    Ok(JSValue::js_boolean(intersects))
 }

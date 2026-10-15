@@ -71,6 +71,13 @@
       "Store"
     ]
   },
+  "src/lint_command/lint_js.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
+  },
   "src/runtime/api/JSTranspiler.rs": {
     "unsafe impl Send": [
       "TransformTask"
@@ -92,16 +99,6 @@
   "src/runtime/bake/production.rs": {
     "unsafe impl Sync": [
       "DotenvSingleton"
-    ]
-  },
-  "src/runtime/cli/create_command.rs": {
-    "thread spawn": 1
-  },
-  "src/lint_command/lint_js.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "Posted",
-      "Shared"
     ]
   },
   "src/runtime/cli/open.rs": {

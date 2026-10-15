@@ -3,7 +3,7 @@
 use bun_bundler::options::TypeChecked;
 use bun_core::{Global, Output, ZStr, feature};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSObject, JSValue};
+use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_options_types::context::ContextData;
 
 pub use crate::cli::arguments::disallow_code_generation_from_strings_as_compiled;
@@ -180,6 +180,15 @@ pub use crate::node::types::Encoding as NodeEncoding;
 #[feature::door(semver)]
 pub fn semver_object(global: &JSGlobalObject) -> JSValue {
     JSValue::UNDEFINED
+}
+
+/// `semverIntersects` of `bun:internal-for-testing`
+#[feature::door(semver)]
+pub fn semver_intersects_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::UNDEFINED)
 }
 
 /// `Bun.CSRF`

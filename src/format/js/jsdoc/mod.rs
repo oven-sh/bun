@@ -64,7 +64,8 @@ fn write_formatted<'a>(
         .sum();
     let available_width = (f.options().line_width.value() as usize).saturating_sub(indent);
     let write_lines = |lines: &[u8], f: &mut Formatter<'a>| {
-        write!(f, "/**");
+        // See `Comment::fmt`: a comment that waits for the end of the line would be written after the `/**`.
+        write!(f, [line_suffix_boundary(), "/**"]);
         for line in strings::split(lines, b"\n") {
             write!(f, [hard_line_break(), " *"]);
             if !line.is_empty() {

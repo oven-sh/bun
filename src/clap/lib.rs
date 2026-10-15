@@ -296,6 +296,11 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
+    /// Without the dashes.
+    pub fn long(&self) -> Option<&[u8]> {
+        self.long.as_deref()
+    }
+
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
     ///
@@ -377,6 +382,8 @@ pub struct ParseOptions<'a> {
     /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
     /// such a flag is skipped.
     pub unknown_long_flags_are_positional: bool,
+    /// Such a flag fails the parse, unless it comes from `BUN_OPTIONS`, which is for every command.
+    pub unknown_long_flags_are_errors: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -460,6 +467,7 @@ pub fn parse<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
         },
     )?;
     Ok(Args { clap })
@@ -481,6 +489,7 @@ pub fn parse_with_table<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
         },
     )?;
     Ok(Args { clap })

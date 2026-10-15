@@ -842,7 +842,7 @@ exact = false
 
 ### `install.ignoreScripts`
 
-Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag.
+Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag and to `NPM_CONFIG_IGNORE_SCRIPTS=true` in the environment.
 
 When `true`, Bun does not run any `preinstall` / `install` / `postinstall` / `prepare` scripts, both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle).
 
@@ -926,7 +926,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
+Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to every package manager command, including `bun publish`, `bun pm pack`, `bun prune`, `bun dedupe` and `bun audit fix`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -937,9 +937,11 @@ dryRun = false
 
 The directory where Bun puts globally installed packages.
 
+Set it in the global `.bunfig.toml` (see [Global vs. local](#global-vs-local)) or in a file passed with `--config`. Bun ignores it in a project's `bunfig.toml`.
+
 Environment variable: `BUN_INSTALL_GLOBAL_DIR`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where `bun install --global` installs packages
 globalDir = "~/.bun/install/global"
@@ -949,9 +951,11 @@ globalDir = "~/.bun/install/global"
 
 The directory where Bun links the binaries of globally installed packages.
 
+Like `globalDir`, Bun ignores it in a project's `bunfig.toml`.
+
 Environment variable: `BUN_INSTALL_BIN`
 
-```toml title="bunfig.toml" icon="settings"
+```toml title="~/.bunfig.toml" icon="settings"
 [install]
 # where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"
@@ -1010,6 +1014,8 @@ ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile = "path/to/cafile"
 ```
 
+Set one of the two. If both are set, only `cafile` is used. `--ca` or `--cafile` on the command line replaces both.
+
 ### `install.cache`
 
 To configure the cache behavior:
@@ -1020,8 +1026,8 @@ To configure the cache behavior:
 # the directory to use for the cache
 dir = "~/.bun/install/cache"
 
-# when true, don't load from the global cache.
-# Bun may still write to node_modules/.cache
+# when true, don't use the global cache or cached registry metadata (same as `cache = false`).
+# Bun extracts packages to node_modules/.cache instead
 disable = false
 
 # when true, always resolve the latest versions from the registry
@@ -1084,7 +1090,7 @@ publicHoistPattern = ["*eslint*", "*prettier*"]
 
 ### `install.hoistPattern`
 
-When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. Similar to pnpm's `hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. A pattern is matched against the dependency name, which for an `npm:` alias is the alias, and the link in the fallback directory has that name. Similar to pnpm's `hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -1093,7 +1099,7 @@ hoistPattern = ["*"]
 
 ### `install.hoist`
 
-When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink to every installed package, or only to the packages matching `install.hoistPattern` when one is set. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
+When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink for every dependency name, or only for the names matching `install.hoistPattern` when one is set. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
 
 This setting only applies to the `"isolated"` linker. Hoisted installs are unaffected: there the flat `node_modules` tree is the layout itself, not something this switch controls.
 
@@ -1157,14 +1163,16 @@ See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ### `install.minimumReleaseAgeExcludes`
 
-An array of package names that are exempt from the `minimumReleaseAge` check. Default `[]`.
+An array of packages that are exempt from the `minimumReleaseAge` check. A package name exempts every version of the package; `name@version` (or `name@1.0.0 || 1.0.1`) exempts only the listed exact versions. Default `[]`. The `--minimum-release-age-excludes` flag replaces this list.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 minimumReleaseAge = 259200
-# These packages will bypass the 3-day minimum age requirement
-minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+# Every version of @types/bun, and only typescript 5.4.5, bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript@5.4.5"]
 ```
+
+See [Minimum release age](/pm/cli/install#minimum-release-age).
 
 ## `bun run`
 

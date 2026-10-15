@@ -118,6 +118,37 @@ test.skipIf(!hasRunner)("comments are attached to the nodes that Prettier attach
   expect(differences).toEqual(knownDifferences);
 });
 
+// A comment that no printer prints is not lost: the file is formatted once more, and the comment is written behind the statement or the
+// member that it is in. That is seldom where it belongs, and it hides that a printer is missing.
+test.skipIf(!hasRunner).concurrent.each([
+  ["Prettier", "--debug-unprinted-comments"],
+  ["oxfmt", "--debug-unprinted-comments-oxfmt"],
+])("every comment of our own inputs has a printer, in the flavor of %s", async (_, flag) => {
+  const found = new Map<string, Uint8Array>();
+  collect(join(import.meta.dir, "own"), "cases", found, name => !/\.[cm]?[jt]sx?\.input$/.test(name));
+  const inputs = new Map(
+    [...found].map(([name, bytes]) => [name.replace(/^cases\/|\.input$/g, ""), Buffer.from(bytes)]),
+  );
+  expect(inputs.size).toBeGreaterThan(300);
+  using dir = tempDir("unprinted-comments", Object.fromEntries(inputs));
+  await using proc = spawn({
+    cmd: [bunExe(), "fmt", flag, "unprinted", ...inputs.keys()],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await proc.exited).toBe(0);
+
+  const unprinted: string[] = [];
+  for (const name of inputs.keys()) {
+    const lines = (await Bun.file(join(String(dir), "unprinted", `${name}.txt`)).text()).split("\n");
+    // An input that is for the other flavor, or for a parser that is given in its options, is refused.
+    unprinted.push(...lines.filter(line => line && line !== "REFUSED").map(line => `${name}: ${line}`));
+  }
+  expect(unprinted).toEqual([]);
+});
+
 const knownDifferences = [
   // Prettier turns `a && (b && c)` into `(a && b) && c` before it attaches comments.
   "comments/before-the-parentheses-of-a-nested-chain.js:33 Prettier: T LogicalExpression 6, bun: T BinaryExpression 25",

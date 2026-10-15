@@ -130,7 +130,7 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> bool {
 /// installed, here or further up. Not for `check`, which has been a command for longer.
 fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
     use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::{dirname, join_abs_string};
+    use bun_paths::resolve_path::join_abs_string;
     use bun_sys::ExistsAtType;
     if name == b"check" {
         return false;
@@ -164,10 +164,9 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
         if (suffixes.iter()).any(|it| kind(dir, &[b"node_modules/.bin/", name, it]).is_some()) {
             return true;
         }
-        let parent = dirname::<Auto>(dir);
-        if parent.is_empty() || parent.len() >= dir.len() {
+        let Some(parent) = bun_paths::dirname(dir) else {
             return false;
-        }
+        };
         dir = parent;
     }
 }
@@ -189,18 +188,14 @@ fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
 /// its text.
 fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
     use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::{dirname, join_abs_string};
+    use bun_paths::resolve_path::join_abs_string;
     loop {
         let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
         if let Some(contents) = read_package_json(&path) {
             let dir = bun_core::strings::without_trailing_slash(dir);
             return Some((dir, path, contents));
         }
-        let parent = dirname::<Auto>(dir);
-        if parent.is_empty() || parent.len() >= dir.len() {
-            return None;
-        }
-        dir = parent;
+        dir = bun_paths::dirname(dir)?;
     }
 }
 

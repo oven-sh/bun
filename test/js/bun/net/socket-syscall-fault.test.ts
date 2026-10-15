@@ -446,31 +446,20 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 
-  // A fatal-classified errno (EPIPE) marks the socket's sends as rejected, but
-  // the same flush() cycle retries the buffered bytes (_generic_flush after the
-  // failed uncork write) and can drain them - kernels return racy one-off
-  // send errnos on healthy sockets (macOS EPROTOTYPE->EPIPE class). A send that
-  // makes progress must end the rejection instead of killing the recovered session.
+  // A send that the kernel rejects for good ends the session, also when a retry would go
+  // through: the same rule as over TLS, where the engine ends the writes at the first
+  // rejected send. EPIPE names no cause, so the close is clean.
   test.concurrent(
-    "one-off fatal errno (EPIPE) whose bytes drain in the same flush cycle leaves the session alive",
+    "one fatal errno (EPIPE) ends the session with a clean close",
     () =>
       serialized(async () => {
         const frames: string[] = [];
-        const waiters: Array<{ want: string; count: number; resolve: () => void }> = [];
-        const seen = (want: string) => frames.filter(f => f === want).length;
-        function frameSeen(want: string, count = 1) {
-          return new Promise<void>(resolve => {
-            if (seen(want) >= count) return resolve();
-            waiters.push({ want, count, resolve });
-          });
-        }
+        const settingsAcked = Promise.withResolvers<void>();
         let rawSocket: net.Socket | undefined;
         const server = rawH2Server(
           f => {
             frames.push(f);
-            for (let i = waiters.length - 1; i >= 0; i--) {
-              if (seen(waiters[i].want) >= waiters[i].count) waiters.splice(i, 1)[0].resolve();
-            }
+            if (f === "t4a#0") settingsAcked.resolve();
           },
           { sendPing: false, onSocket: s => (rawSocket = s) },
         );
@@ -478,34 +467,29 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
         await once(server, "listening");
         const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
         const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
         client.on("error", e => events.push(`session-error:${(e as any).code ?? e.message}`));
-        client.on("close", () => events.push("session-close"));
+        client.on("close", () => {
+          events.push("session-close");
+          closed.resolve();
+        });
         const req = client.request({ ":path": "/" });
         req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));
         req.on("close", () => events.push(`stream-close:${req.rstCode}`));
         try {
           // The client's SETTINGS ACK on the wire means its write path is idle:
           // the next client send is the PING ACK triggered below.
-          await frameSeen("t4a#0");
+          await settingsAcked.promise;
           const fd = (client.socket as any)?._handle?.fd ?? -1;
           expect(fd).toBeGreaterThanOrEqual(0);
           fault.set({ syscall: "send", action: "errno", errno: "EPIPE", after: 0, repeat: 1, fd });
-          const acked = frameSeen("t6a#0");
           rawSocket!.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 5)]));
-          await acked;
-          // The ACK reached the server, so the transport recovered. A stale
-          // rejection would close the socket from the loop's next writable
-          // dispatch; give it several iterations to (wrongly) fire.
-          for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
-          expect(events).toEqual([]);
-          // Second round-trip proves the session stayed fully alive.
-          const acked2 = frameSeen("t6a#0", 2);
-          rawSocket!.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 6)]));
-          await acked2;
+          await closed.promise;
+          // The PING ACK never reaches the server.
           expect({ frames, events, destroyed: client.destroyed }).toEqual({
-            frames: ["t4#0", "t1a#1", "t4a#0", "t6a#0", "t6a#0"],
-            events: [],
-            destroyed: false,
+            frames: ["t4#0", "t1a#1", "t4a#0"],
+            events: ["stream-close:8", "session-close"],
+            destroyed: true,
           });
         } finally {
           fault.clear();

@@ -533,7 +533,7 @@ static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t
   int written = us_internal_socket_raw_write(s, data, length, &send_error);
   if (send_error) {
     loop_ssl_data->ssl_send_error = send_error;
-    s->ssl_send_rejected = 1;
+    s->send_rejected = 1;
     us_internal_socket_raw_shutdown(s);
     /* No write may close under its caller: us_internal_ssl_on_writable does. */
     us_internal_rearm_writable(s);
@@ -1795,7 +1795,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_pending_close_code = 0;
   s->ssl_first_flight_before_fin = 0;
   s->ssl_shutdown_after_first_flight = 0;
-  s->ssl_send_rejected = 0;
+  s->send_rejected = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2452,7 +2452,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
   if (!us_internal_socket_can_raw_write(s)) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
   s = ssl_on_writable(s);
   /* Asked for from inside this dispatch, that event never comes: loop.c drops the writable interest of a shut-down socket. */
-  if (s && !ssl_gone(s) && s->ssl_send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
+  if (s && !ssl_gone(s) && s->send_rejected) return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
   return s;
 }
 

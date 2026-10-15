@@ -1158,6 +1158,11 @@ pub(crate) struct H2FrameParser {
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
+    /// The errno of the first native send that the kernel rejected, or 0. Only that send has
+    /// the cause: linux answers the next one with EPIPE.
+    rejected_send_errno: Cell<i32>,
+    /// The peer's bytes arrived after `rejected_send_errno` was set: it answered before it left.
+    read_after_rejected_send: Cell<bool>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -3017,13 +3022,29 @@ impl H2FrameParser {
     }
 
     /// Nothing here closes the transport: a close before the loop's next read drops what the
-    /// peer sent first. The socket keeps the rejection, and the loop closes it after that read.
-    /// A client hears the errno when nothing was read. A server closes quietly, as Node's does:
-    /// an unheard stream 'error' would end the process.
+    /// peer sent first. The write side ends, and the loop closes the socket after that read.
     fn note_transport_write_fatal(&self, result: i32) {
         if let BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) = self.native_socket.get() {
-            socket.get().reject_sends(-result, !self.is_server.get());
+            if self.rejected_send_errno.get() == 0 {
+                self.rejected_send_errno.set(-result);
+            }
+            socket.get().reject_sends();
         }
+    }
+
+    /// What the loop's close with `code` means for JS once a send was rejected. A client hears
+    /// the errno of that send when the peer sent nothing after it. After an answer of the peer
+    /// the close is clean, as in Node. A server closes quietly: an unheard stream 'error'
+    /// would end the process.
+    pub(crate) fn close_code_after_rejected_send(&self, code: core::ffi::c_int) -> core::ffi::c_int {
+        let errno = self.rejected_send_errno.get();
+        if errno == 0 {
+            return code;
+        }
+        if self.is_server.get() || self.read_after_rejected_send.get() {
+            return 0;
+        }
+        crate::socket::rejected_send_close_code(errno, code)
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
@@ -7344,6 +7365,9 @@ impl H2FrameParser {
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         let _keepalive = self.keepalive();
+        if self.rejected_send_errno.get() != 0 {
+            self.read_after_rejected_send.set(true);
+        }
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
         // What a frame callback left pending stopped the engine (`should_stop`);
@@ -7380,6 +7404,11 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         self.native_socket.note_socket_closed();
         self.detach_native_socket();
+        // What the transport did not take goes to the session's onWrite, which counts it as
+        // sent and ends a half-open socket. Later: this runs under the socket's close dispatch.
+        if self.has_backpressure() {
+            self.register_auto_flush();
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7499,6 +7528,8 @@ impl H2FrameParser {
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
+            rejected_send_errno: Cell::new(0),
+            read_after_rejected_send: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),

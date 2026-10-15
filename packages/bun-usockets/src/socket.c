@@ -443,9 +443,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
-    s->rejected_send = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -595,9 +595,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         if (fatal_write_error) *fatal_write_error = fatal_send_error;
         return 0;
     }
-    /* A send that makes progress ends a rejection as well: the transport recovered. */
     s->unclassified_send_failures = 0;
-    s->rejected_send = 0;
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -605,21 +603,13 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
     return written;
 }
 
-void us_socket_reject_sends(struct us_socket_t *s, int code, int quiet) {
+void us_socket_reject_sends(struct us_socket_t *s) {
     if (s->ssl || !us_socket_is_established(s) || !us_internal_socket_can_raw_write(s)) {
         return;
     }
-    if (!s->rejected_send) {
-        /* Only the first rejected send has the cause: linux answers the next one with EPIPE. */
-        s->rejected_send = quiet ? 2 : 1;
-        s->rejected_send_code = (unsigned short) code;
-    } else if (!s->flags.last_write_failed) {
-        /* The loop has started a writable dispatch since (it clears the flag there) and the retry
-         * was rejected too. The write side ends here; the close is the loop's, after its read. */
-        us_internal_socket_raw_shutdown(s);
-        s->rejected_send += 2;
-    }
-    s->flags.last_write_failed = 1;
+    s->send_rejected = 1;
+    us_internal_socket_raw_shutdown(s);
+    /* No write may close under its caller: the writable event does, after the loop has read. */
     us_internal_rearm_writable(s);
 }
 

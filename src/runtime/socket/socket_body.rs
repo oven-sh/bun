@@ -90,10 +90,11 @@ pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
     <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
 }
 
-/// The close code for a rejected send, or 0 for a clean close. Only an errno
-/// that a read of the socket would also return is reported: the peer-gone set
-/// of `us_socket_write_check_error` without `EPIPE`, which names no cause.
-fn dead_transport_close_code(errno: c_int) -> c_int {
+/// The close code to report for a send that the kernel rejected with `errno`,
+/// when the loop then closed the socket with `loop_code`. 0 is a clean close.
+/// Only an errno that a read of the socket would also return is reported: the
+/// peer-gone set of `us_socket_write_check_error` without `EPIPE`.
+pub(crate) fn rejected_send_close_code(errno: c_int, loop_code: c_int) -> c_int {
     use sys::SystemErrno as E;
     #[cfg(not(windows))]
     let known = E::init(i64::from(errno));
@@ -110,7 +111,15 @@ fn dead_transport_close_code(errno: c_int) -> c_int {
             | E::ENETUNREACH
             | E::EHOSTUNREACH,
         ) => errno,
-        _ => 0,
+        // The BSDs fail every send on a disconnected socket with EPIPE and keep the cause
+        // as the socket error, which the loop read. linux sends EPIPE when the peer's FIN
+        // came first: an EOF.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        Some(E::EPIPE) => loop_code,
+        _ => {
+            let _ = loop_code;
+            0
+        }
     }
 }
 
@@ -964,14 +973,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// The kernel rejected a send of this socket's owner with `errno`. Nothing
-    /// closes under the writer: uSockets keeps the record, and its loop closes
-    /// the socket after it has read what the peer sent. With `report` and
-    /// nothing read, `on_close` gets the code of `dead_transport_close_code`.
-    pub(crate) fn reject_sends(&self, errno: c_int, report: bool) {
-        self.socket
-            .get()
-            .reject_sends(dead_transport_close_code(errno), !report);
+    /// The kernel rejected a send of this socket's owner. Nothing closes under
+    /// the writer: the write side ends, and the loop closes the socket with an
+    /// error code after it has read what the peer sent. The owner says what
+    /// that close means (`NativeCallbacks::close_code`).
+    pub(crate) fn reject_sends(&self) {
+        self.socket.get().reject_sends();
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -2262,6 +2269,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "C"
             }
         );
+        let err = this.native_callback.get().close_code(err);
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         // Declared first so it drops last: ticks drain ahead of the teardown.
@@ -2321,8 +2329,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
         // close was driven by a recv() failure or a poll error (loop.c's
         // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
-        // error code. So is the code of a send that `reject_sends` recorded,
-        // when the loop read nothing after it. No producer can yield
+        // error code. So is the code an owner gives for a send the kernel
+        // rejected (`NativeCallbacks::close_code`). No producer can yield
         // EPERM(1)/ENOENT(2): recv never returns them and the others clamp
         // them away. So values >2 are read errors and 0/1/2 are
         // self-initiated closes that must not surface as a JS read error
@@ -4207,6 +4215,14 @@ impl NativeCallbacks {
         // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
         unsafe { (*h2).on_native_writable() };
         true
+    }
+    /// The close code for JS when the loop closed the socket with `code`. An owner whose
+    /// send the kernel rejected knows what that close means.
+    pub(crate) fn close_code(&self, code: c_int) -> c_int {
+        match self {
+            NativeCallbacks::H2(h2) => h2.close_code_after_rejected_send(code),
+            NativeCallbacks::None => code,
+        }
     }
 }
 

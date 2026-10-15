@@ -279,6 +279,8 @@ fn dispatch_frame(
                     0,
                     &payload[0..8],
                 );
+            } else {
+                session.awaiting_ping_ack = false;
             }
         }
         FT_PRIORITY => {
@@ -344,6 +346,7 @@ fn dispatch_frame(
             // SAFETY: stream pointer from map is valid for session lifetime.
             let stream = stream_mut(maybe_stream.unwrap());
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             if flags & wire::HeadersFrameFlags::PADDED as u8 != 0 {
                 fragment = match strip_padding(fragment) {
                     Some(f) => f,
@@ -426,12 +429,15 @@ fn dispatch_frame(
                     if stream_id == 0 || stream_id & 1 == 0 || stream_id >= session.next_stream_id {
                         session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                     }
+                    // What the peer sent before it saw the RST_STREAM is in front of the ACK.
+                    session.stream_progressed |= session.awaiting_ping_ack;
                     return;
                 }
             };
             // SAFETY: stream pointer valid for session lifetime.
             let stream = stream_mut(stream_ptr);
             session.stream_progressed = true;
+            session.liveness_ping_spent = false;
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
             if stream.status_code == 0 {

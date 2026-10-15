@@ -47,8 +47,9 @@ pub struct HTTPContext<const SSL: bool> {
     /// Built from this context's SSLConfig (or the default `request_cert=1`
     /// opts). Only meaningful when `SSL`.
     pub(crate) secure: Option<OwnedSslCtx>,
-    /// HTTP/2 sessions with at least one active stream, available for
-    /// concurrent attachment if `hasHeadroom()`. Each entry holds a ref.
+    /// HTTP/2 sessions with at least one active stream or an unanswered
+    /// liveness PING, available for concurrent attachment if `hasHeadroom()`.
+    /// Each entry holds a ref.
     pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
@@ -1556,7 +1557,7 @@ impl<const SSL: bool> Handler<SSL> {
         }
         if let Some(session) = tagged.session() {
             HTTPContext::<SSL>::mark_socket_as_dead(socket);
-            h2::ClientSession::on_close(session, crate::Error::Timeout);
+            h2::ClientSession::on_timeout(session);
         }
 
         HTTPContext::<SSL>::terminate_socket(socket);

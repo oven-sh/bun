@@ -80,6 +80,8 @@ type RawConn = {
 type RawState = {
   connections: number;
   rst: Array<{ id: number; code: number }>;
+  /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
+  onPing?: (conn: RawConn, payload: Buffer) => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
    *  in-flight client frames have been delivered to the `data` handler.
    *  Tests asserting on server-side capture (`state.rst`) should await this
@@ -135,6 +137,7 @@ async function withRawH2Server(
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
         if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
         if (type === 3) state.rst.push({ id, code: payload.readUInt32BE(0) });
+        if (type === 6 && !(flags & 1)) state.onPing?.(conn, payload);
       }
     });
     socket.on("error", () => {});
@@ -1737,6 +1740,243 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    // An abort sends a liveness PING only if its request waited a second with no bytes
+    // from the server. Nothing observable marks that moment, so these tests sleep past it.
+    async function runLiveness(url: string, script: string) {
+      await using proc = await spawnFetch(`
+        const tls = { rejectUnauthorized: false };
+        const get = () => fetch("${url}", { tls }).then(r => r.status);
+        const abortAfter = async ms => {
+          const ac = new AbortController();
+          const aborted = fetch("${url}", { tls, signal: ac.signal }).then(r => r.status, e => e.name);
+          await Bun.sleep(ms);
+          ac.abort();
+          return aborted;
+        };
+        ${script}
+        process.exit(0);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+    const pingAck = (payload: Buffer) => frame(6, 1, 0, payload);
+
+    test("after an abort on a silent connection, requests avoid it until it answers a PING", async () => {
+      const served: string[] = [];
+      let pings = 0;
+      let ack: (() => void) | undefined;
+      let otherConnectionUsed = false;
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          served.push(connIndex + ":" + id);
+          if (connIndex === 0 && id === 1) return conn.headers(id, hpackStatus(200));
+          if (connIndex === 0 && (id === 3 || id === 7)) return;
+          conn.headers(id, hpackStatus(204), { endStream: true });
+          if (connIndex === 1) {
+            otherConnectionUsed = true;
+            ack?.();
+          }
+        },
+        async (url, state) => {
+          state.onPing = (conn, payload) => {
+            const send = () => {
+              conn.socket.write(pingAck(payload));
+              conn.data(1, "acked");
+            };
+            if (++pings > 1 || otherConnectionUsed) send();
+            else ack = send;
+          };
+          const result = await runLiveness(
+            url,
+            `
+            const reader = (await fetch("${url}", { tls, timeout: false })).body.getReader();
+            const read = async () => new TextDecoder().decode((await reader.read()).value);
+            console.log(await abortAfter(1100));
+            console.log(await get());
+            console.log(await read());
+            console.log(await get());
+            // The responses since the first PING allow a second one.
+            console.log(await abortAfter(1100));
+            console.log(await read());
+            `,
+          );
+          expect({ ...result, served, pings }).toEqual({
+            stdout: ["AbortError", "204", "acked", "204", "AbortError", "acked"],
+            stderr: "",
+            exitCode: 0,
+            served: ["0:1", "0:3", "1:1", "0:5", "0:7"],
+            pings: 2,
+          });
+        },
+      );
+    }, 30_000);
+
+    test("an abort of the only request on a silent connection does not pool the connection", async () => {
+      const served: string[] = [];
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          served.push(connIndex + ":" + id);
+          if (connIndex === 0 && id === 3) return;
+          conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async url => {
+          const result = await runLiveness(
+            url,
+            `
+            console.log(await get());
+            console.log(await abortAfter(1100));
+            console.log(await get());
+            `,
+          );
+          expect({ ...result, served }).toEqual({
+            stdout: ["204", "AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            served: ["0:1", "0:3", "1:1"],
+          });
+        },
+      );
+    }, 30_000);
+
+    test("an abort of a request that has not waited a second sends no PING", async () => {
+      const served: string[] = [];
+      let pings = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          served.push(String(id));
+          if (id !== 3) conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          state.onPing = () => pings++;
+          const result = await runLiveness(
+            url,
+            `
+            console.log(await get());
+            await Bun.sleep(1100);
+            // Long enough for the request to go out on the pooled connection.
+            console.log(await abortAfter(300));
+            console.log(await get());
+            `,
+          );
+          expect({ ...result, served, pings, connections: state.connections }).toEqual({
+            stdout: ["204", "AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            served: ["1", "3", "5"],
+            pings: 0,
+            connections: 1,
+          });
+        },
+      );
+    }, 30_000);
+
+    test("a second abort with no response since the PING retires the connection without another PING", async () => {
+      const served: string[] = [];
+      let pings = 0;
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          served.push(connIndex + ":" + id);
+          if (connIndex === 0 && id > 1) return;
+          conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          state.onPing = (conn, payload) => {
+            pings++;
+            conn.socket.write(pingAck(payload));
+          };
+          const result = await runLiveness(
+            url,
+            `
+            console.log(await get());
+            // The ACK of the first abort's PING counts as bytes from the server.
+            console.log((await Promise.all([abortAfter(1100), abortAfter(3100)])).join());
+            console.log(await get());
+            `,
+          );
+          expect({ ...result, served, pings }).toEqual({
+            stdout: ["204", "AbortError,AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            served: ["0:1", "0:3", "0:5", "1:1"],
+            pings: 1,
+          });
+        },
+      );
+    }, 30_000);
+
+    test("a connection that answered the PING and was pooled can get another PING", async () => {
+      const served: string[] = [];
+      let pings = 0;
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          served.push(connIndex + ":" + id);
+          if (id === 3 || id === 5) return;
+          conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          state.onPing = (conn, payload) => {
+            pings++;
+            conn.socket.write(pingAck(payload));
+          };
+          const result = await runLiveness(
+            url,
+            `
+            console.log(await get());
+            for (let i = 0; i < 2; i++) {
+              console.log(await abortAfter(1100));
+              // Nothing shows that the client has read the ACK and pooled the connection.
+              await Bun.sleep(1000);
+            }
+            console.log(await get());
+            `,
+          );
+          expect({ ...result, served, pings }).toEqual({
+            stdout: ["204", "AbortError", "AbortError", "204"],
+            stderr: "",
+            exitCode: 0,
+            served: ["0:1", "0:3", "0:5", "0:7"],
+            pings: 2,
+          });
+        },
+      );
+    }, 30_000);
+
+    // The timer for the ACK fires after 16 to 20 s. Both servers hold a stream with no
+    // timeout; the one that answers the PING sends its body after the other was closed.
+    test("a connection that does not answer the PING is closed; one that does keeps its streams", async () => {
+      const onStream = (conn: RawConn, id: number) => {
+        if (id === 1) conn.headers(id, hpackStatus(200));
+      };
+      await withRawH2Server(onStream, async (silentUrl, silent) => {
+        await withRawH2Server(onStream, async (liveUrl, live) => {
+          live.onPing = (conn, payload) => {
+            conn.socket.write(pingAck(payload));
+            silent.allClosed().then(() => conn.data(1, "alive", true));
+          };
+          await using proc = await spawnFetch(`
+            const tls = { rejectUnauthorized: false };
+            const run = async url => {
+              const held = await fetch(url, { tls, timeout: false });
+              const ac = new AbortController();
+              const aborted = fetch(url, { tls, signal: ac.signal }).catch(() => {});
+              await Bun.sleep(1100);
+              ac.abort();
+              await aborted;
+              return held.text().catch(e => e.code);
+            };
+            console.log((await Promise.all([run("${silentUrl}"), run("${liveUrl}")])).join());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+            stdout: "ECONNRESET,alive",
+            stderr: "",
+            exitCode: 0,
+          });
+          expect({ silent: silent.connections, live: live.connections }).toEqual({ silent: 1, live: 1 });
+        });
+      });
+    }, 60_000);
+
     test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
       await withRawH2Server(
         (conn, id) => {
@@ -2625,6 +2865,50 @@ describe.skipIf(!isASAN)("request whose custom TLS context was evicted from the 
   // needs time to print its report.
   test("an abort does not use the freed session", async () => {
     await run("http2", "ac.abort();");
+  }, 30_000);
+
+  // The abort sends a liveness PING that gets no ACK, so the session still waits, with no
+  // request left to hold the context, when the context is freed.
+  test("a session that waits for a PING ACK does not outlive the freed context", async () => {
+    let pings = 0;
+    await withRawH2Server(
+      (conn, id, connIndex) => {
+        if (connIndex > 0) return conn.headers(id, hpackStatus(204), { endStream: true });
+        conn.headers(id, hpackStatus(200));
+        conn.data(id, "chunk");
+      },
+      async (url, state) => {
+        state.onPing = () => pings++;
+        await using proc = await spawnFetch(`
+          const get = serverName => fetch("${url}", { tls: { serverName, rejectUnauthorized: false } });
+          const ac = new AbortController();
+          const held = await fetch("${url}", {
+            signal: ac.signal,
+            tls: { serverName: "localhost", rejectUnauthorized: false },
+          });
+          const reader = held.body.getReader();
+          await reader.read();
+          // 61 more configs overflow the 60-entry cache.
+          for (let i = 0; i < 61; i += 8) {
+            await Promise.all(Array.from({ length: Math.min(8, 61 - i) }, (_, j) => get("evict-" + (i + j) + ".test")));
+          }
+          // The PING needs a second with no bytes from the server, and nothing observable marks it.
+          await Bun.sleep(1100);
+          ac.abort();
+          await reader.read().catch(() => {});
+          // The HTTP thread still serves requests.
+          console.log((await get(undefined)).status);
+          process.exit(0);
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode, pings }).toEqual({
+          stdout: "204",
+          stderr: "",
+          exitCode: 0,
+          pings: 1,
+        });
+      },
+    );
   }, 30_000);
 
   test("a server RST_STREAM does not free the stream the deliver loop holds", async () => {

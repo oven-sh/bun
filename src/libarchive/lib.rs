@@ -367,21 +367,22 @@ pub mod lib {
             })
         }
 
-        pub fn read_data_into_fd(&self, fd: Fd, strategy: &mut WriteStrategy) -> Result {
+        /// `Err`: a system call for `fd` failed. `Ok`: the status of the read.
+        pub fn read_data_into_fd(
+            &self,
+            fd: Fd,
+            strategy: &mut WriteStrategy,
+        ) -> bun_sys::Maybe<Result> {
             let mut writer = EntryWriter::new(fd);
             let mut offset: i64 = 0;
             while let Some(block) = self.next(&mut offset) {
                 if block.result != Result::Ok {
-                    return block.result;
+                    return Ok(block.result);
                 }
-                if writer.write(strategy, block.offset, block.bytes).is_err() {
-                    return Result::Failed;
-                }
+                writer.write(strategy, block.offset, block.bytes)?;
             }
-            match writer.finish(offset) {
-                Ok(()) => Result::Ok,
-                Err(_) => Result::Failed,
-            }
+            writer.finish(offset)?;
+            Ok(Result::Ok)
         }
 
         // `self` must be a live archive handle from `archive_{read,write}_new()`.
@@ -1845,9 +1846,9 @@ impl Archiver {
                                     match unsafe {
                                         (*archive).read_data_into_fd(output.fd, &mut write_strategy)
                                     } {
-                                        lib::Result::Eof => break 'loop_,
-                                        lib::Result::Ok => break 'possibly_retry,
-                                        lib::Result::Retry => {
+                                        Ok(lib::Result::Eof) => break 'loop_,
+                                        Ok(lib::Result::Ok) => break 'possibly_retry,
+                                        Ok(lib::Result::Retry) => {
                                             if options.log {
                                                 Output::err(
                                                     "libarchive error",

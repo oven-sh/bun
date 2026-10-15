@@ -5495,6 +5495,293 @@ it("deeply nested statement blocks error instead of crashing the process", () =>
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 });
 
+// Several passes walk a destructuring pattern for the names it binds. The order of that
+// walk is the order of the hoisted names, and one of them builds the assignment that
+// replaces the declaration.
+describe("destructuring patterns are walked in source order", () => {
+  const js = new Bun.Transpiler({ loader: "js" });
+  const ts = new Bun.Transpiler({ loader: "ts" });
+  const array = "[a, , b = 1, [c, { d }] = e, ...f]";
+  const object = "{ g, h: { i = 2, j: [k] }, [l()]: m, 'n': o = 3, ...p }";
+
+  it("a var pattern in a block moves to the top level", () => {
+    expect(js.transformSync(`{ var ${array} = x, ${object} = y, q; }`)).toMatchInlineSnapshot(`
+      "{
+        [a, , b = 1, [c, { d }] = e, ...f] = x, { g, h: { i = 2, j: [k] }, [l()]: m, n: o = 3, ...p } = y;
+      }
+      var a;
+      var b;
+      var c;
+      var d;
+      var f;
+      var g;
+      var i;
+      var k;
+      var m;
+      var o;
+      var p;
+      var q;
+      "
+    `);
+  });
+
+  it("a var pattern in a for, for-in or for-of head moves to the top level", () => {
+    expect(
+      js.transformSync(`{ for (var ${array} = x; ; ) break; for (var ${object} in y) ; for (var ${array} of z) ; }`),
+    ).toMatchInlineSnapshot(`
+      "{
+        for ([a, , b = 1, [c, { d }] = e, ...f] = x;; )
+          break;
+        for ({ g, h: { i = 2, j: [k] }, [l()]: m, n: o = 3, ...p } in y)
+          ;
+        for ([a, , b = 1, [c, { d }] = e, ...f] of z)
+          ;
+      }
+      var a;
+      var b;
+      var c;
+      var d;
+      var f;
+      var g;
+      var i;
+      var k;
+      var m;
+      var o;
+      var p;
+      "
+    `);
+  });
+
+  it("a var pattern in a dead branch keeps its names", () => {
+    expect(js.transformSync(`function fn() { if (0) { var ${array} = x, ${object} = y; } }`)).toMatchInlineSnapshot(`
+      "function fn() {
+        if (0) {
+          var a, b, c, d, f, g, i, k, m, o, p;
+        }
+      }
+      "
+    `);
+    expect(js.transformSync(`if (0) { var ${array} = x, ${object} = y; }`)).toMatchInlineSnapshot(`
+      "if (0) {}
+      var a;
+      var b;
+      var c;
+      var d;
+      var f;
+      var g;
+      var i;
+      var k;
+      var m;
+      var o;
+      var p;
+      "
+    `);
+  });
+
+  it("an empty pattern binds nothing", () => {
+    expect(js.transformSync(`{ var [] = x, {} = y; } function fn() { if (0) { var [] = x, {} = y, [[], {}] = z; } }`))
+      .toMatchInlineSnapshot(`
+      "{
+        [] = x, {} = y;
+      }
+      function fn() {
+        if (0) {}
+      }
+      "
+    `);
+    expect(ts.transformSync(`namespace N { export var [] = x, {} = y; }`)).toMatchInlineSnapshot(`
+      "var N;
+      ((N) => {
+        [] = x;
+        ({} = y);
+      })(N ||= {});
+      "
+    `);
+  });
+
+  it("an exported pattern exports its names", () => {
+    const code = `export var ${array} = x, ${object} = y; export let [q, { r }] = z; export const { s: [t] } = w;`;
+    expect(js.scan(code).exports).toEqual(["a", "b", "c", "d", "f", "g", "i", "k", "m", "o", "p", "q", "r", "t"]);
+  });
+
+  it("a pattern exported from a TypeScript namespace assigns to the namespace", () => {
+    expect(
+      ts.transformSync(
+        `namespace N { export var ${array} = x, ${object} = y; export function fn() { return [a, b, c, d, f, g, i, k, m, o, p]; } }`,
+      ),
+    ).toMatchInlineSnapshot(`
+      "var N;
+      ((N) => {
+        [N.a, , N.b = 1, [N.c, { d: N.d }] = e, ...N.f] = x;
+        ({ g: N.g, h: { i: N.i = 2, j: [N.k] }, [l()]: N.m, n: N.o = 3, ...N.p } = y);
+        function fn() {
+          return [N.a, N.b, N.c, N.d, N.f, N.g, N.i, N.k, N.m, N.o, N.p];
+        }
+        N.fn = fn;
+      })(N ||= {});
+      "
+    `);
+    expect(ts.transformSync(`namespace A.B { export const [a, { b }] = x; } namespace A.B { export const c = a + b; }`))
+      .toMatchInlineSnapshot(`
+      "var A;
+      ((A) => {
+        let B;
+        ((B) => {
+          [B.a, { b: B.b }] = x;
+        })(B = A.B ||= {});
+      })(A ||= {});
+      ((A) => {
+        let B;
+        ((B) => {
+          B.c = B.a + B.b;
+        })(B = A.B ||= {});
+      })(A ||= {});
+      "
+    `);
+    expect(
+      ts.transformSync(
+        `namespace N { export declare const [a, { b, c: [d] }, ...f]; export function fn() { return [a, b, d, f]; } }`,
+      ),
+    ).toMatchInlineSnapshot(`
+      "var N;
+      ((N) => {
+        function fn() {
+          return [N.a, N.b, N.d, N.f];
+        }
+        N.fn = fn;
+      })(N ||= {});
+      "
+    `);
+  });
+});
+
+// The parser accepts a pattern as deep as its own stack check allows. The walks below run
+// over that pattern later, with a different amount of stack left. One that overflows the
+// stack kills the process, so each test runs the transpiler in a child.
+describe("deeply nested destructuring patterns do not crash the process", () => {
+  const prelude = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const array = depth => repeat("[", depth) + "a" + repeat("]", depth);
+    // Whether the parser and the visit pass took the input.
+    const fitsOnStack = run => {
+      try {
+        run();
+        return true;
+      } catch (e) {
+        const message = String(e?.message);
+        // The printer ran out of stack, after the walks under test ran.
+        if (message.includes("Failed to print code")) return true;
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(message)) throw e;
+        return false;
+      }
+    };
+    // What fits depends on the frame sizes of this build, so the tests measure it instead
+    // of hardcoding a depth that only one build crashes at. Returns the largest size
+    // that fits. With a slack, a size within that fraction below it is close enough.
+    const largestThatFits = (fits, slack = 0) => {
+      let yes = 0;
+      let no = 64;
+      while (no < 1 << 20 && fits(no)) {
+        yes = no;
+        no *= 2;
+      }
+      while (no - yes > 1 + yes * slack) {
+        const middle = (yes + no) >>> 1;
+        if (fits(middle)) yes = middle;
+        else no = middle;
+      }
+      return yes;
+    };
+    // Transpiles source(links, depth): a pattern depth levels deep in a statement that is
+    // nested links levels deep. The visit of the nesting uses the stack up to its own
+    // check, so the deepest nesting leaves the least for a walk that starts under it.
+    const underDeepNesting = (source, options = { loader: "js" }) => {
+      const transpile = (links, depth) =>
+        fitsOnStack(() => new Bun.Transpiler(options).transformSync(source(links, depth)));
+      const deepest = largestThatFits(links => transpile(links, 1), 1 / 32);
+      for (const links of [deepest, Math.floor(deepest * 0.95)]) {
+        for (let depth = 512; depth <= 8192; depth *= 2) transpile(links, depth);
+      }
+    };
+    const elseIfChain = (links, statement) =>
+      "var c = 0, x = [];\\nif (c) {}" + repeat(" else if (c) {}", links) + " else { " + statement + " }";
+  `;
+
+  async function inChild(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script + '\nconsole.log("ok");'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const ok = { stdout: "ok\n", stderr: "", exitCode: 0, signalCode: null };
+
+  const scripts = {
+    // A "var" in a nested block moves to the top level: "var [a] = x" becomes "[a] = x" and
+    // a top-level "var a". That turns the pattern into an expression.
+    "var [[a]] = x, which moves out of its block": `
+      underDeepNesting((links, depth) => elseIfChain(links, "var " + array(depth) + " = x;"));
+    `,
+    "var {a: {a}} = x, which moves out of its block": `
+      underDeepNesting((links, depth) =>
+        elseIfChain(links, "var " + repeat("{a:", depth) + "a" + repeat("}", depth) + " = x;"),
+      );
+    `,
+    "for (var [[a]] of x), which moves out of its block": `
+      underDeepNesting((links, depth) => elseIfChain(links, "for (var " + array(depth) + " of x);"));
+    `,
+    // A dead branch is dropped except for the names that its "var" statements declare.
+    // Inside a function the "var" stays in its block, and a walk over the pattern collects
+    // those names.
+    "a var pattern in a dead branch in a function": `
+      underDeepNesting((links, depth) =>
+        "function f() { " + elseIfChain(links, "if (0) { var " + array(depth) + " = x; }") + " }",
+      );
+    `,
+    "a var pattern in a dead branch at the top level": `
+      underDeepNesting((links, depth) => elseIfChain(links, "if (0) { var " + array(depth) + " = x; }"));
+    `,
+    // A pattern that a TypeScript namespace exports is walked before the namespace body is
+    // visited, and again to assign each name to the namespace. Each nested namespace
+    // prints one level deeper, so the output stays small only without indentation.
+    "a pattern that a TypeScript namespace exports": `
+      underDeepNesting(
+        (links, depth) => "namespace N" + repeat(".N", links) + " { export var " + array(depth) + " = x; }",
+        { loader: "ts", minifyWhitespace: true },
+      );
+    `,
+    // The parameters of an arrow function are parsed as an expression and converted to
+    // bindings once the "=>" is seen. Where the frames of the conversion are the larger
+    // ones, the parser accepts a deeper expression than the conversion can walk, and every
+    // depth between the two overflows the stack. The search for the edge passes through
+    // those depths.
+    "arrow function parameters": `
+      const shapes = [
+        depth => "(" + array(depth) + ") => 1;",
+        depth => "async (" + array(depth) + ") => 1;",
+        depth => "(" + repeat("[", depth) + "a" + repeat(" = y]", depth) + ") => 1;",
+        depth => "(" + repeat("{a:", depth) + "a" + repeat("}", depth) + ") => 1;",
+      ];
+      for (const shape of shapes) {
+        largestThatFits(depth => fitsOnStack(() => new Bun.Transpiler({ loader: "js" }).scan(shape(depth))));
+      }
+    `,
+  };
+
+  // Each test fills the stack a few dozen times in a child process. A debug build takes
+  // about three seconds for that when nothing else runs, so the default is too short.
+  it.concurrent.each(Object.entries(scripts))(
+    "%s",
+    async (_, script) => {
+      expect(await inChild(script)).toEqual(ok);
+    },
+    60_000,
+  );
+});
+
 it("running a file with deeply nested unary operators does not crash the process", () => {
   const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
   const { exitCode, signalCode } = Bun.spawnSync({

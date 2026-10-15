@@ -596,24 +596,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
-        match binding.data {
-            B::BMissing(_) => {}
-            B::BIdentifier(ident) => {
-                // Reshaped for borrowck — capture original_name before calling &mut self method
-                let original_name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
-                self.record_export(binding.loc, original_name.slice(), ident.r#ref)
-                    .expect("unreachable");
-            }
-            B::BArray(array) => {
-                for prop in array.items() {
-                    self.record_exported_binding(prop.binding);
-                }
-            }
-            B::BObject(obj) => {
-                for prop in obj.properties() {
-                    self.record_exported_binding(prop.value);
-                }
-            }
+        for (loc, ident) in binding.identifiers() {
+            // Reshaped for borrowck — capture original_name before calling &mut self method
+            let original_name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
+            self.record_export(loc, original_name.slice(), ident.r#ref)
+                .expect("unreachable");
         }
     }
 }

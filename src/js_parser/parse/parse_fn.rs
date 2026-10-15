@@ -304,8 +304,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let parse_stmt_opts = ParseStatementOptions::default();
-            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg, &parse_stmt_opts)
-                .expect("unreachable");
+            p.declare_binding(js_ast::symbol::Kind::Hoisted, &mut arg, &parse_stmt_opts)?;
 
             let mut default_value: Option<Expr> = None;
             if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TEquals {

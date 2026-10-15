@@ -549,24 +549,14 @@ impl SideEffects {
     }
 
     fn find_identifiers(binding: Binding, decls: &mut Vec<G::Decl>) {
-        match binding.data {
-            bun_ast::binding::Data::BIdentifier(_) => {
-                decls.push(G::Decl {
-                    binding,
-                    value: None,
-                });
-            }
-            bun_ast::binding::Data::BArray(array) => {
-                for item in array.items.slice() {
-                    Self::find_identifiers(item.binding, decls);
-                }
-            }
-            bun_ast::binding::Data::BObject(obj) => {
-                for item in obj.properties.slice() {
-                    Self::find_identifiers(item.value, decls);
-                }
-            }
-            _ => {}
+        for (loc, ident) in binding.identifiers() {
+            decls.push(G::Decl {
+                binding: Binding {
+                    loc,
+                    data: bun_ast::binding::Data::BIdentifier(ident),
+                },
+                value: None,
+            });
         }
     }
 

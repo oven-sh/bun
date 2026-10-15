@@ -273,6 +273,49 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
+  describe("destructuring", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+    const array = "[a, , b = 1, [c, { d }] = e, ...f]";
+    const object = "{ g, h: { i = 2, j: [k] }, [l()]: m, 'n': o = 3, ...p }";
+
+    test("hoists each name of a pattern in source order and assigns the pattern", () => {
+      expect(transpiler.transformSync(`let ${array} = await x, ${object} = y, q;`)).toMatchInlineSnapshot(`
+        "var a, b, c, d, f, g, i, k, m, o, p, q;
+        (async () => {
+          [a, , b = 1, [c, { d }] = e, ...f] = await x;
+          return {
+            __proto__: null,
+            value: { g, h: { i = 2, j: [k] }, [l()]: m, n: o = 3, ...p } = y
+          };
+        })();
+        "
+      `);
+      expect(transpiler.transformSync(`const ${array} = x;`)).toMatchInlineSnapshot(`
+        "var a, b, c, d, f;
+        (() => {
+          return {
+            __proto__: null,
+            value: [a, , b = 1, [c, { d }] = e, ...f] = x
+          };
+        })();
+        "
+      `);
+    });
+
+    test("an empty pattern hoists nothing", () => {
+      expect(transpiler.transformSync("var [] = x, {} = y;")).toMatchInlineSnapshot(`
+        "(() => {
+          [] = x;
+          return {
+            __proto__: null,
+            value: {} = y
+          };
+        })();
+        "
+      `);
+    });
+  });
+
   describe("no transform cases", () => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 

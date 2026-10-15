@@ -545,7 +545,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut item,
                     &mut invalid_log,
                     is_spread,
-                );
+                )?;
                 // double allocations
                 args.push(G::Arg {
                     binding: tuple.binding.unwrap_or(Binding {
@@ -1301,8 +1301,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut local = p.parse_binding(ParseBindingOptions {
                 is_using_statement: opts.is_using_statement,
             })?;
-            p.declare_binding(kind, &mut local, opts)
-                .expect("unreachable");
+            p.declare_binding(kind, &mut local, opts)?;
 
             // Skip over types
             if Self::IS_TYPESCRIPT_ENABLED {

@@ -10,9 +10,9 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::VecExt;
 
 use bun_ast as js_ast;
-use bun_ast::flags;
+use bun_ast::binding::ToExprWrapper;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, G, S, Stmt};
 
 use crate::p::P;
 
@@ -693,24 +693,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         binding: Binding,
         decls: &mut BumpVec<'bump, G::Decl>,
     ) -> Result<(), bun_alloc::AllocError> {
-        match binding.data {
-            B::B::BIdentifier(ident) => {
-                decls.push(G::Decl {
-                    binding: self.b(B::Identifier { r#ref: ident.r#ref }, binding.loc),
-                    value: None,
-                });
-            }
-            B::B::BArray(arr) => {
-                for item in arr.items().iter() {
-                    self.repl_extract_identifiers_from_binding(item.binding, decls)?;
-                }
-            }
-            B::B::BObject(obj) => {
-                for prop in obj.properties().iter() {
-                    self.repl_extract_identifiers_from_binding(prop.value, decls)?;
-                }
-            }
-            B::B::BMissing(_) => {}
+        for (loc, ident) in binding.identifiers() {
+            decls.push(G::Decl {
+                binding: self.b(B::Identifier { r#ref: ident.r#ref }, loc),
+                value: None,
+            });
         }
         Ok(())
     }
@@ -761,129 +748,21 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         value: Expr,
         bump: &'bump Bump,
     ) -> Expr {
-        match binding.data {
-            B::B::BIdentifier(ident) => {
-                let left = self.new_expr(
-                    E::Identifier {
-                        ref_: ident.r#ref,
-                        ..Default::default()
-                    },
-                    binding.loc,
-                );
-                self.new_expr(
-                    E::Binary {
-                        op: js_ast::OpCode::BinAssign,
-                        left,
-                        right: value,
-                    },
-                    binding.loc,
-                )
-            }
-            B::B::BArray(_) => {
-                // For array destructuring, create: [a, b] = value
-                let left = self.repl_convert_binding_to_expr(binding, bump);
-                self.new_expr(
-                    E::Binary {
-                        op: js_ast::OpCode::BinAssign,
-                        left,
-                        right: value,
-                    },
-                    binding.loc,
-                )
-            }
-            B::B::BObject(_) => {
-                // For object destructuring, create: {a, b} = value
-                let left = self.repl_convert_binding_to_expr(binding, bump);
-                self.new_expr(
-                    E::Binary {
-                        op: js_ast::OpCode::BinAssign,
-                        left,
-                        right: value,
-                    },
-                    binding.loc,
-                )
-            }
-            B::B::BMissing(_) => {
-                // Return Missing expression to match convertBindingToExpr
-                self.new_expr(E::Missing {}, binding.loc)
-            }
+        // The names of the pattern are hoisted as `var` by now, so each one is a plain
+        // identifier in the assignment target.
+        let wrapper = ToExprWrapper::new(bump, |_, loc, ref_| Expr::init_identifier(ref_, loc));
+        let left = Binding::to_expr(&binding, core::ptr::null_mut(), wrapper);
+        if matches!(binding.data, B::B::BMissing(_)) {
+            return left;
         }
-    }
-
-    /// Convert a binding pattern to an expression (for assignment targets)
-    /// Handles spread/rest patterns in arrays and objects to match Binding.toExpr behavior
-    fn repl_convert_binding_to_expr<'bump>(&mut self, binding: Binding, bump: &'bump Bump) -> Expr {
-        match binding.data {
-            B::B::BIdentifier(ident) => self.new_expr(
-                E::Identifier {
-                    ref_: ident.r#ref,
-                    ..Default::default()
-                },
-                binding.loc,
-            ),
-            B::B::BArray(arr) => {
-                let arr = arr.get();
-                let arr_items = arr.items();
-                let mut items = BumpVec::with_capacity_in(arr_items.len(), bump);
-                for (i, item) in arr_items.iter().enumerate() {
-                    let expr = self.repl_convert_binding_to_expr(item.binding, bump);
-                    // Check for spread pattern: if has_spread and this is the last element
-                    if arr.has_spread && i == arr_items.len() - 1 {
-                        items.push(self.new_expr(E::Spread { value: expr }, expr.loc));
-                    } else if let Some(default_val) = item.default_value {
-                        items.push(self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinAssign,
-                                left: expr,
-                                right: default_val,
-                            },
-                            item.binding.loc,
-                        ));
-                    } else {
-                        items.push(expr);
-                    }
-                }
-                let item_list = ExprNodeList::from_bump_vec(items);
-                self.new_expr(
-                    E::Array {
-                        items: item_list,
-                        is_single_line: arr.is_single_line,
-                        ..Default::default()
-                    },
-                    binding.loc,
-                )
-            }
-            B::B::BObject(obj) => {
-                let obj = obj.get();
-                let obj_props = obj.properties();
-                let mut properties = BumpVec::with_capacity_in(obj_props.len(), bump);
-                for prop in obj_props.iter() {
-                    properties.push(G::Property {
-                        flags: prop.flags,
-                        key: Some(prop.key),
-                        // Set kind to .spread if the property has spread flag
-                        kind: if prop.flags.contains(flags::Property::IsSpread) {
-                            G::PropertyKind::Spread
-                        } else {
-                            G::PropertyKind::Normal
-                        },
-                        value: Some(self.repl_convert_binding_to_expr(prop.value, bump)),
-                        initializer: prop.default_value,
-                        ..Default::default()
-                    });
-                }
-                let prop_list = G::PropertyList::from_bump_vec(properties);
-                self.new_expr(
-                    E::Object {
-                        properties: prop_list,
-                        is_single_line: obj.is_single_line,
-                        ..Default::default()
-                    },
-                    binding.loc,
-                )
-            }
-            B::B::BMissing(_) => self.new_expr(E::Missing {}, binding.loc),
-        }
+        self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinAssign,
+                left,
+                right: value,
+            },
+            binding.loc,
+        )
     }
 }
 

@@ -517,21 +517,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
-        match binding.data {
-            B::B::BMissing(_) => {}
-            B::B::BIdentifier(id) => {
-                self.visit_ref_to_export(p, id.r#ref, None, binding.loc, false)?;
-            }
-            B::B::BArray(array) => {
-                for item in array.items.iter() {
-                    self.visit_binding_to_export(p, item.binding)?;
-                }
-            }
-            B::B::BObject(object) => {
-                for item in object.properties.iter() {
-                    self.visit_binding_to_export(p, item.value)?;
-                }
-            }
+        for (loc, id) in binding.identifiers() {
+            self.visit_ref_to_export(p, id.r#ref, None, loc, false)?;
         }
         Ok(())
     }

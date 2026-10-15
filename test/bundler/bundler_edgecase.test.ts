@@ -2948,6 +2948,51 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
   });
+  // The names that a top-level pattern binds are hoisted out of the `__esm` wrapper in
+  // source order, and the pattern becomes an assignment inside the wrapper.
+  itBundled("edgecase/EsmWrapDestructuringHoistsNamesInSourceOrder", {
+    files: {
+      "/entry.js": `
+        const m = require("./m.js");
+        console.log(JSON.stringify(m));
+      `,
+      "/m.js": `
+        export var [a, , b = 1, [c, { d }] = [], ...f] = [1, 2, undefined, [4, { d: 5 }], 6, 7];
+        export const { g, h: { i = 2, j: [k] }, [String("l")]: m, 'n': o = 3, ...p } = { g: 8, h: { j: [9] }, l: 10, q: 11 };
+        let [q, { r }] = [12, { r: 13 }], s;
+        export { q, r, s };
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`var a, b, c, d, f, g, i, k, m, o, p, q, r, s;
+var init_m = __esm(() => {
+  [a, , b = 1, [c, { d }] = [], ...f] = [1, 2, undefined, [4, { d: 5 }], 6, 7];
+  ({ g, h: { i = 2, j: [k] }, [String("l")]: m, n: o = 3, ...p } = { g: 8, h: { j: [9] }, l: 10, q: 11 });
+  [q, { r }] = [12, { r: 13 }];
+});`);
+    },
+    run: { stdout: '{"a":1,"b":1,"c":4,"d":5,"f":[6,7],"g":8,"i":2,"k":9,"m":10,"o":3,"p":{"q":11},"q":12,"r":13}' },
+  });
+  // The dev server's module format lists the names that an exported pattern binds, in
+  // source order.
+  itBundled("edgecase/BakeDevExportedDestructuringNamesInSourceOrder", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.js": `
+        export var [a, , b = 1, [c, { d }] = [], ...f] = [1, 2, undefined, [4, { d: 5 }], 6, 7];
+        export const { g, h: { i = 2, j: [k] }, [String("l")]: m, 'n': o = 3, ...p } = { g: 8, h: { j: [9] }, l: 10, q: 11 };
+        export let [q, { r }] = [12, { r: 13 }];
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`"a", "b", "c", "d", "f", "g", "i", "k", "m", "o", "p", "q", "r",`);
+      expect(out).toContain(
+        "hmr.exports = {\n" + [..."abcdfgikmopqr"].map(name => "      " + name).join(",\n") + "\n    };",
+      );
+    },
+  });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.
   itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {

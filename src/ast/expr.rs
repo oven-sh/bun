@@ -2041,7 +2041,7 @@ impl Data {
         self.write_to_hasher_with_check(hasher, symbol_table, bun_core::StackCheck::init());
     }
 
-    fn write_to_hasher_with_check<H, S>(
+    pub(crate) fn write_to_hasher_with_check<H, S>(
         &self,
         hasher: &mut H,
         symbol_table: &mut S,

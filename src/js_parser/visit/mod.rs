@@ -653,6 +653,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let bound_object = bound_object.get();
                 if let ExprData::EObject(mut object) = expr.data {
                     if object.was_originally_macro {
+                        if !self.stack_check.is_safe_to_recurse()
+                            || self.reported_stack_overflow.get()
+                        {
+                            self.report_stack_overflow(binding.loc);
+                            return;
+                        }
                         for property in bound_object.properties() {
                             if property.flags.contains(flags::Property::IsSpread) {
                                 return;
@@ -696,6 +702,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let bound_array = bound_array.get();
                 if let ExprData::EArray(mut array) = expr.data {
                     if array.was_originally_macro && !bound_array.has_spread {
+                        if !self.stack_check.is_safe_to_recurse()
+                            || self.reported_stack_overflow.get()
+                        {
+                            self.report_stack_overflow(binding.loc);
+                            return;
+                        }
                         let bound_items = bound_array.items();
                         let trunc_n = array.items.len().min(bound_items.len());
                         array.items.truncate(trunc_n);

@@ -124,6 +124,18 @@ impl B {
         // `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
+        self.write_to_hasher_with_check(hasher, symbol_table, bun_core::StackCheck::init());
+    }
+
+    fn write_to_hasher_with_check<H, S>(
+        &self,
+        hasher: &mut H,
+        symbol_table: &mut S,
+        stack_check: bun_core::StackCheck,
+    ) where
+        H: bun_core::Hasher + ?Sized,
+        S: crate::base::SymbolTable + ?Sized,
+    {
         // Local mirror of `bun.writeAnyToHasher`. Rust tuples have
         // *uninitialized* padding bytes (e.g. `(Tag /*u8*/, usize)` has 7 on
         // 64-bit), so forming a `&[u8]` over them is UB. Instead we feed each
@@ -146,28 +158,47 @@ impl B {
                 hasher.update(original_name);
             }
             B::BArray(array) => {
+                if !stack_check.is_safe_to_recurse() {
+                    return;
+                }
                 raw(hasher, self.tag() as u8);
                 raw(hasher, array.has_spread);
                 raw(hasher, array.items().len());
                 for item in array.items().iter() {
                     raw(hasher, item.default_value.is_some());
                     if let Some(default) = &item.default_value {
-                        default.data.write_to_hasher(hasher, symbol_table);
+                        default
+                            .data
+                            .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                     }
-                    item.binding.data.write_to_hasher(hasher, symbol_table);
+                    item.binding
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 }
             }
             B::BObject(object) => {
+                if !stack_check.is_safe_to_recurse() {
+                    return;
+                }
                 raw(hasher, self.tag() as u8);
                 raw(hasher, object.properties().len());
                 for property in object.properties().iter() {
                     raw(hasher, property.default_value.is_some());
                     raw(hasher, property.flags.as_u8());
                     if let Some(default) = &property.default_value {
-                        default.data.write_to_hasher(hasher, symbol_table);
+                        default
+                            .data
+                            .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                     }
-                    property.key.data.write_to_hasher(hasher, symbol_table);
-                    property.value.data.write_to_hasher(hasher, symbol_table);
+                    property
+                        .key
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                    property.value.data.write_to_hasher_with_check(
+                        hasher,
+                        symbol_table,
+                        stack_check,
+                    );
                 }
             }
             B::BMissing(_) => {}

@@ -1947,27 +1947,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
-        match binding.data {
-            js_ast::b::B::BMissing(_) => {}
-            js_ast::b::B::BIdentifier(ident) => {
-                let ident = ident.get();
-                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize]
-                    .original_name
-                    .slice();
-                self.record_export(binding.loc, name, ident.r#ref)
-                    .expect("unreachable");
-            }
-            js_ast::b::B::BArray(array) => {
-                for prop in array.items.slice() {
-                    self.record_exported_binding(prop.binding);
-                }
-            }
-            js_ast::b::B::BObject(obj) => {
-                for prop in obj.properties.slice() {
-                    self.record_exported_binding(prop.value);
-                }
-            }
+        for (loc, ident) in binding.identifiers() {
+            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+            let name: &'a [u8] = self.symbols[ident.r#ref.inner_index() as usize]
+                .original_name
+                .slice();
+            self.record_export(loc, name, ident.r#ref)
+                .expect("unreachable");
         }
     }
 
@@ -4000,13 +3986,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         expr: ExprNodeIndex,
         invalid_loc: &mut LocList,
-    ) -> Option<Binding> {
+    ) -> Result<Option<Binding>, crate::Error> {
         match expr.data {
-            js_ast::ExprData::EMissing(_) => return None,
+            js_ast::ExprData::EMissing(_) => return Ok(None),
             js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
+                return Ok(Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc)));
             }
             js_ast::ExprData::EArray(ex) => {
+                if !self.stack_check.is_safe_to_recurse() {
+                    return Err(crate::Error::StackOverflow);
+                }
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {
                     invalid_loc.push(InvalidLoc {
                         loc: spread,
@@ -4038,7 +4027,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         &mut item,
                         invalid_loc,
                         is_spread,
-                    );
+                    )?;
 
                     items.push(bun_ast::ArrayBinding {
                         // It's valid for it to be missing
@@ -4052,16 +4041,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                return Some(self.b(
+                return Ok(Some(self.b(
                     B::Array {
                         items: bun_ast::StoreSlice::new_mut(items.into_bump_slice_mut()),
                         has_spread: is_spread,
                         is_single_line: ex.is_single_line,
                     },
                     expr.loc,
-                ));
+                )));
             }
             js_ast::ExprData::EObject(mut ex) => {
+                if !self.stack_check.is_safe_to_recurse() {
+                    return Err(crate::Error::StackOverflow);
+                }
                 if let Some(sp) = ex.comma_after_spread.to_nullable() {
                     invalid_loc.push(InvalidLoc {
                         loc: sp,
@@ -4098,7 +4090,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     let value = item.value.as_mut().unwrap();
                     let tup =
-                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
+                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, false)?;
                     let initializer = tup.expr.or(item.initializer);
                     let is_spread = item.kind == js_ast::g::PropertyKind::Spread
                         || item.flags.contains(Flags::Property::IsSpread);
@@ -4121,20 +4113,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                return Some(self.b(
+                return Ok(Some(self.b(
                     B::Object {
                         properties: bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut()),
                         is_single_line: ex.is_single_line,
                     },
                     expr.loc,
-                ));
+                )));
             }
             _ => {
                 invalid_loc.push(InvalidLoc {
                     loc: expr.loc,
                     kind: crate::parser::InvalidLocTag::Unknown,
                 });
-                return None;
+                return Ok(None);
             }
         }
     }
@@ -4144,7 +4136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         _expr: &mut ExprNodeIndex,
         invalid_log: &mut LocList,
         is_spread: bool,
-    ) -> ExprBindingTuple {
+    ) -> Result<ExprBindingTuple, crate::Error> {
         let mut initializer: Option<ExprNodeIndex> = None;
         // `Expr` is `Copy`; read it by value so the `EBinary` arm can switch
         // `expr` to `bin.left` via `StoreRef::Deref` (safe arena read) instead
@@ -4157,7 +4149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let bind = self.convert_expr_to_binding(expr, invalid_log);
+        let bind = self.convert_expr_to_binding(expr, invalid_log)?;
         if let Some(initial) = initializer {
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
             if is_spread {
@@ -4170,10 +4162,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // p.markSyntaxFeature();
             }
         }
-        ExprBindingTuple {
+        Ok(ExprBindingTuple {
             binding: bind,
             expr: initializer,
-        }
+        })
     }
 
     #[cold]
@@ -4767,34 +4759,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exported_members: &mut js_ast::TSNamespaceMemberMap,
         binding: Binding,
     ) -> Result<(), crate::Error> {
-        match binding.data {
-            js_ast::b::B::BMissing(_) => {}
-            js_ast::b::B::BIdentifier(id) => {
-                let id = id.get();
-                // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                let name = self.symbols[id.r#ref.inner_index() as usize]
-                    .original_name
-                    .slice();
-                exported_members.put(
-                    name,
-                    js_ast::TSNamespaceMember {
-                        loc: binding.loc,
-                        data: js_ast::ts::Data::Property,
-                    },
-                )?;
-                self.ref_to_ts_namespace_member
-                    .insert(id.r#ref, js_ast::ts::Data::Property);
-            }
-            js_ast::b::B::BObject(obj) => {
-                for prop in obj.properties.slice() {
-                    self.define_exported_namespace_binding(exported_members, prop.value)?;
-                }
-            }
-            js_ast::b::B::BArray(obj) => {
-                for prop in obj.items.slice() {
-                    self.define_exported_namespace_binding(exported_members, prop.binding)?;
-                }
-            }
+        for (loc, id) in binding.identifiers() {
+            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+            let name = self.symbols[id.r#ref.inner_index() as usize]
+                .original_name
+                .slice();
+            exported_members.put(
+                name,
+                js_ast::TSNamespaceMember {
+                    loc,
+                    data: js_ast::ts::Data::Property,
+                },
+            )?;
+            self.ref_to_ts_namespace_member
+                .insert(id.r#ref, js_ast::ts::Data::Property);
         }
         Ok(())
     }
@@ -5314,15 +5292,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::b::B::BArray(bind) => {
+                if !self.stack_check.is_safe_to_recurse() {
+                    return Err(crate::Error::StackOverflow);
+                }
                 for item in bind.items_mut().iter_mut() {
-                    self.declare_binding(kind, &mut item.binding, opts)
-                        .expect("unreachable");
+                    self.declare_binding(kind, &mut item.binding, opts)?;
                 }
             }
             js_ast::b::B::BObject(bind) => {
+                if !self.stack_check.is_safe_to_recurse() {
+                    return Err(crate::Error::StackOverflow);
+                }
                 for prop in bind.properties_mut().iter_mut() {
-                    self.declare_binding(kind, &mut prop.value, opts)
-                        .expect("unreachable");
+                    self.declare_binding(kind, &mut prop.value, opts)?;
                 }
             }
         }
@@ -5796,6 +5778,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return false;
                 };
                 if !Self::object_literal_has_only_plain_keys(literal) {
+                    return false;
+                }
+                if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+                    self.report_stack_overflow(binding.loc);
                     return false;
                 }
                 for property in bo.properties.slice() {
@@ -6954,21 +6940,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn mark_exported_binding_inside_namespace(&mut self, r#ref: Ref, binding: BindingNodeIndex) {
-        match binding.data {
-            js_ast::b::B::BMissing(_) => {}
-            js_ast::b::B::BIdentifier(ident) => {
-                self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
-            }
-            js_ast::b::B::BArray(array) => {
-                for item in array.items.slice() {
-                    self.mark_exported_binding_inside_namespace(r#ref, item.binding);
-                }
-            }
-            js_ast::b::B::BObject(obj) => {
-                for item in obj.properties.slice() {
-                    self.mark_exported_binding_inside_namespace(r#ref, item.value);
-                }
-            }
+        for (_, ident) in binding.identifiers() {
+            self.is_exported_inside_namespace.insert(ident.r#ref, r#ref);
         }
     }
 
@@ -8237,24 +8210,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         binding: Binding,
         decls: &mut ListManaged<'a, G::Decl>,
     ) -> Result<(), crate::Error> {
-        match binding.data {
-            js_ast::b::B::BMissing(_) => {}
-            js_ast::b::B::BIdentifier(_) => {
-                decls.push(G::Decl {
-                    binding,
-                    value: None,
-                });
-            }
-            js_ast::b::B::BArray(arr) => {
-                for item in arr.items().iter() {
-                    Self::extract_decls_for_binding(item.binding, decls).expect("unreachable");
-                }
-            }
-            js_ast::b::B::BObject(obj) => {
-                for prop in obj.properties().iter() {
-                    Self::extract_decls_for_binding(prop.value, decls).expect("unreachable");
-                }
-            }
+        for (loc, ident) in binding.identifiers() {
+            decls.push(G::Decl {
+                binding: Binding {
+                    loc,
+                    data: js_ast::b::B::BIdentifier(ident),
+                },
+                value: None,
+            });
         }
         Ok(())
     }

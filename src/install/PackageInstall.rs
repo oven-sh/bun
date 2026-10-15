@@ -652,7 +652,7 @@ enum FolderLink {
     /// A link of this text.
     Link(Box<[u8]>),
     /// The file at this real path.
-    File(bun_core::ZBox, sys::Stat),
+    File(bun_core::ZBox, Box<sys::Stat>),
     LeftOut(&'static str),
 }
 
@@ -700,7 +700,7 @@ impl FolderLink {
         if !in_folder && path_below(project, real).is_none() {
             return FolderLink::LeftOut("it leads out of the project");
         }
-        FolderLink::File(real_z, target)
+        FolderLink::File(real_z, Box::new(target))
     }
 }
 

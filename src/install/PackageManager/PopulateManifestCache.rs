@@ -186,9 +186,9 @@ pub fn populate_manifest_cache(
                 // holds only `&mut manifests`.
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(pkg_name_slice));
+                let mut expired = false;
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`;
                 // `manager_ptr` is the SRW root.
-                let mut expired = false;
                 let cached = unsafe { &mut (*manager_ptr).manifests }.by_name_allow_expired(
                     cache_ctx,
                     scope.get(),

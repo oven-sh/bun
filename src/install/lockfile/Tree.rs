@@ -454,6 +454,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) walked: DynamicBitSet,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
+    /// Of `sort_buf`: `names_listed_again`, sorted.
+    pub(crate) listed_again: Vec<(DependencyID, DependencyID)>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
@@ -1114,6 +1116,19 @@ impl Tree {
             });
         }
 
+        builder.listed_again.clear();
+        {
+            let (sort_buf, listed_again) = (&builder.sort_buf, &mut builder.listed_again);
+            crate::lockfile::names_listed_again(
+                sort_buf.len(),
+                |i| sort_buf[i],
+                dependencies,
+                lockfile.buffers.string_bytes.as_slice(),
+                |first, later| listed_again.push((first, later)),
+            );
+        }
+        builder.listed_again.sort_unstable();
+
         'dep: for sort_idx in 0..builder.sort_buf.len() {
             let dep_id = builder.sort_buf[sort_idx];
             builder.bind_peer(dep_id);
@@ -1186,15 +1201,16 @@ impl Tree {
                 }
 
                 // A later group lists the name for another package: the place they contest is here.
-                if (dependency.behavior.is_dev() || dependency.behavior.is_optional())
-                    && builder.sort_buf[sort_idx + 1..].iter().any(|&later| {
-                        let rival = &dependencies[later as usize];
-                        rival.name_hash == dependency.name_hash
-                            && !rival.behavior.is_peer()
-                            && !rival.behavior.is_bundled()
-                            && builder.resolutions[later as usize] != pkg_id
-                            && builder.resolutions[later as usize] != invalid_package_id
-                    })
+                if !builder.listed_again.is_empty()
+                    && builder.listed_again
+                        [builder.listed_again.partition_point(|pair| pair.0 < dep_id)..]
+                        .iter()
+                        .take_while(|pair| pair.0 == dep_id)
+                        .any(|&(_, later)| {
+                            !dependencies[later as usize].behavior.is_bundled()
+                                && builder.resolutions[later as usize] != pkg_id
+                                && builder.resolutions[later as usize] != invalid_package_id
+                        })
                 {
                     break 'hoisted hoist(next_id, &mut *builder);
                 }
@@ -1701,10 +1717,10 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
 
     // What each folder holds under a name.
     let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::default();
-    for tree in trees {
+    for (tree_id, tree) in trees.iter().enumerate() {
         for &dep_id in tree.dependencies.get(hoisted) {
             placed
-                .entry((tree.id, dependencies[dep_id as usize].name_hash))
+                .entry((tree_id as Id, dependencies[dep_id as usize].name_hash))
                 .or_insert_with(|| resolutions[dep_id as usize]);
         }
     }

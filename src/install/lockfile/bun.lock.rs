@@ -2835,30 +2835,40 @@ pub(crate) fn parse_into_binary_lockfile(
         };
 
         // A later group that lists a name again has its package one level below the first group's.
-        let later_group_entry = |rows: DependencySlice, dep_id: DependencyID, own_key: &[u8]| {
-            let dep = &dependencies[dep_id as usize];
-            if dep.behavior.is_peer()
-                || !(dependencies[rows.begin() as usize..dep_id as usize].iter())
-                    .take_while(|row| !row.behavior.is_prod())
-                    .any(|row| row.name_hash == dep.name_hash && !row.behavior.is_workspace())
-            {
-                return None;
-            }
-            // Unless the first group's package has that key for a dependency of its own.
-            let first = pkg_deps[*pkg_map.get(own_key)? as usize].get(dependencies);
-            if first.iter().any(|row| row.name_hash == dep.name_hash) {
-                return None;
-            }
-            pkg_map.get(&[own_key, b"/", dep.name.slice(string_buf)].concat())
+        let later_groups = |rows: DependencySlice, listed_again: &mut Vec<DependencyID>| {
+            listed_again.clear();
+            super::names_listed_again(
+                rows.len as usize,
+                |i| rows.begin() + i as DependencyID,
+                dependencies,
+                string_buf,
+                |_, later| listed_again.push(later),
+            );
+            listed_again.sort_unstable();
         };
+        let mut listed_again: Vec<DependencyID> = Vec::new();
+        let later_group_entry =
+            |listed_again: &[DependencyID], dep_id: DependencyID, own_key: &[u8]| {
+                if listed_again.binary_search(&dep_id).is_err() {
+                    return None;
+                }
+                let dep = &dependencies[dep_id as usize];
+                // Unless the first group's package has that key for a dependency of its own.
+                let first = pkg_deps[*pkg_map.get(own_key)? as usize].get(dependencies);
+                if first.iter().any(|row| row.name_hash == dep.name_hash) {
+                    return None;
+                }
+                pkg_map.get(&[own_key, b"/", dep.name.slice(string_buf)].concat())
+            };
 
         {
             // first the root dependencies are resolved
+            later_groups(pkg_deps[0], &mut listed_again);
             for dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep = &dependencies[dep_id as usize];
 
                 let name = dep.name.slice(string_buf);
-                let named = later_group_entry(pkg_deps[0], dep_id, name)
+                let named = later_group_entry(&listed_again, dep_id, name)
                     .or_else(|| pkg_map.get(name))
                     .copied();
                 // The root's own dependency can have the key of the member of that name.
@@ -2903,6 +2913,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let name_end = prefix.len() + workspace_name.len();
 
                 let deps = pkg_deps[pkg_id as usize];
+                later_groups(deps, &mut listed_again);
                 for dep_id in deps.begin()..deps.end() {
                     let dep = &dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
@@ -2929,8 +2940,9 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let own_entry = later_group_entry(deps, dep_id, workspace_node_modules)
-                        .or_else(|| pkg_map.get(workspace_node_modules));
+                    let own_entry =
+                        later_group_entry(&listed_again, dep_id, workspace_node_modules)
+                            .or_else(|| pkg_map.get(workspace_node_modules));
                     let Some(res_id) = peer_by_version(dep)
                         .or_else(|| own_entry.or_else(|| pkg_map.get(dep_name)).copied())
                         .filter(|&id| !is_another_edges_package(dep, id, own_entry.is_some()))
@@ -2978,6 +2990,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
+            later_groups(deps, &mut listed_again);
             'deps: for dep_id in deps.begin()..deps.end() {
                 let dep = &dependencies[dep_id as usize];
 
@@ -3001,12 +3014,19 @@ pub(crate) fn parse_into_binary_lockfile(
                         ) {
                             Ok((&id, mut evidence)) => {
                                 let own_entry = evidence == RowEvidence::OwnEntry;
-                                // `path_buf` starts with the key that was found.
-                                let own_key_len =
-                                    pkg_path.len() + 1 + dep.name.slice(string_buf).len();
-                                let id = (own_entry.then_some(&path_buf[..own_key_len]))
-                                    .and_then(|own_key| later_group_entry(deps, dep_id, own_key))
-                                    .map_or(id, |&below| below);
+                                let id = if own_entry && !listed_again.is_empty() {
+                                    // `path_buf` starts with the key that was found.
+                                    let own_key_len =
+                                        pkg_path.len() + 1 + dep.name.slice(string_buf).len();
+                                    later_group_entry(
+                                        &listed_again,
+                                        dep_id,
+                                        &path_buf[..own_key_len],
+                                    )
+                                    .map_or(id, |&below| below)
+                                } else {
+                                    id
+                                };
                                 if evidence == RowEvidence::WalkedToRoot
                                     && dep.behavior.is_peer()
                                     && root_dep_names.contains(&dep.name_hash)

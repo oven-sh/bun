@@ -312,6 +312,62 @@ impl<'a> DepSorter<'a> {
     }
 }
 
+/// Calls `emit(first, later)` for each row of one package that lists again the name of an earlier
+/// dev or optional row. `id_at(0..len)`: its rows as `DepSorter` and `Dependency::cmp` sort them.
+pub(crate) fn names_listed_again(
+    len: usize,
+    id_at: impl Fn(usize) -> DependencyID,
+    deps: &[Dependency],
+    buf: &[u8],
+    mut emit: impl FnMut(DependencyID, DependencyID),
+) {
+    use dependency::Behavior;
+    let row = |i: usize| &deps[id_at(i) as usize];
+    // workspaces, dev, optional, prod, peer: nearly every package starts at prod.
+    if len < 2 || row(0).behavior.is_prod() || row(0).behavior.is_peer() {
+        return;
+    }
+    let end_of = |from: usize, group: fn(Behavior) -> bool| {
+        (from..len)
+            .find(|&i| !group(row(i).behavior))
+            .unwrap_or(len)
+    };
+    let dev = end_of(0, Behavior::is_workspace);
+    let optional = end_of(dev, Behavior::is_dev);
+    let prod = end_of(optional, Behavior::is_optional);
+    if dev == prod {
+        return;
+    }
+
+    // One key twice in a group.
+    let mut first = dev;
+    for i in dev + 1..prod {
+        if row(i).name_hash == row(first).name_hash {
+            emit(id_at(first), id_at(i));
+        } else {
+            first = i;
+        }
+    }
+    let peer = end_of(prod, Behavior::is_prod);
+    for (earlier, later) in [
+        (dev..optional, optional..prod),
+        (dev..optional, prod..peer),
+        (optional..prod, prod..peer),
+    ] {
+        let (mut e, mut l) = (earlier.start, later.start);
+        while e < earlier.end && l < later.end {
+            match (row(e).name.slice(buf)).cmp(row(l).name.slice(buf)) {
+                Ordering::Less => e += 1,
+                Ordering::Greater => l += 1,
+                Ordering::Equal => {
+                    emit(id_at(e), id_at(l));
+                    l += 1;
+                }
+            }
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Scripts
 // ────────────────────────────────────────────────────────────────────────────
@@ -1633,6 +1689,7 @@ impl Lockfile {
             walked: DynamicBitSet::init_empty(slice.len())?,
             list: Default::default(),
             sort_buf: Default::default(),
+            listed_again: Default::default(),
             peer_probes: Default::default(),
             placed: Default::default(),
             shipped_rows: Default::default(),

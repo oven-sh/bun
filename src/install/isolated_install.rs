@@ -546,6 +546,8 @@ fn build_store(
     });
 
     let mut dep_ids_sort_buf: Vec<DependencyID> = Vec::new();
+    // Of `dep_ids_sort_buf`: the later rows of `names_listed_again`, sorted.
+    let mut listed_again: Vec<DependencyID> = Vec::new();
 
     // For each package, the peer dependency names declared anywhere in its
     // transitive closure that are not satisfied within that closure (i.e., the
@@ -982,6 +984,16 @@ fn build_store(
             });
         }
 
+        listed_again.clear();
+        lockfile::names_listed_again(
+            dep_ids_sort_buf.len(),
+            |i| dep_ids_sort_buf[i],
+            dependencies,
+            string_buf,
+            |_, later| listed_again.push(later),
+        );
+        listed_again.sort_unstable();
+
         peer_dep_ids.clear();
 
         // Under `--omit=peer` the copy an ancestor provides is installed anyway, and is linked.
@@ -1038,7 +1050,8 @@ fn build_store(
                 let pkg_id = resolutions[dep_id as usize];
 
                 // One folder per name: the first group that this run links has it.
-                if !dep.behavior.is_peer()
+                if !listed_again.is_empty()
+                    && listed_again.binary_search(&dep_id).is_ok()
                     && (node_dependencies[node_id.get() as usize].iter())
                         .map(|ids| &dependencies[ids.dep_id as usize])
                         .take_while(|first| !first.behavior.is_prod())

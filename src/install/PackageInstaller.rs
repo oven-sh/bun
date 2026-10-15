@@ -207,7 +207,7 @@ impl NodeModulesFolder {
             .and_then(|rest| rest.strip_prefix(b"node_modules"))
             .and_then(|rest| {
                 rest.strip_prefix(&[SEP])
-                    .or(rest.is_empty().then_some(rest))
+                    .or_else(|| rest.is_empty().then_some(rest))
             })
             .unwrap_or(self.path.as_slice());
         join_z_buf::<platform::Auto>(buf, &[folder, file_path.as_bytes()])

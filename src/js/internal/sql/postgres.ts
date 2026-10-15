@@ -1,5 +1,5 @@
-import type { Query } from "./query";
 import type { SSLMode } from "./options";
+import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLStatementDescription } from "./shared";
 
 type SQLArrayParameter = import("./shared").SQLArrayParameter;

@@ -1,5 +1,5 @@
-import type { BaseQueryHandle } from "internal/sql/query";
 import type { BasePooledConnection } from "internal/sql/pool";
+import type { BaseQueryHandle } from "internal/sql/query";
 import type { DatabaseAdapter, TransactionCommands } from "internal/sql/shared";
 
 type Query = import("internal/sql/query").Query<any, any>;

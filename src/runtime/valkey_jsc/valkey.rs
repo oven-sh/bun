@@ -615,11 +615,16 @@ impl ValkeyClient {
     }
 
     /// A failure before HELLO is accepted costs one retry in `on_close`; with none left it stays terminal so the queue gets its own error.
-    fn attempt_will_be_retried(&self) -> bool {
+    fn attempt_will_be_retried(&mut self) -> bool {
         self.status == Status::Connecting
+            && !self.close_is_final()
             && self.flags.enable_auto_reconnect
-            && !self.flags.is_manually_closed
             && self.retry_attempts < self.max_retries
+    }
+
+    /// The closes `on_close` never retries, whatever `autoReconnect` says.
+    fn close_is_final(&mut self) -> bool {
+        self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped()
     }
 
     /// `fail()` passes `Failure`, the one code whose close callback has run by
@@ -670,7 +675,7 @@ impl ValkeyClient {
 
         // A manual close, a failure the client detected itself, or the script that made the client
         // is gone (a disposed `Bun.ModuleGraph`'s): no retry, and what was queued is released.
-        if self.flags.is_manually_closed || self.flags.failed || self.parent().context_stopped() {
+        if self.close_is_final() {
             debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;

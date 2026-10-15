@@ -1741,7 +1741,7 @@ fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
+    crate::features::image_constructor(global_this)
 }
 
 fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

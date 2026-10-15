@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "src/bun_all",
+  "src/image",
   "src/check_command",
   "src/csrf_jsc",
   "src/format_command",
@@ -213,7 +214,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(bun_needed_by, values(none(), "check", "lint", "fmt", "semver", "csrf"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_disallow_code_generation_from_strings)', 'cfg(bun_sema_mimalloc)', 'cfg(bun_needed_by, values(none(), "check", "lint", "fmt", "semver", "csrf", "image"))'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -411,6 +412,7 @@ bun_format_conformance = { path = "src/format/conformance" }
 bun_lint_driver = { path = "src/lint/driver" }
 bun_check_command = { path = "src/check_command" }
 bun_csrf_jsc = { path = "src/csrf_jsc" }
+bun_image = { path = "src/image" }
 bun_runtime = { path = "src/runtime" }
 bun_format_command = { path = "src/format_command" }
 bun_lint_command = { path = "src/lint_command" }

@@ -50,12 +50,50 @@ pub(crate) mod thumbhash;
 // ─── JS-facing `Image` class + pipeline task ─────────────────────────────────
 //
 // `Image.rs` owns the `#[bun_jsc::JsClass]`-derived `Image` payload plus the
-// pipeline/task state types. Re-exported here so `crate::image::Image` is the
-// JsClass-bearing struct (Body.rs / Blob.rs downcast to it).
-//
-// `pub` so generated_classes.rs can re-export `crate::image::image_body::Image`
-// directly — codegen addresses the defining module, not the flattened re-export.
+// pipeline/task state types.
 
 #[path = "Image.rs"]
 pub(crate) mod image_body;
 pub(crate) use image_body::Image;
+
+/// The thunks that `ZigGeneratedClasses.image.cpp` calls (src/codegen/generate-classes.ts). src/runtime/generated_classes.rs
+/// says why what is generated trips each of these lints.
+#[allow(non_snake_case, improper_ctypes, clippy::redundant_closure)]
+pub(crate) mod generated_classes {
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_classes.image.rs"
+    ));
+}
+
+/// `Bun.Image`
+#[bun_core::feature::behind(bun_runtime::features::image_constructor, image)]
+fn constructor(global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
+    bun_jsc::codegen::js::get_constructor::<Image>(global)
+}
+
+/// `Bun.file("…").image(options)`
+#[bun_core::feature::behind(bun_runtime::features::image_of_blob, image)]
+fn of_blob(
+    global: &bun_jsc::JSGlobalObject,
+    blob: bun_jsc::JSValue,
+    options: bun_jsc::JSValue,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    Image::from_blob_js(global, blob, options)
+}
+
+/// `new Response(image)`: what it encodes to and the MIME type of that, if `value` is an image.
+#[bun_core::feature::behind(bun_runtime::features::image_as_body, image)]
+fn as_body(
+    global: &bun_jsc::JSGlobalObject,
+    value: bun_jsc::JSValue,
+) -> bun_jsc::JsResult<Option<(Box<[u8]>, &'static bun_core::ZStr)>> {
+    let Some(image) = value.as_class_ref::<Image>() else {
+        return Ok(None);
+    };
+    let (encoded, mime) = image.encode_for_body(global, value)?;
+    // Blob.Store frees via an Allocator, so dupe out of the codec's allocator here. The hot path (`.bytes()`) hands the
+    // codec buffer to JS without this copy.
+    // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
+    Ok(Some((Box::from(unsafe { encoded.bytes.as_ref() }), mime)))
+}

@@ -1016,17 +1016,9 @@ impl Value {
                 ));
             }
 
-            if let Some(image) = value.as_class_ref::<crate::image::Image>() {
-                // Body init is synchronous, so encode now and wrap as a Blob
-                // with the right MIME type. The off-thread path is still
-                // available via `await image.blob()`.
-                let (encoded, mime) = image.encode_for_body(global_this, value)?;
-                // Blob.Store frees via an Allocator, so dupe out of the
-                // codec's allocator here. The hot path (`.bytes()`) hands the
-                // codec buffer to JS without this copy.
-                // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
-                let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
-                drop(encoded);
+            if let Some((owned, mime)) = crate::features::image_as_body(global_this, value)? {
+                // Body init is synchronous, so it is encoded now and wrapped as a Blob with the right MIME type. The
+                // off-thread path is still available via `await image.blob()`.
                 let blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type
                     .set(blob::BlobContentType::Static(mime.as_bytes()));

@@ -1,8 +1,9 @@
-import { define } from "../../codegen/class-definitions.ts";
+import { define } from "../codegen/class-definitions.ts";
 
 export default [
   define({
     name: "Image",
+    rustPath: "crate::Image",
     construct: true,
     constructNeedsThis: true,
     finalize: true,

@@ -36,6 +36,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { featureCratesOf, manifestOf } from "../../src/codegen/class-owners.ts";
 import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { CodegenFields } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
@@ -724,12 +725,23 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     // rebuild that crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
+  // The same for the classes of a feature, which are compiled with its crate.
+  const ofFeatures = featureCratesOf(sources.zigGeneratedClasses).map(crate => ({
+    cpp: resolve(cfg.codegenDir, `ZigGeneratedClasses.${crate.name}.cpp`),
+    rust: resolve(cfg.codegenDir, `generated_classes.${crate.name}.rs`),
+  }));
+  outputs.push(...ofFeatures.flatMap(it => [it.cpp, it.rust]));
   const types = resolve(cfg.typesDir, "ZigGeneratedClasses.d.ts");
 
   n.build({
     outputs: [...outputs, types],
     rule: "codegen",
     inputs: [script, ...sources.zigGeneratedClasses],
+    // Which crate's a class is, is in the manifests.
+    implicitInputs: [
+      resolve(cfg.cwd, "src", "codegen", "class-owners.ts"),
+      ...new Set(sources.zigGeneratedClasses.map(manifestOf)),
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -741,7 +753,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.all.push(...outputs, types);
   o.generatedTypes.push(types);
   o.rustInputs.push(...outputs);
-  o.cppSources.push(outputs[1]!); // .cpp
+  o.cppSources.push(outputs[1]!, ...ofFeatures.map(it => it.cpp)); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
 }
 

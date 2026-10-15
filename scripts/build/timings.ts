@@ -818,6 +818,7 @@ const ruleLane: Record<RuleName, Lane> = {
   npm_install: "codegen",
   rust_build_script: "Rust",
   feature_pass: "Rust",
+  in_island: "dependencies",
   check_features: "link and checks",
   rust_plan: "Rust",
   rust_rustc: "Rust",

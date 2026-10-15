@@ -191,6 +191,59 @@ pub fn semver_intersects_for_testing(
     Ok(JSValue::UNDEFINED)
 }
 
+/// `Bun.Image`
+#[feature::door(image)]
+pub fn image_constructor(global: &JSGlobalObject) -> JSValue {
+    JSValue::UNDEFINED
+}
+
+/// `Bun.file("…").image(options)`
+#[feature::door(image)]
+pub fn image_of_blob(
+    global: &JSGlobalObject,
+    blob: JSValue,
+    options: JSValue,
+) -> JsResult<JSValue> {
+    Err(global.throw(format_args!("this executable was built without Bun.Image")))
+}
+
+/// `new Response(image)`: what it encodes to and the MIME type of that, if `value` is an image.
+#[feature::door(image)]
+pub fn image_as_body(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<Option<(Box<[u8]>, &'static ZStr)>> {
+    Ok(None)
+}
+
+pub use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
+
+/// # Safety
+/// That of `BlobExt::read_bytes_to_handler`.
+pub unsafe fn read_bytes_of_blob<H: ReadBytesHandler>(
+    blob: &bun_jsc::webcore_types::Blob,
+    handler: *mut H,
+    cx: &bun_jsc::JsThread<'_>,
+) -> JsResult<()> {
+    use crate::webcore::blob::BlobExt as _;
+    // SAFETY: the caller's.
+    unsafe { blob.read_bytes_to_handler(handler, cx) }
+}
+
+/// `Bun.write(destination, data)`
+pub fn write(
+    cx: &bun_jsc::JsThread<'_>,
+    global: &JSGlobalObject,
+    destination: JSValue,
+    data: JSValue,
+) -> JsResult<JSValue> {
+    let arguments = [destination];
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), &arguments);
+    let mut destination = crate::webcore::blob::write_destination_from_js(global, &mut arguments)?;
+    crate::webcore::blob::write_file_internal(cx, &mut destination, data, Default::default())
+        .map_err(|_| bun_jsc::JsError::Thrown)
+}
+
 /// `Bun.CSRF`
 #[feature::door(csrf)]
 pub fn csrf_object(global: &JSGlobalObject) -> JSValue {

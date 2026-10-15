@@ -140,6 +140,7 @@ dependencies = [
  "bun_check_command",
  "bun_csrf_jsc",
  "bun_format_command",
+ "bun_image",
  "bun_lint_command",
  "bun_runtime",
  "bun_semver_jsc",
@@ -597,6 +598,7 @@ version = "0.0.0"
 dependencies = [
  "bun_collections",
  "bun_core",
+ "bun_exe_format",
 ]
 
 [[package]]
@@ -757,6 +759,25 @@ dependencies = [
  "bytemuck",
  "enumset",
  "strum",
+]
+
+[[package]]
+name = "bun_image"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_alloc",
+ "bun_base64",
+ "bun_core",
+ "bun_jsc",
+ "bun_opaque",
+ "bun_ptr",
+ "bun_runtime",
+ "bun_sys",
+ "libc",
+ "scopeguard",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]

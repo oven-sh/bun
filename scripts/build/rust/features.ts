@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Config } from "../config.ts";
 import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
@@ -42,6 +42,10 @@ export function registerFeaturePassRule(n: Ninja, cfg: Config): void {
   n.rule("feature_pass", {
     command: `${q(cfg.hostCxx)} -std=c++17 -O2 -fPIC -shared -fno-rtti -fno-exceptions -I${q(llvmHeaders(cfg))} $in -o $out`,
     description: "host-plugin $out",
+  });
+  n.rule("in_island", {
+    command: `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "in-island.ts"))} $island $in $out`,
+    description: "island $out",
   });
   n.rule("check_features", {
     command: `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "check-features.ts"))} $nm $readobj $manifest $exe $out`,
@@ -140,6 +144,7 @@ export function featureFlags(
 
 /** A crate that is a feature's: where it is, what the link takes of it, and its island. */
 export interface FeatureCrate {
+  name: string;
   directory: string;
   rlib: string;
   island: number;
@@ -147,29 +152,49 @@ export interface FeatureCrate {
 
 export function featureCrates(islands: Islands): FeatureCrate[] {
   return [...islands.of].map(([unit, island]) => ({
+    name: unit.crateName,
     directory: dirname(unit.pkg.manifest_path),
     rlib: unit.output,
     island,
   }));
 }
 
-/** The crate that `source`, a C or C++ file, is of: the one whose directory it is in. */
+/** The crate that `source`, a C or C++ file, is of: the one whose directory it is in, or whose classes it was generated for. */
 export function crateOfSource(crates: FeatureCrate[], source: string): FeatureCrate | undefined {
-  return crates.find(crate => source.startsWith(crate.directory + sep));
+  const generatedFor = /[\\/]ZigGeneratedClasses\.(\w+)\.cpp$/.exec(source)?.[1];
+  return crates.find(crate => source.startsWith(crate.directory + sep) || basename(crate.directory) === generatedFor);
 }
 
 /** What clang is given for a file of `crate`, and what it then reads beside the file. */
 export function clangFeatureFlags(cfg: Config, crate: FeatureCrate | undefined): { flags: string[]; inputs: string[] } {
+  if (crate === undefined) return { flags: [], inputs: [] };
+  // A file includes what is beside it by name, also through a header of elsewhere (hwy/foreach_target.h).
+  const include = `-I${crate.directory}`;
   const pass = featurePass(cfg);
-  if (crate === undefined || pass === undefined) return { flags: [], inputs: [] };
+  if (pass === undefined) return { flags: [include], inputs: [] };
   const plugin = cfg.windows ? ["-Xclang", `-fpass-plugin=${pass}`] : [`-fpass-plugin=${pass}`];
   return {
     flags: [
       ...["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-island=${crate.island}`],
-      ...["-mllvm", `-bun-island-directory=${crate.directory}`],
+      ...["-mllvm", `-bun-island-directory=${crate.directory}`, include],
     ],
     inputs: [pass],
   };
+}
+
+/** `object`, which an assembler made and so no pass of LLVM's has seen, with what it has in the island of `crate`. */
+export function inIsland(n: Ninja, cfg: Config, object: string, crate: FeatureCrate): string {
+  if (featurePass(cfg) === undefined) return object;
+  // It still ends in what says that an assembler made it (lazyDepObjects).
+  const output = object.replace(/(\.\w+\.\w+)$/, ".island$1");
+  n.build({
+    outputs: [output],
+    rule: "in_island",
+    inputs: [object],
+    implicitInputs: [resolve(cfg.cwd, "scripts", "build", "in-island.ts")],
+    vars: { island: String(crate.island) },
+  });
+  return output;
 }
 
 /**

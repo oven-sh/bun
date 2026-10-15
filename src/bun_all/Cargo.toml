@@ -15,4 +15,5 @@ bun_check_command.workspace = true
 bun_lint_command.workspace = true
 bun_format_command.workspace = true
 bun_csrf_jsc.workspace = true
+bun_image.workspace = true
 bun_semver_jsc.workspace = true

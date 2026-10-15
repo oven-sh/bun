@@ -22,7 +22,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { assert } from "./error.ts";
+import { assert, BuildError } from "./error.ts";
 import {
   bunIncludes,
   computeFlags,
@@ -193,11 +193,19 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
+  // Of what the link takes: its island.
+  const islandOf = new Map<string, number | undefined>();
   for (const dep of allDeps) {
-    const resolved = depsByName.get(dep.name) ?? resolveDep(n, cfg, dep, depsByName);
+    const crate = featureCrates.find(it => it.name === dep.crate);
+    // Before cargo has planned, nothing is known of the crates. ninja configures again once it has.
+    if (dep.crate !== undefined && crate === undefined && rustObjects.length > 0) {
+      throw new BuildError(`${dep.name} is for ${dep.crate}, which is not a crate of a feature`);
+    }
+    const resolved = depsByName.get(dep.name) ?? resolveDep(n, cfg, dep, depsByName, crate);
     if (resolved !== null) {
       deps.push(resolved);
       depsByName.set(dep.name, resolved);
+      for (const object of resolved.objects) islandOf.set(object, crate?.island);
     }
   }
 
@@ -360,8 +368,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     });
   }
 
-  // Of what the link takes: the features that need it.
-  const islandOf = new Map<string, number | undefined>();
   const cxxObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);

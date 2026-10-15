@@ -22,6 +22,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
+import { clangFeatureFlags, inIsland, type FeatureCrate } from "./rust/features.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
@@ -473,6 +474,9 @@ export type DepName =
 export interface Dependency {
   name: DepName;
 
+  /** The crate of a feature (src/bun_core/feature.rs) that alone uses it. It is the crate's, like the C and C++ in its directory. */
+  crate?: string;
+
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
 
@@ -803,6 +807,7 @@ export function resolveDep(
   cfg: Config,
   dep: Dependency,
   resolved: ReadonlyMap<DepName, ResolvedDep>,
+  crate?: FeatureCrate,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -810,6 +815,10 @@ export function resolveDep(
 
   const source = depSource(cfg, dep);
   const buildSpec = dep.build(cfg);
+  assert(
+    dep.crate === undefined || buildSpec.kind === "direct",
+    `${dep.name}: only what is built directly can be a crate's`,
+  );
   const provides = dep.provides(cfg);
 
   // ─── Prebuilt: entire acquisition is download + extract. No build step. ───
@@ -942,7 +951,7 @@ export function resolveDep(
     libs = result.libs;
     outputs = result.libs;
   } else if (buildSpec.kind === "direct") {
-    const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
+    const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps, crate });
     libs = result.libs;
     objects = result.objects;
     checks = result.checks;
@@ -1505,6 +1514,7 @@ interface EmitDirectInput {
   /** Fetch `.ref` stamp; undefined for local/in-tree sources (already on disk). */
   sourceStamp: string | undefined;
   fetchDepStamps: string[];
+  crate: FeatureCrate | undefined;
 }
 
 /**
@@ -1559,7 +1569,8 @@ function emitDirect(
 
   const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
-  const libFlags = [...baseFlags, ...picFlags, ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
+  const forFeatures = clangFeatureFlags(cfg, input.crate && { ...input.crate, directory: srcDir });
+  const libFlags = [...baseFlags, ...picFlags, ...incFlags, ...defFlags, ...(spec.cflags ?? []), ...forFeatures.flags];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
@@ -1646,7 +1657,7 @@ function emitDirect(
   // library sources include them. buildDir goes on -I so #include "foo.h"
   // finds literal, subst, and codegen headers alike.
   if (generatedHeader !== undefined) generated.push(generatedHeader);
-  const implicit = generated;
+  const implicit = [...generated, ...forFeatures.inputs];
   const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
 
   const objects = spec.sources.map(s => {
@@ -1658,7 +1669,8 @@ function emitDirect(
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().
     if (path.endsWith(".asm")) {
-      return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+      const object = nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+      return input.crate === undefined ? object : inIsland(n, cfg, object, input.crate);
     }
     const isC = path.endsWith(".c");
     const isAsm = path.endsWith(".S");

@@ -113,6 +113,7 @@ function simd(path: string, x64: boolean) {
 
 export const libwebp: Dependency = {
   name: "libwebp",
+  crate: "bun_image",
 
   source: () => ({
     kind: "github-archive",

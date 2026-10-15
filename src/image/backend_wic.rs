@@ -39,7 +39,7 @@ use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr;
 use std::sync::Once;
 
-use crate::image::codecs;
+use crate::codecs;
 use bun_sys::windows;
 
 /// `codecs::Error` plus `BackendUnavailable`; the variants used in this file

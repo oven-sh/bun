@@ -100,6 +100,7 @@ const patterns = {
     paths: [
       "src/io/*.cpp",
       "src/lint_command/*.cpp",
+      "src/image/*.cpp",
       "src/jsc/modules/*.cpp",
       "src/jsc/bindings/*.cpp",
       "src/jsc/bindings/webcore/*.cpp",

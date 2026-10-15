@@ -1,6 +1,6 @@
 // Thin C wrapper around the one WIC interaction whose ABI is too fiddly to
 // hand-roll over FFI: IPropertyBag2::Write with a VARIANT. The rest of the
-// WIC backend (vtable-shaped COM calls) lives in src/runtime/image/backend_wic.rs
+// WIC backend (vtable-shaped COM calls) lives in src/image/backend_wic.rs
 // because those are plain function-pointer tables and have been stable; this
 // file exists so the SDK's own <oaidl.h> definition of VARIANT (with its
 // union/BRECORD/DECIMAL padding) is the source of truth instead of an extern

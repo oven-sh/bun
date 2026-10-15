@@ -119,21 +119,6 @@ impl StoredTrace {
         }
         stored
     }
-
-    pub fn from(stack_trace: Option<&StackTrace<'_>>) -> StoredTrace {
-        match stack_trace {
-            None => StoredTrace::EMPTY,
-            Some(stack) => {
-                let mut data = [0usize; 31];
-                let items = core::cmp::min(stack.instruction_addresses.len(), 31);
-                data[..items].copy_from_slice(&stack.instruction_addresses[..items]);
-                StoredTrace {
-                    data,
-                    index: core::cmp::min(items, stack.index),
-                }
-            }
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

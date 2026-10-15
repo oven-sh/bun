@@ -312,12 +312,6 @@ impl<'a> Format<'a> for FormatIdentifier {
     }
 }
 
-impl Spanned for FormatIdentifier {
-    fn span(&self) -> Span {
-        self.span
-    }
-}
-
 // ───────────────────────────── expressions ─────────────────────────────
 
 /// How a function or an arrow function is written where it is. See `print/function.rs` and
@@ -986,12 +980,6 @@ pub(crate) struct FormatDeclaration<'a>(pub(crate) Stmt<'a>);
 impl<'a> Format<'a> for FormatDeclaration<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         format_node(inner_of_stmt(self.0), f, |f| write_declaration(self.0, f));
-    }
-}
-
-impl Spanned for FormatDeclaration<'_> {
-    fn span(&self) -> Span {
-        self.0.span_without_export()
     }
 }
 

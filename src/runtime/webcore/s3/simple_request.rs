@@ -513,7 +513,7 @@ impl S3HttpSimpleTask {
     #[cold]
     #[inline(never)]
     fn fail_or_send_again(
-        self: Box<Self>,
+        mut self: Box<Self>,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_jsc::JsResult<()> {
         if !self.is_sent_again(context) {
@@ -531,7 +531,7 @@ impl S3HttpSimpleTask {
     /// This request goes out again with a new signature (a signature carries its date), in a
     /// task of its own that takes over the body, the proxy and the callback.
     fn send_again(
-        mut self: Box<Self>,
+        &mut self,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_jsc::JsResult<()> {
         let signed = self.resend.as_ref().and_then(|resend| {
@@ -715,7 +715,7 @@ impl Wait {
         // SAFETY: fn contract.
         unsafe { (*this).abort_handle.leave() };
         // SAFETY: fn contract — allocated in `start`, reclaimed exactly once.
-        let Wait { task, .. } = *unsafe { bun_core::heap::take(this) };
+        let Wait { mut task, .. } = *unsafe { bun_core::heap::take(this) };
         let vm = VirtualMachine::get();
         let context = vm.enter_context(task.context);
         if task.is_sent_again(context.context()) {

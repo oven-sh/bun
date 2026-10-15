@@ -1018,7 +1018,12 @@ function llvm(image: Image): Tool {
     name: "llvm",
     identity: pinned(version),
     steps: [
-      ...llvmRelease(image.arch, [...llvmPrograms.map(name => `bin/${name}`), `lib/clang/${major}`]),
+      ...llvmRelease(image.arch, [
+        ...llvmPrograms.map(name => `bin/${name}`),
+        `lib/clang/${major}`,
+        // What scripts/build/feature-pass.cpp, a plugin of clang's and rustc's, is compiled against.
+        ...(image.role === "build" ? ["include/llvm", "include/llvm-c"] : []),
+      ]),
       ...installedDeb({
         url: ubuntuDebUrl(pins.llvm.icu, image.arch),
         sha256: pins.llvm.icu.sha256[image.arch],

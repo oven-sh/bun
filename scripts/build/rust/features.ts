@@ -22,9 +22,17 @@ export const featurePassSource = (root: string) => resolve(root, "scripts", "bui
 /** rustc and clang are the same LLVM, which cross-language LTO takes anyway. */
 const llvmHeaders = (cfg: Config) => join(dirname(dirname(cfg.hostCxx)), "include");
 
-/** The pass, or undefined where it cannot be made or loaded. A feature then stays where everything else is, and only its doors are shut. */
+/**
+ * The pass, or undefined where it cannot be made or loaded. That Bun has no islands, and says that nothing can be excluded from
+ * what it compiles. What CI builds is what ships.
+ */
 export function featurePass(cfg: Config): string | undefined {
   const canBeMade = cfg.host.os === "linux" && existsSync(join(llvmHeaders(cfg), "llvm", "Plugins", "PassPlugin.h"));
+  if (cfg.ci && !canBeMade) {
+    throw new BuildError(`feature-pass.cpp cannot be compiled: LLVM's headers are not in ${llvmHeaders(cfg)}`, {
+      hint: "The llvm tool of scripts/build/ci-images/spec.ts puts them on the image that builds.",
+    });
+  }
   return canBeMade ? join(cfg.buildDir, "feature-pass.so") : undefined;
 }
 

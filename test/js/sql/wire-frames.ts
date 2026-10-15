@@ -498,6 +498,7 @@ const hmacSha256 = (key: Buffer, data: string) => createHmac("sha256", key).upda
  * `exchanges` gets one entry per StartupMessage.
  */
 export async function pgScramServer(options: {
+  /** What the role's verifier was made from: the password after the server's SASLprep. */
   password: string;
   /** `i=` of the server-first-message. PBKDF2 only runs once a proof arrives. */
   iterations?: number;

@@ -309,6 +309,14 @@ function retireReplacedPools(generation: number) {
   }
 }
 
+/// SCRAM hashes SASLprep(password) (RFC 4013). A password that SASLprep refuses is used as it is, like in libpq.
+function saslprep(password: string): string {
+  const mapped = password
+    .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
+    .replace(/[\u00ad\u034f\u1806\u180b-\u180d\u200c\u200d\u2060\ufe00-\ufe0f\ufeff]/g, "");
+  return mapped === "" || /\p{C}/u.test(mapped) ? password : mapped.normalize("NFKC");
+}
+
 /**
  * Resolves the password (which may be a function and/or a promise) and calls
  * the driver's native createConnection with the normalized pool options.
@@ -379,6 +387,7 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     foundRows,
     channelBinding === "disable" ? 0 : channelBinding === "require" ? 2 : 1,
     transform?.column.from,
+    saslprep(password || ""),
   );
 }
 

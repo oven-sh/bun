@@ -58,6 +58,7 @@ const services = [
       { rolname: "bun_sql_test_long", verifier: "SCRAM-SHA-256$4096" },
       { rolname: "bun_sql_test_md5", verifier: "md5" },
       { rolname: "bun_sql_test_password", verifier: "SCRAM-SHA-256$4096" },
+      { rolname: "bun_sql_test_saslprep", verifier: "SCRAM-SHA-256$4096" },
       { rolname: "bun_sql_test_scram", verifier: "SCRAM-SHA-256$4096" },
       { rolname: "bun_sql_test_scram_1000", verifier: "SCRAM-SHA-256$1000" },
     ],
@@ -151,6 +152,18 @@ describeWithContainer("postgres_auth: scram-sha-256", { image: "postgres_auth", 
     } finally {
       for (const connection of reserved) connection.release();
     }
+  });
+
+  test("the server stores SASLprep(password)", async () => {
+    await container.ready;
+    await using sql = connect("bun_sql_test_saslprep", "softhyphen");
+    expect(await sql`select current_user as x`).toEqual([{ x: "bun_sql_test_saslprep" }]);
+  });
+
+  test("scram-sha-256: SASLprep is applied to the password", async () => {
+    await container.ready;
+    await using sql = connect("bun_sql_test_saslprep", "soft\u00adhyphen");
+    expect(await sql`select current_user as x`).toEqual([{ x: "bun_sql_test_saslprep" }]);
   });
 
   test("scram-sha-256: an iteration count below 4096 is refused by name", async () => {
@@ -578,5 +591,27 @@ describe.concurrent("scripted server", () => {
       result: { name: "PostgresError", code: "ERR_POSTGRES_INVALID_MESSAGE" },
       sentProof: false,
     });
+  });
+
+  // Left: what the user typed. Right: what PostgreSQL 15 makes the verifier from (checked against the real server).
+  test.each([
+    ["maps a non-ASCII space to a space", "a\u00a0b", "a b"],
+    ["maps U+200B to a space, as C.1.2 comes first", "a\u200bb", "a b"],
+    ["drops what is commonly mapped to nothing", "I\u00adX\u2060", "IX"],
+    ["normalizes with NFKC", "\u00aa\u2168", "aIX"],
+    ["composes", "e\u0301", "\u00e9"],
+    [
+      "an output longer than the input",
+      "\ufdfa",
+      "\u0635\u0644\u0649 \u0627\u0644\u0644\u0647 \u0639\u0644\u064a\u0647 \u0648\u0633\u0644\u0645",
+    ],
+    ["outside the BMP", "\u{1d7d8}\u{1d7d9}", "01"],
+    ["right-to-left from end to end", "\u05d0\u05d1", "\u05d0\u05d1"],
+    // Refused by SASLprep: the password is used as it is.
+    ["prohibited: as it is", "a\u0007\u00aa", "a\u0007\u00aa"],
+    ["maps to nothing: as it is", "\u00ad", "\u00ad"],
+    ["ASCII control characters: as it is", "a\u0007b", "a\u0007b"],
+  ])("SASLprep %s", async (_, typed, stored) => {
+    expect(await login({ password: stored }, undefined, typed)).toMatchObject({ result: "connected", proofOk: true });
   });
 });

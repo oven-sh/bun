@@ -158,6 +158,8 @@ pub struct PostgresSQLConnection {
     database: bun_ptr::RawSlice<u8>,
     user: bun_ptr::RawSlice<u8>,
     password: bun_ptr::RawSlice<u8>,
+    /// SASLprep(password), which is what SCRAM hashes.
+    scram_password: bun_ptr::RawSlice<u8>,
     path: bun_ptr::RawSlice<u8>,
     options: bun_ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
@@ -1255,9 +1257,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let channel_binding = ChannelBinding::from_js(global_object, callframe.argument(18))?;
 
     let options_str = arguments[7].to_bun_string(global_object)?;
-    let (username, password, database, options, path) = (
+    let scram_password_str = callframe.argument(20).to_bun_string(global_object)?;
+    let (username, password, scram_password, database, options, path) = (
         args.username_str.to_utf8(),
         args.password_str.to_utf8(),
+        scram_password_str.to_utf8(),
         args.database_str.to_utf8(),
         options_str.to_utf8(),
         args.path_str.to_utf8(),
@@ -1290,6 +1294,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             strings: ConnectionStrings::new(
                 username.slice(),
                 password.slice(),
+                scram_password.slice(),
                 database.slice(),
                 options.slice(),
                 path.slice(),
@@ -1339,21 +1344,30 @@ struct ConnectionStrings {
     buf: Box<[u8]>,
     user: bun_ptr::RawSlice<u8>,
     password: bun_ptr::RawSlice<u8>,
+    scram_password: bun_ptr::RawSlice<u8>,
     database: bun_ptr::RawSlice<u8>,
     options: bun_ptr::RawSlice<u8>,
     path: bun_ptr::RawSlice<u8>,
 }
 
 impl ConnectionStrings {
-    fn new(user: &[u8], password: &[u8], database: &[u8], options: &[u8], path: &[u8]) -> Self {
+    fn new(
+        user: &[u8],
+        password: &[u8],
+        scram_password: &[u8],
+        database: &[u8],
+        options: &[u8],
+        path: &[u8],
+    ) -> Self {
         let mut b = bun_core::StringBuilder::default();
-        for string in [user, password, database, options, path] {
+        for string in [user, password, scram_password, database, options, path] {
             b.count_z(string);
         }
         let _ = b.allocate();
         // The buffer never moves again, so each slice can outlive the borrow of `b`.
         let user = bun_ptr::RawSlice::new(b.append_z(user).as_bytes());
         let password = bun_ptr::RawSlice::new(b.append_z(password).as_bytes());
+        let scram_password = bun_ptr::RawSlice::new(b.append_z(scram_password).as_bytes());
         let database = bun_ptr::RawSlice::new(b.append_z(database).as_bytes());
         let options = bun_ptr::RawSlice::new(b.append_z(options).as_bytes());
         let path = bun_ptr::RawSlice::new(b.append_z(path).as_bytes());
@@ -1361,6 +1375,7 @@ impl ConnectionStrings {
             buf: b.move_to_slice(),
             user,
             password,
+            scram_password,
             database,
             options,
             path,
@@ -1414,6 +1429,7 @@ fn open(
         buf: options_buf,
         user: username,
         password,
+        scram_password,
         database,
         options,
         path,
@@ -1450,6 +1466,7 @@ fn open(
             database,
             user: username,
             password,
+            scram_password,
             path,
             options,
             options_buf,
@@ -1910,7 +1927,7 @@ impl PostgresSQLConnection {
             ConnectParams {
                 hostname: &hostname[..hostname_len],
                 port,
-                strings: ConnectionStrings::new(b"", b"", b"", b"", self.path.slice()),
+                strings: ConnectionStrings::new(b"", b"", b"", b"", b"", self.path.slice()),
                 secure: self.secure.clone(),
                 tls_config: Rc::clone(&self.tls_config),
                 // Encrypted exactly when this session is, whatever `prefer` would allow.
@@ -2812,7 +2829,7 @@ impl PostgresSQLConnection {
                         self.flush_data();
                     }
                     protocol::Authentication::SASLContinue(cont) => {
-                        let password: &[u8] = self.password();
+                        let password: &[u8] = self.scram_password.slice();
                         // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
                         // below (neither touches `authentication_state`).
                         let Some(sasl) = self.sasl_state_mut() else {

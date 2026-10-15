@@ -1214,6 +1214,8 @@ await sql.rollbackDistributed("tx1");
 
 Bun supports SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (SASL), MD5, and Clear Text authentication. We recommend SASL for better security. See [Postgres SASL Authentication](https://www.postgresql.org/docs/current/sasl-authentication.html).
 
+For a SCRAM login, Bun normalizes a non-ASCII password with SASLprep, like `psql`. The same password logs in whichever Unicode form you type it in.
+
 ### Channel binding
 
 Over TLS, PostgreSQL can tie a SCRAM login to the server's certificate (SCRAM-SHA-256-PLUS). Someone who terminates TLS between the client and the server then cannot pass the login on. Set `channelBinding` to control it:

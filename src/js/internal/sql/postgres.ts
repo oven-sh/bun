@@ -256,6 +256,7 @@ export interface PostgresDotZig {
     foundRows: boolean,
     channelBinding: 0 | 1 | 2,
     columnTransform: ((name: string) => string) | undefined,
+    scramPassword: string,
   ) => $ZigGeneratedClasses.PostgresSQLConnection;
   createQuery: (
     sql: string,

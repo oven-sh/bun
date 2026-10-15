@@ -30,7 +30,7 @@ use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
+use bun_sema_driver::host::{AlreadyRead, Provided, as_read, from_native, is_bundled, to_native};
 use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
@@ -569,7 +569,7 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             None => {
                 noted.push(FileResult {
                     messages: Vec::new(),
-                    text: crate::fs::read(path).ok(),
+                    text: crate::git::read(context.only, &crate::paths::from_native(path)).ok(),
                     ..FileResult::ignored(path.to_vec(), b"")
                 });
                 noted.len() - 1
@@ -673,11 +673,18 @@ pub(crate) fn lint(
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
+    let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
+    // Under the name that the file is linted by, which can lead through a link.
+    staged.extend(files.iter().filter_map(|file| {
+        let text = context.only?.staged_text(file.path)?.to_vec();
+        Some((from_native(file.path), as_read(file.path, text, true)))
+    }));
     while !pending.is_empty() {
         let changed = states
             .iter()
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
+        let changed = staged.clone().into_iter().chain(changed);
         let linted = check_and_lint(context, environment, files, &pending, changed.collect());
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {

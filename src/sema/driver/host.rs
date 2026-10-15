@@ -367,6 +367,12 @@ fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
     })
 }
 
+/// What a [`Disk`] makes of the bytes of the file at `path`, which is how [`AlreadyRead`] has a text.
+pub fn as_read(path: &[u8], bytes: Vec<u8>, keeps_byte_order_marks: bool) -> Vec<u8> {
+    let keeps_mark = keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
+    decoded(bytes, keeps_mark).into_owned()
+}
+
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
     let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);

@@ -1030,14 +1030,18 @@ impl Run<'_> {
         // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
         // is linted with types has them anyway: `typed::OfFile`.
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
-        let inferred = (options.infer_globals == Some(true) || by_options)
-            .then(|| Inferred::new(environment, pool.threads(), by_options));
-        let invalid_tsconfigs = Guarded::new(Default::default());
-        let only = (options.only.as_ref()).map(|it| git::Files::read(it, options.fix, environment));
+        let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment));
         let only = match only.transpose() {
             Ok(only) => only,
             Err(Fatal(error)) => return self.refuse_flag(&error),
         };
+        let staged = || only.as_ref().map(|it| it.already_read(false));
+        store.provide(staged().unwrap_or_default());
+        let inferred = (options.infer_globals == Some(true) || by_options).then(|| {
+            let staged = staged().unwrap_or_default();
+            Inferred::new(environment, pool.threads(), by_options, staged)
+        });
+        let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,

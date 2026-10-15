@@ -8,7 +8,8 @@ use crate::args::{UsageError, error};
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_sema::util::FxHashSet;
+use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sema_driver::host::{AlreadyRead, as_read, from_native};
 use std::borrow::Cow;
 
 /// Which files to ask git for.
@@ -50,12 +51,11 @@ pub enum NotRun {
 }
 
 /// `git diff` that prints NUL-terminated paths relative to the repository root, whatever the user's git config says.
-const DIFF: [&[u8]; 10] = [
+const DIFF: [&[u8]; 9] = [
     b"--no-optional-locks",
     b"-c",
     b"diff.relative=false",
     b"diff",
-    b"--name-only",
     b"-z",
     b"--no-renames",
     b"--ignore-submodules=all",
@@ -135,16 +135,14 @@ pub(crate) struct Files<'e> {
     top: Vec<u8>,
     /// Absolute paths, in `top`.
     named: FxHashSet<Vec<u8>>,
-    /// Files with unstaged changes. Only filled in for a `--staged` run that writes files.
-    partly_staged: FxHashSet<Vec<u8>>,
+    /// For `--staged`: what the index has of each file that is different on disk, or gone from it.
+    in_the_index: FxHashMap<Vec<u8>, Vec<u8>>,
 }
 
 impl<'e> Files<'e> {
-    /// `writes` is true if the run writes files.
     #[optimize(size)]
     pub(crate) fn read(
         only: &'e Only,
-        writes: bool,
         environment: &'e Environment<'e>,
     ) -> Result<Files<'e>, Fatal> {
         let mut files = Files {
@@ -152,7 +150,7 @@ impl<'e> Files<'e> {
             environment,
             top: Vec::new(),
             named: FxHashSet::default(),
-            partly_staged: FxHashSet::default(),
+            in_the_index: FxHashMap::default(),
         };
         let flag = only.flag();
         // `--show-toplevel` is only here to fail where there's no work tree, like inside `.git`. `--show-cdup` is the
@@ -170,8 +168,8 @@ impl<'e> Files<'e> {
         match only {
             Only::Staged => {
                 files.named = files.diff(&top, &[b"--cached", IS_THERE])?;
-                if writes {
-                    files.partly_staged = files.diff(&top, &[])?;
+                if !files.named.is_empty() {
+                    files.read_the_index(&top)?;
                 }
             }
             Only::Changed(since) => {
@@ -221,15 +219,69 @@ impl<'e> Files<'e> {
     fn names(&self, top: &[u8], args: &[&[u8]]) -> Result<FxHashSet<Vec<u8>>, Fatal> {
         let finished = self.git(args, b"")?;
         if !finished.is_ok {
-            let first = format!("{} cannot read the git repository", self.only.flag());
-            return Err(in_the_words_of_git(&first, &finished));
+            return Err(self.unreadable(&finished));
         }
         let names = strings::split(&finished.stdout, b"\0").filter(|it| !it.is_empty());
         Ok(names.map(|it| paths::join(top, it)).collect())
     }
 
     fn diff(&self, top: &[u8], args: &[&[u8]]) -> Result<FxHashSet<Vec<u8>>, Fatal> {
-        self.names(top, &[&DIFF[..], args].concat())
+        self.names(top, &[&DIFF[..], &[b"--name-only"], args].concat())
+    }
+
+    fn unreadable(&self, finished: &Finished) -> Fatal {
+        let first = format!("{} cannot read the git repository", self.only.flag());
+        in_the_words_of_git(&first, finished)
+    }
+
+    /// Fills in `in_the_index`. What the index has as a symlink doesn't count as a file, whatever it is on disk.
+    fn read_the_index(&mut self, top: &[u8]) -> Result<(), Fatal> {
+        let finished = self.git(&[&DIFF[..], &[b"--raw", b"--no-abbrev"]].concat(), b"")?;
+        if !finished.is_ok {
+            return Err(self.unreadable(&finished));
+        }
+        // `:<mode in the index> <mode on disk> <ID in the index> <zeros> <status>`, NUL, the path, NUL.
+        let mut parts = strings::split(&finished.stdout, b"\0");
+        let mut different = Vec::new();
+        while let Some(entry) = parts.next().filter(|it| !it.is_empty()) {
+            let mut fields = strings::split(entry, b" ");
+            let (Some(mode), Some(id), Some(path)) = (fields.next(), fields.nth(1), parts.next())
+            else {
+                return Err(self.unreadable(&finished));
+            };
+            let path = paths::join(top, path);
+            match mode.starts_with(b":100") {
+                true => different.push((path, id.to_vec())),
+                false => _ = self.named.remove(&path),
+            }
+        }
+        self.in_the_index = self.blobs(different)?;
+        Ok(())
+    }
+
+    /// Reads blobs. Takes and returns paths, each with its blob's ID and then with its blob's content.
+    fn blobs(&self, wanted: Vec<(Vec<u8>, Vec<u8>)>) -> Result<FxHashMap<Vec<u8>, Vec<u8>>, Fatal> {
+        let mut blobs = FxHashMap::default();
+        if wanted.is_empty() {
+            return Ok(blobs);
+        }
+        let ids: Vec<&[u8]> = wanted.iter().map(|it| &it.1[..]).collect();
+        let input = [&ids.join(&b'\n')[..], b"\n"].concat();
+        let finished = self.git(&[b"cat-file", b"--batch"], &input)?;
+        let mut rest = &finished.stdout[..];
+        for (path, _) in wanted {
+            // `<ID> blob <size>`, a line break, the content, a line break.
+            let content = strings::split_once_char(rest, b'\n').and_then(|(first, after)| {
+                let size = strings::rsplit_once_char(first, b' ')?.1;
+                after.split_at_checked(bun_core::fmt::parse_decimal::<usize>(size)?)
+            });
+            let Some((content, after)) = content.filter(|_| finished.is_ok) else {
+                return Err(self.unreadable(&finished));
+            };
+            blobs.insert(path, content.to_vec());
+            rest = after.get(1..).unwrap_or_default();
+        }
+        Ok(blobs)
     }
 
     /// Resolves `written` to a commit ID. Later git calls only get the ID, because they could parse `written` as a flag
@@ -287,7 +339,25 @@ impl<'e> Files<'e> {
 
     /// True if writing `path` and staging it again would also stage changes the user didn't stage.
     pub(crate) fn is_partly_staged(&self, path: &[u8]) -> bool {
-        self.partly_staged.contains(&*self.as_listed(path))
+        self.staged_text(path).is_some()
+    }
+
+    /// What will be committed of a [partly staged](Files::is_partly_staged) file. The file on disk has something else.
+    pub(crate) fn staged_text(&self, path: &[u8]) -> Option<&[u8]> {
+        if self.in_the_index.is_empty() {
+            return None;
+        }
+        (self.in_the_index.get(&*self.as_listed(path))).map(Vec::as_slice)
+    }
+
+    /// `in_the_index`, for whatever follows imports: it finds what the commit has, staged or not.
+    pub(crate) fn already_read(&self, keeps_byte_order_marks: bool) -> AlreadyRead {
+        (self.in_the_index.iter())
+            .map(|(path, text)| {
+                let text = as_read(path, text.clone(), keeps_byte_order_marks);
+                (from_native(path), text)
+            })
+            .collect()
     }
 
     /// Message for a run with no files left. `verb` is what the run does to files, like "lint".
@@ -358,5 +428,16 @@ impl<'e> Files<'e> {
                 &finished,
             )),
         }
+    }
+}
+
+/// The text that a run reads for the file at `path` (absolute).
+pub(crate) fn read(only: Option<&Files>, path: &[u8]) -> bun_sys::Result<Vec<u8>> {
+    match only.and_then(|it| it.staged_text(path)) {
+        Some(text) if text.len() as u64 > bun_lint::fix::MAX_STRING_LENGTH => Err(
+            bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read),
+        ),
+        Some(text) => Ok(text.to_vec()),
+        None => fs::read(path),
     }
 }

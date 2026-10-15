@@ -279,7 +279,7 @@ bun run generate-types | bun fmt --parser typescript > types.ts
 bun fmt --staged
 ```
 
-A file with both staged and unstaged changes isn't written, because staging it again would commit the rest. Bun names the file and exits with code `2`.
+If a file has both staged and unstaged changes, Bun looks at the staged version, which is what the commit gets. It doesn't write such a file, because staging it again would commit the rest. If the staged version needs formatting, Bun names the file and exits with code `2`.
 
 `--changed` formats the files that differ from your default branch. Pass a ref to compare with something else.
 

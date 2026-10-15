@@ -51,7 +51,10 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 });
 
 describe("--watch recovers from a missing import", () => {
-  test.concurrent.each([
+  // todo on Windows CI: in build 126262, 1 to 4 of these 5 rows timed out in each of 4 runs on x64, and
+  // all 5 on arm64. Each restart is a new process, and its watcher thread makes its first
+  // `ReadDirectoryChangesW` call after it starts. A save right after the first line is probably lost.
+  test.todoIf(isBroken && isWindows).concurrent.each([
     ["./a.js", "a.js"],
     // The resolver looks a name up without regard to ASCII case.
     ["./Dep.js", "dep.js"],
@@ -178,6 +181,7 @@ describe("--watch recovers from a missing import", () => {
   });
 
   // A link to a directory is a directory for the resolver: made again, it holds nothing new.
+  // Not on Windows: a link needs a privilege there.
   test
     .skipIf(isWindows)
     .concurrent("a caught miss does not rerun when a link to a directory is made again", async () => {

@@ -2464,6 +2464,18 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a s
     await expectLinked(ctx, { dependencies: { "a-tool": "1.0.0", tool: "1.0.0" }, trustedDependencies: ["tool"] });
     if (!isWindows) expect(readlinkSync(ctx.installed(".bin", "tool"))).toBe(join("..", "a-tool", "cli.js"));
   });
+
+  // The file of the bin is in the tarball, so nothing is left to link after the script.
+  test.skipIf(isWindows || linker === "isolated")(
+    "a program that a script puts in place of its link stays",
+    async () => {
+      using ctx = await setupScriptPackages(linker, {
+        tool: { bin: { tool: "cli.js" }, scripts: { postinstall: "rm ../.bin/tool && cp cli.js ../.bin/tool" }, files },
+      });
+      await expectLinked(ctx, { dependencies: { tool: "1.0.0" }, trustedDependencies: ["tool"] });
+      expect(lstatSync(ctx.installed(".bin", "tool")).isFile()).toBe(true);
+    },
+  );
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)", linker => {

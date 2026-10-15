@@ -2370,25 +2370,6 @@ impl PackageManifest {
 
         deprecated
     }
-
-    /// The highest version in `group` that `accept` takes.
-    pub(crate) fn find_highest_version(
-        &self,
-        group: &Semver::query::Group,
-        group_buf: &[u8],
-        accept: impl Fn(Semver::Version) -> bool,
-    ) -> Option<FindResult<'_>> {
-        for list in [self.pkg.releases, self.pkg.prereleases] {
-            let versions = list.keys.get(&self.versions);
-            let packages = list.values.get(&self.package_versions);
-            for (&version, package) in versions.iter().zip(packages).rev() {
-                if group.satisfies(version, group_buf, &self.string_buf) && accept(version) {
-                    return Some(FindResult { version, package });
-                }
-            }
-        }
-        None
-    }
 }
 
 // Keys are pre-hashed string hashes, so don't re-hash them.

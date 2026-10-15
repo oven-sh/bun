@@ -2231,23 +2231,48 @@ fn warn_deprecated(
 
 /// A row whose range admits a patched version takes it, whichever versions are in the lockfile.
 fn patched_version_in_range<'m>(
-    this: &PackageManager,
+    this: &mut PackageManager,
     manifest: &'m Npm::PackageManifest,
     version: &dependency::Version,
 ) -> Option<Npm::FindResult<'m>> {
-    let patched = &this.lockfile.patched_dependencies;
-    if patched.count() == 0 {
+    if this.lockfile.patched_dependencies.count() == 0 {
         return None;
     }
+    if this.patched_versions.is_none() {
+        this.patched_versions = Some(index_patched_versions(this));
+    }
+    let group = &version.try_npm()?.version;
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    manifest.find_highest_version(&version.try_npm()?.version, buf, |found| {
-        let label = format!(
-            "{}@{}",
-            bstr::BStr::new(manifest.name()),
-            found.fmt(&manifest.string_buf)
-        );
-        patched.contains(&Semver::string::Builder::string_hash(label.as_bytes()))
-    })
+    let versions: &[u8] = &manifest.string_buf;
+    (this.patched_versions.iter().flatten())
+        .filter(|&&(name_hash, _)| name_hash == manifest.pkg.name.hash)
+        .filter_map(|&(_, patched)| manifest.find_by_version(patched))
+        .filter(|found| group.satisfies(found.version, buf, versions))
+        // The highest release, else the highest prerelease.
+        .max_by(|a, b| {
+            (b.version.tag.has_pre().cmp(&a.version.tag.has_pre()))
+                .then_with(|| a.version.order(b.version, versions, versions))
+        })
+}
+
+/// The lockfile has only hashes of the keys of `patchedDependencies`.
+#[cold]
+fn index_patched_versions(this: &mut PackageManager) -> Vec<(PackageNameHash, Semver::Version)> {
+    use Semver::string::Builder;
+    let keys = crate::update_transitive::patched_dependency_keys(this);
+    let patched = &this.lockfile.patched_dependencies;
+    (keys.iter())
+        .filter(|key| patched.contains(&Builder::string_hash(key)))
+        .filter_map(|key| {
+            // The first one after a scope's.
+            let (name, text) = key.split_at(strings::index_of_char_pos(key, b'@', 1)?);
+            let text = &text[1..];
+            let version = Semver::Version::parse_exact(Semver::SlicedString::init(text, text))?;
+            // A patch applies to the version as bun prints it.
+            (format!("{}", version.fmt(text)).as_bytes() == text)
+                .then(|| (Builder::string_hash(name), version))
+        })
+        .collect()
 }
 
 /// `is_filtered_dependency_or_workspace` filters the package of this row and everything below it.

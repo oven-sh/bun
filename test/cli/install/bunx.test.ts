@@ -2609,6 +2609,24 @@ describe("a package in node_modules", () => {
     });
   });
 
+  // Reading an empty package.json ends the process.
+  it.concurrent("the other members of the workspace are not read", async () => {
+    using box = sandbox(undefined, {
+      cwd: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/member/package.json": JSON.stringify({ name: "member" }),
+        "packages/other/package.json": "",
+      },
+    });
+    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+
+    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
+      stdout: "corp of @corp/cli 1.0.0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // On Windows the entry is no link, so it does not say whose it is.
   it.concurrent.skipIf(isWindows).each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
     "bunx %j runs the bin of that package where another one has the entry in .bin",

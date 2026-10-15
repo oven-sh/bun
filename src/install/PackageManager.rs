@@ -430,6 +430,8 @@ pub struct PackageManager {
     pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
     // Filled with it: the names the root resolves to a folder, a tarball or a repository.
     pub(crate) local_in_root: Vec<PackageNameHash>,
+    // What the keys of `patchedDependencies` name; see enqueue::index_patched_versions.
+    pub(crate) patched_versions: Option<Vec<(PackageNameHash, Semver::Version)>>,
 
     // name hash from alias package name -> the alias's `npm:` specifier text. Only what the project declares.
     pub(crate) known_npm_aliases: NpmAliasMap,
@@ -1593,6 +1595,7 @@ fn allocate_package_manager(
         );
         wr!(peer_askers, None);
         wr!(local_in_root, Vec::new());
+        wr!(patched_versions, None);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
@@ -1933,20 +1936,25 @@ impl<'a> PackageJsonWalk<'a> {
 /// The rest of the walk, above the `package.json` of `child_cwd`. The first one with `workspaces`
 /// decides: if they list `child_cwd`, its directory, its open file and the hash of the member's name.
 /// `last_name` gets the `name` of the last `package.json` read.
+/// `members` gets every member, read from disk. Without it no member is read, and the hash is 0:
+/// `child_cwd`, whose package.json has a name, is matched against the entries of `workspaces`.
 fn find_workspace_root<'a>(
     walk: &mut PackageJsonWalk<'a>,
     child_cwd: &[u8],
     log: &mut bun_ast::Log,
-    workspace_names: &mut Package::WorkspaceMap::WorkspaceMap,
-    workspace_package_json_cache: &mut WorkspacePackageJSONCache,
+    mut members: Option<(
+        &mut Package::WorkspaceMap::WorkspaceMap,
+        &mut WorkspacePackageJSONCache,
+    )>,
     mut last_name: Option<&mut Box<[u8]>>,
 ) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
     let found = find_workspace_root_above(
         walk,
         child_cwd,
         log,
-        workspace_names,
-        workspace_package_json_cache,
+        members
+            .as_mut()
+            .map(|(names, cache)| (&mut **names, &mut **cache)),
         last_name.as_deref_mut(),
     )?;
     if found.is_some() {
@@ -1958,15 +1966,10 @@ fn find_workspace_root<'a>(
     };
     *walk = PackageJsonWalk::new(child_cwd);
     walk.next_dir = bun_core::dirname(child_cwd);
-    *workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
-    find_workspace_root_above(
-        walk,
-        child_cwd,
-        log,
-        workspace_names,
-        workspace_package_json_cache,
-        last_name,
-    )
+    if let Some((names, _)) = &mut members {
+        **names = Package::WorkspaceMap::WorkspaceMap::init();
+    }
+    find_workspace_root_above(walk, child_cwd, log, members, last_name)
 }
 
 /// `dir`, which the process started in or below, as `$PWD` spells it: with the links that the user
@@ -1998,8 +2001,10 @@ fn find_workspace_root_above<'a>(
     walk: &mut PackageJsonWalk<'a>,
     child_cwd: &[u8],
     log: &mut bun_ast::Log,
-    workspace_names: &mut Package::WorkspaceMap::WorkspaceMap,
-    workspace_package_json_cache: &mut WorkspacePackageJSONCache,
+    members: Option<(
+        &mut Package::WorkspaceMap::WorkspaceMap,
+        &mut WorkspacePackageJSONCache,
+    )>,
     mut last_name: Option<&mut Box<[u8]>>,
 ) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
     // Finding the workspace root must not depend on its package.json being writable.
@@ -2066,6 +2071,12 @@ fn find_workspace_root_above<'a>(
                 _ => None,
             };
             let Some(names) = names else {
+                break;
+            };
+            let Some((workspace_names, workspace_package_json_cache)) = members else {
+                if Package::WorkspaceMap::WorkspaceMap::lists(names, &json_source, child_cwd) {
+                    return Ok(Some((parent, json_file, 0)));
+                }
                 break;
             };
             let mut log = bun_ast::Log::init();
@@ -2146,6 +2157,8 @@ fn find_project<'a>(
     let mut walk = PackageJsonWalk::new(dir);
     let mut project = None;
     let mut topmost = None;
+    // A workspace has no member without a name.
+    let mut is_named = false;
     while let Some((dir, opened)) = walk.next(bun_sys::O::RDONLY) {
         const OF_A_PROJECT: [&[u8]; 6] = [
             b"name",
@@ -2165,6 +2178,9 @@ fn find_project<'a>(
         {
             Ok(json) if OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()) => {
                 project = Some(dir);
+                is_named = json.root.get(b"name").is_some_and(|name| {
+                    matches!(&name.data, bun_ast::ExprData::EString(it) if !it.data.slice().is_empty())
+                });
             }
             Ok(_) => {
                 topmost = Some(dir);
@@ -2175,13 +2191,12 @@ fn find_project<'a>(
         }
         break;
     }
-    if let Some(member) = project {
+    if let Some(member) = project.filter(|_| is_named) {
         match find_workspace_root(
             &mut walk,
             without_trailing_slash_windows_path(member),
             &mut bun_ast::Log::init(),
-            &mut Package::WorkspaceMap::WorkspaceMap::init(),
-            workspace_package_json_cache,
+            None,
             None,
         ) {
             Ok(Some((root, _, _))) => project = Some(root),
@@ -2451,8 +2466,7 @@ pub fn init(
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
                     unsafe { &mut *ctx.log },
-                    &mut workspace_names,
-                    &mut workspace_package_json_cache,
+                    Some((&mut workspace_names, &mut workspace_package_json_cache)),
                     (subcommand == Subcommand::Pm)
                         .then_some(&mut root_package_json_name_at_time_of_init),
                 )?

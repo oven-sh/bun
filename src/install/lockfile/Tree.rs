@@ -496,8 +496,11 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
     pub(crate) pending_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// A peer got bound, or moved, after its dependent was placed; see `Lockfile::resolve`.
+    /// A peer got bound, or moved, and a pass that starts from that can place something elsewhere;
+    /// see `Lockfile::resolve`.
     pub(crate) late_bound_peer: bool,
+    /// `hoist_root_resolves_elsewhere` reads the rows of packages this pass has yet to walk.
+    pub(crate) bundle_placed: bool,
     /// The packages whose rows this pass has walked; it walks them once per place of the package.
     pub(crate) walked: DynamicBitSet,
     /// Peers `bind_peer` bound, with the other package their dependent finds from its first place.
@@ -1336,10 +1339,28 @@ impl Tree {
                     builder,
                 )
             };
+            // Nothing has read a row before the first walk of its package. So the pass that starts
+            // from the row on `res_id` is this pass again if the row shares that copy from here.
+            let stays_on = |res_id: PackageID, builder: &mut Builder<'_, METHOD>| {
+                first_walk
+                    && !builder.bundle_placed
+                    && matches!(
+                        Tree::hoist_dependency::<true, METHOD>(
+                            next_id,
+                            hoist_root_id,
+                            res_id,
+                            dep_id,
+                            resolution_list,
+                            builder,
+                        ),
+                        HoistDependencyResult::Hoisted
+                    )
+            };
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
                 if dependency.behavior.is_bundled() {
+                    builder.bundle_placed = true;
                     break 'hoisted HoistDependencyResult::Placement {
                         id: next_id,
                         bundled: true,
@@ -1414,7 +1435,9 @@ impl Tree {
                     if first_walk || !dependency.behavior.is_optional_peer() {
                         builder.resolutions[dep_id as usize] = res_id;
                         // Bound, it can get a copy of its own next to a peer of that package.
-                        builder.late_bound_peer = true;
+                        if !stays_on(res_id, &mut *builder) {
+                            builder.late_bound_peer = true;
+                        }
                     }
                 }
                 HoistDependencyResult::ResolveReplace {
@@ -1455,7 +1478,9 @@ impl Tree {
                     // One row for all places of its package: the first decides, alike in each pass.
                     if first_walk {
                         builder.resolutions[dep_id as usize] = res_id;
-                        builder.late_bound_peer = true;
+                        if !stays_on(res_id, &mut *builder) {
+                            builder.late_bound_peer = true;
+                        }
                     }
                 }
                 HoistDependencyResult::ResolveLater => {

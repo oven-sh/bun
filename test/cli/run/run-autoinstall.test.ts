@@ -3048,6 +3048,84 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
     });
   });
 
+  // Whether `app` is the project of `app/<folder>` is what `bun install` in that folder says.
+  cell.each([
+    [true, "packages/member", ["packages/*"]],
+    [true, "packages/member", ["./packages/*/"]],
+    [true, "packages/member", ["packages/member"]],
+    [true, "packages/member", ["./packages/../packages/member/"]],
+    [true, "packages/member", ["packages/**"]],
+    [true, "packages/member", ["other/*", "{apps,packages}/m*"]],
+    [true, "packages/member", ["packages/[lm]ember"]],
+    [true, "packages/deep/member", ["packages/**"]],
+    [true, "packages/member", ["!packages/member", "packages/member"]],
+    [true, "packages/member", ["packages/*", "!packages/other"]],
+    [true, "packages/.member", ["packages/.*"]],
+    [false, "packages/member", ["apps/*"]],
+    [false, "packages/member", ["packages"]],
+    [false, "packages/member", ["packages/*/*"]],
+    [false, "packages/deep/member", ["packages/*"]],
+    [false, "packages/member", ["packages/*", "!packages/member"]],
+    [false, "packages/member", ["!packages/m*", "packages/*"]],
+    [false, "packages/member", ["packages/*", "!packages/**"]],
+    [false, "packages/.member", ["packages/*"]],
+    [false, "packages/.git/member", ["packages/**"]],
+    [false, "packages/member", ["packages/*", 1]],
+    [false, "packages/member", []],
+  ] as [boolean, string, unknown[]][])("is a member: %p, %s of %j", async (isMember, folder, workspaces) => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      cwd: dir => join(dir, "app", folder),
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/package.json": JSON.stringify({ name: "app", workspaces }),
+        [`app/${folder}/package.json`]: JSON.stringify({ name: "member" }),
+        [`app/${folder}/x.mjs`]: importIt,
+      }),
+    });
+    expect(result).toEqual(isMember ? fromPrivateRegistry : fromDefaultRegistry);
+  });
+
+  cell("a folder that `workspaces` matches is no member without a name", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      cwd: dir => join(dir, "app", "packages", "member"),
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "app/packages/member/package.json": JSON.stringify({ dependencies: { "@corp/thing": "1.0.0" } }),
+        "app/packages/member/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromDefaultRegistry);
+  });
+
+  // Reading an empty package.json ends the process.
+  cell("the other members are not read when bun.lock has them", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      cwd: dir => join(dir, "app", "packages", "member"),
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "app/bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: {
+            "": { name: "app" },
+            "packages/member": { name: "member" },
+            "packages/other": { name: "other" },
+          },
+          packages: { member: ["member@workspace:packages/member"], other: ["other@workspace:packages/other"] },
+        }),
+        "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+        "app/packages/member/x.mjs": importIt,
+        "app/packages/other/package.json": "",
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
   const projectInProject = {
     "app/package.json": JSON.stringify({ name: "app" }),
     "app/examples/package.json": packageJson,

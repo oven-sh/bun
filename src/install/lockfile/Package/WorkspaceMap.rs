@@ -662,6 +662,73 @@ impl WorkspaceMap {
 
         Ok(workspace_names.count() as u32)
     }
+
+    /// Whether [`Self::process_names_array`] lists `abs_dir`, which has a package.json with a name.
+    /// It asks the entries and not the disk, so a `**` also goes through a link.
+    pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
+        let root_dir: &[u8] = package_json_dir(source);
+        let mut dir_buf = path::path_buffer_pool::get();
+        let dir = relative_workspace_path(&mut dir_buf.0, root_dir, abs_dir);
+        if dir.is_empty() {
+            return false;
+        }
+        let mut abs_buf = path::path_buffer_pool::get();
+        let mut rel_buf = path::path_buffer_pool::get();
+        let scratch = Arena::new();
+        let mut negated = NegatedWorkspaces::default();
+        let mut matched = false;
+        for i in 0..arr.len() {
+            let Some(input_path) = arr.item_str(i, &scratch) else {
+                return false;
+            };
+            if matches!(input_path, b"" | b"." | b"./" | b".\\") {
+                continue;
+            }
+            if glob::detect_glob_syntax(input_path) {
+                if !negated.take(input_path) {
+                    matched = matched || glob_lists(input_path, dir, abs_dir);
+                }
+                continue;
+            }
+            // One listed by its path stays a member, whatever is negated.
+            if resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                root_dir,
+                &mut abs_buf.0[..],
+                &[input_path],
+            )
+            .is_some_and(|abs| relative_workspace_path(&mut rel_buf.0, root_dir, abs) == dir)
+            {
+                return true;
+            }
+        }
+        matched && !negated.excludes(dir)
+    }
+}
+
+/// Whether the walk of `user_pattern` comes to the package.json of `dir`, which is `abs_dir`.
+fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
+    let dir = if path::is_absolute(user_pattern) {
+        abs_dir
+    } else {
+        dir
+    };
+    if strings::split_any(dir, b"/\\").any(ignored_workspace_paths) {
+        return false;
+    }
+    let mut spill: Vec<u8> = Vec::new();
+    let mut pattern = resolve_path::join_spill::<path::platform::Auto>(
+        &mut spill,
+        &[user_pattern, b"package.json"],
+    )
+    .to_vec();
+    resolve_path::platform_to_posix_in_place::<u8>(&mut pattern);
+    glob::matcher::match_prepared::<{ cfg!(windows) }>(
+        &pattern,
+        &glob::matcher::Shape::of(&pattern),
+        &[dir, b"/package.json"].concat(),
+        glob::Dots::Hide,
+    )
+    .matches()
 }
 
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];

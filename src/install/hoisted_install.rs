@@ -435,7 +435,7 @@ pub(crate) fn install_hoisted_packages(
                                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
-                            links_bins_after_scripts: false,
+                            bins_after_scripts: Vec::new(),
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
@@ -575,7 +575,7 @@ pub(crate) fn install_hoisted_packages(
 
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
-        installer.link_remaining_bins();
+        installer.link_remaining_bins(false);
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.

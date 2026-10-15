@@ -411,8 +411,9 @@ pub struct TreeContext {
     pub(crate) pending_installs: Vec<DependencyInstallContext>,
 
     pub(crate) binaries: bin::PriorityQueue,
-    /// A package with a bin runs scripts, which can write the bin's file.
-    pub(crate) links_bins_after_scripts: bool,
+    /// Dependencies with a bin that run scripts, which can write the bin's file. One leaves the
+    /// list when the files of its bins are all there to link.
+    pub(crate) bins_after_scripts: Vec<DependencyID>,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
@@ -654,6 +655,7 @@ impl<'a> PackageInstaller<'a> {
             self.link_tree_bins(
                 tree_id,
                 true,
+                false,
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
@@ -672,10 +674,12 @@ impl<'a> PackageInstaller<'a> {
         self.increment_tree_install_count(is_pending_package_install, log_level);
     }
 
+    /// `only_free_names`: what is in `.bin` stays as it is.
     fn link_tree_bins(
         &mut self,
         tree_id: TreeContextId,
         can_defer: bool,
+        only_free_names: bool,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -717,6 +721,9 @@ impl<'a> PackageInstaller<'a> {
             );
             while tree.binaries.remove_or_null().is_some() {}
             return;
+        }
+        if only_free_names {
+            bin::see_linked_names(node_modules_path.slice(), &mut self.seen_bin_links);
         }
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
@@ -877,6 +884,9 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 }
 
+                if !bin_linker.skipped_due_to_missing_bin {
+                    tree.bins_after_scripts.retain(|&id| id != dep_id);
+                }
                 if let Some(err) = bin_linker.err {
                     if global {
                         // A logged error stops the save; `bun remove -g` only knows saved packages.
@@ -913,7 +923,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    pub(crate) fn link_remaining_bins(&mut self) {
+    pub(crate) fn link_remaining_bins(&mut self, only_free_names: bool) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
@@ -949,6 +959,7 @@ impl<'a> PackageInstaller<'a> {
                 self.link_tree_bins(
                     tree_id as u32,
                     false,
+                    only_free_names,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
@@ -957,23 +968,18 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// Every bin of a tree that `links_bins_after_scripts`, in their order: the first link stays.
+    /// Links the `bins_after_scripts`. A name that another package or a script took stays theirs.
     pub(crate) fn link_bins_after_scripts(&mut self) {
-        let lockfile = self.lockfile();
-        let rows = lockfile.buffers.hoisted_dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-        for (tree, context) in lockfile.buffers.trees.iter().zip(self.trees.iter_mut()) {
-            if !context.links_bins_after_scripts {
-                continue;
-            }
-            for &dep_id in tree.dependencies.get(rows) {
-                let bin = self.bins.get(resolutions[dep_id as usize] as usize);
-                if bin.is_some_and(|bin| bin.tag != bin::Tag::None) {
-                    context.binaries.add(dep_id).unwrap_or_oom();
-                }
+        let mut queued = false;
+        for tree in self.trees.iter_mut() {
+            for dep_id in core::mem::take(&mut tree.bins_after_scripts) {
+                tree.binaries.add(dep_id).unwrap_or_oom();
+                queued = true;
             }
         }
-        self.link_remaining_bins();
+        if queued {
+            self.link_remaining_bins(true);
+        }
     }
 
     pub(crate) fn run_available_scripts(&mut self, log_level: Options::LogLevel) {
@@ -2671,8 +2677,11 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
-        self.trees[self.current_tree_id as usize].links_bins_after_scripts |=
-            self.bins[package_id as usize].tag != bin::Tag::None;
+        if self.bins[package_id as usize].tag != bin::Tag::None {
+            self.trees[self.current_tree_id as usize]
+                .bins_after_scripts
+                .push(dependency_id);
+        }
         self.unfinished_scripts
             .borrow_mut()
             .push((self.current_tree_id, scripts_list.package_name.clone()));

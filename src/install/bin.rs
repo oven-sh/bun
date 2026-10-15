@@ -1719,7 +1719,10 @@ impl<'a> Linker<'a> {
                 let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                     Ok(d) => sys::Dir::from_fd(d),
                     // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
-                    Err(err) if err.get_errno() == sys::Errno::ENOENT => return,
+                    Err(err) if err.get_errno() == sys::Errno::ENOENT => {
+                        self.skipped_due_to_missing_bin = true;
+                        return;
+                    }
                     Err(err) => {
                         self.err = Some(err.into());
                         return;
@@ -1851,6 +1854,30 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
     link_free_bins(lockfile, b"node_modules", Some(global_bin_path), &placed);
 }
 
+/// The linker skips a seen destination, so what is in the folder stays as it is. False: no folder.
+fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> bool {
+    let bin_path = strings::without_trailing_slash(bin_path);
+    let Ok(bin_dir) = sys::Dir::open(bin_path) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(bin_dir.fd());
+    while let Some(entry) = iter.next().unwrap_or(None) {
+        let name = entry.name.slice_u8();
+        #[cfg(windows)]
+        let name = (name.strip_suffix(b".bunx"))
+            .or_else(|| name.strip_suffix(b".exe"))
+            .unwrap_or(name);
+        let _ = seen.put(&[bin_path, &[SEP][..], name].concat(), ());
+    }
+    true
+}
+
+/// `see_names_in` the `.bin` of `node_modules`.
+pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>) {
+    let node_modules = strings::without_trailing_slash(node_modules);
+    see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
+}
+
 /// Links the bins of `placed`, packages of `node_modules` (from the top-level dir) by folder, in
 /// that order and under free names only. Without a `global_bin_path`, into its `.bin`.
 pub(crate) fn link_free_bins(
@@ -1867,31 +1894,13 @@ pub(crate) fn link_free_bins(
     };
     let (target_node_modules_path, mut node_modules_path) =
         (abs_node_modules(), abs_node_modules());
-    let bin_path: Vec<u8> = match global_bin_path {
-        Some(bin_path) => strings::without_trailing_slash(bin_path.as_bytes()).to_vec(),
-        None => {
-            let node_modules = strings::without_trailing_slash(node_modules_path.slice());
-            [node_modules, &[SEP][..], &b".bin"[..]].concat()
-        }
-    };
 
-    // The linker skips a seen destination, so what is in the folder stays as it is.
     let mut seen: StringHashMap<()> = StringHashMap::default();
-    match sys::Dir::open(&bin_path) {
-        Ok(bin_dir) => {
-            let mut iter = sys::iterate_dir(bin_dir.fd());
-            while let Some(entry) = iter.next().unwrap_or(None) {
-                let name = entry.name.slice_u8();
-                #[cfg(windows)]
-                let name = (name.strip_suffix(b".bunx"))
-                    .or_else(|| name.strip_suffix(b".exe"))
-                    .unwrap_or(name);
-                let _ = seen.put(&[&bin_path[..], &[SEP][..], name].concat(), ());
-            }
-        }
+    match global_bin_path {
         // The linker makes a `.bin`, and no global folder.
-        Err(_) if global_bin_path.is_some() => return,
-        Err(_) => {}
+        Some(bin_path) if !see_names_in(bin_path.as_bytes(), &mut seen) => return,
+        Some(_) => {}
+        None => see_linked_names(node_modules_path.slice(), &mut seen),
     }
 
     let mut abs_target_buf = path::path_buffer_pool::get();

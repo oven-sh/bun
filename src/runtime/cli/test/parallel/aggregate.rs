@@ -40,6 +40,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                     message: b"worker process crashed before reporting results".to_vec(),
                     ..Default::default()
                 }),
+                earlier_failures: Vec::new(),
             };
             junit.record_test_case(&crashed).expect("oom");
         }

@@ -854,14 +854,13 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
         wf.str(name);
         wf.u32(line);
     }
-    match &t.failure {
-        None => wf.u32(0),
-        Some(f) => {
-            wf.u32(1);
-            wf.str(&f.name);
-            wf.str(&f.message);
-            wf.str(&f.body);
-        }
+    // The last attempt's, if it failed, after the earlier ones'.
+    wf.u32(u32::from(t.failure.is_some()));
+    wf.u32(u32::try_from(t.earlier_failures.len()).expect("int cast"));
+    for f in t.earlier_failures.iter().chain(&t.failure) {
+        wf.str(&f.name);
+        wf.str(&f.message);
+        wf.str(&f.body);
     }
 }
 
@@ -886,11 +885,15 @@ pub(crate) fn decode_test_case<'a>(
     for _ in 0..n {
         scopes.push((rd.str(), rd.u32()));
     }
-    let failure = (rd.u32() != 0).then(|| test_command::TestFailure {
+    let has_failure = rd.u32() != 0;
+    let earlier = rd.u32() as usize;
+    let mut read_failure = || test_command::TestFailure {
         name: rd.str().to_vec(),
         message: rd.str().to_vec(),
         body: rd.str().to_vec(),
-    });
+    };
+    let earlier_failures: Vec<_> = (0..earlier).map(|_| read_failure()).collect();
+    let failure = has_failure.then(read_failure);
     Some(test_command::TestCaseReport {
         file,
         scopes,
@@ -900,5 +903,6 @@ pub(crate) fn decode_test_case<'a>(
         elapsed_ns,
         line_number,
         failure,
+        earlier_failures,
     })
 }

@@ -690,7 +690,7 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
-                Execution::discard_junit_failure(buntest);
+                Execution::keep_junit_failure_of_attempt(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -857,7 +857,21 @@ impl Execution {
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
             // provenance (see BunTest docs); single-threaded, no other borrow.
-            unsafe { (*reporter.as_ptr()).test_failure = None };
+            unsafe {
+                (*reporter.as_ptr()).test_failure = None;
+                (*reporter.as_ptr()).earlier_test_failures.clear();
+            }
+        }
+    }
+
+    /// The attempt is retried: its failure is reported with the test's final result.
+    fn keep_junit_failure_of_attempt(buntest: NonNull<BunTest>) {
+        // SAFETY: as in `discard_junit_failure`.
+        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: as in `discard_junit_failure`.
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            let failure = reporter.test_failure.take().unwrap_or_default();
+            reporter.earlier_test_failures.push(failure);
         }
     }
 

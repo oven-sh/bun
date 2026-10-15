@@ -186,6 +186,8 @@ pub(crate) struct TestCaseReport<'a> {
     pub elapsed_ns: u64,
     pub line_number: u32,
     pub failure: Option<TestFailure>,
+    /// Of the attempts before the last one (`retry`), oldest first.
+    pub earlier_failures: Vec<TestFailure>,
 }
 
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
@@ -687,6 +689,43 @@ impl JunitReporter {
         self.write_test_case(t, t.name, &class_name)
     }
 
+    /// `<failure>`, or Surefire's `<flakyFailure>` and `<rerunFailure>` for a test that was retried.
+    fn write_failure(
+        &mut self,
+        indent: &[u8],
+        element: &[u8],
+        failure: Option<&TestFailure>,
+    ) -> crate::Result<()> {
+        let type_name: &[u8] = failure
+            .map(|f| f.name.as_slice())
+            .filter(|n| !n.is_empty())
+            .unwrap_or(b"Error");
+        self.contents.extend_from_slice(indent);
+        self.contents.extend_from_slice(b"  <");
+        self.contents.extend_from_slice(element);
+        self.contents.extend_from_slice(b" type=\"");
+        escape_xml(type_name, &mut self.contents)?;
+        self.contents.extend_from_slice(b"\"");
+        if let Some(f) = failure.filter(|f| !f.message.is_empty()) {
+            self.contents.extend_from_slice(b" message=\"");
+            escape_xml(&f.message, &mut self.contents)?;
+            self.contents.extend_from_slice(b"\"");
+        }
+        match failure.filter(|f| !f.body.is_empty()) {
+            Some(f) => {
+                self.contents.extend_from_slice(b">");
+                escape_xml(&f.body, &mut self.contents)?;
+                self.contents.extend_from_slice(b"</");
+                self.contents.extend_from_slice(element);
+                self.contents.extend_from_slice(b">\n");
+            }
+            None => {
+                self.contents.extend_from_slice(b" />\n");
+            }
+        }
+        Ok(())
+    }
+
     fn write_test_case(
         &mut self,
         t: &TestCaseReport<'_>,
@@ -745,8 +784,16 @@ impl JunitReporter {
 
         use bun_test::Execution::Result as R;
         match status {
-            R::Pass => {
+            R::Pass if t.earlier_failures.is_empty() => {
                 self.contents.extend_from_slice(b" />\n");
+            }
+            R::Pass => {
+                self.contents.extend_from_slice(b">\n");
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"flakyFailure", Some(earlier))?;
+                }
+                self.contents.extend_from_slice(indent);
+                self.contents.extend_from_slice(b"</testcase>\n");
             }
             R::Fail => {
                 if !self.suite_stack.is_empty() {
@@ -754,31 +801,9 @@ impl JunitReporter {
                     self.suite_stack[last].metrics.failures += 1;
                 }
                 self.contents.extend_from_slice(b">\n");
-                self.contents.extend_from_slice(indent);
-                let type_name: &[u8] = failure
-                    .as_ref()
-                    .map(|f| f.name.as_slice())
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or(b"Error");
-                self.contents.extend_from_slice(b"  <failure type=\"");
-                escape_xml(type_name, &mut self.contents)?;
-                self.contents.extend_from_slice(b"\"");
-                if let Some(f) = failure.as_ref() {
-                    if !f.message.is_empty() {
-                        self.contents.extend_from_slice(b" message=\"");
-                        escape_xml(&f.message, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"\"");
-                    }
-                }
-                match failure.as_ref().filter(|f| !f.body.is_empty()) {
-                    Some(f) => {
-                        self.contents.extend_from_slice(b">");
-                        escape_xml(&f.body, &mut self.contents)?;
-                        self.contents.extend_from_slice(b"</failure>\n");
-                    }
-                    None => {
-                        self.contents.extend_from_slice(b" />\n");
-                    }
+                self.write_failure(indent, b"failure", failure)?;
+                for earlier in &t.earlier_failures {
+                    self.write_failure(indent, b"rerunFailure", Some(earlier))?;
                 }
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -992,6 +1017,8 @@ pub(crate) struct CommandLineReporter {
     /// that attaches them to the test case (JUnit) is on. Taken by
     /// `handle_test_completed`.
     pub(crate) test_failure: Option<TestFailure>,
+    /// `test_failure` of the attempts that were retried.
+    pub(crate) earlier_test_failures: Vec<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1243,6 +1270,7 @@ impl CommandLineReporter {
         test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
         failure: Option<TestFailure>,
+        earlier_failures: Vec<TestFailure>,
     ) -> TestCaseReport<'a> {
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
             runner.files.items_source()[buntest.file_id as usize]
@@ -1280,6 +1308,7 @@ impl CommandLineReporter {
             elapsed_ns,
             line_number: test_entry.base.line_no,
             failure,
+            earlier_failures,
         }
     }
 
@@ -1297,6 +1326,7 @@ impl CommandLineReporter {
             elapsed_ns: 0,
             line_number: 0,
             failure: Some(failure),
+            earlier_failures: Vec::new(),
         };
         if let Some(idx) = self.worker_ipc_file_idx {
             ParallelRunner::worker_emit_test_done(idx, b"", Some(&report));
@@ -1407,8 +1437,12 @@ impl CommandLineReporter {
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
             let failure = this.test_failure.take();
-            Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
+            let earlier = core::mem::take(&mut this.earlier_test_failures);
+            Self::test_case_report(
+                result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
+            )
         });
+        this.earlier_test_failures.clear();
         if let Some(idx) = this.worker_ipc_file_idx {
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
         } else {
@@ -1941,6 +1975,7 @@ impl TestCommand {
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
             test_failure: None,
+            earlier_test_failures: Vec::new(),
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),

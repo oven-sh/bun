@@ -316,7 +316,7 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 
-  it("should report only the final result for a retried test", async () => {
+  it("should report the final result for a retried test, and the earlier attempts as Surefire does", async () => {
     await using tmpDir = tempDir("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
@@ -365,6 +365,10 @@ describe("junit reporter", () => {
     const flakyEntries = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g)];
     expect(flakyEntries).toHaveLength(1);
     expect(flakyEntries[0][0]).not.toContain("<failure");
+    expect([...flakyEntries[0][0].matchAll(/<flakyFailure type="Error" message="([^"]*)">/g)].map(m => m[1])).toEqual([
+      "flaky failure attempt 1",
+      "flaky failure attempt 2",
+    ]);
 
     // A test that fails every retry attempt is reported once, as a failure,
     // and the failure message reflects the final attempt (not the first).
@@ -372,9 +376,13 @@ describe("junit reporter", () => {
       ...xmlContent.matchAll(/<testcase[^>]*name="exhausted test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g),
     ];
     expect(exhaustedEntries).toHaveLength(1);
-    expect(exhaustedEntries[0][0]).toContain("<failure");
-    expect(exhaustedEntries[0][0]).toContain("always fails 3");
-    expect(exhaustedEntries[0][0]).not.toContain("always fails 1");
+    expect(
+      [...exhaustedEntries[0][0].matchAll(/<(\w+) type="Error" message="([^"]*)">/g)].map(m => m.slice(1)),
+    ).toEqual([
+      ["failure", "always fails 3"],
+      ["rerunFailure", "always fails 1"],
+      ["rerunFailure", "always fails 2"],
+    ]);
 
     expect(xmlContent).toContain('name="stable test"');
 

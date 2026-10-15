@@ -97,6 +97,22 @@ The report then has one `<testsuite>` per file. Each test's name is prefixed wit
 </testsuite>
 ```
 
+#### Retried tests
+
+A test with [`retry`](/test/writing-tests#retries-and-repeats) is one `<testcase>`, with its final result. The attempts before the last one are in the elements that Maven Surefire uses, which CI tools read to find flaky tests:
+
+```xml junit.xml icon="file-code"
+<testcase name="passes on the third attempt" ...>
+  <flakyFailure type="Error" message="attempt 1">...</flakyFailure>
+  <flakyFailure type="Error" message="attempt 2">...</flakyFailure>
+</testcase>
+<testcase name="never passes" ...>
+  <failure type="Error" message="attempt 3">...</failure>
+  <rerunFailure type="Error" message="attempt 1">...</rerunFailure>
+  <rerunFailure type="Error" message="attempt 2">...</rerunFailure>
+</testcase>
+```
+
 #### Environment Variables in JUnit Reports
 
 The JUnit reporter includes environment information as `<properties>` in the XML output, so you can tell which environment and commit a test run was for.

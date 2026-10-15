@@ -1,13 +1,17 @@
 // Tests the `ws` client's constructor and opening handshake against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
+import crypto from "node:crypto";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
   abnormalClose,
+  type ClientOptions,
   closedPort,
   connectClient,
+  createInflater,
   createPeer,
+  deflate,
   encodeFrame,
   implementations,
   nextEvent,
@@ -360,11 +364,92 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       ]),
       extensions: "permessage-deflate",
     },
+    // npm ws never reads Sec-WebSocket-Version in a response.
+    { response: "Sec-WebSocket-Version: 8", respond: withExtraHeaders(["Sec-WebSocket-Version: 8"]) },
+    { response: "Sec-WebSocket-Version: 13, 8", respond: withExtraHeaders(["Sec-WebSocket-Version: 13, 8"]) },
+    { response: "an empty Sec-WebSocket-Version", respond: withExtraHeaders(["Sec-WebSocket-Version:"]) },
   ])("accepts a 101 with $response", async ({ respond, extensions = "" }) => {
-    await using client = await openClient(implementation, {}, { respond });
-    expect(client.ws.extensions).toBe(extensions);
-    expect(await client.conn.roundTrip()).toEqual([]);
+    await using client = await connectClient(implementation, {}, { respond });
+    await Promise.race([client.opened, client.closed]);
     expect(client.events).toEqual(openEvents);
+    expect(client.ws.extensions).toBe(extensions);
+    expect(await (await client.peer.connection()).roundTrip()).toEqual([]);
+    expect(client.events).toEqual(openEvents);
+  });
+
+  describe("permessage-deflate responses that only a lenient parser accepts", () => {
+    // 300 bytes repeat 2300 bytes later. That's inside a 2^15-byte window but outside a 2^10-byte one.
+    const repeated = crypto.randomBytes(150).toString("hex");
+    const message = repeated + crypto.randomBytes(1000).toString("hex") + repeated;
+
+    type Row = {
+      label?: string;
+      options?: ClientOptions;
+      /** One entry per Sec-WebSocket-Extensions header. */
+      response: string[];
+      /** What npm ws negotiates. */
+      params: { server_max_window_bits?: number; client_max_window_bits?: number };
+    };
+    const withResponseLabels = (rows: Row[]) =>
+      rows.map(row => ({ label: (row.response.length > 1 ? "two headers: " : "") + row.response.join(" | "), ...row }));
+
+    test.each(
+      withResponseLabels([
+        // Only the first permessage-deflate entry counts.
+        { response: ["permessage-deflate, permessage-deflate"], params: {} },
+        { response: ["permessage-deflate", "permessage-deflate"], params: {} },
+        {
+          response: ["permessage-deflate; client_max_window_bits=10, permessage-deflate; client_max_window_bits=12"],
+          params: { client_max_window_bits: 10 },
+        },
+        {
+          response: ["permessage-deflate; client_max_window_bits=10", "permessage-deflate"],
+          params: { client_max_window_bits: 10 },
+        },
+        // Window bits are converted with `+value`.
+        { response: ["permessage-deflate; client_max_window_bits=015"], params: { client_max_window_bits: 15 } },
+        { response: ["permessage-deflate; client_max_window_bits=1e1"], params: { client_max_window_bits: 10 } },
+        { response: ["permessage-deflate; client_max_window_bits=0xa"], params: { client_max_window_bits: 10 } },
+        { response: ["permessage-deflate; server_max_window_bits=015"], params: { server_max_window_bits: 15 } },
+        { response: ["permessage-deflate; server_max_window_bits=1e1"], params: { server_max_window_bits: 10 } },
+        { response: ["permessage-deflate; server_max_window_bits=10.0"], params: { server_max_window_bits: 10 } },
+        { response: ['permessage-deflate; client_max_window_bits="1\\0"'], params: { client_max_window_bits: 10 } },
+        // zlib can't compress with an 8-bit window, so the output of a 9-bit one has to fit.
+        {
+          response: ["permessage-deflate; server_max_window_bits=8; client_max_window_bits=8"],
+          params: { server_max_window_bits: 8, client_max_window_bits: 8 },
+        },
+        // A string option is offered but not enforced.
+        {
+          label: 'permessage-deflate; client_max_window_bits=12 with clientMaxWindowBits: "10"',
+          options: { perMessageDeflate: { clientMaxWindowBits: "10" as any } },
+          response: ["permessage-deflate; client_max_window_bits=12"],
+          params: { client_max_window_bits: 12 },
+        },
+      ]),
+    )("$label", async ({ options, response, params }) => {
+      const { server_max_window_bits = 15, client_max_window_bits = 15 } = params;
+      await using client = await connectClient(implementation, options, {
+        headers: response.map(value => `Sec-WebSocket-Extensions: ${value}`),
+      });
+      await Promise.race([client.opened, client.closed]);
+      expect(client.events).toEqual(openEvents);
+      const conn = await client.peer.connection();
+      expect(client.ws.extensions).toBe("permessage-deflate");
+      expect({ ...(client.ws as any)._extensions["permessage-deflate"].params }).toEqual(params);
+
+      const received = nextEvent(client.ws, "message");
+      conn.text(deflate(message, { windowBits: Math.max(server_max_window_bits, 9) }), { rsv1: true });
+      expect(String((await received)[0])).toBe(message);
+
+      client.ws.send(message);
+      const frame = (await conn.nextFrame())!;
+      expect(frame.rsv).toBe(4);
+      // The small chunkSize forces zlib to resolve back-references from its window instead of its output buffer, so this
+      // throws if the client compressed with a larger window than it agreed to.
+      const inflate = createInflater({ windowBits: client_max_window_bits, chunkSize: 64 });
+      expect(inflate(frame.payload).toString()).toBe(message);
+    });
   });
 
   describe("failed handshake", () => {
@@ -474,15 +559,53 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
       expect(conn.socketEvents).toEqual(["end"]);
     });
 
-    // npm ws ignores Sec-WebSocket-Version in a response. Bun's native client rejects it after the JS checks passed.
-    test.skipIf(!builtin)(
-      "a 101 with Sec-WebSocket-Version other than 13 emits 'error', then 'close' 1006",
-      async () => {
-        const respond = withExtraHeaders(["Sec-WebSocket-Version: 8"]);
-        await using client = await connectClient(implementation, {}, { respond });
-        await client.closed;
-        expect(client.events.map(stripMessage)).toEqual(["upgrade 101 rs=0", "error Error rs=2", abnormalClose]);
+    // The throw skips the validation, so the socket never opens. node:http has already dropped the request's timeout: a
+    // leaked `handshakeTimeout` timer would fire before the process exits and show up in the output.
+    test.concurrent.each([
+      {
+        then: "the peer closes the connection",
+        onUpgrade: "",
+        peerCloses: true,
+        lines: ["readyState 0 on exit"],
       },
+      {
+        then: "terminate() is called",
+        onUpgrade: `setImmediate(() => {
+          console.log("readyState " + ws.readyState + " before terminate()");
+          ws.terminate();
+        });`,
+        peerCloses: false,
+        lines: [
+          "readyState 0 before terminate()",
+          'error Error "WebSocket was closed before the connection was established"',
+          "close 1006",
+          "readyState 3 on exit",
+        ],
+      },
+    ])(
+      "stays CONNECTING after an 'upgrade' listener throws, until $then",
+      async ({ onUpgrade, peerCloses, lines }) => {
+        await using peer = await createPeer({ afterUpgrade: encodeFrame(OP.text, "dropped") });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL, { handshakeTimeout: 5000 });
+          ws.on("open", () => console.log("open"));
+          ws.on("message", data => console.log("message " + data));
+          ws.on("error", error => console.log("error " + showError(error)));
+          ws.on("close", code => console.log("close " + code));
+          ws.on("upgrade", () => {
+            ${onUpgrade}
+            throw new Error("thrown by the listener");
+          });
+          process.on("exit", () => console.log("readyState " + ws.readyState + " on exit"));
+        `;
+        const child = runScript({ specifier }, script, { PEER_URL: peer.url });
+        const conn = await peer.connection();
+        if (peerCloses) conn.end();
+        expect(await conn.remainingFrames()).toEqual([]);
+        expect((await child).lines).toEqual(['uncaught Error "thrown by the listener"', ...lines]);
+        expect(conn.socketEvents).toContain("end");
+      },
+      scriptTimeout,
     );
 
     test("a response that isn't HTTP", async () => {

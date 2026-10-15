@@ -20,6 +20,7 @@
 #ifndef UWS_PERMESSAGEDEFLATE_H
 #define UWS_PERMESSAGEDEFLATE_H
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
@@ -63,6 +64,32 @@ namespace uWS {
          * custom window size; the shared compressor also resets but always uses a 32kb window. */
         COMPRESSOR_NO_CONTEXT_TAKEOVER = 1 << 12
     };
+
+    /* Negotiated permessage-deflate parameters (RFC 7692 7.1). The server_ ones configure our compressor, the
+     * client_ ones our decompressor. Must match PerMessageDeflateParams in src/uws_sys/Response.rs. */
+    struct PerMessageDeflateParams {
+        int serverMaxWindowBits = 15;
+        int clientMaxWindowBits = 15;
+        bool serverNoContextTakeover = false;
+        bool clientNoContextTakeover = false;
+    };
+
+    static inline CompressOptions compressOptionsFor(const PerMessageDeflateParams &params) {
+        /* zlib rejects an 8-bit window for raw deflate. A peer that negotiated 8 bits can still inflate
+         * 9-bit output, because zlib's match distances stay <= 512 - MIN_LOOKAHEAD = 250. npm ws on Node
+         * does the same. */
+        int deflateBits = std::clamp(params.serverMaxWindowBits, 9, 15);
+        int compressor = deflateBits << 4 | (deflateBits - 7);
+        if (params.serverNoContextTakeover) {
+            /* The shared compressor only has a 15-bit window */
+            compressor = deflateBits == 15 ? SHARED_COMPRESSOR : compressor | COMPRESSOR_NO_CONTEXT_TAKEOVER;
+        }
+
+        /* The shared decompressor's 15-bit window can inflate anything a smaller window produced */
+        int decompressor = params.clientNoContextTakeover ? SHARED_DECOMPRESSOR : std::clamp(params.clientMaxWindowBits, 8, 15) << 8;
+
+        return (CompressOptions) (compressor | decompressor);
+    }
 }
 
 #include <zlib.h>

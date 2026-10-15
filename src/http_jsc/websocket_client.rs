@@ -394,7 +394,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         };
         log!("fail ({})", <&'static str>::from(code));
-        let Some(close_code) = code.close_code() else {
+        let Some(close_code) = code.info().close_code else {
             return self.finish(Outcome::Failed(code, detail));
         };
         self.send_close(&close_code.to_be_bytes());
@@ -1653,6 +1653,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         ) {
             // The upgrade client still owns the socket but forgets it when this returns, so close it here.
             CloseMode::Fin.close(Socket::<SSL>::from(input_socket));
+            outgoing.did_fail(ErrorCode::Ended, 0, BunString::EMPTY, BunString::EMPTY);
             return core::ptr::null_mut();
         }
 
@@ -2095,67 +2096,102 @@ pub struct InitialData(pub Vec<u8>);
 // ErrorCode
 // ──────────────────────────────────────────────────────────────────────────
 
-#[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum ErrorCode {
-    Cancel = 1,
-    InvalidResponse = 2,
-    Expected101StatusCode = 3,
-    MissingUpgradeHeader = 4,
-    MissingConnectionHeader = 5,
-    MissingWebsocketAcceptHeader = 6,
-    InvalidUpgradeHeader = 7,
-    InvalidConnectionHeader = 8,
-    InvalidWebsocketVersion = 9,
-    MismatchWebsocketAcceptHeader = 10,
-    MissingClientProtocol = 11,
-    MismatchClientProtocol = 12,
-    Timeout = 13,
-    FailedToWrite = 15,
-    FailedToConnect = 16,
-    Ended = 18,
-    FailedToAllocateMemory = 19,
-    ControlFrameIsFragmented = 20,
-    InvalidControlFrame = 21,
-    InvalidCompressedData = 23,
-    UnexpectedMaskFromServer = 25,
-    UnsupportedControlFrame = 27,
-    UnexpectedOpcode = 28,
-    InvalidUtf8 = 29,
-    TlsHandshakeFailed = 30,
-    MessageTooBig = 31,
+    Cancel,
+    InvalidResponse,
+    Expected101StatusCode,
+    MissingUpgradeHeader,
+    MissingConnectionHeader,
+    MissingWebsocketAcceptHeader,
+    InvalidUpgradeHeader,
+    InvalidConnectionHeader,
+    InvalidWebsocketVersion,
+    MismatchWebsocketAcceptHeader,
+    MissingClientProtocol,
+    MismatchClientProtocol,
+    Timeout,
+    FailedToWrite,
+    FailedToConnect,
+    Ended,
+    FailedToAllocateMemory,
+    ControlFrameIsFragmented,
+    InvalidControlFrame,
+    InvalidCompressedData,
+    UnexpectedMaskFromServer,
+    UnsupportedControlFrame,
+    UnexpectedOpcode,
+    InvalidUtf8,
+    TlsHandshakeFailed,
+    MessageTooBig,
     // Proxy error codes
-    ProxyConnectFailed = 33,
-    ProxyAuthenticationRequired = 34,
-    ProxyTunnelFailed = 36,
-    UnexpectedRsv1 = 37,
-    InvalidCloseCode = 38,
-    UnexpectedRsv2Or3 = 39,
-    UnsupportedExtension = 40,
-    ResponseHeadersTooLarge = 41,
-    ExpectedMask = 42,
-    UnsupportedPayloadLength = 43,
+    ProxyConnectFailed,
+    ProxyAuthenticationRequired,
+    ProxyTunnelFailed,
+    UnexpectedRsv1,
+    InvalidCloseCode,
+    UnexpectedRsv2Or3,
+    UnsupportedExtension,
+    ResponseHeadersTooLarge,
+    ExpectedMask,
+    UnsupportedPayloadLength,
+}
+
+pub(crate) struct ErrorInfo {
+    /// Appended to "WebSocket connection to '<url>' failed: " to make `error.message`.
+    pub message: &'static str,
+    /// Default `error.code`. Empty means none.
+    pub code: &'static str,
+    /// Close code to send to the peer when this error fails an open connection.
+    /// `None` means drop the connection without a Close frame.
+    pub close_code: Option<u16>,
 }
 
 impl ErrorCode {
-    /// Close code to send to the peer when this error fails an open connection.
-    /// `None` means drop the connection without a Close frame.
-    fn close_code(self) -> Option<u16> {
-        match self {
-            ErrorCode::UnexpectedMaskFromServer
-            | ErrorCode::ExpectedMask
-            | ErrorCode::UnexpectedRsv1
-            | ErrorCode::UnexpectedRsv2Or3
-            | ErrorCode::UnexpectedOpcode
-            | ErrorCode::UnsupportedControlFrame
-            | ErrorCode::ControlFrameIsFragmented
-            | ErrorCode::InvalidControlFrame
-            | ErrorCode::InvalidCloseCode => Some(1002),
-            ErrorCode::InvalidUtf8 | ErrorCode::InvalidCompressedData => Some(1007),
-            ErrorCode::MessageTooBig | ErrorCode::UnsupportedPayloadLength => Some(1009),
-            _ => None,
-        }
+    /// Every `code` with a `close_code` needs an entry in `receiverErrors` (src/js/thirdparty/ws.ts),
+    /// which replaces the error with npm ws's.
+    #[rustfmt::skip]
+    pub(crate) const fn info(self) -> ErrorInfo {
+        let (message, code, close_code) = match self {
+            Self::Cancel                        => ("Connection cancelled",                         "",                                       None),
+            Self::InvalidResponse               => ("Invalid response",                             "HPE_INVALID_CONSTANT",                   None),
+            Self::Expected101StatusCode         => ("Expected 101 status code",                     "",                                       None),
+            Self::MissingUpgradeHeader          => ("Missing upgrade header",                       "",                                       None),
+            Self::MissingConnectionHeader       => ("Missing connection header",                    "",                                       None),
+            Self::MissingWebsocketAcceptHeader  => ("Missing websocket accept header",              "",                                       None),
+            Self::InvalidUpgradeHeader          => ("Invalid upgrade header",                       "",                                       None),
+            Self::InvalidConnectionHeader       => ("Invalid connection header",                    "",                                       None),
+            Self::InvalidWebsocketVersion       => ("Invalid websocket version",                    "",                                       None),
+            Self::MismatchWebsocketAcceptHeader => ("Mismatch websocket accept header",             "",                                       None),
+            Self::MissingClientProtocol         => ("Missing client protocol",                      "",                                       None),
+            Self::MismatchClientProtocol        => ("Mismatch client protocol",                     "",                                       None),
+            Self::Timeout                       => ("Timeout",                                      "",                                       None),
+            Self::FailedToWrite                 => ("Failed to write",                              "",                                       None),
+            Self::FailedToConnect               => ("Failed to connect",                            "",                                       None),
+            Self::Ended                         => ("Connection ended",                             "ECONNRESET",                             None),
+            Self::FailedToAllocateMemory        => ("Failed to allocate memory",                    "",                                       None),
+            Self::ControlFrameIsFragmented      => ("Protocol error - control frame is fragmented", "WS_ERR_EXPECTED_FIN",                    Some(1002)),
+            Self::InvalidControlFrame           => ("Protocol error - invalid control frame",       "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH",  Some(1002)),
+            Self::InvalidCompressedData         => ("Invalid compressed data",                      "Z_DATA_ERROR",                           Some(1007)),
+            Self::UnexpectedMaskFromServer      => ("Protocol error - unexpected mask from server", "WS_ERR_UNEXPECTED_MASK",                 Some(1002)),
+            Self::UnsupportedControlFrame       => ("Protocol error - unsupported control frame",   "WS_ERR_INVALID_OPCODE",                  Some(1002)),
+            Self::UnexpectedOpcode              => ("Protocol error - unexpected opcode",           "WS_ERR_INVALID_OPCODE",                  Some(1002)),
+            Self::InvalidUtf8                   => ("Server sent invalid UTF8",                     "WS_ERR_INVALID_UTF8",                    Some(1007)),
+            Self::TlsHandshakeFailed            => ("TLS handshake failed",                         "",                                       None),
+            Self::MessageTooBig                 => ("Message too big",                              "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH",      Some(1009)),
+            Self::ProxyConnectFailed            => ("Proxy connection failed",                      "",                                       None),
+            Self::ProxyAuthenticationRequired   => ("Proxy authentication required",                "",                                       None),
+            Self::ProxyTunnelFailed             => ("Proxy tunnel failed",                          "",                                       None),
+            Self::UnexpectedRsv1                => ("Protocol error - RSV1 must be clear",          "WS_ERR_UNEXPECTED_RSV_1",                Some(1002)),
+            Self::InvalidCloseCode              => ("Protocol error - invalid close code",          "WS_ERR_INVALID_CLOSE_CODE",              Some(1002)),
+            Self::UnexpectedRsv2Or3             => ("Protocol error - RSV2 and RSV3 must be clear", "WS_ERR_UNEXPECTED_RSV_2_3",              Some(1002)),
+            Self::UnsupportedExtension          => ("Unsupported websocket extension",              "",                                       None),
+            Self::ResponseHeadersTooLarge       => ("Response headers too large",                   "",                                       None),
+            Self::ExpectedMask                  => ("Protocol error - expected mask from client",   "WS_ERR_EXPECTED_MASK",                   Some(1002)),
+            Self::UnsupportedPayloadLength      => ("Payload length over 2^53 - 1",                 "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH", Some(1009)),
+        };
+        ErrorInfo { message, code, close_code }
     }
 }
 

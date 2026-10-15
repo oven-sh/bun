@@ -4,7 +4,7 @@ import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import path from "node:path";
-import { constants, inflateRawSync } from "node:zlib";
+import { constants, createInflateRaw, deflateRawSync, inflateRawSync } from "node:zlib";
 import { type Frame, RawClient } from "../../web/websocket/raw-peer";
 
 type Compress = "shared" | "dedicated" | "3KB" | "32KB" | "256KB";
@@ -42,6 +42,8 @@ interface Peer {
   extensions: string | undefined;
   // Asks the server to send pseudoRandomText(n) compressed and returns the frame.
   request(n: number): Promise<Frame>;
+  // Same, but sends an already compressed request.
+  requestCompressed(payload: Buffer): Promise<Frame>;
   // Asks the server to publish pseudoRandomText(n) compressed to every peer.
   publish(n: number): void;
   readFrame(): Promise<Frame>;
@@ -50,7 +52,7 @@ interface Peer {
 
 // On the message "n" the server replies with pseudoRandomText(n), compressed.
 // On "publish n" it publishes that text to every subscriber.
-function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean }) {
+function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean | "dedicated" }) {
   const server = serve({
     port: 0,
     fetch(req, server) {
@@ -86,6 +88,10 @@ async function connect(server: ReturnType<typeof startServer>, offer: string): P
     extensions: client.header("sec-websocket-extensions"),
     request(n) {
       client.text(String(n));
+      return readFrame();
+    },
+    requestCompressed(payload) {
+      client.text(payload, { rsv1: true });
       return readFrame();
     },
     publish(n) {
@@ -127,6 +133,29 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
         peer.close();
       }
     });
+
+    test('compress: "3KB" keeps context takeover in both directions with a dedicated decompressor', async () => {
+      await using server = startServer({ compress: "3KB", decompress: "dedicated" });
+      const peer = await connect(server, "permessage-deflate");
+      try {
+        expect(peer.extensions).toBe("permessage-deflate; server_max_window_bits=9");
+        // The server's Number() ignores the padding. It makes the second request long enough to be compressed as a
+        // back-reference to the first. A preset dictionary primes the window the way the first request would.
+        const request = Buffer.from("200".padStart(64, " \t\n\r"));
+        const options = { finishFlush: constants.Z_SYNC_FLUSH };
+        const first = deflateRawSync(request, options).subarray(0, -4);
+        const second = deflateRawSync(request, { ...options, dictionary: request }).subarray(0, -4);
+        expect(() => inflateWithoutContext(second)).toThrow("invalid distance too far back");
+
+        const firstReply = await peer.requestCompressed(first);
+        expect(inflateWithoutContext(firstReply.payload).toString()).toBe(pseudoRandomText(200));
+        const secondReply = await peer.requestCompressed(second);
+        expect(secondReply.rsv).toBe(4);
+        expect(secondReply.payload.length).toBeLessThan(20);
+      } finally {
+        peer.close();
+      }
+    });
   });
 
   describe("negotiation with a dedicated compressor", () => {
@@ -156,6 +185,32 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       }
     });
 
+    // zlib can't deflate with an 8-bit window and uses 9 bits, but its matches never reach back more than 250 bytes.
+    test("accepts server_max_window_bits=8 and sends messages that inflate with an 8-bit window", async () => {
+      await using server = startServer({ compress: "dedicated", decompress: true });
+      const peer = await connect(server, "permessage-deflate; server_max_window_bits=8");
+      try {
+        expect(peer.extensions).toBe("permessage-deflate; client_no_context_takeover; server_max_window_bits=8");
+        const inflate = createInflateRaw({ windowBits: 8 });
+        const inflated: Buffer[] = [];
+        inflate.on("data", chunk => inflated.push(chunk));
+        for (const size of [200, 200, 600, 5000]) {
+          const frame = await peer.request(size);
+          expect(frame.rsv).toBe(4);
+          inflated.length = 0;
+          inflate.write(frame.payload);
+          inflate.write(Buffer.from([0x00, 0x00, 0xff, 0xff]));
+          await new Promise<void>((resolve, reject) => {
+            inflate.once("error", reject);
+            inflate.flush(() => resolve());
+          });
+          expect(Buffer.concat(inflated).toString()).toBe(pseudoRandomText(size));
+        }
+      } finally {
+        peer.close();
+      }
+    });
+
     test("echoes server_max_window_bits=15", async () => {
       await using server = startServer({ compress: "dedicated", decompress: true });
       const peer = await connect(server, "permessage-deflate; server_max_window_bits=15");
@@ -177,7 +232,6 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     });
 
     test.each([
-      "server_max_window_bits=8",
       "server_max_window_bits=16",
       "server_max_window_bits",
       "server_max_window_bits=10; server_max_window_bits=12",
@@ -237,7 +291,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       [
         "dedicated",
         "permessage-deflate; server_max_window_bits=8, permessage-deflate",
-        "permessage-deflate; client_no_context_takeover",
+        "permessage-deflate; client_no_context_takeover; server_max_window_bits=8",
       ],
       [
         "dedicated",

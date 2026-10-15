@@ -38,7 +38,6 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
-#include "WebSocketErrorCode.h"
 #include "JSValueInWrappedObject.h"
 #include <span>
 #include <variant>
@@ -122,6 +121,11 @@ struct WebSocketStreamOptions {
     WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, true, false, false };
     std::optional<PerMessageDeflateParams> deflate;
 };
+
+// Reads `object.deflate`, the negotiated permessage-deflate parameters as the `ws` module passes them:
+// { serverMaxWindowBits, clientMaxWindowBits, serverNoContextTakeover, clientNoContextTakeover }, or undefined for no compression.
+// Defined in JSWebSocket.cpp.
+std::optional<PerMessageDeflateParams> convertDeflateParamsForWs(JSC::JSGlobalObject*, JSC::JSObject*);
 
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
@@ -228,9 +232,10 @@ public:
     // The peer's Close frame arrived. `code` is 1005 if the frame had none. In ws mode this calls handlers.conclude(code, reason).
     void didStartClosingHandshake(unsigned short code, String&& reason);
     void didClose(unsigned short code, String&& reason, bool wasClean, size_t bufferedAmount);
-    void didFail(Bun::WebSocketErrorCode, size_t bufferedAmount, String&& systemCode, String&& detail);
+    // Fires `error`, then `close` with code 1006. The native client's `text` and `code` come from `ErrorCode::info()` in websocket_client.rs.
+    void didFail(String&& text, size_t bufferedAmount = 0, String&& code = {}, String&& detail = {});
     // ws mode only: an open connection failed. Calls handlers.error right away. The native client stays alive until the connection closes, then calls didClose().
-    void didError(Bun::WebSocketErrorCode, String&& detail);
+    void didError(String&& text, String&& code, String&& detail);
     void didDrain();
     void streamWrite(std::span<const uint8_t>);
     void streamEnd();
@@ -244,11 +249,20 @@ public:
         size_t len;
         std::span<const uint8_t> span() const { return { ptr, len }; }
     };
+    // Same layout as `bun_picohttp::Header`.
     struct HandshakeRawHeader {
         FfiSlice name;
         FfiSlice value;
     };
-    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body);
+    // Matches `HandshakeResult` in CppWebSocket.rs.
+    struct HandshakeResult {
+        bool accepted;
+        bool hasDeflate;
+        PerMessageDeflateParams deflate;
+    };
+    // In ws mode this calls handlers.handshake, which validates a 101 and returns { deflate } to accept it. The native client doesn't validate it again.
+    // Otherwise it dispatches a `handshake` event and `accepted` is false.
+    HandshakeResult didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body);
     // True for sockets created by the `ws` module. They call the wrapper's handler table instead of dispatching Events.
     bool isWsMode() const { return m_connectedOptions.ws_mode; }
     // ws mode only: the decoded body of a non-101 response. Calls handlers.body(chunk) per chunk, then
@@ -318,7 +332,7 @@ private:
     };
 
     struct Failure {
-        ASCIILiteral text;
+        String text;
         // `error.code`
         String code;
         String detail;
@@ -339,8 +353,6 @@ private:
 
     ExceptionOr<void> connect(const String& url, WebSocketOptions&&);
     void* didConnect();
-    // Fires `error`, then `close` with code 1006.
-    void failConnection(ASCIILiteral text, size_t bufferedAmount = 0, String&& code = {}, String&& detail = {});
     // Clears the native client pointers, which are no longer valid. Sets CLOSING, then queues a task that sets CLOSED and fires the events.
     // On the stream transport that happens synchronously.
     void finish(size_t bufferedAmount, unsigned short code, String&& reason, bool wasClean, std::optional<Failure>&&);
@@ -348,7 +360,8 @@ private:
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
     // handlers[name].call(owner, ...arguments). Anything it throws is reported as an uncaught exception.
-    void callHandler(const JSC::Identifier& name, const JSC::ArgList&);
+    // Returns the handler's return value, or an empty JSValue if it threw or wasn't called.
+    JSC::JSValue callHandler(const JSC::Identifier& name, const JSC::ArgList&);
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});
     // After close(), a WHATWG socket drops incoming frames. The `ws` module keeps receiving them until the peer's Close frame.
     bool shouldDispatchFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }

@@ -483,6 +483,8 @@ describe("frames sent in the same write as the 101", () => {
     it(`let close() finish cleanly when they include the peer's Close frame (${mode.name})`, async () => {
       await using peer = await createPeer({
         secure: mode.secure,
+        // The close event waits for the peer's FIN.
+        allowHalfOpen: false,
         afterUpgrade: Buffer.concat([textFrames("m1"), closeFrame(4002)]),
       });
       using clockServer = await startClock();
@@ -495,10 +497,6 @@ describe("frames sent in the same write as the 101", () => {
       await open(ws);
       await ioRoundtrips(clockServer.clock, 5);
       ws.close(1000);
-      // The close event waits for the peer's FIN.
-      const connection = await peer.connection();
-      await connection.ended;
-      connection.end();
       const { code, wasClean } = await closed;
       // The WebSocket is already CLOSING when "m1" is parsed, so the message is dropped.
       expect({ code, wasClean, received }).toEqual({ code: 4002, wasClean: true, received: [] });

@@ -927,6 +927,39 @@ static void convertConnectedOptionsForWs(JSGlobalObject* lexicalGlobalObject, JS
     options.skip_utf8_validation = skipUTF8Validation.toBoolean(lexicalGlobalObject);
 }
 
+std::optional<PerMessageDeflateParams> convertDeflateParamsForWs(JSGlobalObject* lexicalGlobalObject, JSObject* object)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto get = [&](JSObject* from, ASCIILiteral name) {
+        return Bun::getIfPropertyExistsPrototypePollutionMitigation(lexicalGlobalObject, from, Identifier::fromString(vm, name));
+    };
+
+    JSValue deflateValue = get(object, "deflate"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto* deflate = deflateValue.getObject();
+    if (!deflate)
+        return {};
+    JSValue serverMaxWindowBits = get(deflate, "serverMaxWindowBits"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue clientMaxWindowBits = get(deflate, "clientMaxWindowBits"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue serverNoContextTakeover = get(deflate, "serverNoContextTakeover"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue clientNoContextTakeover = get(deflate, "clientNoContextTakeover"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    int32_t serverBits = serverMaxWindowBits.toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    int32_t clientBits = clientMaxWindowBits.toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return PerMessageDeflateParams {
+        static_cast<uint8_t>(serverBits),
+        static_cast<uint8_t>(clientBits),
+        serverNoContextTakeover.toBoolean(lexicalGlobalObject),
+        clientNoContextTakeover.toBoolean(lexicalGlobalObject),
+    };
+}
+
 // createWebSocket(url, options, owner, handlers): like `new WebSocket(url, options)`, but calls `handlers` instead of dispatching events.
 JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1006,28 +1039,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketOverStreamForWs, (JSGlobalObject * lex
     options.extensions = extensions.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    JSValue deflateValue = get(object, "deflate"_s);
+    options.deflate = convertDeflateParamsForWs(lexicalGlobalObject, object);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (auto* deflate = deflateValue.getObject()) {
-        JSValue serverMaxWindowBits = get(deflate, "serverMaxWindowBits"_s);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        JSValue clientMaxWindowBits = get(deflate, "clientMaxWindowBits"_s);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        JSValue serverNoContextTakeover = get(deflate, "serverNoContextTakeover"_s);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        JSValue clientNoContextTakeover = get(deflate, "clientNoContextTakeover"_s);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        int32_t serverBits = serverMaxWindowBits.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        int32_t clientBits = clientMaxWindowBits.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        options.deflate = PerMessageDeflateParams {
-            static_cast<uint8_t>(serverBits),
-            static_cast<uint8_t>(clientBits),
-            serverNoContextTakeover.toBoolean(lexicalGlobalObject),
-            clientNoContextTakeover.toBoolean(lexicalGlobalObject),
-        };
-    }
 
     RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *globalObject, *context, getDOMStructure<JSWebSocket>(vm, *globalObject), WebSocket::createOverStream(*context, WTF::move(options)), {}, owner, handlers));
 }

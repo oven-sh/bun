@@ -1,14 +1,19 @@
 // Tests the opening handshake of a `ws` WebSocketServer, using a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import type { Duplex } from "node:stream";
 import type { ServerOptions } from "ws";
 import {
+  createInflater,
   createServer,
+  deflate,
+  deflateWithContext,
   implementations,
   listen,
   nextEvent,
+  OP,
   openServer,
   RawClient,
   type RequestOptions,
@@ -308,6 +313,43 @@ describe.each(implementations)("ws server opening handshake ($name)", ({ ws: imp
       );
       expect(server.ws.extensions).toBe(reply === null ? "" : "permessage-deflate");
     });
+
+    // zlib can't raw-deflate with an 8-bit window, so Node's zlib silently uses 9 bits. An 8-bit inflater can still
+    // read that, because zlib's match distances stay under 256.
+    test.each(["", "; server_no_context_takeover; client_no_context_takeover"])(
+      "accepts 8-bit windows and compresses in both directions%s",
+      async noContextTakeover => {
+        const offer = `permessage-deflate; server_max_window_bits=8; client_max_window_bits=8${noContextTakeover}`;
+        await using server = await openServer(
+          implementation,
+          { perMessageDeflate: { threshold: 0 } },
+          extensions(offer),
+        );
+        const { ws, client } = server;
+        expect(client.header("sec-websocket-extensions")).toBe(offer);
+        ws.on("message", (data, isBinary) => ws.send(data, { binary: isBinary }));
+
+        // The copies are 200 and 400 bytes apart. A compressor with a window over 9 bits back-references the second
+        // pair, and the 8-bit inflater then fails with "invalid distance too far back".
+        const near = randomBytes(200);
+        const far = randomBytes(400);
+        const messages = [Buffer.concat([near, near]), near, Buffer.concat([far, far]), far];
+        const payloads = noContextTakeover
+          ? messages.map(message => deflate(message, { windowBits: 8 }))
+          : await deflateWithContext(messages, 8);
+
+        // Small output chunks force zlib to resolve back-references through its window.
+        const inflaterOptions = { windowBits: 8, chunkSize: 64 };
+        let inflate = createInflater(inflaterOptions);
+        for (const [i, message] of messages.entries()) {
+          client.binary(payloads[i], { rsv1: true });
+          const frame = (await client.nextFrame())!;
+          expect([frame.opcode, frame.rsv]).toEqual([OP.binary, 4]);
+          if (noContextTakeover) inflate = createInflater(inflaterOptions);
+          expect(inflate(frame.payload).equals(message)).toBe(true);
+        }
+      },
+    );
   });
 
   describe("rejected requests", () => {

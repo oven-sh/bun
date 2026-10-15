@@ -14,6 +14,7 @@ use bun_core::String as BunString;
 use bun_core::ffi::FfiSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
+use bun_picohttp as picohttp;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_uws_sys::Socket;
 
@@ -54,11 +55,24 @@ pub(crate) enum TlsHandshake {
     Renegotiation,
 }
 
-/// Matches `WebCore::WebSocket::HandshakeRawHeader` (WebSocket.h).
+/// The `ws` module's answer to a 101. It validates the response in JS (`validateUpgrade()` in
+/// ws.ts), with npm ws's rules and error messages, so the upgrade client doesn't.
+pub(crate) enum HandshakeVerdict {
+    /// `deflate` holds the negotiated `permessage-deflate` params, or `None` for no compression.
+    Accepted {
+        deflate: Option<websocket_deflate::Params>,
+    },
+    /// The handler rejected the response and closed the WebSocket, or threw. Always this for the
+    /// global `WebSocket`.
+    NotAccepted,
+}
+
+/// Matches `WebCore::WebSocket::HandshakeResult` (WebSocket.h).
 #[repr(C)]
-pub struct RawHeader<'a> {
-    pub name: FfiSlice<'a>,
-    pub value: FfiSlice<'a>,
+struct HandshakeResult {
+    accepted: bool,
+    has_deflate: bool,
+    deflate: websocket_deflate::Params,
 }
 
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
@@ -88,19 +102,20 @@ unsafe extern "C" {
     ) -> *mut core::ffi::c_void;
     safe fn WebSocket__didFail(
         websocket_context: &CppWebSocket,
-        reason: ErrorCode,
+        message: BunString,
         buffered_amount: usize,
-        system_code: BunString,
+        code: BunString,
         detail: BunString,
     );
     safe fn WebSocket__didReceiveHandshakeResponse(
         websocket_context: &CppWebSocket,
         status_code: u16,
         status_message: FfiSlice<'_>,
-        headers: FfiSlice<'_, RawHeader<'_>>,
+        // C++ reads these as `WebCore::WebSocket::HandshakeRawHeader`, which has the same layout.
+        headers: FfiSlice<'_, picohttp::Header>,
         is_upgrade: bool,
         body: FfiSlice<'_>,
-    );
+    ) -> HandshakeResult;
     safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
@@ -125,7 +140,8 @@ unsafe extern "C" {
     );
     safe fn WebSocket__didError(
         websocket_context: &CppWebSocket,
-        reason: ErrorCode,
+        message: BunString,
+        code: BunString,
         detail: BunString,
     );
     safe fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, text: BunString);
@@ -167,7 +183,8 @@ impl CppWebSocket {
     }
 
     /// The client failed the connection and already closed it. Emits `error`, then `close`
-    /// with 1006. `system_code` becomes `error.code`; `detail` is appended to the message.
+    /// with 1006. A non-empty `system_code` overrides `reason`'s `error.code`; `detail` is appended
+    /// to the message.
     pub(crate) fn did_fail(
         &self,
         reason: ErrorCode,
@@ -175,28 +192,39 @@ impl CppWebSocket {
         system_code: BunString,
         detail: BunString,
     ) {
+        let info = reason.info();
+        let message = BunString::static_(info.message);
+        let code = if system_code.is_empty() {
+            BunString::static_(info.code)
+        } else {
+            system_code
+        };
         let _scope = VirtualMachine::get().enter_event_loop_scope();
-        WebSocket__didFail(self, reason, buffered_amount, system_code, detail);
+        WebSocket__didFail(self, message, buffered_amount, code, detail);
     }
 
     /// Dispatch the native `'handshake'` event; C++ copies all slices synchronously.
     pub(crate) fn did_receive_handshake_response(
         &self,
-        status_code: u16,
-        status_message: &[u8],
-        headers: &[RawHeader<'_>],
+        response: &picohttp::Response,
         is_upgrade: bool,
         body: &[u8],
-    ) {
+    ) -> HandshakeVerdict {
         let _scope = VirtualMachine::get().enter_event_loop_scope();
-        WebSocket__didReceiveHandshakeResponse(
+        let result = WebSocket__didReceiveHandshakeResponse(
             self,
-            status_code,
-            status_message.into(),
-            headers.into(),
+            u16::try_from(response.status_code).unwrap_or(0),
+            response.status.into(),
+            response.headers.list.into(),
             is_upgrade,
             body.into(),
         );
+        if !result.accepted {
+            return HandshakeVerdict::NotAccepted;
+        }
+        HandshakeVerdict::Accepted {
+            deflate: result.has_deflate.then_some(result.deflate),
+        }
     }
 
     /// True if the `ws` module created this WebSocket. A field read on the C++ side: no JS runs.
@@ -239,8 +267,14 @@ impl CppWebSocket {
 
     /// `ws` only: emits `error` for a failed connection. `did_close` follows once it closes.
     pub(crate) fn did_error(&self, reason: ErrorCode, detail: BunString) {
+        let info = reason.info();
         let _scope = VirtualMachine::get().enter_event_loop_scope();
-        WebSocket__didError(self, reason, detail);
+        WebSocket__didError(
+            self,
+            BunString::static_(info.message),
+            BunString::static_(info.code),
+            detail,
+        );
     }
 
     pub(crate) fn did_receive_text(&self, text: BunString) {

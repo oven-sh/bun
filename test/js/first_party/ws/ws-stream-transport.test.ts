@@ -803,6 +803,49 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           expect(connection.stream.destroyed).toBe(true);
           expect(connection.peer.frames.map(showFrame)).toEqual(sent);
         });
+
+        // Expected values are from npm ws 8.18.3 on Node v26.3.0, with its 30 s timer shortened.
+        test.each<{
+          buffered: string;
+          frames: [opcode: number, payload?: Payload][];
+          events: string[];
+          clean: boolean;
+        }>([
+          {
+            buffered: "a message and a Close frame",
+            frames: [
+              [OP.text, "held back"],
+              [OP.close, closePayload(4000, "held back")],
+            ],
+            events: ['message Buffer("held back") text rs=2', 'close 4000 Buffer("held back") rs=3'],
+            clean: true,
+          },
+          {
+            buffered: "a Ping and a message",
+            frames: [
+              [OP.ping, "p"],
+              [OP.text, "held back"],
+            ],
+            events: ['ping Buffer("p") rs=2', 'message Buffer("held back") text rs=2', abnormalClose],
+            clean: false,
+          },
+          {
+            buffered: "an invalid frame",
+            frames: [[3, "x"]],
+            events: [`error ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`, abnormalClose],
+            clean: false,
+          },
+        ])("parses $buffered still buffered in a paused stream", async ({ frames, events, clean }) => {
+          await using connection = await open(implementation, role, { closeTimeout: 20 });
+          const { ws, stream, peer } = connection;
+          ws.pause();
+          peer.write(Buffer.concat(frames.map(args => frame(...args))));
+          expect(stream.readableLength).toBeGreaterThan(0);
+          ws.close(1000);
+          expect(await connection.closed).toBe(clean);
+          expect(connection.events).toEqual(events);
+          expect(peer.frames.map(showFrame)).toEqual(["close 1000"]);
+        });
       });
     });
 

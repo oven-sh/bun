@@ -5,7 +5,6 @@ import { bunEnv, bunExe, gc, isASAN, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
-import { echoCloseFrame } from "./proxy-test-utils";
 import { RawSocket } from "./raw-peer";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
@@ -1247,7 +1246,7 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     const server = await rawWsServer(
       sock => {
         conn = new RawSocket(sock, false);
-        echoCloseFrame(conn);
+        conn.echoClose();
         sock.write(Buffer.concat([textFrame("A"), textFrame("B"), textFrame("C")]));
       },
       (_sock, chunk) => {

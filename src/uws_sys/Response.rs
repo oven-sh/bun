@@ -67,6 +67,17 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
+/// Negotiated permessage-deflate parameters (RFC 7692 7.1). Out-of-range window bits are clamped.
+/// Must match `uWS::PerMessageDeflateParams` in PerMessageDeflate.h.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PerMessageDeflateParams {
+    pub server_max_window_bits: c_int,
+    pub client_max_window_bits: c_int,
+    pub server_no_context_takeover: bool,
+    pub client_no_context_takeover: bool,
+}
+
 /// Opaque handle for `uws::Response<SSL>`.
 ///
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
@@ -647,13 +658,12 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
-    /// and is written verbatim. `compress_options` are this socket's `CompressOptions` bits
-    /// (0 = no permessage-deflate).
+    /// and is written verbatim. `deflate_params` is `None` if permessage-deflate wasn't negotiated.
     pub(crate) fn upgrade_raw<D>(
         &mut self,
         data: *mut D,
         handshake: &[u8],
-        compress_options: i32,
+        deflate_params: Option<&PerMessageDeflateParams>,
         ctx: &mut WebSocketUpgradeContext,
     ) -> *mut Socket {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; ptr+len from &[u8].
@@ -664,7 +674,7 @@ impl<const SSL: bool> Response<SSL> {
                 data.cast::<c_void>(),
                 handshake.as_ptr(),
                 handshake.len(),
-                compress_options,
+                deflate_params,
                 ctx,
             )
         }
@@ -1159,16 +1169,16 @@ impl AnyResponse {
         self,
         data: *mut D,
         handshake: &[u8],
-        compress_options: i32,
+        deflate_params: Option<&PerMessageDeflateParams>,
         ctx: &mut WebSocketUpgradeContext,
     ) -> *mut Socket {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
             AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, compress_options, ctx)
+                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
             }
             AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, compress_options, ctx)
+                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
             }
         }
     }
@@ -1449,7 +1459,7 @@ pub mod c {
             data: *mut c_void,
             handshake: *const u8,
             handshake_length: usize,
-            compress_options: i32,
+            deflate_params: Option<&PerMessageDeflateParams>,
             ws: *mut WebSocketUpgradeContext,
         ) -> *mut Socket;
         // safe: cork is synchronous — `ctx` is passed straight back to

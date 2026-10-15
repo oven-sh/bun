@@ -80,92 +80,6 @@ static String urlForMessage(const URL& url)
     return withoutCredentials.stringCenterEllipsizedToLength();
 }
 
-struct FailureDescription {
-    ASCIILiteral text;
-    // Default `error.code`, used when the native client doesn't provide one.
-    ASCIILiteral code {};
-};
-
-static FailureDescription describeFailure(Bun::WebSocketErrorCode code)
-{
-    using enum Bun::WebSocketErrorCode;
-    switch (code) {
-    case cancel:
-        return { "Connection cancelled"_s };
-    case invalid_response:
-        return { "Invalid response"_s, "HPE_INVALID_CONSTANT"_s };
-    case expected_101_status_code:
-        return { "Expected 101 status code"_s };
-    case missing_upgrade_header:
-        return { "Missing upgrade header"_s };
-    case missing_connection_header:
-        return { "Missing connection header"_s };
-    case missing_websocket_accept_header:
-        return { "Missing websocket accept header"_s };
-    case invalid_upgrade_header:
-        return { "Invalid upgrade header"_s };
-    case invalid_connection_header:
-        return { "Invalid connection header"_s };
-    case invalid_websocket_version:
-        return { "Invalid websocket version"_s };
-    case mismatch_websocket_accept_header:
-        return { "Mismatch websocket accept header"_s };
-    case missing_client_protocol:
-        return { "Missing client protocol"_s };
-    case mismatch_client_protocol:
-        return { "Mismatch client protocol"_s };
-    case unsupported_extension:
-        return { "Unsupported websocket extension"_s };
-    case response_headers_too_large:
-        return { "Response headers too large"_s };
-    case timeout:
-        return { "Timeout"_s };
-    case failed_to_write:
-        return { "Failed to write"_s };
-    case failed_to_connect:
-        return { "Failed to connect"_s };
-    case ended:
-        return { "Connection ended"_s, "ECONNRESET"_s };
-    case failed_to_allocate_memory:
-        return { "Failed to allocate memory"_s };
-    case tls_handshake_failed:
-        return { "TLS handshake failed"_s };
-    case proxy_connect_failed:
-        return { "Proxy connection failed"_s };
-    case proxy_authentication_required:
-        return { "Proxy authentication required"_s };
-    case proxy_tunnel_failed:
-        return { "Proxy tunnel failed"_s };
-    case control_frame_is_fragmented:
-        return { "Protocol error - control frame is fragmented"_s, "WS_ERR_EXPECTED_FIN"_s };
-    case invalid_control_frame:
-        return { "Protocol error - invalid control frame"_s, "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"_s };
-    case invalid_close_code:
-        return { "Protocol error - invalid close code"_s, "WS_ERR_INVALID_CLOSE_CODE"_s };
-    case expected_mask:
-        return { "Protocol error - expected mask from client"_s, "WS_ERR_EXPECTED_MASK"_s };
-    case unexpected_mask_from_server:
-        return { "Protocol error - unexpected mask from server"_s, "WS_ERR_UNEXPECTED_MASK"_s };
-    case unsupported_control_frame:
-        return { "Protocol error - unsupported control frame"_s, "WS_ERR_INVALID_OPCODE"_s };
-    case unexpected_opcode:
-        return { "Protocol error - unexpected opcode"_s, "WS_ERR_INVALID_OPCODE"_s };
-    case unexpected_rsv1:
-        return { "Protocol error - RSV1 must be clear"_s, "WS_ERR_UNEXPECTED_RSV_1"_s };
-    case unexpected_rsv2_or_3:
-        return { "Protocol error - RSV2 and RSV3 must be clear"_s, "WS_ERR_UNEXPECTED_RSV_2_3"_s };
-    case invalid_utf8:
-        return { "Server sent invalid UTF8"_s, "WS_ERR_INVALID_UTF8"_s };
-    case invalid_compressed_data:
-        return { "Invalid compressed data"_s, "Z_DATA_ERROR"_s };
-    case message_too_big:
-        return { "Message too big"_s, "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH"_s };
-    case unsupported_payload_length:
-        return { "Payload length over 2^53 - 1"_s, "WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH"_s };
-    }
-    return { "Unknown error"_s };
-}
-
 const size_t maxReasonSizeInBytes = 123;
 // RFC 6455 §5.5: control frame payloads are at most 125 bytes.
 const size_t maxControlFramePayloadSize = 125;
@@ -639,9 +553,10 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         &connectErrorCode);
 
     // Report the failure from a task, like an asynchronous connection failure, so the constructor still returns a CONNECTING socket.
+    // Same text as `ErrorCode::FailedToConnect` in websocket_client.rs.
     if (!m_upgradeClient) {
         queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [code = connectErrorCode.transferToWTFString()](WebSocket& ws) mutable {
-            ws.didFail(Bun::WebSocketErrorCode::failed_to_connect, 0, WTF::move(code), {});
+            ws.didFail("Failed to connect"_s, 0, WTF::move(code));
         });
     }
 
@@ -736,7 +651,7 @@ void WebSocket::terminate()
         return;
     if (m_state == CONNECTING) {
         cancelUpgradeClient();
-        failConnection("WebSocket is closed before the connection is established"_s);
+        didFail("WebSocket is closed before the connection is established"_s);
         return;
     }
     m_state = CLOSING;
@@ -909,14 +824,14 @@ void WebSocket::dispatchEvent(Event& event)
     EventTarget::dispatchEvent(event);
 }
 
-void WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgList& arguments)
+JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgList& arguments)
 {
     RefPtr context = scriptExecutionContext();
     if (!context || context->isJSExecutionForbidden())
-        return;
+        return {};
     auto* wrapper = uncheckedDowncast<JSWebSocket>(this->wrapper());
     if (!wrapper || !wrapper->m_handlers)
-        return;
+        return {};
 
     auto& vm = context->vm();
     JSC::JSLockHolder lock(vm);
@@ -924,16 +839,19 @@ void WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgList& arg
     JSC::JSValue function = wrapper->m_handlers->getDirect(vm, name);
     auto callData = function ? JSC::getCallData(function) : JSC::CallData {};
     if (callData.type == JSC::CallData::Type::None)
-        return;
+        return {};
 
     Ref protectedThis { *this };
     JSC::EnsureStillAliveScope protectedWrapper(wrapper);
     AsyncContextScope asyncContext(globalObject, m_asyncContext.getValue());
     Bun::ModuleGraphContextScope moduleGraphContext(*context);
     NakedPtr<JSC::Exception> exception;
-    JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments, exception);
-    if (exception)
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments, exception);
+    if (exception) {
         reportException(globalObject, exception.get());
+        return {};
+    }
+    return result;
 }
 
 void WebSocket::callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t> bytes, JSC::JSValue secondArgument)
@@ -1140,15 +1058,15 @@ void WebSocket::streamDestroy()
     callHandler(JSC::Identifier::fromString(scriptExecutionContext()->vm(), "destroy"_s), JSC::ArgList());
 }
 
-void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body)
+WebSocket::HandshakeResult WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body)
 {
     // Only the `ws` module and tests use this. Skip the work for a plain WebSocket.
     if (!isWsMode() && !this->hasEventListeners(eventNames().handshakeEvent))
-        return;
+        return {};
 
     auto* context = scriptExecutionContext();
     if (!context)
-        return;
+        return {};
     auto* globalObject = context->jsGlobalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1156,15 +1074,15 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
     if (!rawHeaders || scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();
-        return;
+        return {};
     }
     for (size_t i = 0; i < headers.size(); i++) {
         rawHeaders->putDirectIndex(globalObject, i * 2,
             JSC::jsString(vm, WTF::String(headers[i].name.span())));
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, {});
         rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
             JSC::jsString(vm, WTF::String(headers[i].value.span())));
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSC::MarkedArgumentBuffer arguments;
@@ -1173,14 +1091,22 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     arguments.append(rawHeaders);
     if (isWsMode()) {
         arguments.append(JSC::jsBoolean(isUpgrade));
-        callHandler(JSC::Identifier::fromString(vm, eventNames().handshakeEvent), arguments);
-        return;
+        JSC::JSValue returned = callHandler(JSC::Identifier::fromString(vm, eventNames().handshakeEvent), arguments);
+        auto* accepted = returned ? returned.getObject() : nullptr;
+        if (!accepted)
+            return {};
+        auto deflate = convertDeflateParamsForWs(globalObject, accepted);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
+            return {};
+        }
+        return { true, deflate.has_value(), deflate.value_or(PerMessageDeflateParams {}) };
     }
 
     JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
     if (!bodyBuffer || scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();
-        return;
+        return {};
     }
 
     auto& builtinNames = WebCore::builtinNames(vm);
@@ -1197,6 +1123,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     init.origin = m_origin;
 
     dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
+    return {};
 }
 
 void WebSocket::didReceiveResponseBody(std::span<const uint8_t> chunk)
@@ -1241,26 +1168,19 @@ void WebSocket::didClose(unsigned short code, String&& reason, bool wasClean, si
     finish(bufferedAmount, code, WTF::move(reason), wasClean, std::nullopt);
 }
 
-void WebSocket::didFail(Bun::WebSocketErrorCode code, size_t bufferedAmount, String&& systemCode, String&& detail)
+void WebSocket::didFail(String&& text, size_t bufferedAmount, String&& code, String&& detail)
 {
-    auto description = describeFailure(code);
-    failConnection(description.text, bufferedAmount, systemCode.isEmpty() ? String(description.code) : WTF::move(systemCode), WTF::move(detail));
+    finish(bufferedAmount, 1006, {}, false, Failure { WTF::move(text), WTF::move(code), WTF::move(detail) });
 }
 
-void WebSocket::didError(Bun::WebSocketErrorCode code, String&& detail)
+void WebSocket::didError(String&& text, String&& code, String&& detail)
 {
     if (m_state == CLOSED)
         return;
     m_state = CLOSING;
     if (!scriptExecutionContext())
         return;
-    auto description = describeFailure(code);
-    reportFailure({ description.text, String(description.code), WTF::move(detail) });
-}
-
-void WebSocket::failConnection(ASCIILiteral text, size_t bufferedAmount, String&& code, String&& detail)
-{
-    finish(bufferedAmount, 1006, {}, false, Failure { text, WTF::move(code), WTF::move(detail) });
+    reportFailure({ WTF::move(text), WTF::move(code), WTF::move(detail) });
 }
 
 void WebSocket::finish(size_t bufferedAmount, unsigned short code, String&& reason, bool wasClean, std::optional<Failure>&& failure)
@@ -1348,11 +1268,9 @@ void* WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMe
     auto* globalObject = scriptExecutionContext()->jsGlobalObject();
     auto* initClient = useTLSSocket ? Bun__WebSocketClientTLS__init : Bun__WebSocketClient__init;
     void* client = initClient(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
-    // The socket was already closed or shut down by the time the 101 was parsed.
-    if (!client) {
-        didFail(Bun::WebSocketErrorCode::ended, 0, {}, {});
+    // The socket was already closed or shut down by the time the 101 was parsed. init() has called didFail().
+    if (!client)
         return nullptr;
-    }
     if (useTLSSocket) {
         m_connectedWebSocket.clientSSL = client;
         m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
@@ -1413,9 +1331,9 @@ struct FfiRawHeaderSlice {
     size_t len;
 };
 
-extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, bool isUpgrade, WebCore::WebSocket::FfiSlice body)
+extern "C" WebCore::WebSocket::HandshakeResult WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, bool isUpgrade, WebCore::WebSocket::FfiSlice body)
 {
-    webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), isUpgrade, body.span());
+    return webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), isUpgrade, body.span());
 }
 
 extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)
@@ -1433,9 +1351,9 @@ extern "C" void WebSocket__didEndResponseBody(WebCore::WebSocket* webSocket, boo
     webSocket->didEndResponseBody(aborted, reset);
 }
 
-extern "C" void WebSocket__didFail(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, size_t bufferedAmount, BunString systemCode, BunString detail)
+extern "C" void WebSocket__didFail(WebCore::WebSocket* webSocket, BunString text, size_t bufferedAmount, BunString code, BunString detail)
 {
-    webSocket->didFail(errorCode, bufferedAmount, systemCode.transferToWTFString(), detail.transferToWTFString());
+    webSocket->didFail(text.transferToWTFString(), bufferedAmount, code.transferToWTFString(), detail.transferToWTFString());
 }
 
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t code, BunString reason, bool wasClean, size_t bufferedAmount)
@@ -1448,9 +1366,9 @@ extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocke
     webSocket->didStartClosingHandshake(code, reason.transferToWTFString());
 }
 
-extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, BunString detail)
+extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, BunString text, BunString code, BunString detail)
 {
-    webSocket->didError(errorCode, detail.transferToWTFString());
+    webSocket->didError(text.transferToWTFString(), code.transferToWTFString(), detail.transferToWTFString());
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, BunString text)

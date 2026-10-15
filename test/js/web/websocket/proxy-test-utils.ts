@@ -8,7 +8,6 @@ import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
-import { OP, type RawSocket } from "./raw-peer";
 
 /**
  * NO_PROXY applies to explicit proxies too. An ambient NO_PROXY=localhost,127.0.0.1,... would bypass
@@ -281,14 +280,6 @@ export async function startRawWssServer(
       server.close();
     },
   };
-}
-
-/** Echoes the client's first Close frame, then ends the connection. */
-export async function echoCloseFrame(connection: RawSocket) {
-  let frame;
-  do frame = await connection.nextFrame();
-  while (frame && frame.opcode !== OP.close);
-  if (frame) connection.socket.end(connection.frame(OP.close, frame.payload));
 }
 
 /**

@@ -384,7 +384,6 @@ public:
         /* Extract needed parameters from WebSocketContextData */
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
 
-        /* Note: OpenSSL can be used here to speed this up somewhat */
         char secWebSocketAccept[29] = {};
         char secWebSocketKeyBuffer[24] = {};
         secWebSocketKey.copy(secWebSocketKeyBuffer, 24);
@@ -421,25 +420,18 @@ public:
             if (negCompression) {
                 perMessageDeflate = true;
 
-                /* Map from negotiated windowBits to compressor and decompressor */
-                if (negCompressionWindow == 0) {
-                    compressOptions = CompressOptions::SHARED_COMPRESSOR;
-                } else {
-                    compressOptions = (CompressOptions) ((uint32_t) (negCompressionWindow << 4)
-                                                        | (uint32_t) (negCompressionWindow - 7));
+                /* A negotiated window of 0 means no context takeover */
+                compressOptions = compressOptionsFor({
+                    .serverMaxWindowBits = negCompressionWindow ? negCompressionWindow : 15,
+                    .clientMaxWindowBits = negInflationWindow ? negInflationWindow : 15,
+                    .serverNoContextTakeover = !negCompressionWindow,
+                    .clientNoContextTakeover = !negInflationWindow,
+                });
 
-                    /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
-                     * (they both share the windowBits = 9) */
-                    if ((webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
-                        compressOptions = CompressOptions::DEDICATED_COMPRESSOR_3KB;
-                    }
-                }
-
-                /* Here we modify the above compression with negotiated decompressor */
-                if (negInflationWindow == 0) {
-                    compressOptions = CompressOptions(compressOptions | CompressOptions::SHARED_DECOMPRESSOR);
-                } else {
-                    compressOptions = CompressOptions(compressOptions | (negInflationWindow << 8));
+                /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
+                 * (they both share the windowBits = 9) */
+                if (negCompressionWindow && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
+                    compressOptions = CompressOptions((compressOptions & ~CompressOptions::_COMPRESSOR_MASK) | CompressOptions::DEDICATED_COMPRESSOR_3KB);
                 }
 
                 writeHeader("Sec-WebSocket-Extensions", negResponse);
@@ -453,9 +445,9 @@ public:
     }
 
     /* Like upgrade(), but the caller already negotiated and built the 101 response head, which is written verbatim.
-     * compressOptions are this socket's negotiated options, or DISABLED if permessage-deflate wasn't negotiated. */
+     * deflateParams is nullptr if permessage-deflate wasn't negotiated. */
     template <typename UserData>
-    us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, CompressOptions compressOptions,
+    us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, const PerMessageDeflateParams *deflateParams,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
 
         if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
@@ -465,7 +457,8 @@ public:
         Super::cork();
         Super::write(handshake.data(), (int) handshake.length());
 
-        return adoptWebSocket(std::forward<UserData>(userData), compressOptions != CompressOptions::DISABLED, compressOptions, webSocketContext);
+        return adoptWebSocket(std::forward<UserData>(userData), deflateParams != nullptr,
+            deflateParams ? compressOptionsFor(*deflateParams) : CompressOptions::DISABLED, webSocketContext);
     }
 
 private:

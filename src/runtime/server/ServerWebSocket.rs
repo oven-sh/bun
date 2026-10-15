@@ -658,15 +658,13 @@ impl ServerWebSocket {
 
         let _loop_guard = vm.enter_event_loop_scope();
 
-        let mut corker = Corker {
-            args: &args,
+        if let Err(e) = call_corked(
+            ws,
             global_object,
-            this_value: JSValue::ZERO,
-            callback: on_open_handler,
-            result: Ok(JSValue::ZERO),
-        };
-        ws.cork(&mut corker, Corker::run);
-        if let Err(e) = corker.result {
+            on_open_handler,
+            JSValue::UNDEFINED,
+            &args,
+        ) {
             let err_value = global_object.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onOpen exception");
 
@@ -730,16 +728,13 @@ impl ServerWebSocket {
         let data = data?;
         let arguments = [self.js_value().unwrap_or(JSValue::UNDEFINED), data];
 
-        let mut corker = Corker {
-            args: &arguments,
+        let result = match call_corked(
+            ws,
             global_object,
-            this_value: JSValue::ZERO,
-            callback: on_message_handler,
-            result: Ok(JSValue::ZERO),
-        };
-
-        ws.cork(&mut corker, Corker::run);
-        let result = match corker.result {
+            on_message_handler,
+            JSValue::UNDEFINED,
+            &arguments,
+        ) {
             Ok(result) => result,
             Err(e) => {
                 let err_value = global_object.take_error(e);
@@ -788,16 +783,14 @@ impl ServerWebSocket {
             let global_object = handler.global_object();
 
             let args = [self.js_value().unwrap_or(JSValue::UNDEFINED)];
-            let mut corker = Corker {
-                args: &args,
-                global_object,
-                this_value: JSValue::ZERO,
-                callback: on_drain,
-                result: Ok(JSValue::ZERO),
-            };
             let _loop_guard = vm.enter_event_loop_scope();
-            self.websocket().cork(&mut corker, Corker::run);
-            if let Err(e) = corker.result {
+            if let Err(e) = call_corked(
+                self.websocket(),
+                global_object,
+                on_drain,
+                JSValue::UNDEFINED,
+                &args,
+            ) {
                 let err_value = global_object.take_error(e);
                 handler.run_error_callback(on_error, global_object, args[0], err_value)?;
             }
@@ -1027,20 +1020,16 @@ impl ServerWebSocket {
             ));
         }
 
-        let mut corker = Corker {
-            args: &[this_value],
-            global_object: global_this,
-            this_value,
-            callback,
-            result: Ok(JSValue::ZERO),
-        };
         if self.is_closed() {
-            corker.run();
-        } else {
-            self.websocket().cork(&mut corker, Corker::run);
+            return callback.call(global_this, this_value, &[this_value]);
         }
-
-        corker.result
+        call_corked(
+            self.websocket(),
+            global_this,
+            callback,
+            this_value,
+            &[this_value],
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1134,15 +1123,18 @@ impl ServerWebSocket {
         let [code_value, reason_value] = callframe.arguments_as_array::<2>();
         bun_output::scoped_log!(WebSocketServer, "close()");
 
-        let code: i32 = if code_value.is_undefined() {
-            1000
-        } else if code_value.is_number() {
-            code_value.coerce_to_i32(global_this)?
+        let code_number: f64 = if code_value.is_undefined() {
+            1000.0
+        } else if let Some(number) = code_value.get_number() {
+            number
         } else {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "close requires a numeric code or undefined"
             )));
         };
+        // `as` drops the fraction, maps NaN to 0 and saturates, so an out-of-range number stays
+        // out of range. ToInt32 would wrap 2**32 + 1000 to 1000 and Infinity to 0.
+        let code = code_number as i32;
         let reason: Utf8Bytes = if reason_value.is_undefined() {
             Utf8Bytes::EMPTY
         } else {
@@ -1160,7 +1152,8 @@ impl ServerWebSocket {
                 (1005, [].as_slice())
             } else {
                 let err = global_this.create_range_error_instance(format_args!(
-                    "The close code must be 1000-1003, 1007-1014 or 3000-4999. Received {code}",
+                    "The close code must be 1000-1003, 1007-1014 or 3000-4999. Received {}",
+                    bun_core::fmt::double(code_number),
                 ));
                 return Err(global_this.throw_value(err));
             };
@@ -1476,19 +1469,19 @@ impl WsPackageSocket {
         let _loop_guard = handler.vm().enter_event_loop_scope();
 
         let args = args(global_object)?;
-        let mut corker = Corker {
-            args: &args,
-            global_object,
-            this_value: js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED),
-            callback,
-            result: Ok(JSValue::ZERO),
-        };
-        if socket.is_closed() {
-            corker.run();
+        let websocket = js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
+        let result = if socket.is_closed() {
+            callback.call(global_object, websocket, &args)
         } else {
-            socket.websocket().cork(&mut corker, Corker::run);
-        }
-        if let Err(e) = corker.result {
+            call_corked(
+                socket.websocket(),
+                global_object,
+                callback,
+                websocket,
+                &args,
+            )
+        };
+        if let Err(e) = result {
             let err = global_object.take_error(e);
             return handler.run_error_callback(JSValue::ZERO, global_object, this_value, err);
         }
@@ -1606,25 +1599,17 @@ impl WebSocketHandler for WsPackageSocket {
     }
 }
 
-struct Corker<'a> {
-    args: &'a [JSValue],
-    global_object: &'a JSGlobalObject,
-    this_value: JSValue,
+/// Calls `callback` inside `ws.cork()`, so everything it sends goes out in one write.
+#[inline]
+fn call_corked(
+    ws: AnyWebSocket,
+    global_object: &JSGlobalObject,
     callback: JSValue,
-    result: JsResult<JSValue>,
-}
-
-impl<'a> Corker<'a> {
-    fn run(&mut self) {
-        let this_value = self.this_value;
-        self.result = self.callback.call(
-            self.global_object,
-            if this_value.is_empty() {
-                JSValue::UNDEFINED
-            } else {
-                this_value
-            },
-            self.args,
-        );
-    }
+    this_value: JSValue,
+    args: &[JSValue],
+) -> JsResult<JSValue> {
+    let mut result = Ok(JSValue::ZERO);
+    let mut call = || result = callback.call(global_object, this_value, args);
+    ws.cork(&mut call, |call| call());
+    result
 }

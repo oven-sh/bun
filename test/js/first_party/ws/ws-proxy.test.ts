@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { gc, tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import { getEventListeners, once } from "node:events";
-import type { IncomingMessage } from "node:http";
+import { readFileSync } from "node:fs";
+import http, { type IncomingMessage } from "node:http";
 import net from "node:net";
+import path from "node:path";
+import type { ConnectionOptions } from "node:tls";
 import WebSocket from "ws";
 import { connectRequest, startEchoServer, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
 
@@ -371,7 +374,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
   });
 });
 
-// Bun doesn't call the agent. It reads the agent's proxy URL, headers and options and sends its own CONNECT.
+// For an http: proxy, Bun doesn't call the agent. It reads the agent's proxy URL and headers and sends its own CONNECT.
 describe("ws package with HttpsProxyAgent", () => {
   test("ws:// through HttpsProxyAgent", async () => {
     using recorded = await startRecordingProxy();
@@ -387,14 +390,10 @@ describe("ws package with HttpsProxyAgent", () => {
     gc();
   });
 
-  // Differs from npm ws, where the agent's options only apply to the proxy connection and the target's certificate is
-  // rejected.
   test("wss:// through HttpsProxyAgent with rejectUnauthorized", async () => {
     using recorded = await startRecordingProxy();
-    const agent = new HttpsProxyAgent(`http://127.0.0.1:${recorded.port}`, {
-      rejectUnauthorized: false,
-    } as any);
-    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, { agent });
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:${recorded.port}`);
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, { agent, rejectUnauthorized: false });
     expect({
       events: await wsEchoSession(ws, "hello from wss via HttpsProxyAgent"),
       requests: recorded.requests,
@@ -454,5 +453,114 @@ describe("ws package with HttpsProxyAgent", () => {
       agentConnections: 0,
     });
     gc();
+  });
+});
+
+// npm ws passes its TLS options to the agent, which uses them for the target. The agent uses its own options to connect
+// to the proxy. Expected values are from Node v26.3.0 with ws 8.18.3 and https-proxy-agent 7.0.6.
+describe("TLS options with an HttpsProxyAgent", () => {
+  const fixture = (name: string) =>
+    readFileSync(path.join(import.meta.dirname, "../../node/http/fixtures", name), "utf8");
+  // The proxy's certificate is self-signed and the target's is issued by a private CA, so the error code tells which of
+  // the two was rejected.
+  const proxyCa = tlsCerts.cert;
+  const targetCa = fixture("openssl_localhost_ca.pem");
+  const proxyRejected = failed({ error: expect.any(String), code: "DEPTH_ZERO_SELF_SIGNED_CERT" });
+  const targetRejected = failed({ error: expect.any(String), code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" });
+  const off = { rejectUnauthorized: false };
+  type TrustOptions = Pick<ConnectionOptions, "ca" | "rejectUnauthorized">;
+
+  let secureTarget: Bun.Server<undefined>;
+
+  beforeAll(() => {
+    secureTarget = Bun.serve({
+      port: 0,
+      tls: { cert: fixture("openssl_localhost.crt"), key: fixture("openssl_localhost.key") },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("connected");
+        },
+        message(ws, message) {
+          ws.send(message);
+        },
+      },
+    });
+  });
+
+  afterAll(() => {
+    secureTarget?.stop(true);
+  });
+
+  /** The client's events and the number of CONNECT requests that reached the proxy. */
+  async function connect(proxy: "http" | "https", target: "ws" | "wss", options: (proxyUrl: string) => ClientOptions) {
+    using recorded = await startRecordingProxy({ tls: proxy === "https" });
+    const port = target === "wss" ? secureTarget.port! : wsPort;
+    const ws = new WebSocket(`${target}://127.0.0.1:${port}`, options(`${proxy}://127.0.0.1:${recorded.port}`));
+    const events = await wsEchoSession(ws, "hello");
+    return { events, connects: recorded.requests.length };
+  }
+
+  describe.each([
+    { proxy: "http", target: "wss" },
+    { proxy: "https", target: "ws" },
+    { proxy: "https", target: "wss" },
+  ] as const)("$proxy: proxy, $target: target", ({ proxy, target }) => {
+    test.each<[options: string, agent: TrustOptions, ws: TrustOptions, trusted: ("proxy" | "target")[]]>([
+      ["no options", {}, {}, []],
+      ["agent rejectUnauthorized: false", off, {}, ["proxy"]],
+      ["WebSocket rejectUnauthorized: false", {}, off, ["target"]],
+      ["both rejectUnauthorized: false", off, off, ["proxy", "target"]],
+      ["agent ca for the proxy", { ca: proxyCa }, {}, ["proxy"]],
+      ["agent ca for the target", { ca: targetCa }, {}, []],
+      ["WebSocket ca for the proxy", {}, { ca: proxyCa }, []],
+      ["WebSocket ca for the target", {}, { ca: targetCa }, ["target"]],
+      ["agent ca for the proxy, WebSocket ca for the target", { ca: proxyCa }, { ca: targetCa }, ["proxy", "target"]],
+    ])("%s", async (_, agent, ws, trusted) => {
+      expect(await connect(proxy, target, url => ({ agent: new HttpsProxyAgent(url, agent), ...ws }))).toEqual(
+        proxy === "https" && !trusted.includes("proxy")
+          ? { events: proxyRejected, connects: 0 }
+          : target === "wss" && !trusted.includes("target")
+            ? { events: targetRejected, connects: 1 }
+            : { events: echoed("hello"), connects: 1 },
+      );
+    });
+  });
+
+  // Bun-only: npm ws has no `tls` option.
+  test("the `tls` option replaces the agent's options and applies to the proxy and the target", async () => {
+    expect({
+      trusted: await connect("https", "wss", url => ({
+        agent: new HttpsProxyAgent(url),
+        tls: { ca: [proxyCa, targetCa] },
+      })),
+      proxyOnly: await connect("https", "wss", url => ({ agent: new HttpsProxyAgent(url, off), tls: { ca: proxyCa } })),
+      targetOnly: await connect("https", "wss", url => ({
+        agent: new HttpsProxyAgent(url, off),
+        tls: { ca: targetCa },
+      })),
+    }).toEqual({
+      trusted: { events: echoed("hello"), connects: 1 },
+      proxyOnly: { events: targetRejected, connects: 1 },
+      targetOnly: { events: proxyRejected, connects: 0 },
+    });
+  });
+
+  // Bun-only: Node ignores `proxy` on an agent that doesn't implement it. Bun connects natively, with one set of TLS
+  // options for the proxy and the target.
+  test("`connectOpts` of an agent that can't connect on its own is ignored", async () => {
+    const agent = (proxy: string) => Object.assign(new http.Agent(), { proxy, connectOpts: off });
+    expect({
+      http: await connect("http", "wss", url => ({ agent: agent(url) })),
+      https: await connect("https", "wss", url => ({ agent: agent(url) })),
+      trusted: await connect("https", "wss", url => ({ agent: agent(url), ca: [proxyCa, targetCa] })),
+    }).toEqual({
+      http: { events: targetRejected, connects: 1 },
+      https: { events: proxyRejected, connects: 0 },
+      trusted: { events: echoed("hello"), connects: 1 },
+    });
   });
 });

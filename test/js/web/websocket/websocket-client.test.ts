@@ -13,7 +13,6 @@ import { Worker } from "node:worker_threads";
 import { type ClientOptions, WebSocket as NodeWS, WebSocketServer } from "ws";
 import {
   clientEvents,
-  echoCloseFrame,
   failingSession,
   ignoreAmbientNoProxy,
   startRecordingProxy,
@@ -462,7 +461,7 @@ describe.concurrent("WebSocket closing handshake", () => {
   it("pause() returns false and isPaused stays false unless CONNECTING or OPEN", async () => {
     await using server = await createPeer({
       respond(connection) {
-        echoCloseFrame(connection);
+        connection.echoClose();
         return response101(connection);
       },
     });
@@ -1181,7 +1180,7 @@ describe("WebSocket TLS server identity", () => {
               `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
           );
           connection = new RawSocket(socket, false);
-          echoCloseFrame(connection);
+          connection.echoClose();
         });
         socket.on("error", () => {});
         socket.on("close", () => connectionEnded.resolve());

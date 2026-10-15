@@ -3,6 +3,7 @@ import { tls as cert, isWindows } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
+import { closePayload, encodeFrame, OP } from "../../web/websocket/raw-peer";
 
 // Drives the uws BackPressure buffer through its append / erase / resize paths
 // and verifies the bytes that reach the client exactly match what was sent.
@@ -251,20 +252,6 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
   // Server frame: FIN + binary, 64-bit extended length, no mask.
   const frameHeader = Buffer.from([0x82, 0x7f, 0, 0, 0, 0, 0, 0x10, 0, 0]);
 
-  function closeFrame(code: number, reason: string): Buffer {
-    return Buffer.concat([Buffer.from([0x88, 2 + reason.length, code >> 8, code & 0xff]), Buffer.from(reason)]);
-  }
-
-  function masked(opcode: number, payload: Buffer): Buffer {
-    const mask = [0x12, 0x34, 0x56, 0x78];
-    return Buffer.from([
-      0x80 | opcode,
-      0x80 | payload.length,
-      ...mask,
-      ...Array.from(payload, (b, i) => b ^ mask[i & 3]),
-    ]);
-  }
-
   // Counts the complete 1 MiB frames at the start of the stream and returns the
   // trailing bytes, so a failure shows where the stream stopped.
   function splitStream(bytes: Buffer) {
@@ -282,7 +269,12 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
 
   // Expected value of { ...(await readToEnd()), closeEvent }.
   function delivered(dataFrames: number, code: number, reason: string, closeEvent = { code, reason }) {
-    return { dataFrames, rest: closeFrame(code, reason).toString("hex"), finInTime: true, closeEvent };
+    return {
+      dataFrames,
+      rest: encodeFrame(OP.close, closePayload(code, reason)).toString("hex"),
+      finInTime: true,
+      closeEvent,
+    };
   }
 
   // Sends 1 MiB frames until uws drops one (returns 0). Returns how many it
@@ -372,7 +364,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       const accepted = fillPastLimit(await opened.promise);
 
       // The client's read side is paused, but it can still write.
-      sock.write(masked(0x8, closeFrame(4001, "peer").subarray(2)));
+      sock.write(encodeFrame(OP.close, closePayload(4001, "peer"), { mask: true }));
       const closeEvent = await closed;
 
       expect({ ...(await readToEnd(sock, initial)), closeEvent }).toEqual(delivered(accepted, 4001, "peer"));
@@ -385,7 +377,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       const { sock, initial } = await pausedClient(server.port!, secure);
       const accepted = fillPastLimit(await opened.promise);
 
-      sock.write(masked(0x3, Buffer.alloc(0)));
+      sock.write(encodeFrame(3, "", { mask: true }));
       const closeEvent = await closed;
 
       expect({ ...(await readToEnd(sock, initial)), closeEvent }).toEqual(
@@ -474,7 +466,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       const { sock, initial } = await pausedClient(server.port!, secure);
       await opened.promise;
 
-      sock.write(masked(0x8, closeFrame(4001, "peer").subarray(2)));
+      sock.write(encodeFrame(OP.close, closePayload(4001, "peer"), { mask: true }));
 
       expect({ ...(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(delivered(0, 4001, "peer"));
     });

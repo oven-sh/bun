@@ -23,7 +23,15 @@ const opcodeNames: Record<number, string> = {
 export const syncPrefix = "\0sync";
 
 export type Payload = string | Uint8Array;
-export type FrameOptions = { fin?: boolean; rsv1?: boolean; rsv2?: boolean; rsv3?: boolean; mask?: boolean };
+export type FrameOptions = {
+  fin?: boolean;
+  rsv1?: boolean;
+  rsv2?: boolean;
+  rsv3?: boolean;
+  mask?: boolean;
+  /** Overrides the length in the frame header, to lie about the payload size. */
+  declaredLength?: number;
+};
 
 export class Frame {
   #payload: Buffer;
@@ -65,16 +73,17 @@ export class Frame {
 export function encodeFrame(opcode: number, payload: Payload = "", options: FrameOptions = {}): Buffer {
   const { fin = true, rsv1 = false, rsv2 = false, rsv3 = false, mask = false } = options;
   const body = Buffer.from(payload as any);
+  const length = options.declaredLength ?? body.length;
   const head = [(fin ? 0x80 : 0) | (rsv1 ? 0x40 : 0) | (rsv2 ? 0x20 : 0) | (rsv3 ? 0x10 : 0) | opcode];
   const maskBit = mask ? 0x80 : 0;
-  if (body.length < 126) {
-    head.push(maskBit | body.length);
-  } else if (body.length < 65536) {
-    head.push(maskBit | 126, body.length >> 8, body.length & 255);
+  if (length < 126) {
+    head.push(maskBit | length);
+  } else if (length < 65536) {
+    head.push(maskBit | 126, length >> 8, length & 255);
   } else {
-    const length = Buffer.alloc(8);
-    length.writeBigUInt64BE(BigInt(body.length));
-    head.push(maskBit | 127, ...length);
+    const extended = Buffer.alloc(8);
+    extended.writeBigUInt64BE(BigInt(length));
+    head.push(maskBit | 127, ...extended);
   }
   if (!mask) return Buffer.concat([Buffer.from(head), body]);
   // An all-zero mask key leaves the payload unchanged, so large payloads skip the XOR loop.
@@ -91,9 +100,9 @@ export function closePayload(code: number, reason: Payload = ""): Buffer {
   return Buffer.concat([head, Buffer.from(reason as any)]);
 }
 
-export function showBytes(bytes: Buffer): string {
+export function showBytes(bytes: Buffer, limit = 48): string {
   if (bytes.length === 0) return "";
-  if (bytes.length > 48) return `${bytes.length} bytes`;
+  if (bytes.length > limit) return `${bytes.length} bytes`;
   const text = bytes.toString();
   // Print as text only if it round-trips through UTF-8 and has no control characters.
   if (Buffer.from(text).equals(bytes) && !/[\0-\x1f\x7f�]/.test(text)) return JSON.stringify(text);
@@ -106,14 +115,23 @@ export function showBytes(bytes: Buffer): string {
  * frame, and `masked` for a masked server frame.
  */
 export function showFrame(frame: Frame): string {
+  return formatFrame(frame, 48);
+}
+
+/** `showFrame()` without the 48-byte limit: long payloads are printed in full. */
+export function showFullFrame(frame: Frame): string {
+  return formatFrame(frame, Infinity);
+}
+
+function formatFrame(frame: Frame, limit: number): string {
   const parts = [opcodeNames[frame.opcode] ?? `opcode${frame.opcode}`];
   if (frame.opcode === OP.close && frame.length >= 2) {
     parts.push(String(frame.payload.readUInt16BE(0)));
-    if (frame.length > 2) parts.push(showBytes(frame.payload.subarray(2)));
-  } else if (frame.length > 48) {
+    if (frame.length > 2) parts.push(showBytes(frame.payload.subarray(2), limit));
+  } else if (frame.length > limit) {
     parts.push(`${frame.length} bytes`);
   } else if (frame.length) {
-    parts.push(showBytes(frame.payload));
+    parts.push(showBytes(frame.payload, limit));
   }
   if (!frame.fin) parts.push("!fin");
   if (frame.rsv & 4) parts.push("rsv1");
@@ -216,6 +234,11 @@ export class RawSocket {
     this.#wake();
   }
 
+  /** Number of trailing bytes received that don't form a complete frame yet. */
+  get unparsedBytes() {
+    return this.#size;
+  }
+
   /** The next unread frame, or `undefined` once the other side has closed the connection. */
   async nextFrame(): Promise<Frame | undefined> {
     for (;;) {
@@ -260,6 +283,14 @@ export class RawSocket {
       if (frame.opcode === OP.pong && frame.payload.toString() === payload) return lines;
       lines.push(showFrame(frame));
     }
+  }
+
+  /** Skips unread frames up to the first Close frame, echoes it, and sends FIN. */
+  async echoClose() {
+    let frame;
+    do frame = await this.nextFrame();
+    while (frame && frame.opcode !== OP.close);
+    if (frame) this.socket.end(this.frame(OP.close, frame.payload));
   }
 
   send(opcode: number, payload?: Payload, options?: FrameOptions) {
@@ -349,6 +380,8 @@ export type PeerOptions = {
   tls?: tls.TlsOptions;
   /** Listen on this unix socket path. */
   path?: string;
+  /** Defaults to `true`: only the test ends the connection. `false` replies to the client's FIN with a FIN. */
+  allowHalfOpen?: boolean;
 };
 
 /** A raw server for `new WebSocket(peer.url)`. */
@@ -380,9 +413,10 @@ export async function createPeer(options: PeerOptions = {}) {
     });
   };
 
+  const { allowHalfOpen = true } = options;
   const server = options.secure
-    ? tls.createServer({ ...harnessTls, allowHalfOpen: true, ...options.tls }, onConnection)
-    : net.createServer({ allowHalfOpen: true }, onConnection);
+    ? tls.createServer({ ...harnessTls, allowHalfOpen, ...options.tls }, onConnection)
+    : net.createServer({ allowHalfOpen }, onConnection);
   // Also track raw TCP sockets, so a client that aborts during the TLS handshake still gets destroyed.
   server.on("connection", socket => sockets.add(socket));
   if (options.path) server.listen(options.path);

@@ -119,8 +119,8 @@ static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool 
 
         compressionWindow = offer.serverNoContextTakeover ? 0 : wantedCompressionWindow;
         if (offer.serverMaxWindowBits) {
-            /* zlib can't deflate with windowBits 8, and the shared compressor always uses 15 */
-            if (offer.serverMaxWindowBits == 8 || (!compressionWindow && offer.serverMaxWindowBits < 15)) {
+            /* The shared compressor always uses 15. An 8-bit window is fine: see compressOptionsFor(). */
+            if (!compressionWindow && offer.serverMaxWindowBits < 15) {
                 return true;
             }
             compressionWindow = std::min(compressionWindow, offer.serverMaxWindowBits);

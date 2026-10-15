@@ -582,7 +582,7 @@ impl NodeHTTPResponse {
         max_payload_length: u32,
         auto_pong: bool,
         skip_utf8_validation: bool,
-        compress_options: i32,
+        deflate_params: Option<&uws_sys::response::PerMessageDeflateParams>,
     ) -> JsResult<Option<JSValue>> {
         if !self.can_upgrade() {
             return Ok(None);
@@ -600,7 +600,7 @@ impl NodeHTTPResponse {
             max_payload_length,
             auto_pong,
             skip_utf8_validation,
-            compress_options != 0,
+            deflate_params.is_some(),
         ) else {
             return Ok(None);
         };
@@ -627,7 +627,7 @@ impl NodeHTTPResponse {
             .upgrade_raw(
                 ws,
                 handshake,
-                compress_options,
+                deflate_params,
                 // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref. The app owns it.
                 bun_opaque::opaque_deref_mut(context.as_ptr()),
             )

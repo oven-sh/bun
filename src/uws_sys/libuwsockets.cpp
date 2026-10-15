@@ -1384,7 +1384,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   us_socket_t *uws_res_upgrade_raw(int ssl, uws_res_r res, void *data,
                                    const char *handshake, size_t handshake_length,
-                                   uws_compress_options_t compress_options,
+                                   const uWS::PerMessageDeflateParams *deflate_params,
                                    uws_socket_context_t *ws)
   {
     return withSSL(ssl, [&](auto isSSL) {
@@ -1392,7 +1392,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       return ((uWS::HttpResponse<SSL> *)res)->template upgradeRaw<void *>(
           data ? std::move(data) : nullptr,
           stringViewFromC(handshake, handshake_length),
-          (uWS::CompressOptions)(uint64_t)compress_options,
+          deflate_params,
           (uWS::WebSocketContext<SSL, true, void *> *)ws);
     });
   }

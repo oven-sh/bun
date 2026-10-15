@@ -3409,6 +3409,7 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
     [[1014, "bad gateway"], 1014, "bad gateway"],
     [[3000], 3000, ""],
     [[4999, "mine"], 4999, "mine"],
+    [[1000.5, "bye"], 1000, "bye"],
   ] as const)("close(...%j) sends the code and reason", async (args, code, reason) => {
     expect(await closeWith(...args)).toEqual({ thrown: undefined, wire: [code, reason], handler: [code, reason] });
   });
@@ -3422,16 +3423,29 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
   );
 
   // RFC 6455 §7.4: these are invalid on the wire. The peer would fail the connection with 1002 and ignore the code.
-  it.each([[999], [1004], [1016], [2999], [5000], [-1], [66536], [1.5]])(
-    "close(%p) throws a RangeError and leaves the socket open",
-    async code => {
-      expect(await closeWith(code)).toEqual({
-        thrown: "RangeError readyState=1",
-        wire: [4999, "after the throw"],
-        handler: [4999, "after the throw"],
-      });
-    },
-  );
+  // The last six are 1000 or 0 after ToInt32, which wraps modulo 2**32 and maps the infinities to 0.
+  it.each([
+    [999],
+    [1004],
+    [1016],
+    [2999],
+    [5000],
+    [-1],
+    [66536],
+    [1.5],
+    [2 ** 32 + 1000],
+    [1000 - 2 ** 32],
+    [2 ** 32],
+    [2 ** 53],
+    [Infinity],
+    [-Infinity],
+  ])("close(%p) throws a RangeError and leaves the socket open", async code => {
+    expect(await closeWith(code)).toEqual({
+      thrown: "RangeError readyState=1",
+      wire: [4999, "after the throw"],
+      handler: [4999, "after the throw"],
+    });
+  });
 });
 
 describe.concurrent("ServerWebSocket validates arguments regardless of socket state", () => {
@@ -3492,6 +3506,8 @@ describe.concurrent("ServerWebSocket validates arguments regardless of socket st
     ["publishBinary('t', 'x')", ws => ws.publishBinary("t", "x"), "publishBinary expects a Blob or BufferSource"],
     ["close('x')", ws => ws.close("x"), "close requires a numeric code or undefined"],
     ["close(999)", ws => ws.close(999), "The close code must be"],
+    ["close(2 ** 32 + 1000)", ws => ws.close(2 ** 32 + 1000), "Received 4294968296"],
+    ["close(Infinity)", ws => ws.close(Infinity), "Received Infinity"],
     ["cork()", ws => ws.cork(), "Not enough arguments"],
     ["cork(1)", ws => ws.cork(1), 'The "callback" argument must be of type function'],
   ];

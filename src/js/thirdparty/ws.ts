@@ -22,7 +22,7 @@ const upgradeWebSocket = $newRustFunction("node_http_binding.rs", "upgradeNodeHT
   handshake: string,
   maxPayload: number,
   flags: number,
-  compression: number,
+  deflate: NativeStreamOptions["deflate"],
 ) => NativeServer | undefined;
 const serverSendFrame = $newRustFunction("node_http_binding.rs", "sendWebSocketFrame", 5) as (
   handle: NativeServer,
@@ -234,7 +234,14 @@ interface ServerHandlers {
 }
 
 interface ClientHandlers extends Omit<ServerHandlers, "close"> {
-  handshake(this: WebSocket, statusCode: number, statusMessage: string, rawHeaders: string[], isUpgrade: boolean): void;
+  // Returns an object to accept a 101. The native client doesn't validate the response itself.
+  handshake(
+    this: WebSocket,
+    statusCode: number,
+    statusMessage: string,
+    rawHeaders: string[],
+    isUpgrade: boolean,
+  ): Pick<NativeStreamOptions, "deflate"> | undefined;
   body(this: WebSocket, chunk: Buffer | null, aborted: boolean, reset: boolean): void;
   open(this: WebSocket): void;
   error(this: WebSocket, error: NativeError): void;
@@ -802,21 +809,6 @@ class PerMessageDeflate {
 
     return configurations as DeflateParams[];
   }
-
-  // Encodes the accepted parameters as uWS CompressOptions. Compressor: `window << 4 | memLevel`, or 1 for the one
-  // shared by the event loop. Decompressor: `window << 8`, or `1 << 8` for the shared one. The deflate window is at
-  // least 9 bits because zlib doesn't support a 256 byte one.
-  get nativeOptions(): number {
-    const params = this.params!;
-    const deflateBits = Math.max(params.server_max_window_bits || 15, 9);
-    const inflateBits = (params.client_max_window_bits as number) || 15;
-    // The shared compressor (1) has no context takeover and a 15-bit window.
-    // 1 << 12 is uWS::COMPRESSOR_NO_CONTEXT_TAKEOVER.
-    const dedicated = (deflateBits << 4) | (deflateBits - 7);
-    const compressor = !params.server_no_context_takeover ? dedicated : deflateBits < 15 ? dedicated | (1 << 12) : 1;
-
-    return compressor | (params.client_no_context_takeover ? 1 << 8 : inflateBits << 8);
-  }
 }
 
 //
@@ -1150,7 +1142,6 @@ class WebSocket extends EventEmitter {
   // Sends `options[kHandshake]` and attaches `socket`. Returns false without sending anything if `socket` is a
   // node:http connection that can no longer be upgraded.
   setSocket(socket: ServerSocket, head: Buffer, options: SetSocketOptions): boolean {
-    const perMessageDeflate = this._extensions[extensionName];
     const maxPayload = Math.max(options.maxPayload | 0, 0);
 
     // The native server socket only sees data received after it adopts the connection. If handleUpgrade() was called
@@ -1163,7 +1154,7 @@ class WebSocket extends EventEmitter {
         options[kHandshake],
         maxPayload,
         (this._autoPong ? 1 : 0) | (options.skipUTF8Validation ? 2 : 0),
-        perMessageDeflate ? perMessageDeflate.nativeOptions : 0,
+        nativeDeflateParams(this),
       );
 
       if (native === undefined) return false;
@@ -1171,8 +1162,6 @@ class WebSocket extends EventEmitter {
       this[kNative] = native;
       this[kTransport] = NATIVE_SERVER;
     } else {
-      const params = perMessageDeflate?.params;
-
       if (options[kHandshake]) socket.write(options[kHandshake]);
 
       this[kNative] = createWebSocketOverStream(
@@ -1185,15 +1174,7 @@ class WebSocket extends EventEmitter {
           // The `ping` handler sends the pong instead, because the engine can't see the stream's backpressure.
           autoPong: false,
           skipUTF8Validation: !!options.skipUTF8Validation,
-          deflate: params
-            ? {
-                serverNoContextTakeover: !!params.server_no_context_takeover,
-                clientNoContextTakeover: !!params.client_no_context_takeover,
-                serverMaxWindowBits: params.server_max_window_bits || 15,
-                clientMaxWindowBits:
-                  typeof params.client_max_window_bits === "number" ? params.client_max_window_bits : 15,
-              }
-            : undefined,
+          deflate: nativeDeflateParams(this),
         },
         this,
         clientHandlers,
@@ -1383,20 +1364,10 @@ class WebSocket extends EventEmitter {
       return;
     }
 
-    const native = this[kNative];
-    if (native === null) return;
+    if (this[kNative] === null) return;
 
     this._readyState = CLOSING;
-    // On the stream transport, keep the engine alive until socketOnClose() so it can parse data buffered in the socket.
-    if (this[kTransport] !== STREAM) {
-      const closeFrameSent = this._closeFrameSent;
-
-      // terminate() delivers the frames the native client has buffered. A Close frame among them isn't echoed, so
-      // restore `_closeFrameSent`.
-      native.terminate();
-      this._closeFrameSent = closeFrameSent;
-    }
-    if (this[kTransport] !== NATIVE_CLIENT) this._socket!.destroy();
+    destroySocket(this);
   }
 }
 
@@ -1589,16 +1560,26 @@ function abortHandshake(websocket: WebSocket, req: HandshakeRequest, message: st
   process.nextTick(emitErrorAndClose, websocket, err);
 }
 
-function closeTimerOnTimeout(websocket: WebSocket): void {
-  websocket[kNative]!.terminate();
+// Upstream's `websocket._socket.destroy()`.
+function destroySocket(websocket: WebSocket): void {
+  // On the stream transport, keep the engine alive until socketOnClose() so it can parse data buffered in the socket.
+  if (websocket[kTransport] !== STREAM) {
+    const closeFrameSent = websocket._closeFrameSent;
+
+    // terminate() delivers the frames the native client has buffered. A Close frame among them isn't echoed, so
+    // restore `_closeFrameSent`.
+    websocket[kNative]!.terminate();
+    websocket._closeFrameSent = closeFrameSent;
+  }
   if (websocket[kTransport] !== NATIVE_CLIENT) websocket._socket!.destroy();
 }
 
 function setCloseTimer(websocket: WebSocket): void {
-  websocket._closeTimer = setTimeout(closeTimerOnTimeout, websocket._closeTimeout, websocket);
+  websocket._closeTimer = setTimeout(destroySocket, websocket._closeTimeout, websocket);
 }
 
 // lib/receiver.js errors by code: [constructor, message, has "Invalid WebSocket frame: " prefix, status code].
+// The native client's codes and status codes come from `ErrorCode::info()` in src/http_jsc/websocket_client.rs.
 const receiverErrors = {
   __proto__: null,
   WS_ERR_EXPECTED_FIN: [RangeError, "FIN must be set", true, 1002],
@@ -1752,6 +1733,9 @@ const clientHandlers: ClientHandlers = {
       return;
     }
 
+    // node:http drops the request's timeout once the response is an upgrade, even if an 'upgrade' listener throws.
+    clearTimeout(this[kHandshakeTimer]);
+
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
 
@@ -1763,7 +1747,9 @@ const clientHandlers: ClientHandlers = {
       if (this.readyState !== CONNECTING) return;
     }
 
-    validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"));
+    if (!validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"))) return;
+
+    return { deflate: nativeDeflateParams(this) };
   },
   // Called with each body chunk of a non-101 response, then with `null`. `aborted` means the connection ended before
   // the body was complete. `reset` means it ended with an error, which also fails the request.
@@ -1808,7 +1794,7 @@ const clientHandlers: ClientHandlers = {
     const native = this[kNative] as NativeClient;
 
     clearTimeout(this[kHandshakeTimer]);
-    // `_req` is already null if the native client rejected a 101 that validateUpgrade() accepted.
+    // `_req` is already null if the socket closed after validateUpgrade() accepted the 101 but before 'open'.
     const req = this._req;
     if (req) removeAbortListener(req);
     detach(native);
@@ -2051,7 +2037,22 @@ function followRedirect(
   return true;
 }
 
-// The validation from upstream's `req.on('upgrade')` listener. Returns false if it aborted the handshake.
+// The negotiated permessage-deflate parameters for the native side, or undefined for no compression.
+function nativeDeflateParams(websocket: WebSocket): NativeStreamOptions["deflate"] {
+  const params = websocket._extensions[extensionName]?.params;
+
+  if (!params) return undefined;
+
+  return {
+    serverNoContextTakeover: !!params.server_no_context_takeover,
+    clientNoContextTakeover: !!params.client_no_context_takeover,
+    serverMaxWindowBits: params.server_max_window_bits || 15,
+    clientMaxWindowBits: typeof params.client_max_window_bits === "number" ? params.client_max_window_bits : 15,
+  };
+}
+
+// The validation from upstream's `req.on('upgrade')` listener. Returns false if it aborted the handshake. This is the
+// only check of a 101 on either transport.
 function validateUpgrade(
   websocket: WebSocket,
   req: HandshakeRequest,
@@ -2166,13 +2167,17 @@ function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object:
   }
 }
 
+// `options` is `agent.options`, which node:http merges over the request's options. A proxy agent's `connectOpts` isn't
+// returned because the agent only uses it to connect to the proxy, so it must not affect how the target is verified.
 function extractAgentOptions(agent: Agent): {
-  connectOpts: AgentConnectOptions | undefined;
+  options: AgentConnectOptions | undefined;
   proxy: ProxyOption | null;
+  isSecureProxy: boolean;
 } {
+  let options = Object.hasOwn(agent, "options") ? agent.options : undefined;
+  if (!$isObject(options)) options = undefined;
   let connectOpts = Object.hasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
-  connectOpts ||= Object.hasOwn(agent, "options") ? agent.options : undefined;
-  if (!$isObject(connectOpts)) connectOpts = undefined;
+  if (!$isObject(connectOpts)) connectOpts = options;
   let proxy: ProxyOption | null = null;
 
   // The native client only supports HTTP(S) proxies. A SOCKS agent's `proxy` isn't a URL.
@@ -2189,7 +2194,7 @@ function extractAgentOptions(agent: Agent): {
     }
   }
 
-  return { connectOpts, proxy };
+  return { options, proxy, isSecureProxy: proxy !== null && (proxyUrl as string).startsWith("https:") };
 }
 
 // Whether `agent` overrides how connections are made.
@@ -2680,11 +2685,14 @@ function initAsClient(
   const state: RequestState = { opts, address, protocols, options, protocolSet, perMessageDeflate };
 
   let proxy: ProxyOption | null | undefined = opts.proxy;
-  let connectOpts: AgentConnectOptions | undefined;
+  let agentOptions: AgentConnectOptions | undefined;
   if ($isObject(agent)) {
     const agentOpts = extractAgentOptions(agent);
-    connectOpts = agentOpts.connectOpts;
-    proxy ||= agentOpts.proxy;
+    agentOptions = agentOpts.options;
+
+    // A proxy agent verifies an https: proxy with its own TLS options and the target with the request's. The native
+    // client applies a single `tls` option to both connections, so let the agent connect unless `tls` was passed.
+    if (!agentOpts.isSecureProxy || $isObject(opts.tls) || !hasCustomConnect(agent)) proxy ||= agentOpts.proxy;
   }
 
   // The native client doesn't support these options, so fall back to `http.request()`. The native engine adopts the
@@ -2717,11 +2725,11 @@ function initAsClient(
 
       // The agent's options override the request's. An agent that only carries options isn't needed to connect, so
       // drop it and pass its remaining options straight to the connection.
-      const agentOptions: Dictionary<unknown> | undefined =
-        $isObject(agent) && !hasCustomConnect(agent) ? { __proto__: null as never, ...connectOpts } : undefined;
+      const connectionOptions: Dictionary<unknown> | undefined =
+        $isObject(agent) && !hasCustomConnect(agent) ? { __proto__: null as never, ...agentOptions } : undefined;
 
       // Use `delete`, not `= undefined`. An own key set to undefined still overrides tls.connect()'s defaults.
-      for (const target of agentOptions ? [requestOptions, agentOptions] : [requestOptions]) {
+      for (const target of connectionOptions ? [requestOptions, connectionOptions] : [requestOptions]) {
         for (let i = 0; i < nodeClientTlsKeys.length; i++) delete target[nodeClientTlsKeys[i]];
         delete target.ALPNProtocols;
         delete target.secureContext;
@@ -2734,9 +2742,9 @@ function initAsClient(
       }
       if (serverName !== undefined) requestOptions.servername = serverName;
 
-      if (agentOptions) {
+      if (connectionOptions) {
         opts.agent = undefined;
-        opts.createConnection = args => defaultCreateConnection({ ...args, ...agentOptions });
+        opts.createConnection = args => defaultCreateConnection({ ...args, ...connectionOptions });
       }
     }
 
@@ -2782,7 +2790,7 @@ function initAsClient(
     tls = require("internal/tls").unsealPfxForNative(tls);
   } else if (!tls && options) {
     // The agent's options take precedence: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
-    tls = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...options, ...connectOpts });
+    tls = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...options, ...agentOptions });
   }
   if (tls) nativeOptions.tls = tls;
 

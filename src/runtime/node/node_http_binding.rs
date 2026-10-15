@@ -4,6 +4,7 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
+use bun_uws_sys::response::PerMessageDeflateParams;
 
 use crate::server::{
     DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NodeHTTPResponse, ServerWebSocket,
@@ -78,25 +79,11 @@ pub(crate) fn get_bun_server_open_count(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
-/// Whether `options` is a uWS `CompressOptions` value that zlib accepts. The low byte is the
-/// compressor (`window << 4 | memLevel`) and bits 8-11 are the decompressor's window. 1 in either
-/// field selects the event loop's shared one. Bit 12 (`COMPRESSOR_NO_CONTEXT_TAKEOVER`) is only
-/// valid with a dedicated compressor.
-fn is_valid_compress_options(options: i32) -> bool {
-    let (compressor, decompressor) = (options & 0xFF, (options >> 8) & 0xF);
-    options & !0x1FFF == 0
-        && (if compressor == 1 {
-            options & 0x1000 == 0
-        } else {
-            (9..=15).contains(&(compressor >> 4)) && (1..=9).contains(&(compressor & 0xF))
-        })
-        && (decompressor == 1 || (8..=15).contains(&decompressor))
-}
-
-/// `(response, websocket, handlers, handshake, maxPayload, flags, compression)`: upgrades
-/// `response`'s connection to a WebSocket and writes `handshake` as the response head. Returns the
-/// `ServerWebSocket`. Returns `undefined` without writing anything if `response` isn't a native
-/// response or can no longer be upgraded.
+/// `(response, websocket, handlers, handshake, maxPayload, flags, deflate)`: upgrades
+/// `response`'s connection to a WebSocket and writes `handshake` as the response head. `deflate` is
+/// the negotiated permessage-deflate parameters, or `undefined`. Returns the `ServerWebSocket`.
+/// Returns `undefined` without writing anything if `response` isn't a native response or can no
+/// longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -111,7 +98,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         handshake,
         max_payload,
         flags,
-        compression,
+        deflate,
     ] = frame.arguments_as_array::<7>();
     let Some(response) = response.as_class_ref::<NodeHTTPResponse>() else {
         return Ok(JSValue::UNDEFINED);
@@ -131,12 +118,24 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         0
     };
     let flags = flags.coerce_to_i32(global)?;
-    let compression = compression.coerce_to_i32(global)?;
-    if compression != 0 && !is_valid_compress_options(compression) {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "compression must be 0 or valid uWS CompressOptions"
-        )));
-    }
+    let deflate_params = if deflate.is_object() {
+        Some(PerMessageDeflateParams {
+            server_max_window_bits: deflate
+                .get_optional(global, "serverMaxWindowBits")?
+                .unwrap_or(15),
+            client_max_window_bits: deflate
+                .get_optional(global, "clientMaxWindowBits")?
+                .unwrap_or(15),
+            server_no_context_takeover: deflate
+                .get_boolean_loose(global, "serverNoContextTakeover")?
+                .unwrap_or(false),
+            client_no_context_takeover: deflate
+                .get_boolean_loose(global, "clientNoContextTakeover")?
+                .unwrap_or(false),
+        })
+    } else {
+        None
+    };
 
     Ok(response
         .upgrade_for_ws_package(
@@ -147,7 +146,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
             max_payload,
             flags & AUTO_PONG != 0,
             flags & SKIP_UTF8_VALIDATION != 0,
-            compression,
+            deflate_params.as_ref(),
         )?
         .unwrap_or(JSValue::UNDEFINED))
 }

@@ -135,6 +135,25 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
       expect(await wasClean).toBe(false);
       expect(await conn.remainingFrames()).toEqual(["close 1000"]);
     });
+
+    // Expected values are from npm ws 8.18.3 on Node v26.3.0, with its 30 s timer shortened.
+    test("parses frames that arrived with the 101 and are still buffered in a paused socket", async () => {
+      const buffered = Buffer.concat([
+        encodeFrame(OP.text, "one"),
+        encodeFrame(OP.close, closePayload(4001, "theirs")),
+      ]);
+      await using client = await connectClient(implementation, { closeTimeout: 50 } as {}, { afterUpgrade: buffered });
+      const { ws, events } = client;
+      const wasClean = new Promise(resolve => ws.addEventListener("close", event => resolve(event.wasClean)));
+      ws.on("open", () => {
+        ws.pause();
+        ws.close(1000);
+      });
+      await client.closed;
+      expect(events).toEqual([...openEvents, 'message Buffer("one") text rs=2', 'close 4001 Buffer("theirs") rs=3']);
+      expect(await wasClean).toBe(true);
+      expect(await (await client.peer.connection()).remainingFrames()).toEqual(["close 1000"]);
+    });
   });
 
   test("messages and pings received after close() are delivered, but the pings aren't answered", async () => {

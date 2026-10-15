@@ -289,6 +289,110 @@ describe("css tests", () => {
     minify_test(`.a{margin-left:mod(-7px,-3px)}`, `.a{margin-left:-1px}`);
     minify_test(`.a{margin-left:mod(7px,3px)}`, `.a{margin-left:1px}`);
   });
+  describe("relative color keywords inside nested math functions", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors: a channel keyword
+    // may appear anywhere in a channel's math, including inside a math function
+    // nested in another one. #336699 is r 51, g 102, b 153, hsl(210 50% 40%),
+    // alpha 1.
+    minify_test(".foo { color: rgb(from #336699 calc(calc(r)) g b) }", ".foo{color:#369}");
+    minify_test(".foo { color: rgb(from #336699 calc(r + calc(g)) b b) }", ".foo{color:#999}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(abs(r - b))) }", ".foo{color:#366}");
+    minify_test(".foo { color: rgb(from #336699 calc(b * sign(g)) g b) }", ".foo{color:#969}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(rem(b, g))) }", ".foo{color:#363}");
+    // sqrt() parses its argument as a plain number; the pow() inside it still sees the keywords.
+    minify_test(".foo { color: rgb(from #336699 r g sqrt(pow(r, 2))) }", ".foo{color:#363}");
+    minify_test(".foo { color: rgb(from #336699 r calc(sqrt(pow(b, 2))) b) }", ".foo{color:#399}");
+    // A keyword next to a literal: abs(51 - 100) is 49.
+    minify_test(".foo { color: rgb(from #336699 r g calc(abs(r - 100))) }", ".foo{color:#336631}");
+    minify_test(".foo { color: rgb(from #336699 r g calc(rem(calc(0 - r), 7) + 60)) }", ".foo{color:#33663a}");
+    // `a` is -20 here. sqrt() of it is NaN, which is 0 in a channel.
+    minify_test(".foo { color: lab(from lab(50% -20 30) l calc(sqrt(a)) b) }", ".foo{color:lab(50% 0 30)}");
+    // A keyword does not reach a nested round() or hypot(): they fold a negative argument wrong.
+    minify_test(
+      ".foo { color: rgb(from #336699 r g calc(round(b, 10))) }",
+      ".foo{color:rgb(from #369 r g calc(round(b,10)))}",
+    );
+    minify_test(
+      ".foo { color: lab(from lab(50% -20 30) l calc(hypot(a)) b) }",
+      ".foo{color:lab(from lab(50% -20 30) l calc(hypot(a))b)}",
+    );
+    // Trigonometric functions read a keyword as a number of radians, as a browser does.
+    minify_test(".foo { color: rgb(from #336699 calc(r + sin(g) * 20) g b) }", ".foo{color:#476699}");
+    minify_test(".foo { color: rgb(from #336699 calc(r + cos(g) * 20) g b) }", ".foo{color:#356699}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h) * 20) s l) }", ".foo{color:#994333}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h * 1deg) * 20) s l) }", ".foo{color:#934}");
+    minify_test(".foo { color: hsl(from #336699 calc(sin(h) * 100deg) s l) }", ".foo{color:#998333}");
+    minify_test(".foo { color: hsl(from #336699 asin(s / 100) s l) }", ".foo{color:#963}");
+    minify_test(".foo { color: hsl(from #336699 atan2(s, l) s l) }", ".foo{color:#998a33}");
+    minify_test(".foo { color: hsl(from #336699 calc(atan2(s * 1deg, l * 1deg)) s l) }", ".foo{color:#998a33}");
+    minify_test(".foo { color: rgb(from #336699 r g b / calc(sin(g))) }", ".foo{color:#336699fe}");
+    // A color that now folds keeps the alpha of its origin.
+    minify_test(".foo { color: rgb(from #33669980 calc(r + calc(g)) b b) }", ".foo{color:#99999980}");
+    // The alpha slot.
+    minify_test(".foo { color: rgb(from #336699 r g b / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(".foo { color: hsl(from #336699 h s l / calc(alpha - calc(alpha / 2))) }", ".foo{color:#33669980}");
+    minify_test(
+      ".foo { color: rgb(from light-dark(#336699, #996633) calc(r + calc(g)) b b) }",
+      ".foo{color:light-dark(#999,#f33)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(g)) b b / var(--a)) }",
+      ".foo{color:rgb(153 153 153/var(--a))}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(g)) b b / calc(alpha * var(--a))) }",
+      ".foo{color:rgb(from #369 calc(r + calc(g))b b/calc(alpha*var(--a)))}",
+    );
+    // Hues.
+    minify_test(".foo { color: hsl(from #336699 calc(h + calc(h)) s l) }", ".foo{color:#993}");
+    minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(calc(s) * 1deg + 30deg) s l) }", ".foo{color:#793}");
+    minify_test(".foo { color: lch(from lch(50% 30 120) l c calc(h + calc(h))) }", ".foo{color:lch(50% 30 240)}");
+    // Channels written as percentages.
+    minify_test(".foo { color: hsl(from #336699 h calc(s + calc(s)) l) }", ".foo{color:#06c}");
+    minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + calc(l)) a b) }", ".foo{color:lab(100% 20 30)}");
+    // Channels written as numbers.
+    minify_test(".foo { color: lab(from lab(50% 20 30) l calc(a + calc(b)) b) }", ".foo{color:lab(50% 50 30)}");
+    minify_test(
+      ".foo { color: color(from color(srgb 0.8 0.4 0.2) srgb calc(r - calc(g)) g b) }",
+      ".foo{color:color(srgb .4 .4 .2)}",
+    );
+    // A keyword is a number. A browser rejects a keyword that is added to a percentage or to an angle.
+    // Such a sum folds where it folded before, at the top of a channel, and nowhere deeper.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(calc(r) + 10%) g b) }",
+      ".foo{color:rgb(from #369 calc(calc(r) + 10%)g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from #336699 calc(calc(h) + 30deg) s l) }",
+      ".foo{color:hsl(from #369 calc(calc(h) + 30deg)s l)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 r g b / calc(calc(alpha) + 50%)) }",
+      ".foo{color:rgb(from #369 r g b/calc(calc(alpha) + 50%))}",
+    );
+    minify_test(
+      ".foo { color: hsl(from #336699 calc(h + asin(s / 100)) s l) }",
+      ".foo{color:hsl(from #369 calc(h + asin(s/100))s l)}",
+    );
+    // 153 + 153 is outside 0..255.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(calc(b) + b) g b) }",
+      ".foo{color:rgb(from #369 calc(calc(b) + b)g b)}",
+    );
+    // The nested function sees exactly the keywords of the function it is
+    // written in: an unknown identifier, another color space's keyword, and a
+    // keyword outside relative syntax are still invalid, and the declaration
+    // is left as written.
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(x)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(x))g b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from #336699 calc(r + calc(h)) g b) }",
+      ".foo{color:rgb(from #369 calc(r + calc(h))g b)}",
+    );
+    minify_test(".foo { color: rgb(calc(1 + calc(r)) 0 0) }", ".foo{color:rgb(calc(1 + calc(r))0 0)}");
+  });
   describe("border_spacing", () => {
     minify_test(
       `

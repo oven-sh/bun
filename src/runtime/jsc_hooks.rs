@@ -741,8 +741,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `vm.transpiler.resolver`, not `vm.preload`).
         let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
         // SAFETY: `preload` points at a live boxed slice for this iteration
-        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`:
-        // a reload that lands in the tick is deferred while `is_in_preload`).
+        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -846,12 +845,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // Under --isolate each test file gets
     // a fresh global, so preloads must re-execute for every file. Otherwise,
-    // only load preloads once. One more time for a reload that was deferred
-    // while the preloads of a reload loaded: this walk can have read a file
-    // before that save, or in the middle of it. Once, because a preload that
-    // saves a watched file each time would not end.
+    // only load preloads once.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let vm = unsafe { &mut *vm };
+    // Once more, and only once, for a reload deferred during the preloads of a reload.
     vm.preloads_kept_for_reload =
         vm.hot_reload_deferred && vm.hot_reload_counter != 0 && !kept_for_this_walk;
     if !vm.test_isolation_enabled && !vm.preloads_kept_for_reload {

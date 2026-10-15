@@ -260,8 +260,7 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
-    /// The preloads of a reload loaded, and stay listed for the reload that was deferred
-    /// meanwhile: it loads them once more.
+    /// `load_preloads` kept the list for the reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
 
@@ -4479,12 +4478,9 @@ impl VirtualMachine {
                 crate::js_promise::Status::Rejected => {
                     if self.pending_internal_promise_reported_at != self.hot_reload_counter {
                         self.pending_internal_promise_reported_at = self.hot_reload_counter;
-                        // `global()` is `&'static`, so it survives the `&mut self`
-                        // call below.
+                        // `global()` is `&'static`, so it survives the `&mut self` call below.
                         let global_ref = self.global();
-                        // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut`
-                        // is the centralised non-null deref proof (live JSC heap
-                        // cell tracked by the VM's strong-ref slot).
+                        // `opaque_mut`: the VM's slot keeps this JSC heap cell alive.
                         let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
                         let promise_js = JSValue::from_cell(promise);
                         self.unhandled_rejection(global_ref, result, promise_js);
@@ -4498,8 +4494,7 @@ impl VirtualMachine {
                 break;
             }
             self.reload(None);
-            // A reload that a task starts is inside a tick, and the tick then runs what the
-            // reload queued. This one is between ticks: tick for it, then look at its promise.
+            // Between ticks, unlike a reload that a task starts: tick for it, then look again.
             self.tick();
         }
         self.add_main_to_watcher_if_needed();
@@ -4607,8 +4602,7 @@ impl VirtualMachine {
             bun_core::reload_process(should_clear_terminal, false);
         }
 
-        // `load_preloads` ticks the event loop between preloads and indexes the list it walks.
-        // A reload from inside that tick would run the preloads again and empty the list.
+        // A reload inside the tick of `load_preloads` would empty the list that it walks.
         if self.is_in_preload {
             self.hot_reload_deferred = true;
             return;
@@ -4665,11 +4659,7 @@ impl VirtualMachine {
         }
     }
 
-    /// A reload that gives an error and no promise, as when a preload file is gone. The error
-    /// becomes the rejection of the reload: the run loop reports it and waits for the next
-    /// save, as for an import that is gone. (A first start with the same error exits.)
-    /// `logged` is the log's length and counts from before the reload: the error is in what
-    /// the reload added.
+    /// The error of a reload that gave no promise becomes the rejection of its entry promise.
     #[cold]
     fn reject_failed_reload(&mut self, err: crate::CrateError, logged: Option<(usize, u32, u32)>) {
         use crate::LogJsc as _;

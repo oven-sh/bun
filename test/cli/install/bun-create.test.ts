@@ -1156,6 +1156,27 @@ it.concurrent("should preserve package.json indentation from the template", asyn
   expect(exitCode).toBe(0);
 });
 
+// Windows copies from and to absolute paths, so a home directory like C:\Users\José is part of both.
+it.concurrent.each([
+  ["josé", "dest"],
+  ["日本語", "dest"],
+  ["ascii", "déstination"],
+])("copies a local template when the working directory is %s and the destination is %s", async (cwd, destination) => {
+  using dir = tempDir("create-non-ascii", {
+    [`${cwd}/bun-create/tpl/package.json`]: JSON.stringify({ name: "tpl", version: "1.0.0" }),
+    [`${cwd}/bun-create/tpl/src/index.js`]: "// index\n",
+    [`${cwd}/bun-create/tpl/src/résumé.js`]: "// résumé\n",
+  });
+  const root = join(String(dir), cwd);
+  const { err, exitCode } = await create(root, ["tpl", destination, "--no-install", "--no-git"]);
+
+  expect(err).not.toContain("failed to copy file");
+  const { "package.json": packageJson, ...files } = await tree(join(root, destination));
+  expect(files).toEqual({ "src/index.js": "// index\n", "src/résumé.js": "// résumé\n" });
+  expect(JSON.parse(packageJson)).toEqual({ name: destination, version: "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
 it("should keep bun-create task and start strings containing escape sequences intact", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "escaped-config-template";

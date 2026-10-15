@@ -660,23 +660,27 @@ impl CreateCommand {
                 #[cfg(windows)]
                 let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let dst_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(destination);
+                let destination_len = strings::convert_utf8_to_utf16_in_buffer(
+                    destination_buf.as_mut_slice(),
+                    strings::without_trailing_slash(destination),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut destination_buf, dst_without_trailing_slash);
-                    destination_buf[dst_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    destination_buf[destination_len] = bun_paths::SEP as u16;
                 }
 
                 #[cfg(windows)]
                 let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
-                let src_without_trailing_slash: &[u8] =
-                    strings::without_trailing_slash(abs_template_path);
+                let template_path_len = strings::convert_utf8_to_utf16_in_buffer(
+                    template_path_buf.as_mut_slice(),
+                    strings::without_trailing_slash(abs_template_path),
+                )
+                .len();
                 #[cfg(windows)]
                 {
-                    strings::copy_u8_into_u16(&mut template_path_buf, src_without_trailing_slash);
-                    template_path_buf[src_without_trailing_slash.len()] = bun_paths::SEP as u16;
+                    template_path_buf[template_path_len] = bun_paths::SEP as u16;
                 }
 
                 let mut walker_ = bun_sys::walker_skippable::walk(
@@ -691,11 +695,11 @@ impl CreateCommand {
                     node,
                     &mut progress,
                     #[cfg(windows)]
-                    (dst_without_trailing_slash.len() + 1),
+                    (destination_len + 1),
                     #[cfg(windows)]
                     &mut destination_buf,
                     #[cfg(windows)]
-                    (src_without_trailing_slash.len() + 1),
+                    (template_path_len + 1),
                     #[cfg(windows)]
                     &mut template_path_buf,
                 )?;

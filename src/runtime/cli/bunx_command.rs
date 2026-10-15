@@ -1082,8 +1082,7 @@ impl BunxCommand {
         );
         env_loader
             .map
-            .put(b"BUN_INTERNAL_BUNX_INSTALL", bunx_cache_dir)
-            .expect("oom");
+            .put(b"BUN_INTERNAL_BUNX_INSTALL", bunx_cache_dir)?;
         let has_copy: &[u8] = if finished_package_json.is_some() && look_for_existing_bin {
             b"true"
         } else {
@@ -1091,8 +1090,7 @@ impl BunxCommand {
         };
         env_loader
             .map
-            .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)
-            .expect("oom");
+            .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 

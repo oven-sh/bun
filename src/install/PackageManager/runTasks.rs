@@ -770,6 +770,7 @@ fn run_tasks_erased(
                         if (manager.task_queue.get(&task.task_id))
                             .is_none_or(|list| list.is_empty())
                         {
+                            return_network_task(task_ptr);
                             continue;
                         }
                     }

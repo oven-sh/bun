@@ -225,13 +225,52 @@ impl MacroEntryPoint {
                 break 'brk cursor.position() as usize;
             }
 
+            // An absolute path is imported as a file URL: a `?` in it is part of a name.
+            let mut macro_specifier: Vec<u8> = Vec::new();
+            if bun_paths::is_absolute(dir_to_use) {
+                let macro_path = [dir_to_use, import_path.filename].concat();
+                let macro_url =
+                    bun_url::file_url_from_string(&bun_core::String::borrow_utf8(&macro_path));
+                write!(
+                    &mut macro_specifier,
+                    "{}",
+                    strings::format_escapes(
+                        &macro_url.to_utf8(),
+                        strings::QuoteEscapeFormatFlags {
+                            quote_char: b'\'',
+                            ..Default::default()
+                        }
+                    ),
+                )
+            } else {
+                write!(
+                    &mut macro_specifier,
+                    "{}{}",
+                    bun_fmt::fmt_path_u8(
+                        dir_to_use,
+                        bun_fmt::PathFormatOptions {
+                            escape_backslashes: true,
+                            ..Default::default()
+                        }
+                    ),
+                    bun_fmt::fmt_path_u8(
+                        import_path.filename,
+                        bun_fmt::PathFormatOptions {
+                            escape_backslashes: true,
+                            ..Default::default()
+                        }
+                    ),
+                )
+            }
+            .map_err(|_| crate::Error::FormatError)?;
+
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
             write!(
                 &mut cursor,
                 "//Auto-generated file\n\
                  var Macros;\n\
                  try {{\n\
-                 \x20 Macros = await import('{}{}');\n\
+                 \x20 Macros = await import('{}');\n\
                  }} catch (err) {{\n\
                  \x20  console.error(\"Error importing macro\");\n\
                  \x20  throw err;\n\
@@ -241,20 +280,7 @@ impl MacroEntryPoint {
                  }}\n\
                  \n\
                  Bun.registerMacro({}, Macros['{}']);",
-                bun_fmt::fmt_path_u8(
-                    dir_to_use,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
-                bun_fmt::fmt_path_u8(
-                    import_path.filename,
-                    bun_fmt::PathFormatOptions {
-                        escape_backslashes: true,
-                        ..Default::default()
-                    }
-                ),
+                BStr::new(&macro_specifier),
                 BStr::new(function_name),
                 BStr::new(function_name),
                 bun_fmt::fmt_path_u8(

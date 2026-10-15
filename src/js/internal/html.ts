@@ -9,6 +9,9 @@ const path = require("node:path");
 
 const env = Bun.env;
 
+// An entry point is a path: as a file URL, a "?" in it is part of a name.
+const pathSpecifier = (file: string) => (file.includes("?") ? Bun.pathToFileURL(file).href : file);
+
 // This function is called at startup.
 async function start() {
   let args: string[] = [];
@@ -85,7 +88,7 @@ yourself with Bun.serve().
           continue;
         }
         try {
-          resolved = Bun.resolveSync(resolved, cwd);
+          resolved = Bun.resolveSync(pathSpecifier(resolved), cwd);
         } catch {
           resolved = Bun.resolveSync("./" + resolved, cwd);
         }
@@ -98,10 +101,14 @@ yourself with Bun.serve().
       }
     } else {
       let resolved = arg;
-      try {
-        resolved = Bun.resolveSync(arg, cwd);
-      } catch {
-        resolved = Bun.resolveSync("./" + arg, cwd);
+      if (arg.includes("?")) {
+        resolved = Bun.resolveSync(pathSpecifier(path.resolve(cwd, arg)), cwd);
+      } else {
+        try {
+          resolved = Bun.resolveSync(arg, cwd);
+        } catch {
+          resolved = Bun.resolveSync("./" + arg, cwd);
+        }
       }
 
       if (resolved.includes(path.sep + "node_modules" + path.sep)) {
@@ -199,7 +206,7 @@ yourself with Bun.serve().
 
   const htmlImports = await Promise.all(
     args.map(arg => {
-      return import(arg).then(m => m.default);
+      return import(pathSpecifier(arg)).then(m => m.default);
     }),
   );
 

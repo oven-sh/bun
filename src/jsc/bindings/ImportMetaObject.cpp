@@ -77,7 +77,7 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
     return create(vm, globalObject, structure, url);
 }
 
-ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL)
+ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, const String& loadedPath)
 {
     if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(specifierOrURL))) {
         return create(globalObject, url->href().string());
@@ -85,17 +85,24 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
     WTF::String specifier = specifierOrURL.toWTFString(globalObject);
     ASSERT(specifier);
-    return ImportMetaObject::createFromSpecifier(globalObject, specifier);
+    return ImportMetaObject::createFromSpecifier(globalObject, specifier, loadedPath);
 }
 
-ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
+extern "C" uint32_t Bun__VM__moduleKeyPathLength(void* bunVM, const BunString* key);
+
+ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, const String& loadedPath)
 {
-    auto index = specifier.find('?');
     URL url;
-    if (index != notFound) {
+    if (specifier.find('?') != notFound) {
+        unsigned pathLength = loadedPath.length();
+        if (pathLength >= specifier.length() || specifier[pathLength] != '?' || !specifier.startsWith(loadedPath)) {
+            auto key = Bun::toString(specifier);
+            pathLength = Bun__VM__moduleKeyPathLength(uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM(), &key);
+        }
         StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
+        url = URL::fileURLWithFileSystemPath(view.substring(0, pathLength));
+        if (pathLength < specifier.length())
+            url.setQuery(view.substring(pathLength + 1));
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }

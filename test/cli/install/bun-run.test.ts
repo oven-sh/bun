@@ -1261,8 +1261,7 @@ describe.concurrent("bun run", () => {
 
   // bun.exe runs the .bunx launcher in-process first. When the metadata fails
   // validation, the launcher has to hand control back so `bun run` spawns the
-  // `<bin>.exe` shim, which reports the corruption itself. A bun.exe built with
-  // assertions panics if the in-process launcher prints that error instead.
+  // `<bin>.exe` shim, which reports the corruption itself.
   it.if(isWindows)("falls back to the shim executable when the .bunx metadata fails validation", async () => {
     using dir = tempDir("bun-run-bunx-fallback", {
       "package.json": JSON.stringify({
@@ -1318,11 +1317,21 @@ describe.concurrent("bun run", () => {
     await Bun.write(bunxPath, bytes);
 
     const corrupt = await run();
+    const stderrLines = corrupt.stderr.split(/\r?\n/).filter(line => line !== "");
+    // The shim executable prints the first line. `bun run` prints the last line
+    // for a process it spawned. The in-process launcher prints the same first
+    // line when it does not hand control back, but then exits with no last line.
     expect({
       stdout: corrupt.stdout,
-      message: corrupt.stderr.includes("error: bin metadata is corrupt (validate)"),
+      shimError: stderrLines[0],
+      spawnedExit: stderrLines.at(-1),
       exitCode: corrupt.exitCode,
-    }).toEqual({ stdout: "", message: true, exitCode: 255 });
+    }).toEqual({
+      stdout: "",
+      shimError: "error: bin metadata is corrupt (validate)",
+      spawnedExit: 'error: "print-marker.exe" exited with code 255',
+      exitCode: 255,
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite

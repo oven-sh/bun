@@ -2,7 +2,7 @@
 // global, sharing every ES module's executable/CodeBlock (and so JIT code) with the first
 // load while giving each graph its own module environments and its own values
 // for the names the host passes as `globals`.
-import { heapStats } from "bun:jsc";
+import { heapStats, numberOfDFGCompiles } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
@@ -2072,19 +2072,23 @@ describe("Bun.ModuleGraph — graphs share the compiled code of a CommonJS modul
       `,
     });
     const reads: ((n: number) => string)[] = [];
+    const counts: number[] = [];
     const graphs: ModuleGraphInstance[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       graphs.push(new ModuleGraphClass({ globals: { TAG: "g" + i } }));
       reads.push((await graphs[i].import(join(dir, "reads.cjs"))).default.read);
-      // Hot enough for the DFG before the next graph exists.
-      reads[i](20000);
+      counts.push(0);
+      // In the DFG before the next graph exists.
+      do reads[i](500);
+      while ((counts[i] += 500) < 100_000 && !numberOfDFGCompiles(reads[i]));
     }
-    expect(reads.map(read => read(20000))).toEqual(
-      reads.map((_, i) => `g${i},top of g${i},dep of g${i},thing of g${i},40000`),
-    );
-    expect(reads.toReversed().map(read => read(1))).toEqual(
-      reads.map((_, i) => `g${i},top of g${i},dep of g${i},thing of g${i},40001`).toReversed(),
-    );
+    expect(numberOfDFGCompiles(reads[0])).toBeGreaterThan(0);
+    // The others run what was compiled for the first.
+    expect(counts.slice(1)).toEqual([500, 500, 500]);
+    const expected = (more: number) =>
+      reads.map((_, i) => `g${i},top of g${i},dep of g${i},thing of g${i},${(counts[i] += more)}`);
+    expect(reads.map(read => read(500))).toEqual(expected(500));
+    expect(reads.toReversed().map(read => read(1))).toEqual(expected(1).toReversed());
   });
 
   test("each graph gets a module, exports, require and classes of its own", async () => {

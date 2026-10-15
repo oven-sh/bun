@@ -132,13 +132,16 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
     expect(() => fs.readdirSync(devLong)).toThrow("ENAMETOOLONG");
   });
 
-  // rmSync opens each entry by its name, relative to the handle of its
-  // directory. A name with a dot used to be joined to the `\Device\…` name of
-  // that handle first, which is some 20 units longer than the `C:\…` path, so
-  // it did not fit where the path itself still does.
+  // rmSync opens each entry by its name alone, against the handle of its
+  // directory. The name must not be joined to the path of that handle, which
+  // starts with the device of the volume and so is longer than `dir`.
   it("removes a directory with a dot in its name whose path almost fills the buffer", () => {
     using dir = tempDir("fs-path-length", {});
-    const length = 32741;
+    // The longest path that still fits once its drive is spelled as a device,
+    // with the headroom of 8 that normalizePathWindows keeps.
+    const fitsAsDevicePath = 32767 - 8 - ("\\Device\\HarddiskVolume1".length - "C:".length);
+    // mkdirSync takes 6 more than that.
+    const length = fitsAsDevicePath + 3;
     const dotted = "d.d";
     let deep = String(dir);
     const left = () => length - dotted.length - 1 - deep.length - 1;

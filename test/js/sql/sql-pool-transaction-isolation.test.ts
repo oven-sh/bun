@@ -1352,6 +1352,91 @@ describe.each(adapters)("$adapter", entry => {
     }
   });
 
+  // The reverse order: the callback settles while the ROLLBACK of tx.close() is on its way. The
+  // runner has nothing left to commit or roll back, and begin() must not report a stored result.
+  test.each(["fulfils", "rejects"])(
+    "the runner sends no COMMIT or ROLLBACK behind the ROLLBACK of tx.close() when the callback %s",
+    async outcome => {
+      const received: Received[] = [];
+      const { port, server } = await mockServer(received);
+      const sql = new SQL(options(port));
+      try {
+        let closed!: Promise<void>;
+        const begun = await sql
+          .begin(async tx => {
+            await tx.unsafe("SELECT 'T1a'");
+            closed = tx.close();
+            if (outcome === "rejects") throw new Error("t1-app-error");
+            return "t1";
+          })
+          .then(
+            value => value,
+            err => err.code ?? err.message,
+          );
+        await closed;
+        expect(begun).toBe(outcome === "rejects" ? "t1-app-error" : closedCode);
+        expect(received).toEqual([
+          { conn: 0, sql: beginCommand },
+          { conn: 0, sql: "SELECT 'T1a'" },
+          { conn: 0, sql: "ROLLBACK" },
+        ]);
+      } finally {
+        await sql.close({ timeout: 0 }).catch(() => {});
+        await new Promise<void>(r => server.close(() => r()));
+      }
+    },
+  );
+
+  // The timer of close({ timeout }) can fire after the runner ended the transaction: here a savepoint
+  // that never settles keeps the wait of close() open. close() must still settle, and bun:test fails
+  // this test if the timer reports a refused ROLLBACK as an unhandled rejection.
+  test("the timer of tx.close({ timeout }) settles close() when the runner ended the transaction first", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let closed!: Promise<void>;
+      const begun = await sql.begin(async tx => {
+        tx.savepoint(() => new Promise<void>(() => {})).catch(() => {});
+        closed = tx.close({ timeout: 0.01 });
+        return "t1";
+      });
+      expect(begun).toBe("t1");
+      await closed;
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SAVEPOINT s0" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("tx.savepoint(name, fn) names the savepoint like tx.savepoint(fn, name)", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.begin(async tx => {
+        await tx.savepoint("first", async () => {});
+        await tx.savepoint(async () => {}, "second");
+      });
+      expect(received.map(entry => entry.sql)).toEqual([
+        beginCommand,
+        "SAVEPOINT s0_first",
+        "RELEASE SAVEPOINT s0_first",
+        "SAVEPOINT s1_second",
+        "RELEASE SAVEPOINT s1_second",
+        "COMMIT",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // handle(row) builds a fragment for a later query. On a handle that no longer accepts
   // queries it has to stay a fragment: a rejected promise in its place is one that the
   // query it is part of never awaits, and bun:test fails this test if one is reported.

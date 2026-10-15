@@ -899,6 +899,28 @@ const SQL = function SQL(
       }
       return pool.flush();
     };
+    // The chain of statements that ends the transaction: COMMIT or ROLLBACK, with XA END ahead of it. One chain
+    // goes out, the one of the runner or the one of close(). The other waits for its answer.
+    let ending: Promise<unknown> | undefined;
+    async function endWith(command: string) {
+      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND, state);
+      }
+      return run_internal_transaction_sql(command, state);
+    }
+    // The ROLLBACK of close(). When COMMIT or ROLLBACK is already on its way there is nothing to roll back.
+    async function rollBackNow() {
+      if (state.connectionState & ReservedConnectionState.closed) return;
+      if (ending) {
+        await ending.catch(() => {});
+        return;
+      }
+      for (const query of state.queries) {
+        (query as Query<any, any>).cancel();
+      }
+      await (ending = endWith(ROLLBACK_COMMAND));
+      state.connectionState |= ReservedConnectionState.closed;
+    }
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
       if (
@@ -907,9 +929,8 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      if (state.connectionState & ReservedConnectionState.ended) {
-        // COMMIT or ROLLBACK is on its way. There is nothing to roll back: wait for its answer.
-        return (finished ??= Promise.withResolvers<void>()).promise;
+      if (ending) {
+        return rollBackNow();
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;
@@ -921,21 +942,11 @@ const SQL = function SQL(
         }
 
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
           // race all queries vs timeout
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(async () => {
-            for (const query of transactionQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND, state);
-            }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND, state);
-            state.connectionState |= ReservedConnectionState.closed;
-            resolve();
-          }, timeout * 1000);
+          const timer = setTimeout(() => rollBackNow().then(resolve, reject), timeout * 1000);
           timer.unref(); // dont block the event loop
           // allSettled: the wait is for all of the work, and it does not report the error of a query as unhandled
           Promise.allSettled([...pending_queries, ...pending_savepoints]).then(() => {
@@ -945,14 +956,7 @@ const SQL = function SQL(
           return promise;
         }
       }
-      for (const query of transactionQueries) {
-        (query as Query<any, any>).cancel();
-      }
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND, state);
-      }
-      await run_internal_transaction_sql(ROLLBACK_COMMAND, state);
-      state.connectionState |= ReservedConnectionState.closed;
+      return rollBackNow();
     };
     transaction_sql[Symbol.asyncDispose] = () => transaction_sql.close();
     transaction_sql.options = sql.options;
@@ -1020,9 +1024,11 @@ const SQL = function SQL(
       }
 
       if ($isCallable(name)) {
+        // savepoint(name, fn)
         savepoint_callback = name as unknown as TransactionCallback;
-        name = "";
-      } else if (name) {
+        name = typeof fn === "string" ? fn : "";
+      }
+      if (name) {
         name = String(name).replace(/[^a-zA-Z0-9_]/g, "_");
       }
       if (!$isCallable(savepoint_callback)) {
@@ -1042,8 +1048,6 @@ const SQL = function SQL(
       transaction_sql.savepoint = (fn: TransactionCallback, name?: string): Promise<any> => savepoint(state, fn, name);
     }
     let needs_rollback = false;
-    // What tx.close() waits for when COMMIT or ROLLBACK is already on its way.
-    let finished: PromiseWithResolvers<void> | undefined;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND, null);
       needs_rollback = true;
@@ -1053,10 +1057,12 @@ const SQL = function SQL(
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;
-      if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND, state);
+      if (ending) {
+        // tx.close() is rolling the transaction back: the result is not stored
+        await ending.catch(() => {});
+        throw pool.connectionClosedError();
       }
-      const commit_result = await run_internal_transaction_sql(COMMIT_COMMAND, state);
+      const commit_result = await (ending = endWith(COMMIT_COMMAND));
       // PostgreSQL answers COMMIT on an aborted transaction with a
       // CommandComplete tag of "ROLLBACK" (the session is already in the
       // failed-transaction state, so nothing was committed). Surfacing that
@@ -1070,11 +1076,13 @@ const SQL = function SQL(
       return resolve(transaction_result);
     } catch (err) {
       try {
-        if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-            await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND, state);
+        if (needs_rollback) {
+          if (ending) {
+            // tx.close() is rolling the transaction back. The error of the callback stays.
+            await ending.catch(() => {});
+          } else if (!(state.connectionState & ReservedConnectionState.closed)) {
+            await (ending = endWith(ROLLBACK_COMMAND));
           }
-          await run_internal_transaction_sql(ROLLBACK_COMMAND, state);
         }
       } catch (err) {
         return reject(err);
@@ -1089,7 +1097,6 @@ const SQL = function SQL(
       if (!dontRelease) {
         pool.release(pooledConnection);
       }
-      finished?.resolve();
     }
   }
   function sql(

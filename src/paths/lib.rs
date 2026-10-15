@@ -305,6 +305,12 @@ pub fn stem(p: &[u8]) -> &[u8] {
     }
 }
 
+/// Byte-exact: `x.D.ts`, `x.d.tsx` and `x.d.css.ts` are not declaration files here.
+#[inline]
+pub fn is_typescript_declaration(path: &[u8]) -> bool {
+    path.ends_with(b".d.ts") || path.ends_with(b".d.mts") || path.ends_with(b".d.cts")
+}
+
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
 // are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
 // `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
@@ -993,6 +999,38 @@ pub mod fs {
             self.text = to;
             self.pretty = old_path;
             self.is_symlink = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_typescript_declaration;
+
+    #[test]
+    fn typescript_declaration_suffixes() {
+        for path in [
+            "a.d.ts",
+            "a.d.mts",
+            "a.d.cts",
+            "pages/docs/[...slug].d.ts",
+            ".d.ts",
+        ] {
+            assert!(is_typescript_declaration(path.as_bytes()), "{path}");
+        }
+        for path in [
+            "",
+            "d.ts",
+            "a.ts",
+            "a.mts",
+            "a.d.tsx",
+            "a.d.css.ts",
+            "a.D.ts",
+            "a.d.TS",
+            "a.d.js",
+            "a.d.ts.map",
+        ] {
+            assert!(!is_typescript_declaration(path.as_bytes()), "{path}");
         }
     }
 }

@@ -302,6 +302,13 @@ pub(crate) fn install_hoisted_packages(
         }
     };
 
+    // A `node_modules` that is new, or was moved aside, has no record of an earlier install.
+    let lists_pending_scripts = this.lists_pending_scripts();
+    (this.pending_scripts.get_mut()).load(
+        lists_pending_scripts,
+        !new_node_modules && old_modules.is_none(),
+    );
+
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
 
@@ -432,7 +439,6 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
-                unfinished_scripts: Default::default(),
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
@@ -453,6 +459,10 @@ pub(crate) fn install_hoisted_packages(
 
         let top_level_len =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+
+        if this.pending_scripts.get_mut().has_stale() {
+            installer.discard_left_pending();
+        }
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {
@@ -578,6 +588,12 @@ pub(crate) fn install_hoisted_packages(
                 n.end();
             }
         }
+
+        this.pending_scripts.get_mut().finish(
+            !workspace_filters.is_empty()
+                || !install_root_dependencies
+                || packages_to_install.is_some(),
+        );
     }
 
     Ok(summary)

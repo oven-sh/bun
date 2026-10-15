@@ -1948,6 +1948,9 @@ pub(crate) fn install_isolated_packages(
 
         break 'is_new_bun_modules true;
     };
+    // A `node_modules/.bun` that is new has no record of an earlier install beside it.
+    let lists_pending_scripts = manager.lists_pending_scripts();
+    (manager.pending_scripts.get_mut()).load(lists_pending_scripts, !is_new_bun_modules);
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
@@ -2019,6 +2022,7 @@ pub(crate) fn install_isolated_packages(
                 result: installer::Result::None,
                 relink: installer::Relink::Off,
                 newly_trusted: false,
+                trusted: None,
                 blocked_scripts: 0,
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2059,7 +2063,6 @@ pub(crate) fn install_isolated_packages(
                 ..Default::default()
             },
             task_queue: Default::default(),
-            listed_in_pending_scripts: Vec::new(),
             held_members: Some(Vec::new()),
             left_out_entries: Vec::new(),
             pending_lifecycle_scripts: Default::default(),
@@ -2103,6 +2106,10 @@ pub(crate) fn install_isolated_packages(
                 Output::flush();
                 Global::exit(1);
             }
+        }
+
+        if installer.manager().pending_scripts.borrow().has_stale() {
+            installer.discard_left_pending();
         }
 
         // add the pending task count upfront
@@ -2174,12 +2181,8 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
-                    let left_pending = installer.left_pending(entry_id);
                     // folders are always hardlinked to keep them up-to-date
-                    if !is_new_bun_modules
-                        && !installer.manager().options.enable.force_install()
-                        && !left_pending
-                    {
+                    if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
                         let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                         installer.append_real_store_path(&mut store_path, entry_id, Which::Final);
                         if let (Ok(src), Ok(dest)) =
@@ -2190,7 +2193,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
                     }
-                    installer.list_pending_scripts(entry_id, left_pending);
+                    installer.list_pending_scripts(entry_id);
                     installer.start_task(entry_id);
                 }
 
@@ -2208,7 +2211,6 @@ pub(crate) fn install_isolated_packages(
                     };
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
-                    let left_pending = !uses_global_store && installer.left_pending(entry_id);
 
                     let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
@@ -2217,7 +2219,6 @@ pub(crate) fn install_isolated_packages(
                         // should still take the cheap symlink-only path.
                         || (is_new_bun_modules && !uses_global_store)
                         || matches!(patch_info, PatchInfo::Remove)
-                        || left_pending
                         || 'needs_install: {
                             let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                             if uses_global_store {
@@ -2288,7 +2289,9 @@ pub(crate) fn install_isolated_packages(
                         installer.on_task_complete(entry_id, CompleteState::Skipped);
                         continue;
                     }
-                    installer.list_pending_scripts(entry_id, left_pending);
+                    if !uses_global_store {
+                        installer.list_pending_scripts(entry_id);
+                    }
 
                     // Downloads only produce the unpatched folder; `apply_package_patch` derives the rest.
                     let cache_subpath_z = installer.cached_folder_name(entry_id, None);
@@ -2441,6 +2444,11 @@ pub(crate) fn install_isolated_packages(
         installer.relink_bins_of_members_with_scripts();
         installer.unlink_left_out_entries();
         installer.record_update_request_trust();
+        (installer.manager().pending_scripts.borrow_mut()).finish(
+            !workspace_filters.is_empty()
+                || !install_root_dependencies
+                || packages_to_install.is_some(),
+        );
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

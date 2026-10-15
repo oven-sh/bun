@@ -2646,51 +2646,51 @@ test.concurrent.skipIf(!isLinux).each(["hoisted", "isolated"] as const)(
 // A bun install that dies cannot remove what it placed: the next install has to see on its own that
 // a script did not finish. The postinstall of `held` waits for a line in $GATE and builds on "go".
 describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a bun install that died (%s)", linker => {
-  const held = {
-    name: "held",
-    version: "1.0.0",
-    scripts: {
-      postinstall:
-        'echo started > "$STARTED" && { test -z "$GATE" || { read line < "$GATE" && test "$line" = go; }; } && echo built > built.txt',
-    },
-  };
-  // Where `held` comes from: the project's package.json and the directory `held` is in, if any.
-  const sources = {
-    "the registry": { manifest: { dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] }, dir: undefined },
-    "a file: folder": {
-      manifest: { dependencies: { held: "file:./held" }, trustedDependencies: ["held"] },
-      dir: "held",
-    },
-    "a workspace": {
-      manifest: { workspaces: ["packages/*"], dependencies: { held: "workspace:*" } },
-      dir: join("packages", "held"),
-    },
+  const script = (wait: string) =>
+    `echo started >> "$STARTED" && { test -z "$GATE" || ${wait}; } && echo built > built.txt`;
+  const postinstall = script('{ read line < "$GATE" && test "$line" = go; }');
+  const held = { name: "held", version: "1.0.0", scripts: { postinstall } };
+  const trusted = { name: "foo", dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] };
+  const installed = linker === "hoisted" ? ["held"] : [".bun", "held"];
+  const record = ".bun-pending-scripts";
+
+  type Setup = {
+    // Of the registry, beside `held`.
+    packages?: Record<string, ScriptPackage>;
+    manifest?: object;
+    // Of the project, by path.
+    files?: Record<string, string>;
+    // With a lockfile the linker downloads what it links: a package can be in place before another is.
+    lockfile?: boolean;
+    args?: string[];
+    // `body` runs once the postinstall of `held` has started, or once `held` is in place.
+    from?: "started" | "placed";
   };
   type Held = {
     ctx: Awaited<ReturnType<typeof setupScriptPackages>>;
     proc: ReturnType<typeof spawn>;
     release(line: "go" | "stop"): void;
-    // Kills the first install. A script that outlived it (no PR_SET_PDEATHSIG) ends without a build.
+    // Kills the first install. A script that outlived it ends without a build.
     kill(signal: NodeJS.Signals): Promise<void>;
-    // A later command. Its script reports to a file and waits for nothing.
+    // A later command. Its scripts report to a file and wait for nothing.
     bun(...args: string[]): Promise<{ errors: string[]; ran: boolean; built: boolean; exitCode: number }>;
   };
 
-  // Runs `body` while a first `bun install` waits in that postinstall.
-  async function whileScriptRuns(body: (held: Held) => Promise<void>, source: keyof typeof sources = "the registry") {
-    using ctx = await setupScriptPackages(linker, { held: { scripts: held.scripts } });
-    const { manifest, dir } = sources[source];
-    await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", ...manifest }));
-    if (dir) {
-      await mkdir(join(ctx.packageDir, dir), { recursive: true });
-      await writeFile(join(ctx.packageDir, dir, "package.json"), JSON.stringify(held));
+  // Runs `body` while a first `bun install` is under way.
+  async function whileInstalling(body: (held: Held) => Promise<void>, setup: Setup = {}) {
+    using ctx = await setupScriptPackages(linker, { held: { scripts: held.scripts }, ...setup.packages });
+    await writeFile(ctx.packageJson, JSON.stringify(setup.manifest ?? trusted));
+    for (const [path, contents] of Object.entries(setup.files ?? {})) {
+      await mkdir(join(ctx.packageDir, path, ".."), { recursive: true });
+      await writeFile(join(ctx.packageDir, path), contents);
     }
+    if (setup.lockfile) expect((await ctx.bun("install", "--lockfile-only")).exitCode).toBe(0);
     const [STARTED, GATE, ran] = ["started", "gate", "ran.txt"].map(name => join(ctx.packageDir, name));
     expect(Bun.spawnSync({ cmd: ["mkfifo", STARTED, GATE] }).exitCode).toBe(0);
     const gate = openSync(GATE, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
 
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", ...(setup.args ?? [])],
       cwd: ctx.packageDir,
       env: { ...ctx.env, STARTED, GATE },
       stdin: "ignore",
@@ -2698,8 +2698,15 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       stderr: "ignore",
     });
     try {
-      const started = createReadStream(STARTED, "utf8")[Symbol.asyncIterator]();
-      expect(await Promise.race([started.next(), proc.exited])).toEqual({ done: false, value: "started\n" });
+      if (setup.from === "placed") {
+        while (!existsSync(ctx.installed("held", "package.json"))) {
+          if (proc.exitCode !== null) throw new Error(`bun install exited with ${proc.exitCode}`);
+          await Bun.sleep(1);
+        }
+      } else {
+        const started = createReadStream(STARTED, "utf8")[Symbol.asyncIterator]();
+        expect(await Promise.race([started.next(), proc.exited])).toEqual({ done: false, value: "started\n" });
+      }
       const release = (line: string) => void writeSync(gate, line + "\n");
       await body({
         ctx,
@@ -2724,17 +2731,16 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
         },
       });
     } finally {
-      // Ends a reader that still waits for a script to open the other end.
+      // Ends a reader, or a script, that still waits for the other end.
       closeSync(openSync(STARTED, fsConstants.O_RDWR | fsConstants.O_NONBLOCK));
       closeSync(gate);
     }
   }
-  const installed = linker === "hoisted" ? ["held"] : [".bun", "held"];
 
   test.skipIf(isWindows).each(["SIGKILL", "SIGTERM", "SIGINT", "SIGHUP"] as const)(
     "%s while a postinstall runs: the next install runs it again, the one after does not",
     async signal => {
-      await whileScriptRuns(async ({ ctx, kill, bun }) => {
+      await whileInstalling(async ({ ctx, kill, bun }) => {
         await kill(signal);
 
         expect(await bun("install")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
@@ -2745,19 +2751,120 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     },
   );
 
-  test.skipIf(isWindows).each(["a file: folder", "a workspace"] as const)(
-    "the postinstall of %s runs again too",
-    async source => {
-      await whileScriptRuns(async ({ kill, bun }) => {
+  test.skipIf(isWindows).each([
+    { title: "a file: folder", manifest: { ...trusted, dependencies: { held: "file:./held" } }, dir: "held" },
+    {
+      title: "a workspace",
+      manifest: { name: "foo", workspaces: ["packages/*"], dependencies: { held: "workspace:*" } },
+      dir: join("packages", "held"),
+    },
+  ])("the postinstall of $title runs again too", async ({ manifest, dir }) => {
+    await whileInstalling(
+      async ({ kill, bun }) => {
         await kill("SIGKILL");
 
         expect(await bun("install")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
-      }, source);
-    },
-  );
+      },
+      { manifest, files: { [join(dir, "package.json")]: JSON.stringify(held) } },
+    );
+  });
+
+  test.skipIf(isWindows)("bun ci runs it again", async () => {
+    await whileInstalling(
+      async ({ kill, bun }) => {
+        await kill("SIGKILL");
+
+        expect(await bun("ci")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
+      },
+      { lockfile: true },
+    );
+  });
+
+  // One script at a time: the first of the two holds the slot, the other is in place and has not started.
+  test.skipIf(isWindows)("a postinstall that had not started runs too", async () => {
+    await whileInstalling(
+      async ({ ctx, proc, kill, bun }) => {
+        while (!["held", "other"].every(name => existsSync(ctx.installed(name, "package.json")))) {
+          expect(proc.exitCode).toBe(null);
+          await Bun.sleep(1);
+        }
+        await kill("SIGKILL");
+
+        expect(await bun("install")).toMatchObject({ errors: [], exitCode: 0 });
+        expect(["held", "other"].filter(name => existsSync(ctx.installed(name, "built.txt")))).toEqual([
+          "held",
+          "other",
+        ]);
+      },
+      {
+        packages: { other: { scripts: held.scripts } },
+        manifest: {
+          ...trusted,
+          dependencies: { held: "1.0.0", other: "1.0.0" },
+          trustedDependencies: ["held", "other"],
+        },
+        args: ["--concurrent-scripts=1"],
+      },
+    );
+  });
+
+  // bun ends on its own here, with `held` in place and its script not finished. The tarball of
+  // `other` comes once `held` is there. Its patch does not apply.
+  test.skipIf(isWindows)("a patch of another package that does not apply ends the install", async () => {
+    const late = Promise.withResolvers<void>();
+    await whileInstalling(
+      async ({ ctx, proc, release, bun }) => {
+        late.resolve();
+        expect(await proc.exited).toBe(1);
+        release("stop");
+
+        await writeFile(
+          ctx.packageJson,
+          JSON.stringify({ ...trusted, dependencies: { held: "1.0.0", other: "1.0.0" } }),
+        );
+        expect(await bun("install")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
+      },
+      {
+        packages: { other: { hold: late.promise, files: { "index.js": "module.exports = 1;\n" } } },
+        manifest: {
+          ...trusted,
+          dependencies: { held: "1.0.0", other: "1.0.0" },
+          patchedDependencies: { "other@1.0.0": "patches/other.patch" },
+        },
+        files: {
+          "patches/other.patch": `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-a line that the package does not have
++module.exports = 2;
+`,
+        },
+        lockfile: true,
+        // The isolated linker goes on after a package that fails, unless it is told to stop.
+        args: linker === "isolated" ? ["--production"] : [],
+        from: "placed",
+      },
+    );
+  });
+
+  // The shell runs the wait in a child of its own, which PR_SET_PDEATHSIG does not reach: it is
+  // still there when the next install places the package again, as it is under --force.
+  test.skipIf(isWindows)("a script that outlives the install does not keep the next one from building", async () => {
+    await whileInstalling(
+      async ({ ctx, kill, release, bun }) => {
+        await kill("SIGKILL");
+
+        expect(await bun("install")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
+        expect(readFileSync(join(ctx.packageDir, "ran.txt"), "utf8")).toBe("started\n");
+        release("stop");
+      },
+      { packages: { held: { scripts: { postinstall: script('(read line < "$GATE" && test "$line" = go)') } } } },
+    );
+  });
 
   test.skipIf(isWindows)("an install that runs meanwhile leaves the package to the first one", async () => {
-    await whileScriptRuns(async ({ ctx, proc, release, bun }) => {
+    await whileInstalling(async ({ ctx, proc, release, bun }) => {
       expect(await bun("install")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
 
       release("go");
@@ -2768,7 +2875,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
   });
 
   test.skipIf(isWindows)("--ignore-scripts leaves the script to the install that runs scripts", async () => {
-    await whileScriptRuns(async ({ kill, bun }) => {
+    await whileInstalling(async ({ kill, bun }) => {
       await kill("SIGKILL");
 
       expect(await bun("install", "--ignore-scripts")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
@@ -2776,8 +2883,29 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     });
   });
 
+  // `held` is a dependency of the workspace `b` only. An install of the workspace `a` does not come to it.
+  test.skipIf(isWindows)("an install of another workspace leaves the script to the next full install", async () => {
+    await whileInstalling(
+      async ({ ctx, kill, bun }) => {
+        await kill("SIGKILL");
+
+        expect(await bun("install", "--filter", "a")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
+        expect(existsSync(ctx.installed(record))).toBe(true);
+        expect(await bun("install")).toMatchObject({ errors: [], ran: true, exitCode: 0 });
+        expect(existsSync(ctx.installed(record))).toBe(false);
+      },
+      {
+        manifest: { name: "foo", workspaces: ["packages/*"], trustedDependencies: ["held"] },
+        files: {
+          "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+          "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0", dependencies: { held: "1.0.0" } }),
+        },
+      },
+    );
+  });
+
   test.skipIf(isWindows)("a package that is not trusted any more is not built", async () => {
-    await whileScriptRuns(async ({ ctx, kill, bun }) => {
+    await whileInstalling(async ({ ctx, kill, bun }) => {
       await kill("SIGKILL");
 
       await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" } }));
@@ -2786,31 +2914,9 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     });
   });
 
-  // No kill, so this one runs on Windows too: the list is written by hand, as a dead install leaves it.
-  test("a package that the list names is installed again", async () => {
-    using ctx = await setupScriptPackages(linker, { held: { scripts: { postinstall: "echo ran > ran.txt" } } });
-    await writeFile(
-      ctx.packageJson,
-      JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] }),
-    );
-    expect((await ctx.bun("install")).exitCode).toBe(0);
-    await rm(ctx.installed("held", "ran.txt"));
-    const dir =
-      linker === "hoisted"
-        ? join("node_modules", "held")
-        : join("node_modules", ".bun", "held@1.0.0", "node_modules", "held");
-    await writeFile(ctx.installed(".bun-pending-scripts"), `+${dir}\n`);
-
-    const { err, exitCode } = await ctx.bun("install");
-    expect(err).not.toContain("error:");
-    expect(existsSync(ctx.installed("held", "ran.txt"))).toBe(true);
-    expect(await readdirSorted(ctx.installed())).toEqual(installed);
-    expect(exitCode).toBe(0);
-  });
-
   // `bun patch` puts a copy to edit in place of the package. No script runs before `--commit`.
   test.skipIf(isWindows)("bun patch: the copy to edit stays until --commit, which builds", async () => {
-    await whileScriptRuns(async ({ ctx, kill, bun }) => {
+    await whileInstalling(async ({ ctx, kill, bun }) => {
       await kill("SIGKILL");
 
       expect(await bun("patch", "held")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
@@ -2821,6 +2927,30 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       expect(await bun("patch", "--commit", "held")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
       expect(existsSync(ctx.installed("held", "edited.txt"))).toBe(true);
     });
+  });
+
+  // No kill, so these run on Windows too: the file is written by hand, as a dead install leaves it.
+  const directory =
+    linker === "hoisted"
+      ? join("node_modules", "held")
+      : join("node_modules", ".bun", "held@1.0.0", "node_modules", "held");
+  test.each([
+    { title: "names", contents: `+${directory}\n` },
+    // Nothing says what was listed: every trusted package is placed again.
+    { title: "is empty, and so may have listed", contents: "" },
+    { title: "is cut off, and so may have listed", contents: `+${directory}` },
+  ])("a package that the list $title is installed again", async ({ contents }) => {
+    using ctx = await setupScriptPackages(linker, { held: { scripts: { postinstall: "echo ran > ran.txt" } } });
+    await writeFile(ctx.packageJson, JSON.stringify(trusted));
+    expect((await ctx.bun("install")).exitCode).toBe(0);
+    await rm(ctx.installed("held", "ran.txt"));
+    await writeFile(ctx.installed(record), contents);
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(existsSync(ctx.installed("held", "ran.txt"))).toBe(true);
+    expect(await readdirSorted(ctx.installed())).toEqual(installed);
+    expect(exitCode).toBe(0);
   });
 });
 

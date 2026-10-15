@@ -295,6 +295,16 @@ impl PackageManager {
         }
     }
 
+    /// Whether a linker pass writes `PendingScripts` to its file, and acts on what is in it.
+    /// `bun patch <pkg>` is not to fail on a script of the package it prepares.
+    pub(crate) fn lists_pending_scripts(&self) -> bool {
+        self.options.do_.run_scripts()
+            && !matches!(
+                self.options.patch_features,
+                crate::package_manager_real::options::PatchFeatures::Patch
+            )
+    }
+
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger
@@ -302,9 +312,15 @@ impl PackageManager {
 
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
 
-        let add_node_gyp_rebuild_script = root_package
-            .scripts
-            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
+        // The root's listing is read already: without a `binding.gyp` in it there is nothing to stat.
+        let has_binding_gyp = {
+            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            self.root_dir.has_comptime_query(b"binding.gyp")
+        };
+        let add_node_gyp_rebuild_script = has_binding_gyp
+            && root_package
+                .scripts
+                .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
 
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(

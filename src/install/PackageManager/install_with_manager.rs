@@ -861,16 +861,6 @@ pub fn install_with_manager(
                 config_version,
                 !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
             );
-        // `bun patch <pkg>` is not to fail on a script of the package it prepares.
-        let retries_pending_scripts = manager.options.do_.run_scripts()
-            && !matches!(
-                manager.options.patch_features,
-                Options::PatchFeatures::Patch
-            );
-        manager
-            .pending_scripts
-            .get_mut()
-            .load(retries_pending_scripts);
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
@@ -890,7 +880,6 @@ pub fn install_with_manager(
                 None,
             )?
         };
-        manager.pending_scripts.get_mut().finish();
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
         if !isolated {
             if warn_incorrect_peers {

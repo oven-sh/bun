@@ -1928,7 +1928,9 @@ describe("client TLS options", () => {
         native: {},
         finishRequest: { finishRequest: (req: { end(): void }) => req.end() },
         family: { family: 4 },
-        localAddress: { localAddress: "127.0.0.1" },
+        // Its options win over those of the request, but not over `tls`.
+        agent: { agent: new https.Agent({ rejectUnauthorized: false }) },
+        agentAndFamily: { agent: new https.Agent({ rejectUnauthorized: false, servername: "other" }), family: 4 },
         lookup: { lookup: (_host: string, _options: object, done: Function) => done(null, [{ address: "127.0.0.1", family: 4 }]) }, // prettier-ignore
       };
       const results = await Promise.all(
@@ -1936,7 +1938,8 @@ describe("client TLS options", () => {
           // It replaces the options beside it, which trust everybody.
           const options = { ...only, rejectUnauthorized: false };
           const outcomes = await Promise.all([
-            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1" } }),
+            // `serverName` is Bun's name for it and comes first.
+            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", servername: "other" } }),
             dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", checkServerIdentity: refuse } }),
             dial(server.url, { ...options, tls: { ca: ca1 } }),
             dial(server.url, { ...options, tls: {} }),

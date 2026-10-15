@@ -191,6 +191,17 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     expect(seen).toEqual([[...switching, "Sec-WebSocket-Protocol: a"], "/x?y=1"]);
   });
 
+  // As `socket.write(string)` sends it, whatever the other lines hold.
+  test.each([
+    { label: "alone", lines: ["X-Name: café"] },
+    { label: "next to a character beyond U+00FF", lines: ["X-Name: café", "X-Price: 5 €"] },
+  ])("a line of the 101 that is not ASCII goes out as UTF-8, $label", async ({ lines }) => {
+    await using server = await createServer(implementation);
+    server.wss.on("headers", headers => void headers.push(...lines));
+    const sent = (await server.connect().responseLines()).slice(switching.length);
+    expect(sent).toEqual(lines.map(line => Buffer.from(line).toString("latin1")));
+  });
+
   test("verifyClient, handleProtocols, 'headers' and 'connection' run in that order", async () => {
     const order: string[] = [];
     await using server = await createServer(implementation, {

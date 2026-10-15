@@ -2678,15 +2678,29 @@ function initAsClient(
       const connect = opts as unknown as Dictionary<unknown>;
       const { nodeClientTlsKeys } = require("internal/tls");
 
+      // The options of an agent win over those of the request. One that only carries options is not needed to
+      // connect, so the rest of them go to the connection without it.
+      const fromAgent: Dictionary<unknown> | undefined =
+        $isObject(agent) && !connectsItself(agent) ? { __proto__: null as never, ...connectOpts } : undefined;
+
       // Deleted, not undefined: to tls.connect() a key that is there replaces its default.
-      for (let i = 0; i < nodeClientTlsKeys.length; i++) delete connect[nodeClientTlsKeys[i]];
-      delete connect.ALPNProtocols;
-      delete connect.secureProtocol;
+      for (const replaced of fromAgent ? [connect, fromAgent] : [connect]) {
+        for (let i = 0; i < nodeClientTlsKeys.length; i++) delete replaced[nodeClientTlsKeys[i]];
+        delete replaced.ALPNProtocols;
+        delete replaced.secureProtocol;
+      }
       delete connect.tls;
 
-      if (serverName !== undefined) connect.servername = serverName;
       for (const key of Object.keys(tls)) {
         if (tls[key] !== undefined) connect[key] = tls[key];
+      }
+      if (serverName !== undefined) connect.servername = serverName;
+
+      if (fromAgent) {
+        const createConnection = isSecure ? tlsConnect : netConnect;
+
+        opts.agent = undefined;
+        opts.createConnection = args => createConnection({ ...args, ...fromAgent });
       }
     }
 

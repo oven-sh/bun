@@ -118,14 +118,10 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         return Ok(JSValue::UNDEFINED);
     };
 
+    // As `socket.write(string)` sends it, in npm ws and over a stream.
     let handshake = handshake.to_js_string_view(global)?;
-    let handshake_utf8;
-    let handshake: &[u8] = if handshake.is_8bit() {
-        handshake.latin1()
-    } else {
-        handshake_utf8 = handshake.to_utf8();
-        handshake_utf8.slice()
-    };
+    let handshake = handshake.to_utf8();
+    let handshake: &[u8] = handshake.slice();
     if !handshake.ends_with(b"\r\n\r\n") {
         return Err(global
             .throw_invalid_arguments(format_args!("handshake must be a complete response head")));

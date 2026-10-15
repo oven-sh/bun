@@ -7,6 +7,7 @@
 // If a part is canceled or fails early, the allocated slice is freed, and the reference is removed. If a part completes successfully, an etag is received, the allocated slice is deallocated, and the etag is appended to multipart_etags. If a part request fails, it retries until the maximum retry count is reached. If it still fails, MultiPartUpload is marked as failed and its reference is removed.
 // If all parts succeed, a complete request is sent.
 // If any part fails, a rollback request deletes the uploaded parts. Rollback and commit requests do not increase the reference count of MultiPartUpload, as they are the final step. Once commit or rollback finishes, the reference count is decremented, and MultiPartUpload is freed. These requests retry up to the maximum retry count on a best-effort basis.
+// No retry is made in this file: `simple_request.rs` decides whether a request that failed is sent again, and asks its sender here for it (`again`).
 
 //                Start Upload
 //                       │

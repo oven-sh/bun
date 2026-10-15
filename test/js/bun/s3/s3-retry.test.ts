@@ -1,7 +1,8 @@
 import { S3Client, type S3Options } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import net from "node:net";
+import path from "node:path";
 
 type Asked = {
   method: string;
@@ -15,11 +16,12 @@ type Asked = {
   closed: Promise<void>;
 };
 type Answer = { status: number; body?: string; headers?: Record<string, string> } | "cut";
-/** `count` is 1 for the first request. */
-type Plan = (asked: Asked, count: number) => Answer | Promise<Answer>;
+type Plan = (asked: Asked) => Answer | Promise<Answer>;
 
 const isCreate = (asked: Asked) => asked.method === "POST" && asked.target.endsWith("?uploads=");
 const isPart = (asked: Asked) => asked.method === "PUT" && asked.target.includes("partNumber=");
+const isComplete = (asked: Asked) => asked.method === "POST" && asked.target.includes("?uploadId=");
+const isAbort = (asked: Asked) => asked.method === "DELETE" && asked.target.includes("?uploadId=");
 
 /** What a bucket answers when nothing is wrong. */
 function ok(asked: Asked): Answer {
@@ -29,7 +31,7 @@ function ok(asked: Asked): Answer {
       body: "<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
     };
   }
-  if (asked.method === "POST") {
+  if (isComplete(asked)) {
     return { status: 200, body: "<CompleteMultipartUploadResult><ETag>etag</ETag></CompleteMultipartUploadResult>" };
   }
   if (asked.method === "DELETE") return { status: 204 };
@@ -41,10 +43,12 @@ function ok(asked: Asked): Answer {
   return { status: 200, headers: { ETag: '"etag"' } };
 }
 
+const error = (code: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${code}</Message></Error>`;
 const fails = (status: number, code: string, headers?: Record<string, string>): Answer => ({
   status,
   headers,
-  body: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>${code}</Code><Message>${code}</Message></Error>`,
+  body: error(code),
 });
 /** The first request that `matches` gets `answer`. */
 function once(answer: Answer, matches: (asked: Asked) => boolean = () => true): Plan {
@@ -63,6 +67,7 @@ function always(answer: Answer, matches: (asked: Asked) => boolean = () => true)
 /** A bucket on loopback that answers each request as `plan` says, and keeps what it was asked. */
 async function bucket(plan: Plan) {
   const asked: Asked[] = [];
+  const waiting: { matches: (asked: Asked) => boolean; resolve: (asked: Asked) => void }[] = [];
   const server = net.createServer(socket => {
     const closed = Promise.withResolvers<void>();
     const chunks: Buffer[] = [];
@@ -101,7 +106,11 @@ async function bucket(plan: Plan) {
         closed: closed.promise,
       };
       asked.push(request);
-      const answer = await plan(request, asked.length);
+      for (const waiter of waiting.splice(0)) {
+        if (waiter.matches(request)) waiter.resolve(request);
+        else waiting.push(waiter);
+      }
+      const answer = await plan(request);
       request.answered = performance.now();
       if (answer === "cut") return socket.destroy();
       const content = method === "HEAD" ? "" : (answer.body ?? "");
@@ -129,6 +138,12 @@ async function bucket(plan: Plan) {
       ),
     /** The time from each answer to the request after it, in ms. */
     waits: () => asked.slice(1).map((request, index) => request.at - asked[index].answered),
+    /** The next request that `matches`, once it has arrived. */
+    next: (matches: (asked: Asked) => boolean) => {
+      const { promise, resolve } = Promise.withResolvers<Asked>();
+      waiting.push({ matches, resolve });
+      return promise;
+    },
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }
@@ -164,6 +179,32 @@ function bucketOfAWaitingUpload() {
 }
 
 const part = Buffer.alloc(5 * 1024 * 1024, "a");
+const files = tempDir("s3-retry", { "hello.txt": "hello" });
+afterAll(() => files[Symbol.dispose]());
+const helloFile = () => Bun.file(path.join(String(files), "hello.txt"));
+
+const create = "POST ?uploads=";
+const complete = "POST ?uploadId=upload-1";
+const abort = "DELETE ?uploadId=upload-1";
+const put = (count: number) => Array.from({ length: count }, () => "PUT");
+
+/** An upload of `parts` parts, one part at a time. */
+const inParts =
+  (parts: number, retry?: number) =>
+  async ({ client }: Bucket) => {
+    const writer = client().file("key").writer({ retry, partSize: part.length, queueSize: 1 });
+    for (let sent = 0; sent < parts; sent++) writer.write(part);
+    await writer.end();
+  };
+/** `inParts`, and then the request that rolls the upload back when it fails. */
+const inPartsThenAbort = (parts: number, retry?: number) => async (stub: Bucket) => {
+  const aborted = stub.next(isAbort);
+  try {
+    await inParts(parts, retry)(stub);
+  } finally {
+    await aborted;
+  }
+};
 
 describe.concurrent("S3 retry", () => {
   describe("an upload that takes one request is sent again", () => {
@@ -173,43 +214,70 @@ describe.concurrent("S3 retry", () => {
       ["client.write(key, Uint8Array)", stub => stub.client(5).write("key", new TextEncoder().encode("hello"))],
       ["client.write(key, Blob)", stub => stub.client(5).write("key", new Blob(["hello"]))],
       ["client.write(key, Response)", stub => stub.client(5).write("key", new Response("hello"))],
+      ["client.write(key, Bun.file)", stub => stub.client(5).write("key", helloFile())],
       ["S3Client.write(key, string, options)", stub => S3Client.write("key", "hello", { ...stub.options, retry: 5 })],
       ["file.write(string)", stub => stub.client(5).file("key").write("hello")],
       ["Bun.write(file, string)", stub => Bun.write(stub.client(5).file("key"), "hello")],
       ["Bun.write('s3://key', string, options)", stub => Bun.write("s3://key", "hello", { ...stub.options, retry: 5 })],
+      [
+        "file.writer(), one part",
+        async stub => {
+          const writer = stub.client(5).file("key").writer();
+          writer.write("hello");
+          await writer.end();
+        },
+      ],
     ];
     test.each(doors)("%s", async (_, door) => {
       await using stub = await bucket(once(fails(503, "SlowDown")));
       expect(await outcome(stub, door)).toEqual({ ended: "resolved", requests: ["PUT", "PUT"] });
+      // Never at once: 250 ms, less 20% at most.
+      expect(stub.waits()[0]).toBeGreaterThanOrEqual(200);
     });
   });
 
   describe("until `retry` is used up, and only after a failure another attempt can get past", () => {
     const write = (retry?: number) => (stub: Bucket) => stub.client(retry).write("key", "hello");
+    const writer = (retry?: number) => async (stub: Bucket) => {
+      const writer = stub.client(retry).file("key").writer();
+      writer.write("hello");
+      await writer.end();
+    };
+    const unavailable = () => always(fails(503, "SlowDown"));
     const rows: [string, () => Plan, (stub: Bucket) => Promise<unknown>, string, number][] = [
-      ["the default is 3 more attempts", () => always(fails(503, "SlowDown")), write(), "SlowDown", 4],
-      ["retry: 0 sends it once", () => always(fails(503, "SlowDown")), write(0), "SlowDown", 1],
+      ["the default is 3 more attempts", unavailable, write(), "SlowDown", 4],
+      ["retry: 0 sends it once", unavailable, write(0), "SlowDown", 1],
+      ["retry: 0 on the client of a writer() sends it once", unavailable, writer(0), "SlowDown", 1],
       [
         "the retry of the call wins over the client's",
-        () => always(fails(503, "SlowDown")),
+        unavailable,
         stub => stub.client(5).write("key", "hello", { retry: 1 }),
         "SlowDown",
         2,
+      ],
+      [
+        "also when the call uploads a file",
+        unavailable,
+        stub => stub.client(5).file("key").write(helloFile(), { retry: 0 }),
+        "SlowDown",
+        1,
       ],
       ["500", () => once(fails(500, "InternalError")), write(), "resolved", 2],
       ["502", () => once(fails(502, "BadGateway")), write(), "resolved", 2],
       ["504", () => once(fails(504, "GatewayTimeout")), write(), "resolved", 2],
       ["429", () => once(fails(429, "TooManyRequests")), write(), "resolved", 2],
+      ["408", () => once(fails(408, "RequestTimeout")), write(), "resolved", 2],
       ["400 RequestTimeout", () => once(fails(400, "RequestTimeout")), write(), "resolved", 2],
       ["a connection that closes with no answer", () => once("cut"), write(), "resolved", 2],
       ["a connection that closes every time", () => always("cut"), write(2), "ConnectionClosed", 3],
       ["not 403", () => always(fails(403, "AccessDenied")), write(), "AccessDenied", 1],
+      ["not 403, through a writer()", () => always(fails(403, "AccessDenied")), writer(), "AccessDenied", 1],
       ["not another 400", () => always(fails(400, "InvalidArgument")), write(), "InvalidArgument", 1],
       ["not 404", () => always(fails(404, "NoSuchBucket")), write(), "NoSuchBucket", 1],
     ];
     test.each(rows)("%s", async (_, plan, call, ended, count) => {
       await using stub = await bucket(plan());
-      expect(await outcome(stub, call)).toEqual({ ended, requests: Array.from({ length: count }, () => "PUT") });
+      expect(await outcome(stub, call)).toEqual({ ended, requests: put(count) });
     });
   });
 
@@ -218,7 +286,7 @@ describe.concurrent("S3 retry", () => {
       await using stub = await bucket(always(fails(503, "SlowDown")));
       expect(await outcome(stub, stub => stub.client(2).write("key", "hello"))).toEqual({
         ended: "SlowDown",
-        requests: ["PUT", "PUT", "PUT"],
+        requests: put(3),
       });
       // 250 ms, then 500 ms, each less 20% at most.
       const [first, second] = stub.waits();
@@ -274,44 +342,94 @@ describe.concurrent("S3 retry", () => {
     });
   });
 
-  describe("a multipart upload", () => {
-    const twoParts = (retry?: number) => async (stub: Bucket) => {
-      const writer = stub.client().file("key").writer({ retry, partSize: part.length, queueSize: 2 });
-      writer.write(part);
-      writer.write(part);
-      await writer.end();
-    };
-    const create = "POST ?uploads=";
+  describe("each request of a multipart upload is sent again by the same rule", () => {
+    const rows: [string, () => Plan, (stub: Bucket) => Promise<unknown>, string, string[]][] = [
+      [
+        "CreateMultipartUpload",
+        () => once(fails(503, "SlowDown"), isCreate),
+        inParts(1),
+        "resolved",
+        [create, create, "PUT part", complete],
+      ],
+      [
+        "CreateMultipartUpload, until `retry` is used up",
+        () => always(fails(503, "SlowDown"), isCreate),
+        inParts(1, 2),
+        "SlowDown",
+        [create, create, create],
+      ],
+      [
+        "CreateMultipartUpload, not after a 403",
+        () => always(fails(403, "AccessDenied"), isCreate),
+        inParts(1),
+        "AccessDenied",
+        [create],
+      ],
+      [
+        "CreateMultipartUpload, not when the connection closed with no answer: the bucket may have made the upload",
+        () => once("cut", isCreate),
+        inParts(1),
+        "ConnectionClosed",
+        [create],
+      ],
+      [
+        "a part",
+        () => once(fails(503, "SlowDown"), isPart),
+        inParts(2),
+        "resolved",
+        [create, "PUT part", "PUT part", "PUT part", complete],
+      ],
+      [
+        "a part that is answered 200 with no ETag",
+        () => once({ status: 200 }, isPart),
+        inParts(1),
+        "resolved",
+        [create, "PUT part", "PUT part", complete],
+      ],
+      [
+        "a part, not after a 403: the upload is rolled back",
+        () => always(fails(403, "AccessDenied"), isPart),
+        inPartsThenAbort(2),
+        "AccessDenied",
+        [create, "PUT part", abort],
+      ],
+      [
+        "CompleteMultipartUpload that is answered 200 with an error",
+        () => once({ status: 200, body: error("InternalError") }, isComplete),
+        inParts(1),
+        "resolved",
+        [create, "PUT part", complete, complete],
+      ],
+      [
+        "CompleteMultipartUpload whose connection closes with no answer",
+        () => once("cut", isComplete),
+        inParts(1),
+        "resolved",
+        [create, "PUT part", complete, complete],
+      ],
+      [
+        "CompleteMultipartUpload, not after a 403: the upload is rolled back",
+        () => always(fails(403, "AccessDenied"), isComplete),
+        inPartsThenAbort(1),
+        "AccessDenied",
+        [create, "PUT part", complete, abort],
+      ],
+    ];
+    test.each(rows)("%s", async (_, plan, call, ended, requests) => {
+      await using stub = await bucket(plan());
+      expect(await outcome(stub, call)).toEqual({ ended, requests });
+    });
 
-    test("sends CreateMultipartUpload again", async () => {
-      await using stub = await bucket(once(fails(503, "SlowDown"), isCreate));
-      expect(await outcome(stub, twoParts())).toEqual({
-        ended: "resolved",
-        requests: [create, create, "PUT part", "PUT part", "POST ?uploadId=upload-1"],
+    test("AbortMultipartUpload, and each with the whole of `retry`", async () => {
+      // CompleteMultipartUpload uses up `retry`, and AbortMultipartUpload has it again.
+      await using stub = await bucket(always(fails(503, "SlowDown"), asked => isComplete(asked) || isAbort(asked)));
+      const aborted = stub.next(isAbort).then(() => stub.next(isAbort));
+      expect(await outcome(stub, inParts(1, 1))).toEqual({
+        ended: "SlowDown",
+        requests: [create, "PUT part", complete, complete],
       });
-    });
-
-    test("until `retry` is used up", async () => {
-      await using stub = await bucket(always(fails(503, "SlowDown"), isCreate));
-      expect(await outcome(stub, twoParts(2))).toEqual({ ended: "SlowDown", requests: [create, create, create] });
-    });
-
-    test("not after a 403", async () => {
-      await using stub = await bucket(always(fails(403, "AccessDenied"), isCreate));
-      expect(await outcome(stub, twoParts())).toEqual({ ended: "AccessDenied", requests: [create] });
-    });
-
-    test("not when the connection closed with no answer: the bucket may have made the upload", async () => {
-      await using stub = await bucket(once("cut", isCreate));
-      expect(await outcome(stub, twoParts())).toEqual({ ended: "ConnectionClosed", requests: [create] });
-    });
-
-    test("sends a part again as before: at once, after any failure", async () => {
-      await using stub = await bucket(once(fails(403, "AccessDenied"), isPart));
-      expect(await outcome(stub, twoParts())).toEqual({
-        ended: "resolved",
-        requests: [create, "PUT part", "PUT part", "PUT part", "POST ?uploadId=upload-1"],
-      });
+      await aborted;
+      expect(stub.requests()).toEqual([create, "PUT part", complete, complete, abort, abort]);
     });
   });
 
@@ -365,6 +483,36 @@ describe.concurrent("S3 retry", () => {
         requests: ["HEAD", "PUT"],
       });
       expect(exitCode).toBe(0);
+    });
+
+    test("when its upload failed meanwhile", async () => {
+      // CreateMultipartUpload waits about 250 ms. The write after it waits a second, so when
+      // that one is sent again the first wait is over.
+      let fences = 0;
+      await using stub = await bucket(asked => {
+        if (isCreate(asked)) return fails(503, "SlowDown");
+        return fences++ === 0 ? fails(503, "SlowDown", { "Retry-After": "1" }) : ok(asked);
+      });
+      const created = stub.next(isCreate);
+      let pulls = 0;
+      const source = new ReadableStream({
+        async pull(controller) {
+          if (pulls++ === 0) return controller.enqueue(part);
+          await (
+            await created
+          ).closed;
+          controller.error(new Error("the source failed"));
+        },
+      });
+      const upload = stub.client().write("key", new Response(source), { partSize: part.length });
+      expect(
+        await upload.then(
+          () => "resolved",
+          error => error.message,
+        ),
+      ).toBe("the source failed");
+      await stub.client().write("fence", "hello");
+      expect(stub.requests()).toEqual([create, "PUT", "PUT"]);
     });
   });
 });

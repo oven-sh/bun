@@ -177,6 +177,24 @@ for (let i = 0; i < 10; i++) {
 await writer.end();
 ```
 
+### Retrying failed uploads
+
+`retry` sets how many times a request of an upload is sent again after it fails. The default is `3`. Each request of an upload has this budget: the one request of a small `write()`, and each request of a multipart upload.
+
+```ts s3.ts icon="/icons/typescript.svg"
+// Send each failed upload request up to 5 more times
+await s3file.write("Hello World!", { retry: 5 });
+
+// Send each upload request once
+await s3file.write("Hello World!", { retry: 0 });
+```
+
+A request is retried after a connection failure, a timeout, or a 5xx, 429 or 408 response. Another response, such as a 403, fails the upload at once. The request that starts a multipart upload is not retried after a connection that closed with no answer or timed out, because the bucket can have started the upload.
+
+The wait before the first retry is 250 ms. It doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. The `BUN_CONFIG_HTTP_RETRY_BACKOFF` environment variable sets the first wait in milliseconds, and `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once.
+
+Requests that are not uploads (reads, `exists`, `stat`, `delete` and `list`) are sent once.
+
 ---
 
 ## Presigning URLs

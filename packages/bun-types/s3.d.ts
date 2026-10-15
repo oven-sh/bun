@@ -278,15 +278,29 @@ declare module "bun" {
     queueSize?: number;
 
     /**
-     * Number of retry attempts for failed uploads.
+     * How many times a request of an upload is sent again after it fails.
      * - Default: 3
      * - Maximum: 255
+     *
+     * Each request of an upload has this budget: the one request of a small
+     * `write()`, and each request of a multipart upload. A request is sent
+     * again after a connection failure, a timeout, or a 408, 429 or 5xx
+     * response. Another response, such as a 403, fails the upload at once.
+     * The request that starts a multipart upload is not sent again after a
+     * connection that closed with no answer or timed out.
+     *
+     * The wait before the first retry is 250 ms. It doubles with every
+     * retry, up to 10 s, with ±20% jitter. A longer `Retry-After` header is
+     * honored, up to 60 seconds.
+     *
+     * Requests that are not uploads (reads, `exists`, `stat`, `delete` and
+     * `list`) are sent once.
      *
      * @example
      * ```ts
      * // Setting retry attempts
      * const file = s3.file("my-file.txt", {
-     *   retry: 5 // Retry failed uploads up to 5 times
+     *   retry: 5 // Send a failed upload request up to 5 more times
      * });
      * ```
      */

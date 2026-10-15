@@ -1,16 +1,12 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
-import { heapStats, jscDescribe } from "bun:jsc";
+import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, Heap, isArm64, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
-
-// bun-types does not declare it.
-declare module "bun:jsc" {
-  function generateHeapSnapshotForDebugging(): unknown;
-}
+import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
 
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
@@ -105,82 +101,6 @@ const dir = String(
 );
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const file = (name: string) => join(dir, name);
-
-/** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
- *  from the caller's own continuation: that runs inside a microtask job, which still holds what it
- *  was given (the promise an `await` just resumed from, and through it the module that promise
- *  was fulfilled with). */
-function collect(): Promise<void> {
-  return new Promise(resolve =>
-    setTimeout(() => {
-      Bun.gc(true);
-      setTimeout(resolve, 0);
-    }, 0),
-  );
-}
-
-/** The heap as a timer callback sees it: with the caller suspended, so that what its frames hold
- *  is held through the heap, like everything else. The caller's continuation hangs off the promise
- *  returned here, which the timer's callback (on the stack while the snapshot is taken) would
- *  otherwise be the only thing to hold: `pendingHeap` holds it from this module's scope. */
-let pendingHeap: Promise<Heap> | undefined;
-function heapFromTimer(): Promise<Heap> {
-  return (pendingHeap = new Promise(resolve => setTimeout(() => resolve(new Heap()), 0)));
-}
-
-const addressOf = (object: object) => BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(object))![0]);
-
-/** Lifetimes by name: `track` an object, then ask which are gone or still kept alive.
- *  A finalized object is gone, and that is all most runs need. One that is not finalized after a
- *  few collections is looked up in the heap (its cell is its own for as long as it is not
- *  collected): kept alive only if a root reaches it. A snapshot is slow on a debug build, so it
- *  is taken only then. */
-class Lifetimes {
-  #finalized = new Set<string>();
-  #registry = new FinalizationRegistry<string>(name => this.#finalized.add(name));
-  #address = new Map<string, bigint>();
-  track<T extends object>(name: string, object: T): T {
-    this.#registry.register(object, name);
-    this.#address.set(name, addressOf(object));
-    return object;
-  }
-  #notFinalized(names: string[]): string[] {
-    const untracked = names.filter(name => !this.#address.has(name));
-    if (untracked.length) throw new Error("never tracked: " + untracked.join(", "));
-    return names.filter(name => !this.#finalized.has(name));
-  }
-  /** Of `names`, those a root reaches, each with its path. */
-  async #kept(names: string[]): Promise<Map<string, string>> {
-    const heap = await heapFromTimer();
-    const kept = new Map<string, string>();
-    for (const name of this.#notFinalized(names)) {
-      const path = heap.pathTo(this.#address.get(name)!);
-      if (path !== undefined) kept.set(name, path);
-    }
-    return kept;
-  }
-  /** Collects until nothing keeps any of `names` alive (bounded); returns those still kept, with what keeps them. */
-  async stillAlive(...names: string[]): Promise<string[]> {
-    let waiting = this.#notFinalized(names);
-    for (let i = 0; i < 100 && waiting.length; i++) {
-      await collect();
-      waiting = this.#notFinalized(waiting);
-      // Not finalized after a few collections: from here on only what a root reaches is waited for.
-      if (i === 4 && waiting.length) waiting = [...(await this.#kept(waiting)).keys()];
-    }
-    if (!waiting.length) return [];
-    return [...(await this.#kept(waiting))].map(([name, path]) => `${name}: ${path}`);
-  }
-  /** Collects a few times; whether `name` survived all of them. Every caller expects it to, so
-   *  this goes by finalization alone: a stack word can only make that pass, and asking the heap
-   *  would cost each of them a snapshot. */
-  async survives(name: string): Promise<boolean> {
-    for (let i = 0; i < 5; i++) {
-      await collect();
-    }
-    return this.#notFinalized([name]).length > 0;
-  }
-}
 
 const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
 /** Collects until the count of each type is at most its limit (bounded); returns the counts. When
@@ -685,30 +605,21 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
 describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
-  // TODO: failed on every build on the three Linux aarch64 CI lanes (not on the CI's own Linux aarch64 build under
-  // emulation, nor on macOS arm64) while it went by finalization alone. Not tried there since it asks the heap.
-  test.todoIf(isLinux && isArm64)("a dropped graph whose module keeps a FileHandle open is collected", async () => {
+  // A child process: node:fs reports the handle nobody closed as an uncaught exception.
+  test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          import { generateHeapSnapshotForDebugging, jscDescribe } from "bun:jsc";
-          ${Heap}
-          // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
+          import { Lifetimes } from ${JSON.stringify(join(import.meta.dir, "module-graph-lifetimes.ts"))};
           process.on("uncaughtException", () => {});
-          let collected = false;
-          let address;
-          const registry = new FinalizationRegistry(() => { collected = true; });
+          const lifetimes = new Lifetimes();
           await (async () => {
-            const graph = new Bun.ModuleGraph({ onError() {} });
-            registry.register(graph, "graph");
-            address = BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(graph))[0]);
+            const graph = lifetimes.track("graph", new Bun.ModuleGraph({ onError() {} }));
             await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
           })();
-          for (let i = 0; i < 200 && !collected; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
-          const keptBy = collected ? undefined : await new Promise(resolve => setTimeout(() => resolve(new Heap().pathTo(address)), 0));
-          console.log(JSON.stringify({ keptBy: keptBy ?? null }));
+          console.log(JSON.stringify(await lifetimes.stillAlive("graph")));
           process.exit(0);
           `,
       ],
@@ -717,7 +628,7 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(`{"keptBy":null}`);
+    expect(JSON.parse(stdout)).toEqual([]);
     expect(exitCode).toBe(0);
   });
 });

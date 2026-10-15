@@ -3,7 +3,6 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
-#include "CodeGenerationFromStrings.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -336,13 +335,6 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"json\", \"jsonc\", \"json5\", \"toml\", \"yaml\", \"xml\", \"text\", \"md\", or \"css\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
-        return result;
-    }
-
-    // Source a plugin supplies is a string made into script. What it supplies for a loader of
-    // data (json, toml, ...) or as an object is not.
-    if (Bun::mayNotMakeScriptFromStrings() && (loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX)) [[unlikely]] {
-        result.value.error = Bun::createCodeGenerationFromStringsError(globalObject);
         return result;
     }
 
@@ -800,10 +792,6 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
-    }
-
     BunString specifier = Bun::toString(specifierWtfString);
 
     bool wasModuleMock = false;
@@ -921,9 +909,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
-    }
     if (pluginContents) {
         if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString))
             RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -1112,9 +1097,6 @@ static JSValue fetchESMSourceCode(
             return code;
         }
     };
-
-    if (Bun::mayNotMakeScriptFromStrings() && Bun::isDataOrBlobURL(specifier->toWTFString(BunString::ZeroCopy))) [[unlikely]]
-        return reject(Bun::createCodeGenerationFromStringsError(globalObject));
 
     bool wasModuleMock = false;
     BunPlugin::OnLoad::Matches onLoad;

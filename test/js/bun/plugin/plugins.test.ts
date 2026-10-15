@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -1313,6 +1313,79 @@ describe.concurrent("what onResolve answers without a namespace", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+describe.concurrent.skipIf(isWindows)("with a folder that has `?` in its name", () => {
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("plugin-question-mark", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin.ts", "./que?ry/entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("onResolve is asked for with the whole path of the importer", async () => {
+    const result = await run({
+      "plugin.ts": `
+        Bun.plugin({
+          name: "importers",
+          setup(build) {
+            build.onResolve({ filter: /\\.importer$/ }, ({ importer }) => ({
+              path: importer.split("/").slice(-2).join("/"),
+              namespace: "served",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
+              contents: "export default " + JSON.stringify(path),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "que?ry/entry.mjs": `
+        import esm from "who.importer";
+        import cjs from "./importer.cjs";
+        import withQuery from "./importer.mjs?x=1";
+        console.log(esm, cjs.default, withQuery);
+      `,
+      "que?ry/importer.cjs": `module.exports = require("who.importer");`,
+      "que?ry/importer.mjs": `export { default } from "who.importer";`,
+    });
+    expect(result).toEqual({
+      stdout: "que?ry/entry.mjs que?ry/importer.cjs que?ry/importer.mjs\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("onResolve can answer with a path in that folder, with or without a query", async () => {
+    const result = await run({
+      "plugin.ts": `
+        const answers = {
+          "path.img": import.meta.dir + "/que?ry/answer.mjs",
+          "query.img": import.meta.dir + "/que?ry/answer.mjs?v=1",
+        };
+        Bun.plugin({
+          name: "answers",
+          setup(build) {
+            build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] }));
+          },
+        });
+      `,
+      "que?ry/entry.mjs": `
+        import path from "path.img";
+        import query from "query.img";
+        console.log(path, query);
+      `,
+      "que?ry/answer.mjs": `export default import.meta.url.split("/").slice(-2).join("/");`,
+    });
+    expect(result).toEqual({ stdout: "que%3Fry/answer.mjs que%3Fry/answer.mjs?v=1\n", stderr: "", exitCode: 0 });
   });
 });
 

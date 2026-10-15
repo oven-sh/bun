@@ -2278,8 +2278,7 @@ impl StackCheck {
 // Small helpers that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Invalidation counter for cached directory listings. A listing older than
-/// the resolver's generation is read again. Advanced once per `Bun.build`.
+/// Invalidation counter for cached directory listings; a listing older than the resolver's is read again.
 pub type Generation = u32;
 
 // ── Ordinal ───────────────────────────────────────────────────────────────

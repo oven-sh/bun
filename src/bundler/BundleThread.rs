@@ -49,8 +49,7 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    /// Resolver generation of the current build; advanced before every build.
-    /// Generation 0 is the runtime resolver's.
+    /// Resolver generation of the current build; advanced before every build (0 is the runtime's).
     pub(crate) generation: bun_core::Generation,
 }
 
@@ -88,10 +87,8 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `Transpiler<'a>` has borrow-carrying fields (`arena: &'a Arena`,
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
-    /// arena-allocated, fully-configured transpiler. The resolver carries
-    /// `generation` before configuration starts, so the `.env` and tsconfig
-    /// lookups of the configuration step read directories at the build's
-    /// generation too.
+    /// arena-allocated, fully-configured transpiler, with `generation` set
+    /// on its resolver before configuration reads any directory.
     // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
     // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
     // mutability — the standard arena pattern `mut_from_ref` cannot see through.

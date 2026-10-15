@@ -1660,7 +1660,8 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
             peer_probes: Default::default(),
-            placed: Default::default(),
+            // Most lookups find nothing, and those are short in a table that is half empty.
+            placed: tree::Placed::with_capacity(slice.len() * 2),
             replaced_row: false,
             shipped_rows: Default::default(),
             in_shipped_folder: false,

@@ -6,27 +6,13 @@
 //! the single-argument `hash(input)` (no seed) — the JS-side seed argument is
 //! ignored for Adler32.
 
-pub struct Adler32 {
-    pub adler: u32,
-}
-
-impl Default for Adler32 {
-    #[inline]
-    fn default() -> Self {
-        Self { adler: 1 }
-    }
-}
+pub struct Adler32;
 
 impl Adler32 {
     const BASE: u32 = 65521;
     const NMAX: usize = 5552;
 
-    #[inline]
-    pub fn init() -> Self {
-        Self::default()
-    }
-
-    pub fn permute(state: u32, input: &[u8]) -> u32 {
+    pub(crate) fn permute(state: u32, input: &[u8]) -> u32 {
         let mut s1 = state & 0xffff;
         let mut s2 = (state >> 16) & 0xffff;
 
@@ -87,11 +73,6 @@ impl Adler32 {
         }
 
         s1 | (s2 << 16)
-    }
-
-    #[inline]
-    pub fn update(&mut self, input: &[u8]) {
-        self.adler = Self::permute(self.adler, input);
     }
 
     #[inline]

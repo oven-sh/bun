@@ -7,7 +7,7 @@ use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
 pub struct ContainerName {
-    pub v: CustomIdent,
+    pub(crate) v: CustomIdent,
 }
 
 impl ContainerName {
@@ -18,7 +18,7 @@ impl ContainerName {
 
 impl ContainerName {
     #[inline]
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -44,7 +44,6 @@ impl ContainerName {
     }
 }
 
-pub use ContainerName as ContainerNameFns;
 pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
@@ -177,7 +176,7 @@ impl QueryCondition for StyleQuery {
 }
 
 impl StyleQuery {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Operator` is `Copy`; `Property` routes through `dc::property` until
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
@@ -295,7 +294,7 @@ impl QueryCondition for ContainerCondition {
 }
 
 impl ContainerCondition {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.
         match self {
@@ -329,11 +328,11 @@ pub struct ContainerRule<R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
     /// The container condition.
-    pub condition: ContainerCondition,
+    pub(crate) condition: ContainerCondition,
     /// The rules within the `@container` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ContainerRule<R> {

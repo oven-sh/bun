@@ -5,7 +5,7 @@ description: "Bun's automatic package installation feature for standalone script
 
 If Bun finds no `node_modules` directory in the working directory or higher, it abandons Node.js-style module resolution in favor of the **Bun module resolution algorithm**.
 
-Under Bun-style module resolution, Bun auto-installs every imported package on the fly into a [global module cache](/pm/global-cache) during execution (the same cache used by [`bun install`](/pm/cli/install)).
+Under Bun-style module resolution, Bun auto-installs every imported package on the fly into a [global module cache](/pm/global-cache) during execution. [`bun install`](/pm/cli/install) uses the same cache.
 
 ```ts index.ts icon="/icons/typescript.svg"
 import { foo } from "foo"; // install `latest` version
@@ -33,13 +33,34 @@ Once Bun determines a version or version range, it:
 
 1. Checks the module cache for a compatible version. If one exists, uses it.
 2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
-3. Otherwise, downloads and installs the appropriate version from the `npm` registry.
+3. Otherwise, downloads and installs the appropriate version from the registry.
+
+With `bun --prefer-offline` (or [`install.prefer = "offline"`](/runtime/bunfig#install-prefer)), Bun resolves versions and tags from the cached registry metadata, however old it is, and only asks the registry for a package that is not in the cache.
+
+The first import of a package that is not in the cache blocks the thread until the download finishes. Timers and other requests' handlers do not run inside `require()`, `import()`, or `Bun.resolveSync()`.
+
+When the registry answers that a package does not exist (404), Bun does not ask for it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure, such as a 5xx or a dropped connection, the next import asks again.
+
+---
+
+## Registries
+
+Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, and their credentials from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://npm.myorg.com/
+//npm.myorg.com/:_authToken=${NPM_TOKEN}
+```
+
+Bun reads the user's `.npmrc`, then `.npmrc` in the directory where you started `bun`. It does not search parent directories. A value in `bunfig.toml` overrides the same value in `.npmrc`. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only.
+
+Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
 
 ---
 
 ## Installation
 
-Bun installs and caches packages into `<cache>/<pkg>@<version>`, so multiple versions of the same package can be cached at once. It also creates a symlink under `<cache>/<pkg>/<version>` to speed up looking up all cached versions of a package.
+Bun installs and caches packages into `<cache>/<pkg>@<version>`, so Bun can cache multiple versions of the same package at once. It also creates a symlink under `<cache>/<pkg>/<version>` to speed up looking up all cached versions of a package.
 
 ---
 
@@ -68,6 +89,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
 - No Intellisense. TypeScript auto-completion in IDEs relies on type declaration files inside `node_modules`. We are investigating solutions to this.
 - No [patch-package](https://github.com/ds300/patch-package) support
+- No git dependencies. Auto-install loads packages from the npm registry only. Run `bun install` for a dependency on a git URL.
 
 ---
 
@@ -81,7 +103,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
     </Accordion>
 
-    <Accordion title="How is this different from Yarn Plug'N'Play does?">
+    <Accordion title="How is this different from what Yarn Plug'N'Play does?">
     With Yarn, you must run `yarn install` before you run a script. By contrast, Bun resolves dependencies on the fly when you run a file; there's no need to run any `install` command ahead of time.
 
     Yarn Plug'N'Play also uses zip files to store dependencies. This makes dependency loading [slower at runtime](https://twitter.com/jarredsumner/status/1458207919636287490), as random access reads on zip files tend to be slower than the equivalent disk lookup.

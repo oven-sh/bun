@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 it("setTimeout", async () => {
@@ -68,6 +68,53 @@ it("clearTimeout", async () => {
     setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
+});
+
+it("clearTimeout and clearInterval look a numeric id up by value, whichever way JSC boxes the number", async () => {
+  // The same integer as a double-boxed JSValue: a Float64Array element never
+  // comes back as an int32, and -0 cannot be one.
+  const asDouble = n => new Float64Array([n])[0];
+  const fired = [];
+
+  const timeoutViaClearTimeout = setTimeout(() => fired.push("timeoutViaClearTimeout"), 0);
+  const timeoutViaClearInterval = setTimeout(() => fired.push("timeoutViaClearInterval"), 0);
+  const intervalViaClearInterval = setInterval(() => fired.push("intervalViaClearInterval"), 1);
+  const intervalViaClearTimeout = setInterval(() => fired.push("intervalViaClearTimeout"), 1);
+  const kept = setTimeout(() => fired.push("kept"), 0);
+  const timers = [
+    timeoutViaClearTimeout,
+    timeoutViaClearInterval,
+    intervalViaClearInterval,
+    intervalViaClearTimeout,
+    kept,
+  ];
+
+  try {
+    expect(asDouble(+timeoutViaClearTimeout)).toBe(+timeoutViaClearTimeout);
+    clearTimeout(asDouble(+timeoutViaClearTimeout));
+    clearInterval(asDouble(+timeoutViaClearInterval));
+    clearInterval(asDouble(+intervalViaClearInterval));
+    clearTimeout(asDouble(+intervalViaClearTimeout));
+
+    // Numbers that do not name a timer clear nothing and do not throw. The last one
+    // would hit `kept` if the value were wrapped into an int32 (ToInt32) instead of compared.
+    clearTimeout(+kept + 0.5);
+    clearTimeout(-0);
+    clearTimeout(NaN);
+    clearTimeout(Infinity);
+    clearTimeout(2 ** 31);
+    clearTimeout(-(2 ** 31) - 1);
+    clearTimeout(+kept + 2 ** 32);
+
+    expect(timers.map(t => t._destroyed)).toEqual([true, true, true, true, false]);
+
+    // This timer is due after every timer above, so once it fires each cleared
+    // timer would have fired too had it still been armed.
+    await new Promise(resolve => setTimeout(resolve, 2));
+    expect(fired).toEqual(["kept"]);
+  } finally {
+    timers.forEach(t => clearTimeout(t));
+  }
 });
 
 it.todo("setImmediate runs after setTimeout cb", async () => {
@@ -517,16 +564,16 @@ __attribute__((constructor)) static void arm(void) {
   });
 });
 
-it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-6.js"))).toSpawn();
 });
 
-it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
-  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+it.concurrent("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "setTimeout-unref-fixture-7.js"))).toSpawn();
 });
 
-it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
+it.concurrent("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
+  expect(await bunRun([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"])).toSpawn();
 });
 
 for (const mode of ["clear", "refresh", "repeat"]) {
@@ -548,10 +595,10 @@ for (const mode of ["clear", "refresh", "repeat"]) {
   }, 90_000);
 }
 
-it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+it("setTimeout propagates an error thrown while emitting a timeout warning", async () => {
   // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
-  // If that read throws, the exception must not be left pending on the VM when setTimeout
-  // returns — otherwise debug builds hit releaseAssertNoException().
+  // If that read throws, setTimeout throws it (as in Node) rather than leaving it pending on
+  // the VM or swallowing it.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -562,8 +609,13 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
           get() { throw new TypeError("boom"); },
           configurable: true,
         });
-        const t = setTimeout(() => {}, 1e100);
-        clearTimeout(t);
+        try {
+          setTimeout(() => {}, 1e100);
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw " + e.message);
+        }
+        delete process._exiting;
         console.log("survived");
       `,
     ],
@@ -574,8 +626,8 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("boom");
-  expect(stdout.trim()).toBe("survived");
+  expect(stdout.trim()).toBe("threw boom\nsurvived");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -681,6 +733,48 @@ it("setTimeout(1) is not quantized to the ~15.6ms Windows system tick", async ()
   expect(min).toBeGreaterThanOrEqual(1);
   expect(exitCode).toBe(0);
 });
+
+// Reading a timer's numeric id (`+t`, `${t}`, obj[t]=x, any Symbol.toPrimitive
+// use) registers it in the id->timer map. Finalize removed that entry with the
+// ordered ArrayHashMap.remove(), which is three O(n) vec shifts plus a full
+// hash-index rebuild per timer, so a GC sweep of n id-accessed timers was
+// O(n^2). 20k such timers froze the loop for ~2-3 s on release, tens of
+// seconds at 30k+. Node: ~5 ms for 200k. With swap_remove() the sweep is O(n).
+it("GC of many id-accessed timers is not quadratic", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+          const N = 20000;
+          for (let i = 0; i < N; i++) {
+            const t = setTimeout(() => {}, 3_600_000);
+            Number(t);          // mint the id-map entry via Symbol.toPrimitive
+            clearTimeout(t);
+          }
+          const t0 = performance.now();
+          Bun.gc(true);
+          const ms = performance.now() - t0;
+          process.stdout.write(JSON.stringify({ ms: Math.round(ms) }));
+        `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  const { ms } = JSON.parse(stdout);
+  // Before: ~2100-3400 ms release, far more on debug+ASAN (quadratic in N).
+  // After: <10 ms release, ~100-170 ms debug+ASAN (linear). 1500 ms splits
+  // the two with ~9x headroom over the fixed debug+ASAN number.
+  expect(ms).toBeLessThan(1500);
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 it("timer heap clock is monotonic, not wall-clock", () => {
   // The clock that schedules setTimeout/setInterval deadlines must be monotonic

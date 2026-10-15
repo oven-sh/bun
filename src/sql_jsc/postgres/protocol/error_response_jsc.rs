@@ -52,7 +52,6 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
             FieldMessage::File(str) => file = str,
             FieldMessage::Line(str) => line = str,
             FieldMessage::Routine(str) => routine = str,
-            _ => {}
         }
     }
 
@@ -97,7 +96,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
 
     let errno = maybe_slice(code);
     // syntax error - https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-    let error_code: &'static [u8] = if code.eql_comptime(b"42601") {
+    let error_code: &'static [u8] = if code.eq_ascii(b"42601") {
         b"ERR_POSTGRES_SYNTAX_ERROR"
     } else {
         b"ERR_POSTGRES_SERVER_ERROR"
@@ -119,13 +118,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     let line_slice = maybe_slice(line);
     let routine_slice = maybe_slice(routine);
 
-    // Capture `b.len` first: `b.allocated_slice()` borrows `b` mutably.
-    let len = b.len;
-    let error_message: &[u8] = if len > 0 {
-        &b.allocated_slice()[..len]
-    } else {
-        b""
-    };
+    let error_message: &[u8] = b.written_slice();
 
     create_postgres_error(
         global_object,

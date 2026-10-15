@@ -1,4 +1,4 @@
-import * as b from "bindgenv2";
+import * as b from "../../codegen/bindgenv2/lib.ts";
 
 export const SSLConfigSingleFile = b.union("SSLConfigSingleFile", {
   string: b.String,
@@ -95,6 +95,22 @@ export const SSLConfig = b.dictionary(
       type: b.u32,
       default: 0,
       internalName: "client_renegotiation_window",
+    },
+    crl: SSLConfigFile,
+    allowPartialTrustChain: {
+      type: b.bool,
+      default: false,
+      internalName: "allow_partial_trust_chain",
+    },
+    sessionTimeout: {
+      type: b.i32,
+      default: 0,
+      internalName: "session_timeout",
+    },
+    sigalgs: b.String.nullable,
+    ecdhCurve: {
+      type: b.String.nullable,
+      internalName: "ecdh_curve",
     },
   },
 );

@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isRoot, isWindows, tempDir, type DirectoryTree } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -80,7 +80,7 @@ const fixture = tempDir("no-orphans", {
 });
 
 async function spawnTree(noOrphans: string | undefined, childScript = "child.js") {
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   // bunEnv spreads process.env; make sure an ambient BUN_FEATURE_FLAG_NO_ORPHANS
   // from the test runner doesn't leak into the "unset" case.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
@@ -219,7 +219,7 @@ test.concurrent.skipIf(!isPosix)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isPosix || process.getuid?.() !== 0)(
+test.concurrent.skipIf(!isPosix || !isRoot)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
@@ -282,7 +282,7 @@ describe.concurrent.each([
         process.exit(0);
       `,
     });
-    const env: Record<string, string> = { ...bunEnv, ...extraEnv };
+    const env: NodeJS.Dict<string> = { ...bunEnv, ...extraEnv };
     if (!("BUN_FEATURE_FLAG_NO_ORPHANS" in extraEnv)) delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const proc = Bun.spawn({
       cmd: [bunExe(), ...argv, "clean-exit.js"],
@@ -332,8 +332,8 @@ describe.concurrent.each([
   },
 ])("bun run --no-orphans $label: supervisor SIGKILLed", ({ runArgs, files }) => {
   test.concurrent.skipIf(!isPosix)("bun run and the script exit", async () => {
-    using dir = tempDir("no-orphans-run", files);
-    const env: Record<string, string> = { ...bunEnv };
+    using dir = tempDir("no-orphans-run", files as DirectoryTree);
+    const env: NodeJS.Dict<string> = { ...bunEnv };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     const sh = Bun.spawn({
       cmd: ["/bin/sh", "-c", `"${bunExe()}" run --no-orphans ${runArgs} & wait`],
@@ -445,18 +445,23 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // Same daemon shape but the outer and the intermediate exit *immediately* —
 // no spinning on the pidfile (that spin is what made the proc_listallpids
 // scan() pass: it gave the wait loop's NOTE_FORK time to fire and observe
-// each link). With NOTE_TRACK xnu attaches to the intermediate inside fork1()
-// before it's schedulable, recursively, so the daemon is captured even if both
-// ancestors are gone before the wait loop drains a single event. Linux:
-// subreaper is also armed pre-spawn, and `killSubreaperAdoptees()` in the
-// disarm defer kills any ppid==bun adoptee that wasn't a pre-arm sibling
-// before subreaper drops, so the daemon can't escape in the disarm →
-// `onProcessExit` window.
+// each link). Linux: subreaper is armed pre-spawn, and
+// `killSubreaperAdoptees()` in the disarm defer kills any ppid==bun adoptee
+// that wasn't a pre-arm sibling before subreaper drops, so the daemon can't
+// escape in the disarm → `onProcessExit` window.
+//
+// macOS: NOTE_TRACK (which attached atomically inside fork1()) has been
+// ENOTSUP since 10.5; the replacement NOTE_FORK + p_puniqueid scan (#30100)
+// has a documented unfixable-from-userspace race where a fast-exit
+// intermediate dies before the scan records its uniqueid, leaving the
+// daemon's p_puniqueid unlinkable. setsid() also moves it out of the script
+// pgroup, so kill(-pgid) misses it. That race loses under CI load on the x64
+// macs in particular, so this test is Linux-only.
 //
 // `bun run` may finish before the daemon writes its pidfile. Poll for the
 // file from the *test*; if it never appears the daemon was reaped before it
 // could write — also a pass. Only fail if the file appears AND the pid lives.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!isLinux || !hasPerl)(
   "bun run --no-orphans (perl): fast-exit intermediate (no pidfile spin) — daemon still reaped",
   async () => {
     using dir = tempDir("no-orphans-fast-daemon", {
@@ -594,7 +599,7 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
       process.exit(0);
     `,
   });
-  const env: Record<string, string> = { ...bunEnv };
+  const env: NodeJS.Dict<string> = { ...bunEnv };
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   const proc = Bun.spawn({
     cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
@@ -998,7 +1003,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
 // libuv's job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.
-async function spawnTreeWindows(argv: string[], extraEnv: Record<string, string>, bunfig = false) {
+async function spawnTreeWindows(argv: readonly string[], extraEnv: NodeJS.Dict<string>, bunfig = false) {
   // No `cwd` anywhere in the chain: the leaf must not hold an open handle on
   // the tempDir (CWD lock) or the negative test's cleanup races the rm.
   const dir = tempDir("no-orphans-win", {
@@ -1089,3 +1094,109 @@ describe.concurrent.each([
     }
   });
 });
+
+// The --no-orphans Job Object is Bun's immediate (leaf) job because enable()
+// self-assigns it after startup. Probe its LimitFlags via
+// QueryInformationJobObject(NULL), and exercise CREATE_BREAKAWAY_FROM_JOB:
+// without BREAKAWAY_OK on the immediate job, that CreateProcess fails with
+// ERROR_ACCESS_DENIED (5), which is a compat break --no-orphans mustn't cause.
+// DIE_ON_UNHANDLED_EXCEPTION can't be asserted behaviorally in CI (WER is
+// suppressed there) so the flag check is the proof for that half.
+//
+// Spawn via a cmd.exe supervisor so the bun under test is not explicitly
+// assigned to the test runner's libuv global job (libuv's job has
+// SILENT_BREAKAWAY so cmd.exe's child doesn't inherit it); this guarantees
+// the --no-orphans job is the immediate job regardless of parent timing.
+test.concurrent.skipIf(!isWindows)(
+  "windows: --no-orphans Job allows breakaway and sets DIE_ON_UNHANDLED_EXCEPTION, not SILENT_BREAKAWAY",
+  async () => {
+    using dir = tempDir("no-orphans-jobflags", {
+      "probe.js": `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const k = dlopen("kernel32.dll", {
+          QueryInformationJobObject: {
+            args: [FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr],
+            returns: FFIType.i32,
+          },
+          GetLastError: { args: [], returns: FFIType.u32 },
+          CreateProcessW: {
+            args: [
+              FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.i32,
+              FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr,
+            ],
+            returns: FFIType.i32,
+          },
+          WaitForSingleObject: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u32 },
+          CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
+        }).symbols;
+
+        // sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION) == 144 on x64/arm64;
+        // LimitFlags is at offset 16 inside BasicLimitInformation.
+        const jeli = new Uint8Array(144);
+        const qok = k.QueryInformationJobObject(null, 9, ptr(jeli), 144, null);
+        const flags = qok ? new DataView(jeli.buffer).getUint32(16, true) : -1;
+
+        const w = s => {
+          const a = new Uint16Array(s.length + 1);
+          for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+          return a;
+        };
+        const cmdline = w((process.env.COMSPEC || "C:/Windows/System32/cmd.exe") + " /d /c exit 0");
+        const si = new Uint8Array(104);
+        new DataView(si.buffer).setUint32(0, 104, true);
+        const pi = new Uint8Array(24);
+        const cok = k.CreateProcessW(null, ptr(cmdline), null, null, 0,
+          0x01000000 /* CREATE_BREAKAWAY_FROM_JOB */, null, null, ptr(si), ptr(pi));
+        const cerr = cok ? 0 : k.GetLastError();
+        if (cok) {
+          const dv = new DataView(pi.buffer);
+          const hP = dv.getBigUint64(0, true), hT = dv.getBigUint64(8, true);
+          k.WaitForSingleObject(hP, 10000);
+          k.CloseHandle(hP);
+          k.CloseHandle(hT);
+        }
+        process.stdout.write(JSON.stringify({ qok, flags, cok, cerr }));
+      `,
+      "sup.bat": `@"${bunExe()}" --no-orphans "%~dp0probe.js"\r\n`,
+    });
+    const env: NodeJS.Dict<string> = { ...bunEnv };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    await using proc = Bun.spawn({
+      cmd: ["cmd.exe", "/d", "/c", `${dir}\\sup.bat`],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+
+    const KILL_ON_JOB_CLOSE = 0x2000;
+    const DIE_ON_UNHANDLED_EXCEPTION = 0x400;
+    const BREAKAWAY_OK = 0x800;
+    const SILENT_BREAKAWAY_OK = 0x1000;
+
+    // Sanity: QueryInformationJobObject succeeded and we're looking at the
+    // --no-orphans job (KILL_ON_JOB_CLOSE set, SILENT_BREAKAWAY_OK not).
+    // SILENT_BREAKAWAY_OK would defeat --no-orphans entirely: children
+    // would no longer inherit Job membership.
+    expect({
+      qok: out.qok,
+      KILL_ON_JOB_CLOSE: !!(out.flags & KILL_ON_JOB_CLOSE),
+      DIE_ON_UNHANDLED_EXCEPTION: !!(out.flags & DIE_ON_UNHANDLED_EXCEPTION),
+      BREAKAWAY_OK: !!(out.flags & BREAKAWAY_OK),
+      SILENT_BREAKAWAY_OK: !!(out.flags & SILENT_BREAKAWAY_OK),
+    }).toEqual({
+      qok: 1,
+      KILL_ON_JOB_CLOSE: true,
+      DIE_ON_UNHANDLED_EXCEPTION: true,
+      BREAKAWAY_OK: true,
+      SILENT_BREAKAWAY_OK: false,
+    });
+
+    // Behavioral: a descendant's CreateProcess(CREATE_BREAKAWAY_FROM_JOB) must
+    // succeed. Before the fix this was { cok: 0, cerr: 5 } (ERROR_ACCESS_DENIED).
+    expect({ cok: out.cok, cerr: out.cerr }).toEqual({ cok: 1, cerr: 0 });
+    expect(exitCode).toBe(0);
+  },
+);

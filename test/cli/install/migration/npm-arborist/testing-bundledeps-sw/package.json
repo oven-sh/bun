@@ -1,0 +1,7 @@
+{
+  "name": "testing-bundledeps",
+  "version": "1.2.3",
+  "dependencies": {
+    "@isaacs/testing-bundledeps": "*"
+  }
+}

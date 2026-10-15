@@ -31,12 +31,7 @@ const methods = [
 ];
 
 (async function() {
-  // Bun: getPublicKey and the ML-KEM encapsulate/decapsulate methods are not
-  // implemented yet; verify the non-async invariant for the methods that exist.
-  const implemented = methods.filter((name) => typeof subtle[name] === 'function');
-  assert.ok(implemented.length >= 12);
-
-  for (const name of implemented) {
+  for (const name of methods) {
     assert.notStrictEqual(subtle[name].constructor, AsyncFunction);
 
     const promise = subtle[name].call({});

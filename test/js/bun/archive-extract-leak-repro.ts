@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
+const rss = process.memoryUsage.rss;
+
 const dir = mkdtempSync(join(tmpdir(), "archive-leak-"));
 
 const files = {
@@ -12,7 +14,7 @@ const files = {
   "b.txt": "world",
 };
 
-const archive = Bun.Archive.from(files);
+const archive = new Bun.Archive(files);
 
 function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(0) + " MB";
@@ -26,8 +28,8 @@ for (let round = 0; round < 20; round++) {
   }
 
   Bun.gc(true);
-  const rss = process.memoryUsage.rss();
-  console.log(`Round ${round + 1}: RSS = ${formatMB(rss)}`);
+  const rssNow = rss();
+  console.log(`Round ${round + 1}: RSS = ${formatMB(rssNow)}`);
 }
 
 rmSync(dir, { recursive: true });

@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { symlink } from "fs/promises";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "path";
 
 test("Object prototype followSymlinks", async () => {
-  const dir = tempDirWithFiles("glob-follow", {
+  await using dir = tempDir("glob-follow", {
     "abc/def/file.txt": "file",
     "symed/file2.txt": "file",
   });
@@ -36,7 +36,7 @@ test("Object prototype followSymlinks", async () => {
     onlyFiles: true,
   });
   expect([...second].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
-  delete Object.prototype.followSymlinks;
+  delete (Object.prototype as any).followSymlinks;
 
   const third = glob.scanSync({
     "cwd": path.join(dir, "abc"),

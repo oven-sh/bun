@@ -2657,12 +2657,6 @@ pub struct BufferedStdin {
 }
 
 impl BufferedStdin {
-    /// Hands back `&mut Self` (which already exposes `read`/`read_byte`).
-    #[inline]
-    pub fn reader(&mut self) -> &mut Self {
-        self
-    }
-
     /// Fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///

@@ -342,18 +342,6 @@ impl File {
         // `Drop` closes the fd on all paths (no leak on read failure).
         f.read_to_end()
     }
-    /// Open + read; returns BOTH
-    /// the open `File` handle and the bytes. Caller owns the fd and must
-    /// `close()` it. On read error the fd is closed before returning (no leak).
-    pub fn read_file_from(dir: impl AsFd, path: &[u8]) -> Maybe<(Self, Vec<u8>)> {
-        let dir = dir.as_fd();
-        let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        match f.read_to_end() {
-            Ok(bytes) => Ok((f, bytes)),
-            // The fd escapes only on success; `Drop` closes it here.
-            Err(e) => Err(e),
-        }
-    }
     /// Normalize a
     /// user-provided relative path against the resolver's cached
     /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.

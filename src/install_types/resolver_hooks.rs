@@ -825,14 +825,6 @@ impl OperatingSystem {
     // ("win32").
 
     #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
-    #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0
     }
@@ -946,14 +938,6 @@ impl Architecture {
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
 
-    #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
     #[inline]
     pub fn is_match(self, target: Self) -> bool {
         (self.0 & target.0) != 0

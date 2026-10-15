@@ -72,7 +72,7 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
-    pub(crate) on_unresolved: fn(*mut (), lookup: &UnresolvedLookup<'_>),
+    pub(crate) on_unresolved: fn(*mut (), lookup: &UnresolvedLookup<'_>) -> bool,
 }
 
 /// A relative or absolute import that resolved to nothing, with the names the resolver tried in `dir`.
@@ -91,8 +91,9 @@ impl AnyResolveWatcher {
         (self.callback)(self.context, dir_path, dir_fd)
     }
 
+    /// True when a name in `lookup` is in the directory by now: the resolver must look once more.
     #[inline]
-    pub fn unresolved(self, lookup: &UnresolvedLookup<'_>) {
+    pub fn unresolved(self, lookup: &UnresolvedLookup<'_>) -> bool {
         (self.on_unresolved)(self.context, lookup)
     }
 }
@@ -101,7 +102,7 @@ impl AnyResolveWatcher {
 struct UnresolvedImport {
     dir_hash: HashType,
     candidates: Vec<Box<[u8]>>,
-    /// Candidates that were in the directory when the import failed. They cannot satisfy it.
+    /// Candidates that were in the directory when the import failed. Only a listing needs them: they are not new.
     present: Vec<Box<[u8]>>,
 }
 
@@ -127,8 +128,9 @@ impl UnresolvedImport {
             .any(|candidate| strings::eql_case_insensitive_ascii(candidate, name, true))
     }
 
-    fn matches(&self, name: &[u8]) -> bool {
-        Self::is_candidate(&self.candidates, name) && !self.present.iter().any(|p| &**p == name)
+    fn is_new_candidate(&self, listed_name: &[u8]) -> bool {
+        Self::is_candidate(&self.candidates, listed_name)
+            && !self.present.iter().any(|p| &**p == listed_name)
     }
 }
 
@@ -1018,7 +1020,7 @@ impl Watcher {
             // `&mut Watcher` is scoped to this call.
             unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
-        fn wrap_unresolved(ctx: *mut (), lookup: &UnresolvedLookup<'_>) {
+        fn wrap_unresolved(ctx: *mut (), lookup: &UnresolvedLookup<'_>) -> bool {
             // SAFETY: see `wrap`.
             unsafe { (*ctx.cast::<Watcher>()).on_unresolved_import(lookup) }
         }
@@ -1049,25 +1051,30 @@ impl Watcher {
     }
 
     /// Called once the whole resolution missed, not on every `load_as_file` miss.
-    pub(crate) fn on_unresolved_import(&mut self, lookup: &UnresolvedLookup<'_>) {
+    pub(crate) fn on_unresolved_import(&mut self, lookup: &UnresolvedLookup<'_>) -> bool {
         if !self.track_unresolved_imports
             || lookup.base.is_empty()
             || !self.is_watchable_directory(lookup.dir)
         {
-            return;
+            return false;
         }
         let dir_hash = Self::unresolved_dir_hash(lookup.dir);
-        {
+        let is_this =
+            |u: &UnresolvedImport| u.dir_hash == dir_hash && *u.candidates[0] == *lookup.base;
+        let candidates = {
             let _guard = self.mutex.lock_guard();
-            if self
-                .unresolved_imports
-                .iter()
-                .any(|u| u.dir_hash == dir_hash && *u.candidates[0] == *lookup.base)
-            {
-                return;
+            if self.unresolved_imports.iter().any(is_this) {
+                return false;
             }
-        }
-        let candidates = UnresolvedImport::candidates_of(lookup);
+            let candidates = UnresolvedImport::candidates_of(lookup);
+            self.unresolved_imports.push(UnresolvedImport {
+                dir_hash,
+                candidates: candidates.clone(),
+                present: Vec::new(),
+            });
+            candidates
+        };
+        // Listed after the record is in place: an entry created from here on has an event that finds the record.
         let mut present: Vec<Box<[u8]>> = Vec::new();
         for_each_dir_entry(lookup.dir, |name| {
             if UnresolvedImport::is_candidate(&candidates, name) {
@@ -1075,12 +1082,14 @@ impl Watcher {
             }
             false
         });
+        if present.is_empty() {
+            return false;
+        }
         let _guard = self.mutex.lock_guard();
-        self.unresolved_imports.push(UnresolvedImport {
-            dir_hash,
-            candidates,
-            present,
-        });
+        if let Some(record) = self.unresolved_imports.iter_mut().find(|u| is_this(u)) {
+            record.present = present;
+        }
+        true
     }
 
     /// Callers spell the same directory with and without a trailing slash.
@@ -1089,7 +1098,7 @@ impl Watcher {
         Self::get_hash(strings::without_trailing_slash(dir_path))
     }
 
-    /// `name: None` lists the directory (kqueue and Windows report no entry name). Caller holds `mutex`.
+    /// `name` is the new entry of a create event. `None` lists the directory (kqueue and Windows give no name). Caller holds `mutex`.
     pub fn unresolved_import_matches(&self, dir_path: &[u8], name: Option<&[u8]>) -> bool {
         debug_assert!(self.mutex.is_held_by_current_thread());
         if self.unresolved_imports.is_empty() {
@@ -1105,11 +1114,11 @@ impl Watcher {
             return false;
         }
         if let Some(name) = name {
-            return records.any(|u| u.matches(name));
+            return records.any(|u| UnresolvedImport::is_candidate(&u.candidates, name));
         }
         let records: Vec<&UnresolvedImport> = records.collect();
-        for_each_dir_entry(dir_path, |entry_name| {
-            records.iter().any(|u| u.matches(entry_name))
+        for_each_dir_entry(dir_path, |listed_name| {
+            records.iter().any(|u| u.is_new_candidate(listed_name))
         })
     }
 

@@ -1848,7 +1848,7 @@ impl<'a> Resolver<'a> {
             let mut normalizer = ResolvePath::PosixToWinNormalizer::default();
             let mut entry = MatchResult::default();
             if self
-                .load_as_file_or_directory(
+                .load_reporting_miss(
                     normalizer.resolve(source_dir, import_path),
                     kind,
                     &mut entry,
@@ -1865,7 +1865,6 @@ impl<'a> Resolver<'a> {
                 });
             }
 
-            self.report_unresolved(normalizer.resolve(source_dir, import_path));
             return ResultUnion::NotFound;
         }
 
@@ -2198,7 +2197,7 @@ impl<'a> Resolver<'a> {
 
         let mut res = MatchResult::default();
         let ret = if self
-            .load_as_file_or_directory(abs_path, kind, &mut res)
+            .load_reporting_miss(abs_path, kind, &mut res)
             .is_success()
         {
             ResultUnion::Success(Result {
@@ -2209,29 +2208,45 @@ impl<'a> Resolver<'a> {
                 ..Default::default()
             })
         } else {
-            self.report_unresolved(abs_path);
             ResultUnion::NotFound
         };
         self.extension_order = prev_extension_order;
         ret
     }
 
-    /// Tells the watcher which names `load_as_file` tried for a relative or absolute import that resolved to nothing.
-    fn report_unresolved(&self, abs_path: &[u8]) {
-        if !FeatureFlags::WATCH_DIRECTORIES {
-            return;
+    /// `load_as_file_or_directory` for a relative or absolute import. The watcher hears of a miss and can ask for one more look.
+    fn load_reporting_miss(
+        &mut self,
+        path: &[u8],
+        kind: ast::ImportKind,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        let status = self.load_as_file_or_directory(path, kind, out);
+        if status.is_success() || !self.report_unresolved(path) {
+            return status;
         }
-        let (Some(watcher), Some(dir)) = (self.watcher, bun_paths::dirname(abs_path)) else {
-            return;
+        *out = MatchResult::default();
+        self.load_as_file_or_directory(path, kind, out)
+    }
+
+    /// Tells the watcher which names `load_as_file` tried. True when one of them is in the directory by now.
+    fn report_unresolved(&mut self, abs_path: &[u8]) -> bool {
+        if !FeatureFlags::WATCH_DIRECTORIES {
+            return false;
+        }
+        let path = strings::without_trailing_slash(abs_path);
+        let (Some(watcher), Some(dir)) = (self.watcher, bun_paths::dirname(path)) else {
+            return false;
         };
-        let base = bun_paths::basename(abs_path);
+        let dir = strings::without_trailing_slash_windows_path(dir);
+        let base = bun_paths::basename(path);
         let replaced_extensions = match strings::last_index_of_char(base, b'.') {
             Some(dot) => rewritten_file_extensions(&base[dot..], || {
                 strings::path_contains_node_modules_folder(abs_path)
             }),
             None => &[],
         };
-        watcher.unresolved(&bun_watcher::UnresolvedLookup {
+        let appeared = watcher.unresolved(&bun_watcher::UnresolvedLookup {
             dir,
             base,
             extensions: [
@@ -2240,6 +2255,10 @@ impl<'a> Resolver<'a> {
             ],
             replaced_extensions,
         });
+        if appeared {
+            self.bust_dir_cache(dir);
+        }
+        appeared
     }
 
     pub(crate) fn check_package_path(

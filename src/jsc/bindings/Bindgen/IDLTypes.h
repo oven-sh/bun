@@ -13,6 +13,10 @@ struct IDLStackOnlyDictionary : WebCore::IDLType<T> {
     using NullableParameterType = const T&;
 };
 
+// A generated union: a struct with a member for each alternative, and a tag.
+template<typename T>
+struct IDLTaggedUnion : WebCore::IDLType<T> {};
+
 // A string or a `String` object, which is what `JSValue::is_string` in Rust accepts.
 struct IDLStrictUTF8String : WebCore::IDLType<JSStringUTF8View> {
     using SequenceStorageType = void;

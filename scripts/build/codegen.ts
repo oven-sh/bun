@@ -870,7 +870,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, withoutBindings(cfg, sources)]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir, withoutBindingsFlag(cfg, sources)]),
     },
   });
 
@@ -922,18 +922,21 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 }
 
 /** A `*_test.bind.ts` binds what exists for tests. Only a build where Rust has `debug_assertions` has it, and none ships. */
-function hasSchema(cfg: CodegenFields, src: string): boolean {
+function hasBindings(cfg: CodegenFields, src: string): boolean {
   return cfg.debug || cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 
-function withoutBindings(cfg: CodegenFields, sources: Sources): string {
-  return `--without-bindings=${sources.bindgen.filter(src => !hasSchema(cfg, src)).map(src => basename(src))}`;
+function withoutBindingsFlag(cfg: CodegenFields, sources: Sources): string {
+  return `--without-bindings=${sources.bindgen
+    .filter(src => !hasBindings(cfg, src))
+    .map(src => basename(src))
+    .join(",")}`;
 }
 
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
-  const sources = { ...allSources, bindgen: allSources.bindgen.filter(src => hasSchema(cfg, src)) };
+  const sources = { ...allSources, bindgen: allSources.bindgen.filter(src => hasBindings(cfg, src)) };
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
   const stems = sources.bindgen.map(src => `Generated${pascalCase(basename(src, ".bind.ts"))}`);
@@ -964,7 +967,7 @@ export function emitBindgen({ n, cfg, sources: allSources, o, dirStamp }: Ctx): 
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
         `--sources=${allSources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
-        withoutBindings(cfg, allSources),
+        withoutBindingsFlag(cfg, allSources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,
       ]),

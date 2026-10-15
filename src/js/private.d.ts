@@ -276,6 +276,7 @@ declare function $newRustFunction<T = (...args: any) => any>(
  * Retrieves a handle to a function or class defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
+ * `undefined` for a `*_test.bind.ts` file in a build without assertions.
  * @param filename - The basename of the `.bind.ts` file.
  * @param symbol - The name of the export.
  */

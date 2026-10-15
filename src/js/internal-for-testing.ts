@@ -242,7 +242,7 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
   };
 };
 
-// Only in a build with assertions: `hasSchema` in scripts/build/codegen.ts.
+// Only in a build with assertions: `hasBindings` in scripts/build/codegen.ts.
 export const bindgen = $bindgenFn("bindgen_test.bind.ts", "add") && {
   add: $bindgenFn("bindgen_test.bind.ts", "add"),
   requiredAndOptionalArg: $bindgenFn("bindgen_test.bind.ts", "requiredAndOptionalArg"),

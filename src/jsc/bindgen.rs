@@ -521,7 +521,8 @@ pub mod to_js {
         mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsValue<'a>>,
     ) -> Result<'a, JsValue<'a>> {
         // As many as a `MarkedArgumentBuffer` holds inline, on this stack, where the GC sees them just the same.
-        let mut inline = [JSValue::ZERO; 8];
+        const INLINE_CAPACITY: usize = 8;
+        let mut inline = [JSValue::ZERO; INLINE_CAPACITY];
         let mut items = items.into_iter();
         for count in 0..inline.len() {
             let Some(item) = items.next() else {

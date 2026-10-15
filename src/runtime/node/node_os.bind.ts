@@ -26,7 +26,7 @@ export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
 
 export const UserInfoOptions = b.dictionary(
   { encoding: b.string.loose.utf8.default("") },
-  { allowArray: true, allowNonObject: true },
+  { allowArray: true, nonObjectAsEmpty: true },
 );
 export const userInfo = b.fn({
   args: {

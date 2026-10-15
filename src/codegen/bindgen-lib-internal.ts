@@ -36,7 +36,7 @@ export function structLayout(fields: readonly Layout[]): Layout {
 }
 
 /** `{ union data; uint8_t tag; }`. */
-export function variantLayout(alternatives: readonly Layout[]): Layout {
+export function taggedUnionLayout(alternatives: readonly Layout[]): Layout {
   const align = Math.max(...alternatives.map(a => a.align));
   const union = { size: roundUp(Math.max(...alternatives.map(a => a.size)), align), align };
   return structLayout([union, { size: 1, align: 1 }]);
@@ -70,11 +70,8 @@ export function asciiLiteral(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"_s`;
 }
 
-/**
- * JavaScript values, divided by what tells them apart: the bits of the value, then the type byte in a cell's header,
- * then, for the instances of a class, its ClassInfo. A value of none of these kinds is "other".
- */
-export type Kind =
+/** JavaScript values, divided by what tells them apart. One of none of these kinds is "other". See "Unions and kinds" in the docs. */
+export type ValueKind =
   | "undefined"
   | "null"
   | "boolean"
@@ -92,30 +89,42 @@ export interface JSClass {
   readonly cpp: string;
 }
 
-const takes = (type: Type, kind: Kind | "other") => type.kinds === "any" || type.kinds.includes(kind as Kind);
+type ValueKinds = readonly ValueKind[] | "any";
 
-const kindsToTellApart = (types: readonly Type[]): (Kind | "other")[] => [
-  ...new Set(types.flatMap(type => (type.kinds === "any" ? [] : type.kinds))),
+const takes = (type: Type, kind: ValueKind | "other") =>
+  type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
+
+const distinguishingKinds = (types: readonly Type[]): (ValueKind | "other")[] => [
+  ...new Set(types.flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))),
   "other",
 ];
 
-/**
- * Which of `alternatives` get a value of each kind: the first, in written order, that takes the kind, preceded by those
- * that take it but refuse some of its values.
- */
-export function alternativesByKind(alternatives: readonly Type[]): Map<Kind | "other", readonly number[]> {
+/** Which of `alternatives` get a value of each kind, in order: all but the last refuse some. Equal lists are one array. */
+export function alternativesByKind(alternatives: readonly Type[]): Map<ValueKind | "other", readonly number[]> {
+  const lists = new Map<string, readonly number[]>();
   return new Map(
-    kindsToTellApart(alternatives).map(kind => {
+    distinguishingKinds(alternatives).map(kind => {
       const takers = alternatives.flatMap((type, i) => (takes(type, kind) ? [i] : []));
-      const last = takers.findIndex(i => alternatives[i].kinds === "any" || !alternatives[i].refusesSomeOfItsKinds);
-      return [kind, last < 0 ? takers : takers.slice(0, last + 1)];
+      const last = takers.findIndex(i => alternatives[i].takesEveryValueOfItsKinds);
+      const list = last < 0 ? takers : takers.slice(0, last + 1);
+      if (!lists.has(`${list}`)) lists.set(`${list}`, list);
+      return [kind, lists.get(`${list}`)!];
     }),
   );
 }
 
+export function indent(text: string, by: number): string {
+  const pad = " ".repeat(by);
+  return text
+    .split("\n")
+    .map(line => (line.length > 0 ? pad + line : line))
+    .join("\n");
+}
+
 /** C++ statements that engage `optional`, a `std::optional`, and do to what it holds what `fill` says, given its name. */
 export function cppEmplace(optional: string, fill: (target: string) => string): string {
-  const target = `${optional.replace(/\W+/g, "_")}_value`;
+  const [first, ...rest] = optional.split(/\W+/);
+  const target = `${first}${rest.map(part => part[0].toUpperCase() + part.slice(1)).join("")}Value`;
   return `auto& ${target} = ${optional}.emplace();\n${fill(target)}`;
 }
 
@@ -155,12 +164,12 @@ export abstract class Type {
     return false;
   }
   /** The kinds of value it takes where there is a choice. "any": its own conversion decides, by coercing or by throwing. */
-  get kinds(): readonly Kind[] | "any" {
+  get valueKinds(): ValueKinds {
     return "any";
   }
-  /** Such as a shared buffer, or a Blob that was detached. In a union the next alternative gets them. */
-  get refusesSomeOfItsKinds(): boolean {
-    return false;
+  /** False if it refuses a shared buffer, say, or a detached Blob. In a union the next alternative gets those. */
+  get takesEveryValueOfItsKinds(): boolean {
+    return true;
   }
   /** Holds a JS value: the Rust type is branded with the call. */
   get holdsJSValue(): boolean {
@@ -176,7 +185,7 @@ export abstract class Type {
   }
   /** `rustType` is `Copy`. */
   get rustIsCopy(): boolean {
-    return this.dependencies.length > 0 && this.dependencies.every(type => type.rustIsCopy);
+    return this.dependencies.every(type => type.rustIsCopy);
   }
   get needsLifetime(): boolean {
     return this.holdsJSValue || this.borrowsFrame || this.borrowsHeap;
@@ -240,28 +249,33 @@ export abstract class Type {
 // ───────────────────────────── primitives ─────────────────────────────
 
 class PrimitiveType extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly idlType: string;
   readonly tsType: string;
   readonly rustName: string;
   readonly size: number;
-  constructor(idlType: string, tsType: string, rustName: string, size: number) {
+  readonly #valueKinds: ValueKinds;
+  constructor(idlType: string, tsType: string, rustName: string, size: number, valueKinds: ValueKinds) {
     super();
     this.idlType = idlType;
     this.tsType = tsType;
     this.rustName = rustName;
     this.size = size;
+    this.#valueKinds = valueKinds;
+  }
+  get valueKinds(): ValueKinds {
+    return this.#valueKinds;
+  }
+  protected get cppName(): string {
+    return "double";
   }
   toCpp(value: unknown): string {
     if (this.rustName === "bool") {
-      assert(typeof value === "boolean");
+      assert(typeof value === "boolean", `${util.inspect(value)} is not a boolean`);
       return String(value);
     }
-    assert(typeof value === "number");
-    if (this.rustName !== "f64") assert(Number.isSafeInteger(value));
-    return `${this.idlType}::ImplementationType { ${value} }`;
+    assert(typeof value === "number", `${util.inspect(value)} is not a number`);
+    if (this.rustName !== "f64") assert(Number.isSafeInteger(value), `${value} is not an integer`);
+    return `${this.cppName} { ${value} }`;
   }
   toRust(value: unknown): string {
     return this.rustName === "f64" && Number.isInteger(value) ? `${value}.0` : String(value);
@@ -281,15 +295,12 @@ class PrimitiveType extends Type {
 }
 
 export class BoolType extends PrimitiveType {
-  constructor(idlType = "::Bun::IDLStrictBoolean") {
-    super(idlType, "boolean", "bool", 1);
+  constructor(idlType = "::Bun::IDLStrictBoolean", valueKinds: ValueKinds = ["boolean"]) {
+    super(idlType, "boolean", "bool", 1, valueKinds);
   }
   /** `ToBoolean`: any value is accepted. */
   get loose(): BoolType {
-    return new BoolType("::WebCore::IDLBoolean");
-  }
-  get kinds() {
-    return this.idlType === "::Bun::IDLStrictBoolean" ? (["boolean"] as const) : "any";
+    return new BoolType("::WebCore::IDLBoolean", "any");
   }
 }
 
@@ -305,12 +316,19 @@ interface IntegerInfo {
 
 export class IntegerType extends PrimitiveType {
   readonly info: IntegerInfo;
-  constructor(info: IntegerInfo, idlType = `::Bun::IDLStrictInteger<${info.cpp}>`) {
-    super(idlType, "number", info.rust, info.size);
+  /** Only the strict conversion is given no `idlType`. */
+  constructor(info: IntegerInfo, idlType?: string) {
+    super(
+      idlType ?? `::Bun::IDLStrictInteger<${info.cpp}>`,
+      "number",
+      info.rust,
+      info.size,
+      idlType ? "any" : ["number", "bigint"],
+    );
     this.info = info;
   }
-  get kinds() {
-    return this.idlType.startsWith("::Bun::IDLStrictInteger<") ? (["number", "bigint"] as const) : "any";
+  protected get cppName(): string {
+    return this.info.cpp;
   }
   /** `ToNumeric` first, then as strict as the default. */
   get loose(): IntegerType {
@@ -333,8 +351,11 @@ export class IntegerType extends PrimitiveType {
 export class RangeType extends IntegerType {
   readonly kind: "Web" | "Node";
   constructor(info: IntegerInfo, min: number, max: number, kind: "Web" | "Node") {
-    assert(Number.isSafeInteger(min) && Number.isSafeInteger(max) && min <= max);
-    assert(min >= Number(info.min) && max <= Number(info.max), `range does not fit ${info.rust}`);
+    assert(
+      Number.isSafeInteger(min) && Number.isSafeInteger(max) && min <= max,
+      `[${min}, ${max}] is not a range of integers`,
+    );
+    assert(min >= Number(info.min) && max <= Number(info.max), `[${min}, ${max}] does not fit ${info.rust}`);
     super(
       info,
       `::Bun::BindgenCustomEnforceRange<${info.cpp}, ${min}, ${max}, ::Bun::BindgenCustomEnforceRangeKind::${kind}>`,
@@ -365,18 +386,12 @@ export const integers = {
 
 export class DoubleType extends PrimitiveType {
   constructor() {
-    super("::Bun::IDLStrictDouble", "number", "f64", 8);
-  }
-  get kinds() {
-    return ["number"] as const;
+    super("::Bun::IDLStrictDouble", "number", "f64", 8, ["number"]);
   }
 }
 
 /** Only as a union alternative or a return type. */
 export class UnitType extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly idlType: string;
   readonly tsType: string;
   constructor(tsType: "null" | "undefined") {
@@ -384,7 +399,7 @@ export class UnitType extends Type {
     this.tsType = tsType;
     this.idlType = tsType === "null" ? "::Bun::IDLStrictNull" : "";
   }
-  get kinds(): readonly Kind[] {
+  get valueKinds(): ValueKinds {
     return this.tsType === "null" ? ["undefined", "null"] : ["undefined"];
   }
   get permitsUndefined(): boolean {
@@ -414,22 +429,25 @@ export class UnitType extends Type {
 export class StringType extends Type {
   readonly idlType: string;
   readonly tsType = "string";
-  constructor(idlType = "::Bun::IDLStrictString") {
+  readonly #valueKinds: ValueKinds;
+  constructor(idlType = "::Bun::IDLStrictString", valueKinds: ValueKinds = ["string"]) {
     super();
     this.idlType = idlType;
+    this.#valueKinds = valueKinds;
   }
-  get kinds(): readonly Kind[] | "any" {
-    if (this.idlType === "::Bun::IDLStrictString") return ["string"];
-    return this.idlType === "::Bun::Bindgen::IDLStrictStringOrStringObject" ? ["string", "stringObject"] : "any";
+  get valueKinds(): ValueKinds {
+    return this.#valueKinds;
+  }
+  get rustIsCopy(): boolean {
+    return false;
   }
   /** `ToString`: any value is accepted. */
   get loose(): StringType {
-    return new StringType("::WebCore::IDLDOMString");
+    return new StringType("::WebCore::IDLDOMString", "any");
   }
   /** `&[u8]`, UTF-8, for the duration of the call, instead of an owned string. Also takes a `String` object. */
   get utf8(): Utf8Type {
-    const isLoose = this.idlType === "::WebCore::IDLDOMString";
-    return new Utf8Type(`::Bun::Bindgen::IDL${isLoose ? "Loose" : "Strict"}UTF8String`);
+    return new Utf8Type(this.valueKinds === "any");
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -460,6 +478,12 @@ export class StringType extends Type {
 
 /** UTF-8 to keep: the JS string's own buffer, shared, when it is 8-bit ASCII, otherwise a transcoded copy. */
 export class OwnedUtf8Type extends StringType {
+  get loose(): never {
+    throw new TypeError("write b.string.loose.utf8.owned");
+  }
+  get utf8(): never {
+    throw new TypeError("b.string.utf8.owned is already UTF-8");
+  }
   toRust(): string {
     throw new TypeError("b.string.utf8.owned cannot have a default");
   }
@@ -476,22 +500,23 @@ export class OwnedUtf8Type extends StringType {
 
 /** UTF-8 bytes for the duration of the call: `Bun::Bindgen::JSStringUTF8View`. */
 export class Utf8Type extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
-  readonly idlType: string;
+  readonly isLoose: boolean;
   readonly tsType = "string";
-  constructor(idlType: string) {
+  constructor(isLoose: boolean) {
     super();
-    this.idlType = idlType;
+    this.isLoose = isLoose;
+  }
+  get idlType(): string {
+    return `::Bun::Bindgen::IDL${this.isLoose ? "Loose" : "Strict"}UTF8String`;
   }
   /** `bun_core::Utf8Bytes<'static>`, for a body that stores the string. */
   get owned(): OwnedUtf8Type {
-    const isLoose = this.idlType === "::Bun::Bindgen::IDLLooseUTF8String";
-    return new OwnedUtf8Type(isLoose ? "::WebCore::IDLDOMString" : "::Bun::Bindgen::IDLStrictStringOrStringObject");
+    return this.isLoose
+      ? new OwnedUtf8Type("::WebCore::IDLDOMString", "any")
+      : new OwnedUtf8Type("::Bun::Bindgen::IDLStrictStringOrStringObject", this.valueKinds);
   }
-  get kinds(): readonly Kind[] | "any" {
-    return this.idlType === "::Bun::Bindgen::IDLStrictUTF8String" ? ["string", "stringObject"] : "any";
+  get valueKinds(): ValueKinds {
+    return this.isLoose ? "any" : ["string", "stringObject"];
   }
   get borrowsFrame(): boolean {
     return true;
@@ -535,20 +560,14 @@ export class Utf8Type extends Type {
   }
 }
 
-const bufferSourceKinds = ["arrayBuffer", "arrayBufferView"] as const;
+const bufferSourceKinds: ValueKinds = ["arrayBuffer", "arrayBufferView"];
 
 /** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
 export class BytesType extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly idlType = "::Bun::Bindgen::IDLBufferSourceBytes";
   readonly tsType = "ArrayBuffer | ArrayBufferView";
-  get kinds() {
+  get valueKinds(): ValueKinds {
     return bufferSourceKinds;
-  }
-  get refusesSomeOfItsKinds(): boolean {
-    return true;
   }
   get borrowsHeap(): boolean {
     return true;
@@ -572,16 +591,13 @@ export class BytesType extends Type {
 
 /** A typed array, `DataView` or `ArrayBuffer`, as a handle whose bytes are read through `with_bytes`. */
 export class BufferSourceType extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly idlType = "::Bun::Bindgen::IDLRawBufferSource";
   readonly tsType = "ArrayBuffer | ArrayBufferView";
-  get kinds() {
+  get valueKinds(): ValueKinds {
     return bufferSourceKinds;
   }
-  get refusesSomeOfItsKinds(): boolean {
-    return true;
+  get takesEveryValueOfItsKinds(): boolean {
+    return false;
   }
   /** `&[u8]` for the duration of the call. Not for `capability: "js"`, where JavaScript could detach it. */
   get bytes(): BytesType {
@@ -629,8 +645,8 @@ export class WithValueType extends Type {
   get permitsUndefined(): boolean {
     return this.inner.permitsUndefined;
   }
-  get kinds() {
-    return this.inner.kinds;
+  get valueKinds(): ValueKinds {
+    return this.inner.valueKinds;
   }
   get holdsJSValue(): boolean {
     return true;
@@ -662,9 +678,6 @@ export class WithValueType extends Type {
 }
 
 export class AnyType extends Type {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly idlType = "::Bun::IDLRawAny";
   readonly tsType = "any";
   get holdsJSValue(): boolean {
@@ -675,7 +688,7 @@ export class AnyType extends Type {
   }
   toCpp(value: unknown): string {
     assert(value === undefined, "b.any cannot have a default");
-    return "::JSC::jsUndefined()";
+    return "JSC::jsUndefined()";
   }
   toRust(): string {
     return "bindgen::JsValue::UNDEFINED";
@@ -703,20 +716,23 @@ export class RefType extends Type {
   readonly tsType: string;
   readonly pointee: string;
   readonly header: string | null;
-  readonly wrapperKinds: readonly Kind[];
-  constructor(idlType: string, tsType: string, pointee: string, header: string | null, wrapperKinds: readonly Kind[]) {
+  readonly #valueKinds: ValueKinds;
+  constructor(idlType: string, tsType: string, pointee: string, header: string | null, valueKinds: ValueKinds) {
     super();
     this.idlType = idlType;
     this.tsType = tsType;
     this.pointee = pointee;
     this.header = header;
-    this.wrapperKinds = wrapperKinds;
+    this.#valueKinds = valueKinds;
   }
-  get kinds() {
-    return this.wrapperKinds;
+  get valueKinds(): ValueKinds {
+    return this.#valueKinds;
   }
-  get refusesSomeOfItsKinds(): boolean {
-    return true;
+  get takesEveryValueOfItsKinds(): boolean {
+    return false;
+  }
+  get rustIsCopy(): boolean {
+    return false;
   }
   get nullRepresentation() {
     return "pointer" as const;
@@ -767,9 +783,9 @@ export class OptionalType extends Type {
   get permitsUndefined(): boolean {
     return true;
   }
-  get kinds(): readonly Kind[] | "any" {
-    if (this.payload.kinds === "any" || this.kind === "falsyAsNull") return "any";
-    return [...this.payload.kinds, "undefined", ...(this.kind === "nullable" ? (["null"] as const) : [])];
+  get valueKinds(): ValueKinds {
+    if (this.payload.valueKinds === "any" || this.kind === "falsyAsNull") return "any";
+    return [...this.payload.valueKinds, "undefined", ...(this.kind === "nullable" ? (["null"] as const) : [])];
   }
   get dependencies(): readonly Type[] {
     return [this.payload];
@@ -787,7 +803,7 @@ export class OptionalType extends Type {
     }[this.kind];
     const convert = (slot: string) => this.payload.cppConvertInto(slot, value, ctx, name);
     const body = this.payload.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
-    return `if (${provided}) {\n    ${body.replaceAll("\n", "\n    ")}\n}`;
+    return `if (${provided}) {\n${indent(body, 4)}\n}`;
   }
   toCpp(value: unknown): string {
     return value == null ? `${this.idlType}::nullValue()` : this.payload.toCpp(value);
@@ -797,7 +813,7 @@ export class OptionalType extends Type {
     if (value == null) return "";
     const assign = (slot: string) => this.payload.cppAssign(slot, value);
     return this.payload.nullRepresentation === "optional"
-      ? `{\n    ${cppEmplace(target, assign).replaceAll("\n", "\n    ")}\n}`
+      ? `{\n${indent(cppEmplace(target, assign), 4)}\n}`
       : assign(target);
   }
   toRust(value: unknown, scope: RustScope): string {
@@ -805,7 +821,7 @@ export class OptionalType extends Type {
   }
   layout(): Layout {
     return this.payload.nullRepresentation === "optional"
-      ? variantLayout([{ size: 1, align: 1 }, this.payload.layout()])
+      ? taggedUnionLayout([{ size: 1, align: 1 }, this.payload.layout()])
       : this.payload.layout();
   }
   rustExternType(scope: RustScope): string {
@@ -844,7 +860,7 @@ export class DefaultType extends Type {
   readonly onNull: boolean;
   constructor(payload: Type, value: unknown) {
     super();
-    assert(!(payload instanceof DefaultType));
+    assert(!(payload instanceof DefaultType), "already has a default");
     if (payload instanceof OptionalType) {
       assert(payload.kind === "nullable", ".default() follows a type or .nullable");
       this.payload = payload.payload;
@@ -874,19 +890,26 @@ export class DefaultType extends Type {
   toRust(value: unknown, scope: RustScope): string {
     return this.payload.toRust(value, scope);
   }
-  get kinds(): readonly Kind[] | "any" {
-    if (this.payload.kinds === "any") return "any";
-    return [...this.payload.kinds, "undefined", ...(this.onNull ? (["null"] as const) : [])];
+  get valueKinds(): ValueKinds {
+    if (this.payload.valueKinds === "any") return "any";
+    return [...this.payload.valueKinds, "undefined", ...(this.onNull ? (["null"] as const) : [])];
+  }
+  private cppIsAbsent(value: string): string {
+    return `${value}.${this.onNull ? "isUndefinedOrNull" : "isUndefined"}()`;
   }
   cppConvert(value: string, ctx: string, name: string): string {
-    return this.payload.cppConvert(value, ctx, name);
+    return `${this.cppIsAbsent(value)} ? ${this.toCpp(this.value)} : ${this.payload.cppConvert(value, ctx, name)}`;
   }
   get convertsInPlace(): boolean {
     return this.payload.convertsInPlace;
   }
-  /** Of a value that is provided. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
-    return this.payload.cppConvertInto(target, value, ctx, name);
+    if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
+    return `if (${this.cppIsAbsent(value)}) {
+${indent(this.cppAssign(target, this.value), 4)}
+} else {
+${indent(this.payload.cppConvertInto(target, value, ctx, name), 4)}
+}`;
   }
   cppAssign(target: string, value: unknown): string {
     return this.payload.cppAssign(target, value);
@@ -912,7 +935,7 @@ export class ArrayType extends Type {
   readonly element: Type;
   constructor(element: Type) {
     super();
-    assert(!(element instanceof DefaultType));
+    assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(
       !element.borrowsHeap,
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
@@ -921,14 +944,17 @@ export class ArrayType extends Type {
   }
   get idlType(): string {
     assert(!this.element.holdsJSValue, "an array argument cannot hold JS values: the GC does not scan it");
-    assert(!this.element.borrowsFrame, "an array argument cannot hold borrowed views; use b.string without .utf8");
+    assert(
+      !this.element.borrowsFrame,
+      "an array argument cannot hold borrowed views; use b.string or b.string.utf8.owned",
+    );
     return `::Bun::IDLArray<${this.element.idlType}>`;
   }
   get tsType(): string {
     return `(${this.element.tsType})[]`;
   }
-  get kinds() {
-    return ["array"] as const;
+  get valueKinds(): ValueKinds {
+    return ["array"];
   }
   get dependencies(): readonly Type[] {
     return [this.element];
@@ -994,9 +1020,6 @@ export abstract class NamedType extends Type {
 }
 
 export class EnumType extends NamedType {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   /** `spellings[i]` all parse to variant `i`; the first is the canonical one. */
   readonly spellings: readonly (readonly string[])[];
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
@@ -1005,10 +1028,10 @@ export class EnumType extends NamedType {
   returned = false;
   constructor(values: readonly (string | readonly string[])[]) {
     super();
-    assert(values.length > 0, "an enumeration has values");
+    assert(values.length > 0, "an enumeration needs at least one value");
     this.spellings = values.map(value => (typeof value === "string" ? [value] : value));
     const all = this.spellings.flat();
-    assert(new Set(all).size === all.length, "duplicate value");
+    assert(new Set(all).size === all.length, `a value is listed twice: ${all.join(", ")}`);
     assert(new Set(this.variants).size === this.variants.length, "two values make the same identifier");
     for (const variant of this.variants) assert(/^[A-Z]/.test(variant), `${variant} is not an identifier`);
   }
@@ -1026,7 +1049,7 @@ export class EnumType extends NamedType {
   }
   toCpp(value: unknown): string {
     const index = this.spellings.findIndex(spellings => spellings.includes(value as string));
-    assert(index >= 0, `${util.inspect(value)} is not a value of ${this.name}`);
+    assert(index >= 0, `${util.inspect(value)} is not one of ${this.tsType}`);
     return `${this.cpp}::${this.variants[index]}`;
   }
   toRust(value: unknown, scope: RustScope): string {
@@ -1080,7 +1103,7 @@ export interface DictionaryOptions {
   /** An array is read like any other object, not refused. */
   allowArray?: boolean;
   /** A value whose `typeof` is not "object" gives every member its default: Node's `if (typeof options !== "object") options = null`. */
-  allowNonObject?: boolean;
+  nonObjectAsEmpty?: boolean;
 }
 
 export class DictionaryType extends NamedType {
@@ -1097,13 +1120,19 @@ export class DictionaryType extends NamedType {
     super();
     this.options = options;
     this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
-    assert(this.members.length > 0, "a dictionary has members");
-    assert(!this.allowNonObject || this.hasDefault, "allowNonObject: every member must be optional or have a default");
+    assert(this.members.length > 0, "a dictionary needs at least one member");
+    assert(
+      !this.nonObjectAsEmpty || this.hasDefault,
+      "nonObjectAsEmpty: every member must be optional or have a default",
+    );
     assert(
       !this.borrowsHeap,
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
     );
-    assert(!this.fromJS || !this.borrowsFrame, "from_js outlives the frame b.string.utf8 borrows from");
+    assert(
+      !this.fromJS || !this.borrowsFrame,
+      "from_js outlives the frame b.string.utf8 borrows from; use b.string or b.string.utf8.owned",
+    );
   }
   get userFacingName(): string {
     return this.options.userFacingName ?? this.name;
@@ -1114,8 +1143,8 @@ export class DictionaryType extends NamedType {
   get allowArray(): boolean {
     return !!this.options.allowArray;
   }
-  get allowNonObject(): boolean {
-    return !!this.options.allowNonObject;
+  get nonObjectAsEmpty(): boolean {
+    return !!this.options.nonObjectAsEmpty;
   }
   get idlType(): string {
     return `::WebCore::IDLDictionary<${this.cpp}>`;
@@ -1127,14 +1156,17 @@ export class DictionaryType extends NamedType {
     return true;
   }
   cppConvertInto(target: string, value: string): string {
-    return `::Bun::Bindgen::Generated::convert${this.name}(*globalObject, ${value}, ${target});`;
+    return `::Bun::Bindgen::convertDictionaryInto(*globalObject, ${value}, ${target});`;
   }
   /** Every JS name read, in order. */
   get names(): string[] {
     return this.members.flatMap(member => member.names);
   }
   cppAssign(target: string, value: unknown): string {
-    assert(typeof value === "object" && value !== null);
+    assert(
+      typeof value === "object" && value !== null,
+      `the default of a dictionary is an object, not ${util.inspect(value)}`,
+    );
     const given = value as Record<string, unknown>;
     for (const key of Object.keys(given))
       assert(
@@ -1180,11 +1212,8 @@ export class UnionType extends NamedType {
   readonly alternatives: readonly { name: string; variant: string; type: Type }[];
   constructor(alternatives: Record<string, Type>) {
     super();
-    this.alternatives = Object.entries(alternatives).map(([name, type]) => {
-      assert(!(type instanceof DefaultType));
-      return { name, variant: pascalCase(name), type };
-    });
-    assert(this.alternatives.length > 0);
+    this.alternatives = Object.entries(alternatives).map(([name, type]) => ({ name, variant: pascalCase(name), type }));
+    assert(this.alternatives.length > 0, "a union needs at least one alternative");
     assert(
       !this.borrowsHeap,
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
@@ -1192,21 +1221,29 @@ export class UnionType extends NamedType {
     for (const { name, type } of this.alternatives) {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
+      assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
+      assert(
+        !(type instanceof RangeType),
+        `${name}: a range reports the name of its argument, which a union does not know`,
+      );
     }
     const chosen = new Set([...this.alternativesByKind.values()].flat());
     this.alternatives.forEach(({ name }, i) =>
-      assert(chosen.has(i), `${name} is never chosen: the alternatives before it take every value it would`),
+      assert(
+        chosen.has(i),
+        `${name} is never chosen: the alternatives before it take every value it would. Move it earlier or remove it`,
+      ),
     );
   }
   get alternativesByKind() {
     return alternativesByKind(this.alternatives.map(a => a.type));
   }
-  get kinds(): readonly Kind[] | "any" {
-    const kinds = this.alternatives.map(a => a.type.kinds);
-    return kinds.includes("any") ? "any" : [...new Set(kinds.flat() as Kind[])];
+  get valueKinds(): ValueKinds {
+    const kinds = distinguishingKinds(this.alternatives.map(a => a.type)).filter(kind => kind !== "other");
+    return this.alternatives.some(a => a.type.valueKinds === "any") ? "any" : kinds;
   }
   get idlType(): string {
-    return `::Bun::Bindgen::Generated::IDL${this.name}`;
+    return `::Bun::Bindgen::IDLTaggedUnion<${this.cpp}>`;
   }
   get convertsInPlace(): boolean {
     return true;
@@ -1223,20 +1260,19 @@ export class UnionType extends NamedType {
   get dependencies(): readonly Type[] {
     return this.alternatives.map(a => a.type);
   }
-  cppAssign(target: string, value: unknown): string {
+  private unitAlternative(value: unknown) {
     const unit = value == null && this.alternatives.find(a => a.type instanceof UnitType && takes(a.type, `${value}`));
-    assert(unit, `${this.name}: only null or undefined can be a default, and only for an alternative that takes it`);
-    return `${target}.tag = ${this.alternatives.indexOf(unit)};`;
+    assert(unit, `${this.tsType}: the default of a union is null or undefined, and it needs b.null as an alternative`);
+    return unit;
+  }
+  cppAssign(target: string, value: unknown): string {
+    return `${target}.tag = ${this.alternatives.indexOf(this.unitAlternative(value))};`;
   }
   toRust(value: unknown, scope: RustScope): string {
-    const unit = this.alternatives.find(
-      a => a.type instanceof UnitType && (value === undefined || a.type.tsType === String(value)),
-    );
-    assert(unit, `${this.name}: only null or undefined can be a default`);
-    return `${this.path(scope, this.name)}::${unit.variant}`;
+    return `${this.path(scope, this.name)}::${this.unitAlternative(value).variant}`;
   }
   layout(): Layout {
-    return variantLayout(this.alternatives.map(a => a.type.layout()));
+    return taggedUnionLayout(this.alternatives.map(a => a.type.layout()));
   }
   rustExternType(scope: RustScope): string {
     return this.path(scope, `Extern${this.name}`);
@@ -1288,8 +1324,11 @@ export class Signature {
         `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
       );
     }
-    assert(!(this.returns instanceof DefaultType));
-    assert(!this.returns.holdsJSValue || this.capability !== "none", "returning a JS value takes a capability");
+    assert(!(this.returns instanceof DefaultType), "a result has no default");
+    assert(
+      !this.returns.holdsJSValue || this.capability !== "none",
+      'returning a JS value takes capability: "heap" or "js"',
+    );
   }
   get requiredCount(): number {
     return this.args.filter(arg => !arg.type.permitsUndefined).length;
@@ -1297,63 +1336,59 @@ export class Signature {
 }
 
 /** Call a signature, or look at the kind of one more argument. */
-export type OverloadChoice = Signature | { argument: number; byKind: Map<Kind | "other", OverloadChoice> };
+export type OverloadDispatch = Signature | { argument: number; byKind: Map<ValueKind | "other", OverloadDispatch> };
 
 export class FunctionDefinition {
   readonly signatures: readonly Signature[];
-  /** How the signature is chosen when at least this many arguments were passed. Most arguments first; the last is for any number. */
-  readonly choices: readonly { atLeast: number; choice: OverloadChoice }[];
+  /** Most arguments first. The last entry is for any number of them. */
+  readonly dispatchByArgumentCount: readonly { atLeast: number; dispatch: OverloadDispatch }[];
   name = "";
   origin: Origin | null = null;
   constructor(signatures: readonly SignatureOptions[]) {
-    assert(signatures.length > 0);
+    assert(signatures.length > 0, "b.overloads needs at least one signature");
     this.signatures = signatures.map(options => new Signature(options));
     const counts = [...new Set(this.signatures.map(signature => signature.requiredCount))].sort((a, b) => b - a);
-    const made = new Map<string, OverloadChoice>();
-    this.choices = counts.map(atLeast => ({
+    const nodes = new Map<string, OverloadDispatch>();
+    this.dispatchByArgumentCount = counts.map(atLeast => ({
       atLeast,
-      choice: this.choose(
+      dispatch: this.dispatchOn(
         this.signatures.filter(signature => signature.requiredCount <= atLeast),
         0,
-        made,
+        nodes,
       ),
     }));
-    const chosen = new Set(made.values());
+    const chosen = new Set(nodes.values());
     this.signatures.forEach((signature, i) =>
-      assert(chosen.has(signature), `overload ${i + 1} is never chosen: nothing tells it from the others`),
+      assert(
+        chosen.has(signature),
+        `overload ${i + 1} is never chosen: nothing tells it from the others. Give an argument a type of another kind`,
+      ),
     );
   }
-  /**
-   * Argument by argument, keeps the candidates that take a value of its kind; one that has no such argument ignores it.
-   * What is left when the arguments run out, or when no candidate takes the kind, goes to the one that requires the most
-   * arguments, then to the one written first: its conversion reports what is wrong.
-   */
-  private choose(
+  /** "Overloads" in the docs. The same candidates and argument give the same object of `nodes`: nodes are compared by identity. */
+  private dispatchOn(
     candidates: readonly Signature[],
     argument: number,
-    made: Map<string, OverloadChoice>,
-  ): OverloadChoice {
+    nodes: Map<string, OverloadDispatch>,
+  ): OverloadDispatch {
     const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument}`;
-    const existing = made.get(key);
+    const existing = nodes.get(key);
     if (existing) return existing;
     const best = candidates.reduce((a, b) => (b.requiredCount > a.requiredCount ? b : a));
-    let choice: OverloadChoice = best;
+    let dispatch: OverloadDispatch = best;
     if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
       const typeOf = (signature: Signature) => signature.args[argument]?.type;
-      choice = {
-        argument,
-        byKind: new Map(
-          kindsToTellApart(candidates.flatMap(signature => typeOf(signature) ?? [])).map(kind => {
-            const takers = candidates.filter(signature => !typeOf(signature) || takes(typeOf(signature), kind));
-            return [kind, this.choose(takers.length > 0 ? takers : [best], argument + 1, made)];
-          }),
-        ),
-      };
-      const outcomes = new Set(choice.byKind.values());
-      if (outcomes.size === 1) [choice] = outcomes;
+      const byKind = new Map(
+        distinguishingKinds(candidates.flatMap(signature => typeOf(signature) ?? [])).map(kind => {
+          const takers = candidates.filter(signature => !typeOf(signature) || takes(typeOf(signature), kind));
+          return [kind, this.dispatchOn(takers.length > 0 ? takers : [best], argument + 1, nodes)];
+        }),
+      );
+      const outcomes = new Set(byKind.values());
+      dispatch = outcomes.size === 1 ? byKind.get("other")! : { argument, byKind };
     }
-    made.set(key, choice);
-    return choice;
+    nodes.set(key, dispatch);
+    return dispatch;
   }
   get length(): number {
     const given = this.signatures.find(signature => signature.length !== undefined);
@@ -1469,9 +1504,6 @@ export const selfType = new SelfType();
 
 /** As an argument or a result: the wrapper, `JsWrapper<'a, T>`. */
 export class ClassType extends NamedType {
-  get rustIsCopy(): boolean {
-    return true;
-  }
   readonly rustPath: string;
   readonly construct: Signature | null;
   readonly methods: readonly Method[];
@@ -1530,7 +1562,7 @@ export class ClassType extends NamedType {
   get idlType(): string {
     return `::Bun::Bindgen::IDLRawInterface<${this.cpp}>`;
   }
-  get kinds(): readonly Kind[] {
+  get valueKinds(): ValueKinds {
     return [this];
   }
   get holdsJSValue(): boolean {

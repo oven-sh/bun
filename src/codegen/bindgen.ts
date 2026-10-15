@@ -75,9 +75,9 @@ const sources = (args.sources as string)
 const allFiles: SchemaFile[] = [];
 for (const source of sources) allFiles.push(await load(source));
 allFiles.forEach(sortTypes);
+const withoutBindings = ((args["without-bindings"] as string | undefined) ?? "").split(",");
 /** What this build compiles. The types describe every schema. */
-const without = ((args["without-bindings"] as string | undefined) ?? "").split(",");
-const files = allFiles.filter(file => !without.includes(`${file.origin.stem}.bind.ts`));
+const files = allFiles.filter(file => !withoutBindings.includes(`${file.origin.stem}.bind.ts`));
 const owners = new Map<string, string>();
 for (const file of files) {
   for (const { name } of file.types) {

@@ -19,6 +19,10 @@ template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : IDLHumanRe
 
 namespace Bindgen {
 
+// Specialized by generated code. `result` was just default-constructed.
+template<typename T>
+void convertDictionaryInto(JSC::JSGlobalObject&, JSC::JSValue, T& result);
+
 template<IDLConversionContext Ctx>
 void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
 {

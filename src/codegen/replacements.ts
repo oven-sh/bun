@@ -129,7 +129,7 @@ export const enums = {
 
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
-/** Schemas this build leaves out (`hasSchema` in scripts/build/codegen.ts). `$bindgenFn` of one is `void 0`, which the minifier folds. */
+/** Schemas this build leaves out (`hasBindings` in scripts/build/codegen.ts). `$bindgenFn` of one is `void 0`, which the minifier folds. */
 const withoutBindings = (process.argv.find(arg => arg.startsWith("--without-bindings=")) ?? "=")
   .split("=")[1]
   .split(",");

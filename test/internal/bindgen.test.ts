@@ -53,7 +53,6 @@ it("bindgen add example", () => {
   expect(bindgen.add(5555555555555, 0)).toBe(-2132125469);
   expect(bindgen.add(-5555555555555, 0)).toBe(2132125469);
 
-  // Test Zig error handling
   expect(() => bindgen.add(2147483647, 1)).toThrow("Integer overflow while adding");
 });
 
@@ -490,7 +489,7 @@ describe("dictionaries", () => {
 });
 
 describe("unions", () => {
-  it("picks the first alternative that fits", () => {
+  it("picks the alternative that takes the kind of the value", () => {
     expect(bindgen.describeValue(1.5)).toBe("number 1.5");
     expect(bindgen.describeValue(true)).toBe("flag true");
     expect(bindgen.describeValue("téxt")).toBe("text téxt");
@@ -559,7 +558,12 @@ describe("unions", () => {
 
   it("the alternative that was chosen reports what is wrong with the value", () => {
     expect(() => bindgen.describeAnything(1.5)).toThrow("value must be an integer (received 1.5)");
-    expect(() => bindgen.describeAnything(2n ** 40n)).toThrow(RangeError);
+    expect(() => bindgen.describeAnything(2n ** 40n)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: "value must be in the range [-2147483648, 2147483647] (received 1099511627776)",
+      }),
+    );
     expect(() => bindgen.describeAnything([1, "x"])).toThrow("element of value must be a number");
     expect(() => bindgen.describeAnything({ count: "x" })).toThrow("TestOptions.count must be a number");
   });
@@ -570,10 +574,12 @@ describe("unions", () => {
       (name: string) =>
       (...args: unknown[]) => (calls.push(name), (Reflect as any)[name](...args));
     const handler = Object.fromEntries(Reflect.ownKeys(Reflect).map(name => [name, trap(name as string)]));
-    expect(() => bindgen.describeValue(new Proxy({}, handler))).toThrow("value must be of type");
+    expect(() => bindgen.describeValue(new Proxy({}, handler))).toThrow(
+      "value must be of type number, boolean, string, or array of integer",
+    );
     expect(() =>
       bindgen.describeValue({ toString: () => calls.push("toString"), valueOf: () => calls.push("valueOf") }),
-    ).toThrow("value must be of type");
+    ).toThrow("value must be of type number, boolean, string, or array of integer");
     expect(calls).toEqual([]);
   });
 

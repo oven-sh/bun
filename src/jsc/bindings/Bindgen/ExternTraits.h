@@ -15,6 +15,16 @@ namespace Bun::Bindgen {
 template<typename T>
 struct ExternTraits;
 
+template<typename IDL>
+using ExternOf = typename ExternTraits<typename IDL::ImplementationType>::ExternType;
+
+// What Rust is passed. It owns what `value` owned.
+template<typename T>
+ALWAYS_INLINE auto toExtern(T& value)
+{
+    return ExternTraits<T>::convertToExtern(std::move(value));
+}
+
 template<typename T>
 struct TrivialExtern {
     using ExternType = T;

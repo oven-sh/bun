@@ -110,7 +110,7 @@ Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.
 
 The candidates are the signatures that do not require more arguments than were
-passed. Then, argument by argument, those that take a value of its
+passed, or, if every one requires more, those that require the fewest. Then, argument by argument, those that take a value of its
 [kind](#unions-and-kinds) stay; a signature that has no such argument ignores it.
 If several are left when the arguments run out, or none takes the kind, the call goes
 to the one that requires the most arguments, then to the one written first, and its
@@ -120,22 +120,22 @@ signature that no call can reach is an error when the schema is loaded.
 ## Types
 
 Conversions are strict unless the schema says otherwise: `b.i32` takes a number
-that is an integer in range, and nothing else. A failed strict, `.loose` or
+or BigInt that is an integer in range, and nothing else. A failed strict, `.loose` or
 `.validateInteger` conversion throws `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE`
 naming the argument or the dictionary member; `.wrap` and `.enforceRange` throw
 what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
 
-| Schema                                           | Rust, as an argument             | Accepts                                                       |
+| Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
-| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | an integer in range; see below                                |
+| `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number or BigInt that is an integer in range; see below     |
 | `b.f64`                                          | `f64`                            | a number                                                      |
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsValue<'a, ArrayBuffer>`       | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
-| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | a typed array, `DataView` or `ArrayBuffer`                    |
+| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same                                                      |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsValue<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
@@ -200,8 +200,7 @@ A dictionary whose members can all be left out implements `Default`.
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
 configure a Bun API. For a plain object, where the own properties are therefore
-the whole answer, the generated code reads the member straight out of the object's
-property table. The two paths are indistinguishable to JavaScript;
+the whole answer, the member is read straight out of the object's property table. The two paths are indistinguishable to JavaScript;
 `test/internal/bindgen.test.ts` holds them to that.
 
 Returning a dictionary makes an object with a prebuilt `Structure`: one
@@ -210,12 +209,12 @@ left out, and the object is then built one property at a time.
 
 The second argument of `b.dictionary` takes:
 
-| Key              | What it does                                                                                                                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `userFacingName` | what error messages call it, when that is not its name                                                                                                                                   |
-| `allowArray`     | an array is read like any other object, not refused                                                                                                                                      |
-| `allowNonObject` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`         | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body                                                                                                 |
+| Key                | What it does                                                                                                                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `userFacingName`   | what error messages call it, when that is not its name                                                                                                                                   |
+| `allowArray`       | an array is read like any other object, not refused                                                                                                                                      |
+| `nonObjectAsEmpty` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
+| `fromJS`           | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body                                                                                                 |
 
 ### Enumerations
 
@@ -239,7 +238,7 @@ in play apart:
 | the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
 | the cell's `ClassInfo`             | an instance of a class                                                           |
 
-A strict type takes the kinds in its row of the table above. A type that coerces or
+A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 `.validateInteger`, `b.any`, an enumeration, a dictionary.
 
@@ -252,8 +251,9 @@ alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
 kind goes last. An alternative that can never be chosen is an error when the schema is
-loaded. The generated C++ tests whether the value is a cell once, loads the type byte
-once, makes no test twice, and converts into the place the result ends up in.
+loaded. Choosing tests whether the value is a cell once, loads the type byte once and
+repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
+place they end up in.
 
 ### Buffers
 
@@ -333,7 +333,7 @@ pub(crate) struct Glob {
 }
 
 impl GlobClass for Glob {
-    fn constructor<'a>(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+    fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob { pattern }
     }
 

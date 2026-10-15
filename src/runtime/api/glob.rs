@@ -409,7 +409,7 @@ impl Glob {
 impl GlobClass for Glob {
     type Error<'a> = ScanError<'a>;
 
-    fn constructor<'a>(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+    fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob {
             shape: bun_glob::matcher::Shape::of(pattern.slice()),
             pattern,

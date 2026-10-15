@@ -286,6 +286,44 @@ describe("Floyd–Steinberg dither", () => {
     expect(Buffer.compare(Buffer.from(a), Buffer.from(b))).toBe(0);
   });
 
+  // Pixels of rows `from`.. that do not come back as `flat`, for a 64×64
+  // image quantised with dither.
+  async function displaced(
+    pixelOf: (x: number, y: number) => [number, number, number, number],
+    flat: [number, number, number, number],
+    from: number,
+    colors: number,
+  ): Promise<number> {
+    const png = await new Bun.Image(makePng(64, 64, pixelOf)).png({ palette: true, colors, dither: true }).bytes();
+    const { data } = decodePng(await new Bun.Image(png).png().bytes());
+    let count = 0;
+    for (let i = from * 64 * 4; i < data.length; i += 4) {
+      if (data[i] !== flat[0] || data[i + 1] !== flat[1] || data[i + 2] !== flat[2] || data[i + 3] !== flat[3]) count++;
+    }
+    return count;
+  }
+
+  // The four shares of a pixel's error add up to that error. With four
+  // floored shares an error of -1 pushed -4, so small errors grew as they
+  // travelled and speckled a flat area that has its own palette entry.
+  test("a flat grey below a ramp that crosses it keeps 99% of its pixels", async () => {
+    const grey128: [number, number, number, number] = [128, 128, 128, 255];
+    const off = await displaced((x, y) => (y < 16 ? [x * 4, x * 4, x * 4, 255] : grey128), grey128, 16, 16);
+    // 30 is 1% of the 48 flat rows.
+    expect(off).toBeLessThanOrEqual(30);
+  });
+
+  // The error is measured from the candidate clamped to 0..255. The palette
+  // here is black and grey 192: white is 63 past it. Unclamped, every white
+  // pixel added 63 that nothing could absorb, and the sum came down on the
+  // black area as a band of grey.
+  test("error past the palette's range does not spill into a flat area", async () => {
+    const black: [number, number, number, number] = [0, 0, 0, 255];
+    const top = (x: number): [number, number, number, number] => (x < 32 ? [255, 255, 255, 255] : [128, 128, 128, 255]);
+    // Rows 32 and 33 take the error of the last row above them.
+    expect(await displaced((x, y) => (y < 32 ? top(x) : black), black, 34, 2)).toBe(0);
+  });
+
   // 1×N and N×1 are the edge cases where FS has no "below" or no "right".
   test("1-pixel-wide and 1-pixel-tall sources", async () => {
     for (const [w, h] of [

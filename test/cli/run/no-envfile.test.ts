@@ -368,7 +368,9 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
     return { report: line ? JSON.parse(line.slice("REPORT ".length)) : { stdout, stderr }, exitCode };
   }
 
-  test.concurrent("with no switch, each of them has the values of .env", async () => {
+  // The tests that make the whole report run one at a time: each starts three builds, a transform, a child process and
+  // a Worker, and that is too much at once for a debug build.
+  test("with no switch, each of them has the values of .env", async () => {
     using dir = tempDir("env-of-the-process", files);
     expect(await run(String(dir), ["main.ts"])).toEqual({
       report: everyPlace(["key-from-dot-env", "only-from-dot-env"], ["key-from-dot-env"]),
@@ -385,12 +387,12 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
     ["bun invoked as node", ["main.ts"], { argv0: "node" }],
     ["bun test --no-env-file", ["test", "--no-env-file", "./main.test.ts"], {}],
   ];
-  test.concurrent.each(switches)("%s: none of them has a value of .env", async (_, args, { bunfig, ...options }) => {
+  test.each(switches)("%s: none of them has a value of .env", async (_, args, { bunfig, ...options }) => {
     using dir = tempDir("env-of-the-process", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
     expect(await run(String(dir), args, options)).toEqual({ report: everyPlace([]), exitCode: 0 });
   });
 
-  test.concurrent("--env-file: each of them has the values of that file only", async () => {
+  test("--env-file: each of them has the values of that file only", async () => {
     using dir = tempDir("env-of-the-process", files);
     expect(await run(String(dir), ["--env-file=custom.env", "main.ts"])).toEqual({
       report: everyPlace(["key-from-custom-env"]),

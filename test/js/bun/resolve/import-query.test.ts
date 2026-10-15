@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -503,14 +504,25 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
   });
 });
 
-// `bun <file>.html` imports the file it was given. Windows does not allow `?` in a file name.
-test.skipIf(isWindows)("bun serves an HTML entry point in a folder with `?` in its name", async () => {
+// `bun <file>.html` imports the file it was given, and the plugins that bunfig.toml names. Windows does not allow `?` in a file name.
+test.skipIf(isWindows)("bun serves an HTML entry point, with a plugin, in a folder with `?` in its name", async () => {
   using dir = tempDir("import-query-question-mark-html", {
-    "pa?ge/index.html": `<!DOCTYPE html><html><head><title>in pa?ge</title></head><body></body></html>`,
+    "pa?ge/bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "pa?ge/plugin.ts": `
+      export default {
+        name: "text",
+        setup(build) {
+          build.onLoad({ filter: /\\.txt$/ }, () => ({ loader: "text", contents: "from the plugin" }));
+        },
+      };
+    `,
+    "pa?ge/index.html": `<!DOCTYPE html><html><head><title>in pa?ge</title><link rel="stylesheet" href="./styles.css"></head><body></body></html>`,
+    "pa?ge/styles.css": `body { content: url("./example.txt"); }`,
+    "pa?ge/example.txt": "",
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "./pa?ge/index.html", "--port=0"],
-    cwd: String(dir),
+    cmd: [bunExe(), "./index.html", "--port=0"],
+    cwd: join(String(dir), "pa?ge"),
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -524,9 +536,10 @@ test.skipIf(isWindows)("bun serves an HTML entry point in a folder with `?` in i
   }
   // The server prints its URL, or the process ends with the reason on stderr.
   if (!url) expect(await proc.stderr.text()).toBe("");
-  const response = await fetch(url!);
-  expect({ status: response.status, title: (await response.text()).match(/<title>(.*)<\/title>/)?.[1] }).toEqual({
-    status: 200,
+  const html = await (await fetch(url!)).text();
+  const css = await (await fetch(new URL(html.match(/href="([^"]+\.css)"/)?.[1] ?? "/no-stylesheet", url))).text();
+  expect({ title: html.match(/<title>(.*)<\/title>/)?.[1], css: css.match(/url\(.*\)/)?.[0] }).toEqual({
     title: "in pa?ge",
+    css: `url("data:text/plain;base64,${btoa("from the plugin")}")`,
   });
 });

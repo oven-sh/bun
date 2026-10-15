@@ -3238,6 +3238,87 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+it.if(isPosix)("realpath reads its path the way Node does", async () => {
+  using dir = tempDir("fs-realpath-path", {
+    "file": "",
+    "y": "",
+    "dir/y": "",
+    "dir/sub/x": "",
+    "a\\b": "",
+    "a/b": "",
+    "\\c": "",
+    "C:\\d": "",
+    "w\\d/z": "",
+  });
+  symlinkSync("dir/sub", join(String(dir), "link"));
+
+  // fs.realpath starts from path.resolve(path). fs.realpath.native and
+  // fs.promises.realpath leave the whole path to the system.
+  const cases: [path: string, resolved: string, native: string][] = [
+    ["a\\b", "/a\\b", "/a\\b"],
+    ["\\c", "/\\c", "/\\c"],
+    ["C:\\d", "/C:\\d", "/C:\\d"],
+    ["w\\d/z", "/w\\d/z", "/w\\d/z"],
+    ["w\\d/../file", "/file", "/file"],
+    ["a\\..\\file", "ENOENT lstat", "ENOENT realpath"],
+    ["file/", "/file", "ENOTDIR realpath"],
+    ["file/..", "", "ENOTDIR realpath"],
+    ["nope/../file", "/file", "ENOENT realpath"],
+    ["link/../y", "/y", "/dir/y"],
+  ];
+
+  const script = `
+    import fs from "node:fs";
+    import { promisify } from "node:util";
+    const cwd = process.cwd();
+    const impls = [
+      fs.realpathSync,
+      promisify(fs.realpath),
+      fs.realpathSync.native,
+      promisify(fs.realpath.native),
+      fs.promises.realpath,
+    ];
+    async function run(path) {
+      const results = [];
+      for (const impl of impls) {
+        try {
+          results.push((await impl(path)).slice(cwd.length));
+        } catch (err) {
+          results.push(err.code + " " + err.syscall);
+        }
+      }
+      return results;
+    }
+    const out = [];
+    for (const path of ${JSON.stringify(cases.map(([path]) => path))}) {
+      out.push(await run(path), await run(cwd + "/" + path), await run(Buffer.from(path)));
+    }
+    out.push(await run(""));
+    process.chdir("w\\\\d");
+    out.push(await run("."), await run("z"));
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const row = (resolved: string, native: string) => [resolved, resolved, native, native, native];
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    ...cases.flatMap(([, resolved, native]) => Array(3).fill(row(resolved, native))),
+    row("", "ENOENT realpath"),
+    row("/w\\d", "/w\\d"),
+    row("/w\\d/z", "/w\\d/z"),
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every

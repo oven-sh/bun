@@ -32,6 +32,7 @@
 namespace WebCore {
 
 class AbortAlgorithm : public ThreadSafeRefCounted<AbortAlgorithm>, public ActiveDOMCallback {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(AbortAlgorithm); // both bases declare allocators
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 

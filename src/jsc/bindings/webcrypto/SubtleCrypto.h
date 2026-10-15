@@ -57,6 +57,7 @@ class CryptoKey;
 class DeferredPromise;
 
 class SubtleCrypto : public ContextDestructionObserver, public RefCounted<SubtleCrypto> {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SubtleCrypto); // both bases declare allocators
 public:
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }

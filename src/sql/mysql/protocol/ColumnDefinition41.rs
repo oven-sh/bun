@@ -9,14 +9,10 @@ use bstr::BStr;
 bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
-    pub(crate) catalog: Data,
-    pub(crate) schema: Data,
     /// A copy: it is read after the packet is gone.
     pub table: Data,
-    pub(crate) org_table: Data,
     /// A copy of the name on the wire, which `name_or_index` is made from.
     name: Option<Data>,
-    pub(crate) org_name: Data,
     pub character_set: u16,
     pub column_length: u32,
     pub column_type: FieldType,
@@ -28,12 +24,8 @@ pub struct ColumnDefinition41 {
 impl Default for ColumnDefinition41 {
     fn default() -> Self {
         Self {
-            catalog: Data::empty(),
-            schema: Data::empty(),
             table: Data::empty(),
-            org_table: Data::empty(),
             name: None,
-            org_name: Data::empty(),
             character_set: 0,
             column_length: 0,
             column_type: FieldType::MYSQL_TYPE_NULL,
@@ -123,19 +115,15 @@ impl ColumnDefinition41 {
         extended_type_info: bool,
     ) -> Result<Changed, AnyMySQLError> {
         // Length encoded strings
-        self.catalog = reader.encode_len_string()?;
+        let catalog = reader.encode_len_string()?;
         bun_core::scoped_log!(
             ColumnDefinition41,
             "catalog: {}",
-            BStr::new(self.catalog.slice())
+            BStr::new(catalog.slice())
         );
 
-        self.schema = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "schema: {}",
-            BStr::new(self.schema.slice())
-        );
+        let schema = reader.encode_len_string()?;
+        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(schema.slice()));
 
         let table = reader.encode_len_string()?;
         bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table.slice()));
@@ -144,21 +132,21 @@ impl ColumnDefinition41 {
             self.table = Data::create(table.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
         }
 
-        self.org_table = reader.encode_len_string()?;
+        let org_table = reader.encode_len_string()?;
         bun_core::scoped_log!(
             ColumnDefinition41,
             "org_table: {}",
-            BStr::new(self.org_table.slice())
+            BStr::new(org_table.slice())
         );
 
         let name = reader.encode_len_string()?;
         bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(name.slice()));
 
-        self.org_name = reader.encode_len_string()?;
+        let org_name = reader.encode_len_string()?;
         bun_core::scoped_log!(
             ColumnDefinition41,
             "org_name: {}",
-            BStr::new(self.org_name.slice())
+            BStr::new(org_name.slice())
         );
 
         // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, a lenenc blob of

@@ -151,7 +151,8 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
-    /// Chooses as libpq's `pg_SASL_init` does.
+    /// Chooses as libpq's `pg_SASL_init` does, but for -PLUS in the list of a connection without TLS, which libpq
+    /// refuses. There a proxy speaks TLS to the server. One that means harm takes the name off the list.
     pub(crate) fn init(
         offered: SASLMechanisms,
         channel_binding: ChannelBinding,
@@ -162,12 +163,6 @@ impl SASL {
             if channel_binding == ChannelBinding::Require {
                 return Err(Refusal::required(
                     "channel binding required, but SSL not in use",
-                ));
-            }
-            // A proxy that strips TLS.
-            if offered.scram_sha_256_plus {
-                return Err(Refusal::failed(
-                    "server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection",
                 ));
             }
             return offered

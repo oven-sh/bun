@@ -40,6 +40,10 @@ type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 struct LoweredClass {
     /// `var` statement for the temporaries the class body now refers to.
     temps: Option<Stmt>,
+    /// `let` statement for the binding the body names the class by, when its
+    /// class decorators can replace the class. It is block scoped so that a
+    /// class evaluated in a loop gets a fresh binding each time.
+    inner_binding: Option<Stmt>,
     class_decorators: Option<ClassDecorators>,
 }
 
@@ -729,6 +733,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let lowered = self.lower_class_body(&mut s_class.class, stmt.loc, None);
         out.extend(lowered.temps);
+        out.extend(lowered.inner_binding);
         let Some(decorators) = lowered.class_decorators else {
             out.push(stmt);
             return;
@@ -752,10 +757,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_from_context: Option<&'a [u8]>,
     ) -> Expr {
         let lowered = self.lower_class_body(class, expr.loc, name_from_context);
-        if let Some(decl) = lowered.temps
-            && let Some(stmt_list) = self.nearest_stmt_list_mut()
-        {
-            stmt_list.push(decl);
+        if let Some(stmt_list) = self.nearest_stmt_list_mut() {
+            stmt_list.extend(lowered.temps);
+            stmt_list.extend(lowered.inner_binding);
         }
         let Some(decorators) = lowered.class_decorators else {
             return expr;
@@ -1192,11 +1196,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice(),
                     None => name_from_context.unwrap_or(b""),
                 };
-                let decorated_ref = p.declared_temp(if js_lexer::is_identifier(name) {
-                    p.bump_name3(b"_", name, b"")
+                // A named class already has the binding its body resolves the
+                // name to (`visit_class`). What the decorators return goes there.
+                let decorated_ref = if class.inner_class_ref.is_symbol() {
+                    class.inner_class_ref
                 } else {
-                    b"_class"
-                });
+                    p.declared_temp(if js_lexer::is_identifier(name) {
+                        p.bump_name3(b"_", name, b"")
+                    } else {
+                        b"_class"
+                    })
+                };
                 let this = p.new_expr(E::This {}, loc);
                 let name = p.new_expr(E::EString::init(name), loc);
                 let decorated = p.decorate_element(init_ref, 0.0, name, dec, this, None, loc);
@@ -1267,8 +1277,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
+        let inner_binding = class.inner_class_ref.is_symbol().then(|| {
+            let binding = p.b(
+                B::Identifier {
+                    r#ref: class.inner_class_ref,
+                },
+                loc,
+            );
+            p.s(
+                S::Local {
+                    kind: js_ast::s::Kind::KLet,
+                    decls: DeclList::init_one(G::Decl {
+                        binding,
+                        value: None,
+                    }),
+                    ..Default::default()
+                },
+                loc,
+            )
+        });
+
         LoweredClass {
             temps: p.drain_capture_temp_decls(temps_before, loc),
+            inner_binding,
             class_decorators: class_decorators_result,
         }
     }

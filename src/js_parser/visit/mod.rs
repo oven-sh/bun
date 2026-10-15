@@ -1021,17 +1021,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // When class decorators are lowered, the body names the class by
+        // `inner_class_ref` instead. The lowering declares it next to the
+        // class and assigns what the decorators return to it, because the
+        // spec initializes the inner binding with the decorated class.
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_name =
+                    bun_alloc::arena_format!(in self.arena, "_{}", bstr::BStr::new(original_name))
+                        .into_bump_str()
+                        .as_bytes();
+                let inner_ref = self.generate_temp_var(inner_name);
+                class.inner_class_ref = inner_ref;
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )

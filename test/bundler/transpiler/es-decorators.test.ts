@@ -1404,9 +1404,9 @@ describe("ES Decorators", () => {
           static sg() { return "C" }
           #m() { return super.greet() }
           static #s() { return super.sg() }
-          call() { return [this.x, this.#m(), C.#s()] }
+          call() { return [this.x, this.#m(), C.s] }
           @dec static y = super.sg();
-          static { C.blk = super.sg(); }
+          static { C.blk = super.sg(); C.s = this.#s(); }
         }
         console.log(new C().call(), C.y, C.blk, Object.getPrototypeOf(C) !== B);
       `);
@@ -1430,6 +1430,88 @@ describe("ES Decorators", () => {
       expect(stderr).toBe("");
       expect(stdout).toBe("undefined 1 none\n");
       expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the class body names the class a class decorator returns", async () => {
+      // The spec initializes the inner class binding with the decorated class,
+      // after the class decorators run and before the static fields and
+      // static blocks. Babel, esbuild and tsc do the same.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const replace = (cls) => class extends cls {};
+        let thunk;
+        const capture = (fn) => { thunk = fn; return () => {}; };
+        @replace class Model {
+          static self = () => Model;
+          @capture(() => Model) field = 1;
+          static { Model.blk = Model; }
+          m() { return Model; }
+          inst = () => Model;
+        }
+        const m = new Model();
+        console.log(thunk() === Model, Model.self() === Model, Model.blk === Model, m.m() === Model, m.inst() === Model);
+        const A = @replace class Foo { static self = () => Foo; m() { return Foo; } static { Foo.blk = Foo; } };
+        console.log(A.self() === A, new A().m() === A, A.blk === A);
+        const keep = (cls) => {};
+        @keep class Same { static self = () => Same; }
+        console.log(Same.self() === Same, Same.self().name);
+        // A static #private member stays on the class as written, so the
+        // replacement does not carry its brand: the spec throws here too.
+        @replace class P { static #s() { return "s"; } static viaName() { return P.#s(); } static viaThis() { return this.#s(); } static { P.early = this.#s(); } }
+        let viaName;
+        try { viaName = P.viaName(); } catch (e) { viaName = e.constructor.name; }
+        console.log(P.early, viaName, Object.getPrototypeOf(P).viaThis());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true true true\ntrue true true\ntrue Same\ns TypeError s\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a decorated class in a loop binds its name once per evaluation", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const replace = (cls) => class extends cls {};
+        const seen = [];
+        for (let i = 0; i < 2; i++) {
+          @replace class C { static self = () => C; }
+          seen.push(C);
+        }
+        const made = [];
+        function make() { return @replace class E { static self = () => E; }; }
+        made.push(make(), make());
+        console.log(seen[0] !== seen[1], seen[0].self() === seen[0], seen[1].self() === seen[1]);
+        console.log(made[0] !== made[1], made[0].self() === made[0], made[1].self() === made[1]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true\ntrue true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an exported decorated class body names the class a class decorator returns", async () => {
+      using dir = tempDir("es-dec-export-inner", {
+        "named.js": `
+          const replace = (cls) => class extends cls {};
+          export @replace class Named { static self = () => Named; m() { return Named; } }
+        `,
+        "def.js": `
+          const replace = (cls) => class extends cls {};
+          export default @replace class Def { static self = () => Def; m() { return Def; } }
+        `,
+        "entry.js": `
+          import { Named } from "./named.js";
+          import Def from "./def.js";
+          console.log(Named.self() === Named, new Named().m() === Named);
+          console.log(Def.self() === Def, new Def().m() === Def);
+        `,
+      });
+      const run = await runIn(String(dir), ["entry.js"]);
+      expect(filterStderr(run.stderr)).toBe("");
+      expect(run.stdout).toBe("true true\ntrue true\n");
+      expect(run.exitCode).toBe(0);
+      const build = await runIn(String(dir), ["build", "--target=browser", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const bundled = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(bundled.stderr)).toBe("");
+      expect(bundled.stdout).toBe("true true\ntrue true\n");
+      expect(bundled.exitCode).toBe(0);
     });
 
     test.concurrent("the inner name of a named class expression resolves in private methods", async () => {

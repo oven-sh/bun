@@ -531,7 +531,7 @@ async function run(scope: Scope, callback: TransactionCallback) {
   try {
     result = await callback(makeHandle(scope));
     // A result is an array too, and Promise.all would copy it without its count, command and columns.
-    if ($isArray(result) && !(result instanceof SQLResultArray)) {
+    if ($isArray(result) && !SQLResultArray.isResult(result)) {
       result = await Promise.all(result);
     }
   } catch (error) {

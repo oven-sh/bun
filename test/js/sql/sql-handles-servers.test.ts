@@ -1,7 +1,7 @@
 // The wire order is in sql-handles.test.ts.
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
 
@@ -61,6 +61,32 @@ function whatStaysInTheTable(prefix: string, connect: () => Promise<SQL>) {
     const pipeline = await sql.begin(tx => [insert(tx, 3), insert(tx, 4)]);
     expect([pipeline.constructor.name, ...pipeline.map(described)]).toEqual(["Array", direct, direct]);
     expect(await rows(sql)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  test("begin() and savepoint() run the queries of an array that an async callback returns", async () => {
+    await using sql = await open();
+    const transaction: any = await sql.begin(async tx => [insert(tx, 1), insert(tx, 2)]);
+    const savepoint: any = await sql.begin(tx => tx.savepoint(async sp => [insert(sp, 3), insert(sp, 4)]));
+    expect({
+      transaction: transaction.map((result: any) => result.count),
+      savepoint: savepoint.map((result: any) => result.count),
+      rows: await rows(sql),
+    }).toEqual({ transaction: [1, 1], savepoint: [1, 1], rows: [1, 2, 3, 4] });
+  });
+
+  test("a returned result is not a pipeline: a query that was stored in it does not run", async () => {
+    await using sql = await open();
+    let stored: any;
+    const transaction: any = await sql.begin(async tx => {
+      const result: any = await insert(tx, 1);
+      result.push((stored = insert(tx, 2)));
+      return result;
+    });
+    expect({ handedOn: transaction[0] === stored, stored: await outcome(stored), rows: await rows(sql) }).toEqual({
+      handedOn: true,
+      stored: endedCode,
+      rows: [1],
+    });
   });
 
   test("a rejected begin() keeps no row of the tasks that go on after one failed", async () => {
@@ -351,6 +377,36 @@ function asyncContext({ open }: ReturnType<typeof whatStaysInTheTable>, connect:
   });
 }
 
+// `instanceof` would ask the hook. In a process of its own: the hook is global.
+function arrayHook(url: () => Promise<string>, several: number[] | null) {
+  test("an Array[Symbol.hasInstance] of the program changes neither a pipeline nor the results of several statements", async () => {
+    const statements = `(await sql.unsafe("SELECT 1 AS x; SELECT 2 AS x; SELECT 3 AS x").simple()).map(result => Number(result[0]?.x))`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+          Object.defineProperty(Array, Symbol.hasInstance, { value: value => Array.isArray(value) });
+          await sql.unsafe("CREATE TEMPORARY TABLE t (n INT PRIMARY KEY)");
+          const pipeline = await sql.begin(tx => [tx.unsafe("INSERT INTO t VALUES (1)"), tx.unsafe("INSERT INTO t VALUES (2)")]);
+          const rows = await sql.unsafe("SELECT n FROM t ORDER BY n");
+          const several = ${several === null ? "null" : statements};
+          console.log(JSON.stringify({ pipeline: pipeline.map(result => result.count), rows: rows.map(row => Number(row.n)), several }));
+          await sql.close();
+        `,
+      ],
+      env: { ...bunEnv, SQL_URL: await url() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ pipeline: [1, 1], rows: [1, 2], several });
+    expect(exitCode).toBe(0);
+  });
+}
+
 const servers = [
   { image: "postgres_plain", prefix: "POSTGRES", scheme: "postgres://bun_sql_test" },
   { image: "mysql_plain", prefix: "MYSQL", scheme: "mysql://root" },
@@ -365,11 +421,16 @@ for (const { image, prefix, scheme } of servers) {
     const shared = whatStaysInTheTable(prefix, connect);
     reservations(shared);
     asyncContext(shared, connect);
+    arrayHook(async () => {
+      await container.ready;
+      return `${scheme}@${container.host}:${container.port}/bun_sql_test`;
+    }, [1, 2, 3]);
   });
 }
 
 describe.concurrent("sqlite", () => {
   whatStaysInTheTable("SQLITE", async () => new SQL("sqlite://:memory:"));
+  arrayHook(async () => "sqlite://:memory:", null);
 });
 
 // Not concurrent: they wait for the collector.

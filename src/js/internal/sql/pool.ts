@@ -467,7 +467,7 @@ function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) 
   const results = query[_results];
   if (!results) {
     query[_results] = result;
-  } else if (results instanceof SQLResultArray) {
+  } else if (SQLResultArray.isResult(results)) {
     query[_results] = [results, result];
   } else {
     results.push(result);

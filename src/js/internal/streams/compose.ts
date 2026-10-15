@@ -38,7 +38,7 @@ export default function compose(...streams) {
   }
 
   for (let n = 0; n < streams.length; ++n) {
-    if (!isNodeStream(streams[n]) && !isWebStream(streams[n]) && !isWritableStreamLike(streams[n])) {
+    if (!isNodeStream(streams[n]) && !isWebStream(streams[n])) {
       // TODO(ronag): Add checks for non streams.
       continue;
     }

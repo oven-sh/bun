@@ -83,16 +83,17 @@ function isWritableStreamLike(obj) {
   return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function" && !isNodeStream(obj));
 }
 
-// Node takes any `writable`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
+// Node takes any object as `writable`, and pumpToWeb() calls its getWriter() outside a try: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
 function isTransformStream(obj) {
-  return (
-    $inheritsTransformStream(obj) ||
-    !!(obj && typeof obj.readable === "object" && isWritableStreamLike(obj.writable) && !isNodeStream(obj))
-  );
+  if ($inheritsTransformStream(obj)) return true;
+  if (!obj || typeof obj.readable !== "object") return false;
+  const writable = obj.writable;
+  return typeof writable === "object" && isWritableStreamLike(writable) && !isNodeStream(obj);
 }
 
+// As in Node, a userland WritableStream is a web stream. The class checks stay: eos() and duplexify need native streams.
 function isWebStream(obj) {
-  return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj);
+  return isReadableStream(obj) || isWritableStream(obj) || isTransformStream(obj) || isWritableStreamLike(obj);
 }
 
 function isIterable(obj, isAsync?) {

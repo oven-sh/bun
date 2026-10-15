@@ -274,6 +274,7 @@ class PrimitiveType extends Type {
       return String(value);
     }
     assert(typeof value === "number", `${util.inspect(value)} is not a number`);
+    assert(Number.isFinite(value), `${value} is not finite`);
     if (this.rustName !== "f64") assert(Number.isSafeInteger(value), `${value} is not an integer`);
     return `${this.cppName} { ${value} }`;
   }
@@ -330,6 +331,15 @@ export class IntegerType extends PrimitiveType {
   protected get cppName(): string {
     return this.info.cpp;
   }
+  /** What a default has to be within. */
+  protected get range(): readonly [min: number | bigint, max: number | bigint] {
+    return [this.info.min, this.info.max];
+  }
+  toCpp(value: unknown): string {
+    const [min, max] = this.range;
+    assert(typeof value !== "number" || (value >= min && value <= max), `${value} is not in [${min}, ${max}]`);
+    return super.toCpp(value);
+  }
   /** `ToNumeric` first, then as strict as the default. */
   get loose(): IntegerType {
     return new IntegerType(this.info, `::Bun::IDLLooseInteger<${this.info.cpp}>`);
@@ -350,6 +360,7 @@ export class IntegerType extends PrimitiveType {
 
 export class RangeType extends IntegerType {
   readonly kind: "Web" | "Node";
+  readonly #range: readonly [number, number];
   constructor(info: IntegerInfo, min: number, max: number, kind: "Web" | "Node") {
     assert(
       Number.isSafeInteger(min) && Number.isSafeInteger(max) && min <= max,
@@ -361,6 +372,10 @@ export class RangeType extends IntegerType {
       `::Bun::BindgenCustomEnforceRange<${info.cpp}, ${min}, ${max}, ::Bun::BindgenCustomEnforceRangeKind::${kind}>`,
     );
     this.kind = kind;
+    this.#range = [min, max];
+  }
+  protected get range() {
+    return this.#range;
   }
   getHeaders(out: Set<string>): void {
     out.add("BindgenCustomEnforceRange.h");
@@ -404,6 +419,9 @@ export class UnitType extends Type {
   }
   get permitsUndefined(): boolean {
     return true;
+  }
+  cppConvert(): string {
+    throw new TypeError(`b.${this.tsType} is only an alternative of a union`);
   }
   layout(): Layout {
     return { size: 1, align: 1 };
@@ -770,6 +788,7 @@ export class OptionalType extends Type {
     this.kind = kind;
   }
   get idlType(): string {
+    assert(!(this.payload instanceof RangeType), "a range cannot be absent; give it a .default()");
     const template = {
       optional: "::WebCore::IDLOptional",
       nullable: "::WebCore::IDLNullable",
@@ -936,6 +955,8 @@ export class ArrayType extends Type {
   constructor(element: Type) {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
+    assert(!(element instanceof RangeType), "a range reports the name of its argument, which an element does not have");
+    assert(!(element instanceof WithValueType), ".withValue is only for an argument");
     assert(
       !element.borrowsHeap,
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
@@ -962,10 +983,6 @@ export class ArrayType extends Type {
   getHeaders(out: Set<string>): void {
     out.add("Bindgen/ExternVectorTraits.h");
     super.getHeaders(out);
-  }
-  toCpp(value: unknown): string {
-    assert(Array.isArray(value));
-    return `${this.idlType}::ImplementationType { ${value.map(item => this.element.toCpp(item)).join(", ")} }`;
   }
   layout(): Layout {
     return { size: 16, align: 8 };
@@ -1121,6 +1138,8 @@ export class DictionaryType extends NamedType {
     this.options = options;
     this.members = Object.entries(members).map(([name, spec]) => new Member(name, spec));
     assert(this.members.length > 0, "a dictionary needs at least one member");
+    for (const { name, type } of this.members)
+      assert(!(type instanceof WithValueType), `${name}: .withValue is only for an argument`);
     assert(
       !this.nonObjectAsEmpty || this.hasDefault,
       "nonObjectAsEmpty: every member must be optional or have a default",
@@ -1222,6 +1241,8 @@ export class UnionType extends NamedType {
       assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
       assert(!(type instanceof OptionalType), `${name}: add b.null as an alternative`);
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
+      assert(!(type instanceof WithValueType), `${name}: .withValue is only for an argument`);
+      assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(
         !(type instanceof RangeType),
         `${name}: a range reports the name of its argument, which a union does not know`,
@@ -1349,11 +1370,12 @@ export class FunctionDefinition {
     this.signatures = signatures.map(options => new Signature(options));
     const counts = [...new Set(this.signatures.map(signature => signature.requiredCount))].sort((a, b) => b - a);
     const nodes = new Map<string, OverloadDispatch>();
-    this.dispatchByArgumentCount = counts.map(atLeast => ({
+    this.dispatchByArgumentCount = counts.map((atLeast, i) => ({
       atLeast,
       dispatch: this.dispatchOn(
         this.signatures.filter(signature => signature.requiredCount <= atLeast),
         0,
+        i === 0 ? Infinity : counts[i - 1] - 1,
         nodes,
       ),
     }));
@@ -1365,27 +1387,31 @@ export class FunctionDefinition {
       ),
     );
   }
-  /** "Overloads" in the docs. The same candidates and argument give the same object of `nodes`: nodes are compared by identity. */
+  /** "Overloads" in the docs, for a call with at most `passed` arguments. Equal inputs give the same object of `nodes`: nodes are compared by identity. */
   private dispatchOn(
     candidates: readonly Signature[],
     argument: number,
+    passed: number,
     nodes: Map<string, OverloadDispatch>,
   ): OverloadDispatch {
-    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument}`;
+    const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument} ${passed}`;
     const existing = nodes.get(key);
     if (existing) return existing;
     const best = candidates.reduce((a, b) => (b.requiredCount > a.requiredCount ? b : a));
     let dispatch: OverloadDispatch = best;
     if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
       const typeOf = (signature: Signature) => signature.args[argument]?.type;
-      const byKind = new Map(
-        distinguishingKinds(candidates.flatMap(signature => typeOf(signature) ?? [])).map(kind => {
-          const takers = candidates.filter(signature => !typeOf(signature) || takes(typeOf(signature), kind));
-          return [kind, this.dispatchOn(takers.length > 0 ? takers : [best], argument + 1, nodes)];
-        }),
-      );
-      const outcomes = new Set(byKind.values());
-      dispatch = outcomes.size === 1 ? byKind.get("other")! : { argument, byKind };
+      const next = (kind: ValueKind | "other") => {
+        const takers = candidates.filter(signature => !typeOf(signature) || takes(typeOf(signature), kind));
+        return this.dispatchOn(takers.length > 0 ? takers : [best], argument + 1, passed, nodes);
+      };
+      if (argument >= passed) {
+        dispatch = next("undefined");
+      } else {
+        const kinds = distinguishingKinds(candidates.flatMap(signature => typeOf(signature) ?? []));
+        const byKind = new Map(kinds.map(kind => [kind, next(kind)]));
+        dispatch = new Set(byKind.values()).size === 1 ? byKind.get("other")! : { argument, byKind };
+      }
     }
     nodes.set(key, dispatch);
     return dispatch;

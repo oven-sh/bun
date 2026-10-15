@@ -135,7 +135,7 @@ what WebIDL does. Too few arguments throw `ERR_MISSING_ARGS`.
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsValue<'a, ArrayBuffer>`       | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
-| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same                                                      |
+| `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsValue<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |

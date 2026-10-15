@@ -521,6 +521,9 @@ describe("unions", () => {
       [new Uint8Array(4), "bytes 4"],
       [new Float64Array(2), "bytes 16"],
       [new DataView(new ArrayBuffer(5)), "bytes 5"],
+      [new DataView(new ArrayBuffer(5), 1, 2), "bytes 2"],
+      [new Uint8Array(7).subarray(2), "bytes 5"],
+      [new Uint16Array(new ArrayBuffer(8), 2, 1), "bytes 2"],
       [Buffer.alloc(6).buffer.slice(0, 6), "bytes 6"],
       [new Blob(["x"]), "blob"],
       [Bun.file("/nonexistent"), "blob"],
@@ -583,6 +586,12 @@ describe("unions", () => {
     expect(calls).toEqual([]);
   });
 
+  it("Array.prototype, which b.array refuses, is not of the array kind", () => {
+    expect(() => bindgen.describeValue(Array.prototype)).toThrow(
+      "value must be of type number, boolean, string, or array of integer",
+    );
+  });
+
   itAlways("an alternative that cannot be chosen is an error in the schema", () => {
     expect(() => b.union({ anything: b.any, text: b.string })).toThrow("text is never chosen");
     expect(() => b.union({ text: b.string.loose, flag: b.bool })).toThrow("flag is never chosen");
@@ -590,6 +599,7 @@ describe("unions", () => {
     expect(() => b.union({ integer: b.i32, number: b.f64 })).toThrow("number is never chosen");
     expect(() => b.union({ none: b.null, inner: b.union({ text: b.string }) })).toThrow("list the alternatives");
     expect(() => b.union({ text: b.string.nullable, flag: b.bool })).toThrow("add b.null as an alternative");
+    expect(() => b.union({ tag: b.bool, text: b.string })).toThrow("has a member of that name");
     // What one refuses, the next can take.
     b.union({ bytes: b.bufferSource, reference: b.bufferSource.arrayBuffer });
     b.union({ text: b.string, boxed: b.string.utf8 });
@@ -638,6 +648,14 @@ describe("overloads", () => {
     expect(() => b.overloads({ args: { a: b.i32, b: b.bool } }, { args: { a: b.f64, b: b.bool } })).toThrow(
       "overload 2 is never chosen",
     );
+    // With one argument the second is undefined, and with two the last signature takes everything.
+    expect(() =>
+      b.overloads(
+        { args: { a: b.string, b: b.f64.optional } },
+        { args: { a: b.string, b: b.string.optional } },
+        { args: { a: b.string, b: b.string.loose } },
+      ),
+    ).toThrow("overload 2 is never chosen");
     b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });

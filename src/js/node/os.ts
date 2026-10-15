@@ -102,16 +102,28 @@ function bound(binding) {
         : $bundleError("TODO: endianness");
     },
     freemem: binding.freemem,
-    getPriority: binding.getPriority,
-    homedir: binding.homedir,
-    hostname: binding.hostname,
-    loadavg: binding.loadavg,
-    networkInterfaces: binding.networkInterfaces,
+    getPriority: function (pid) {
+      return binding.getPriority(pid);
+    },
+    homedir: function () {
+      return binding.homedir();
+    },
+    hostname: function () {
+      return binding.hostname();
+    },
+    loadavg: function () {
+      return binding.loadavg();
+    },
+    networkInterfaces: function () {
+      return binding.networkInterfaces();
+    },
     platform: function () {
       return process.platform;
     },
     release: binding.release,
-    setPriority: binding.setPriority,
+    setPriority: function (pid, priority) {
+      return priority === undefined ? binding.setPriority(pid) : binding.setPriority(pid, priority);
+    },
     get tmpdir() {
       return tmpdir;
     },
@@ -127,8 +139,12 @@ function bound(binding) {
               ? "FreeBSD"
               : $bundleError("TODO: type");
     },
-    uptime: binding.uptime,
-    userInfo: binding.userInfo,
+    uptime: function () {
+      return binding.uptime();
+    },
+    userInfo: function (options) {
+      return binding.userInfo(options);
+    },
     version: binding.version,
     machine: function () {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —

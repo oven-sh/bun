@@ -126,7 +126,12 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
             if (jsView->isShared()) {
                 return std::nullopt;
             }
-            return jsView->unsharedBuffer();
+            // A copy: the view's buffer can hold more than the view shows.
+            if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span())) {
+                return bytes;
+            }
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSC::throwOutOfMemoryError(&globalObject, scope);
         }
         return std::nullopt;
     }

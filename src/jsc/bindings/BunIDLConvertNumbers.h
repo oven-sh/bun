@@ -89,6 +89,7 @@ private:
             if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
                 if (auto result = Bun::Detail::tryBigIntToInt<Largest>(value)) {
                     ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
+                    return {};
                 }
             }
             ctx.throwBigIntOutOfRange(globalObject, scope, minInt, maxInt);
@@ -100,7 +101,7 @@ private:
         }
 
         double number = value.asNumber();
-        if (number > maxSafeInteger || number < -maxSafeInteger) {
+        if (!(number <= maxSafeInteger && number >= -maxSafeInteger)) {
             ctx.throwNumberNotInteger(globalObject, scope, number);
             return {};
         }

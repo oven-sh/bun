@@ -54,7 +54,7 @@ struct Converter<Bun::BindgenCustomEnforceRange<NumericType, Min, Max, Kind>>
             }
             unrestricted = value.asNumber();
 
-            if (unrestricted != std::round(unrestricted)) {
+            if (!std::isfinite(unrestricted) || unrestricted != std::round(unrestricted)) {
                 // ERR_OUT_OF_RANGE "an integer"
                 Bun::ERR::OUT_OF_RANGE(scope, &lexicalGlobalObject, exceptionThrower(), "an integer"_s, value);
                 return 0;

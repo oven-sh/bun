@@ -148,7 +148,7 @@ const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string)
   bigint: { ofValue: value => `${value}.isBigInt32()`, ofCell: "type == JSC::HeapBigIntType" },
   string: { ofCell: "type == JSC::StringType" },
   stringObject: { ofCell: "type == JSC::StringObjectType || type == JSC::DerivedStringObjectType" },
-  array: { ofCell: "type == JSC::ArrayType || type == JSC::DerivedArrayType" },
+  array: { ofCell: "type == JSC::ArrayType" },
   arrayBuffer: { ofCell: "type == JSC::ArrayBufferType" },
   arrayBufferView: { ofCell: "JSC::isTypedArrayTypeIncludingDataView(type)" },
 };
@@ -220,7 +220,8 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     ${member} = ::std::move(*converted);
     result.tag = ${i};
     return;
-}`;
+}
+RETURN_IF_EXCEPTION(scope, void());`;
       if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
       const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "");
       return `result.tag = ${i};
@@ -250,7 +251,7 @@ namespace Generated {
 // A member for each alternative, so that the one \`tag\` names is converted where it stays. A large one is made when chosen.
 struct ${name} {
 ${cppDefaultConstructor(name)}
-${held.map(a => `    ${a.type.convertsInPlace ? `::std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
+${held.map(a => `    ${a.type.convertsInPlace ? `::std::optional<${implementationType(a.type)}> ${a.name}` : `${implementationType(a.type)} ${a.name} {}`};`).join("\n")}
     ::std::uint8_t tag;
 };
 struct Extern${name} {

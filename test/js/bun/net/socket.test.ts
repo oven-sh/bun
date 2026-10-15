@@ -2,6 +2,7 @@ import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
+import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -6563,6 +6564,41 @@ it("socket and tls options are not read from Object.prototype", async () => {
     expect(server.hostname).toBe("127.0.0.1");
   } finally {
     for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
+  }
+});
+
+it("a view of part of a buffer as a tls option is read as the view", () => {
+  const { privateKey: otherKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const listen = (key: unknown) =>
+    Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { key, cert: tls.cert } as any });
+  // OpenSSL reads the first key it finds, which does not go with the certificate.
+  const both = Buffer.concat([Buffer.from(otherKey), Buffer.from(tls.key)]);
+  expect(() => listen(both)).toThrow("KEY_TYPE_MISMATCH");
+  const [offset, length] = [both.byteOffset + Buffer.byteLength(otherKey), Buffer.byteLength(tls.key)];
+  for (const view of [
+    both.subarray(Buffer.byteLength(otherKey)),
+    new Uint8Array(both.buffer, offset, length),
+    new DataView(both.buffer, offset, length),
+  ]) {
+    listen(view).stop(true);
+    listen([view]).stop(true);
+  }
+});
+
+it("Array.prototype as a tls option is none of the types one takes", () => {
+  for (const name of ["key", "cert", "ca", "crl"]) {
+    expect(() =>
+      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
+      }),
+    );
   }
 });
 

@@ -353,24 +353,54 @@ it("userInfo ignores options that are not an object, like Node", () => {
   }
 });
 
-it("setPriority without arguments throws ERR_MISSING_ARGS", () => {
+it("setPriority with an undefined priority takes the first argument as the priority", () => {
   expect(() => os.setPriority()).toThrow(
-    expect.objectContaining({ name: "TypeError", code: "ERR_MISSING_ARGS", message: "Not enough arguments" }),
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "priority" argument must be of type number. Received undefined',
+    }),
   );
+  expect(() => os.setPriority(20, undefined)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "priority" is out of range. It must be >= -20 and <= 19. Received 20',
+    }),
+  );
+  const priority = os.getPriority();
+  os.setPriority(priority, undefined);
+  expect(os.getPriority()).toBe(priority);
 });
 
-it("native functions are not constructors", () => {
-  for (const name of [
-    "freemem",
-    "getPriority",
-    "homedir",
-    "hostname",
-    "loadavg",
-    "release",
-    "setPriority",
-    "totalmem",
-    "userInfo",
-  ]) {
-    expect(() => new os[name]()).toThrow(TypeError);
+it("an infinite pid or priority is not an integer", () => {
+  for (const value of [Infinity, -Infinity, NaN, 1.5]) {
+    expect(() => os.getPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "pid" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+    expect(() => os.setPriority(value)).toThrow(
+      expect.objectContaining({
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "priority" is out of range. It must be an integer. Received ${value}`,
+      }),
+    );
+  }
+});
+
+it("with new, each function does what it does in Node", () => {
+  expect(new os.loadavg()).toBeArrayOfSize(3);
+  expect(new os.networkInterfaces()).toEqual(os.networkInterfaces());
+  expect(new os.userInfo()).toEqual(os.userInfo());
+  for (const name of ["getPriority", "homedir", "hostname", "uptime"]) {
+    expect(new os[name]()).toBeObject();
+  }
+  expect(() => new os.setPriority()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  for (const name of ["freemem", "totalmem", "release", "version"]) {
+    expect(() => new os[name]()).toThrow("is not a constructor");
   }
 });

@@ -70,7 +70,7 @@ test("a tool's line of the record, for each kind of identity", () => {
   const image = images.find(image => image.os === "linux" && image.role === "build")!;
   const lines = tools(image).map(recordedTool);
   expect(lines).toContain(`tool nodejs: pinned ${pins.nodejs.version}`);
-  expect(lines).toContain("tool llvm: packageDatabase");
+  expect(lines).toContain("tool packages: packageDatabase");
   expect(lines).toContain("tool glibc-sysroot: observed");
   expect(lines).toContain("tool record-image: configuration");
   expect(lines).toContain("tool prefetch: notRecorded decided by the commit being built, not by this file");
@@ -144,8 +144,6 @@ test("the record a Windows bake writes", () => {
     `Add-Content -Path 'C:\\bun-image.txt' -Encoding ascii -Value @(`,
     ...written.map((line, index) => `  '${line}'${index < written.length - 1 ? "," : ""}`),
     ")",
-    `if (-not (Get-Content "$BAKE_DIR\\observed\\visual-studio")) { throw 'bootstrap: nothing was observed for visual-studio' }`,
-    `Get-Content "$BAKE_DIR\\observed\\visual-studio" | ForEach-Object { "observed visual-studio: $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
     `scoop export | Out-String | ConvertFrom-Json | Select-Object -ExpandProperty apps | ForEach-Object { "$($_.Name) $($_.Version)" } | Out-File -Encoding ascii "$scratch\\packages"`,
     // Scoop's exit code: a query that failed must not leave a record without its packages.
     'if ($LASTEXITCODE -ne 0) { throw "bootstrap: scoop exited with code $LASTEXITCODE" }',

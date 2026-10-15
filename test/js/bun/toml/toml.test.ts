@@ -932,7 +932,7 @@ describe("TOML.stringify", () => {
   test("a long header path stays in root-first order", () => {
     const segments = Array.from({ length: 200 }, (_, i) => "k" + i);
     let table: object = {};
-    for (let i = segments.length; i-- > 0; ) table = { [segments[i]]: table };
+    for (let i = segments.length; i-- > 0;) table = { [segments[i]]: table };
     expect(TOML.stringify(table)).toBe(`[${segments.join(".")}]\n`);
   });
 

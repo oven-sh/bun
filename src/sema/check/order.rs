@@ -7,8 +7,8 @@
 //! query first. So a top-level query starts by resolving the calls that enclose its subject,
 //! outermost first, and the result does not depend on the caller.
 
-use super::Checker;
 use super::root_declaration;
+use super::{Checker, Query};
 use crate::bind::{Parent, PatParent};
 use crate::hir::{ExprId, FnId, PatId};
 use crate::program::FileId;
@@ -23,7 +23,8 @@ impl Checker<'_, '_> {
     #[inline]
     /// Returns whether anything may have been computed.
     pub(super) fn prepare_query_for_expr(&mut self, file: FileId, e: ExprId) -> bool {
-        if !self.is_top_level_query() || e.is_none() {
+        // The calls around what is refused are refused.
+        if !self.is_top_level_query() || e.is_none() || self.is_refused(Query::Expr(file, e)) {
             return false;
         }
         // Nothing is computed without a query being made.

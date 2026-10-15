@@ -545,6 +545,7 @@ impl<Id> ComptimeClap<Id> {
             positional: None,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
         };
 
         while let Some(arg) = stream.next()? {

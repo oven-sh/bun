@@ -632,6 +632,47 @@ describe("util", () => {
   });
 });
 
+it("inspect() does not use isMapIterator and isSetIterator of the writable node:util/types", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const types = require("node:util/types");
+        const calls = { isMapIterator: 0, isSetIterator: 0 };
+        for (const name of Object.keys(calls)) {
+          const original = types[name];
+          types[name] = value => (calls[name]++, original(value));
+        }
+        // Loaded after the replacement.
+        const { inspect } = require("node:util");
+        const map = new Map([["a", 1]]);
+        const set = new Set([1]);
+        const inspected = [map.keys(), map.entries(), set.values(), set.entries(), { [Symbol.iterator]() {} }].map(v => inspect(v));
+        console.log(JSON.stringify({ inspected, calls }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      inspected: [
+        "[Map Iterator] { 'a' }",
+        "[Map Entries] { [ 'a', 1 ] }",
+        "[Set Iterator] { 1 }",
+        "[Set Entries] { [ 1, 1 ] }",
+        "{ Symbol(Symbol.iterator): [Function: [Symbol.iterator]] }",
+      ],
+      calls: { isMapIterator: 0, isSetIterator: 0 },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });

@@ -4,6 +4,8 @@ use crate::PrintErr;
 use crate::Printer;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::LengthValue as Length;
+use crate::css_values::number::NonNegative;
+use crate::generics::Parse as _;
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
@@ -15,15 +17,15 @@ pub struct TextShadow {
     /// The y offset of the text shadow.
     pub(crate) y_offset: Length,
     /// The blur radius of the text shadow.
-    pub(crate) blur: Length,
+    pub(crate) blur: NonNegative<Length>,
     /// The spread distance of the text shadow.
-    pub(crate) spread: Length, // added in Level 4 spec
+    pub(crate) spread: NonNegative<Length>, // added in Level 4 spec
 }
 
 impl TextShadow {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
-        type Lengths = (Length, Length, Length, Length);
+        type Lengths = (Length, Length, NonNegative<Length>, NonNegative<Length>);
         let mut lengths: Option<Lengths> = None;
 
         loop {
@@ -31,9 +33,21 @@ impl TextShadow {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
                     let horizontal = Length::parse(i)?;
                     let vertical = Length::parse(i)?;
-                    let blur = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
-                    let spread = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
-                    Ok((horizontal, vertical, blur, spread))
+                    let blur = i.try_parse(NonNegative::<Length>::parse).ok();
+                    // A rejected blur radius must not be reinterpreted as a spread.
+                    let spread = if blur.is_some() {
+                        i.try_parse(NonNegative::<Length>::parse)
+                            .ok()
+                            .unwrap_or_else(|| NonNegative(Length::zero()))
+                    } else {
+                        NonNegative(Length::zero())
+                    };
+                    Ok((
+                        horizontal,
+                        vertical,
+                        blur.unwrap_or_else(|| NonNegative(Length::zero())),
+                        spread,
+                    ))
                 });
 
                 if let Ok(v) = value {
@@ -69,13 +83,13 @@ impl TextShadow {
         dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
-        if self.blur != Length::zero() || self.spread != Length::zero() {
+        if self.blur != NonNegative(Length::zero()) || self.spread != NonNegative(Length::zero()) {
             dest.write_char(b' ')?;
-            self.blur.to_css(dest)?;
+            self.blur.0.to_css(dest)?;
 
-            if self.spread != Length::zero() {
+            if self.spread != NonNegative(Length::zero()) {
                 dest.write_char(b' ')?;
-                self.spread.to_css(dest)?;
+                self.spread.0.to_css(dest)?;
             }
         }
 
@@ -91,8 +105,8 @@ impl TextShadow {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)
-            && self.blur.is_compatible(browsers)
-            && self.spread.is_compatible(browsers)
+            && self.blur.0.is_compatible(browsers)
+            && self.spread.0.is_compatible(browsers)
     }
 
     pub(crate) fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {

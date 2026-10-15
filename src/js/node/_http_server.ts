@@ -3486,8 +3486,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
-  // Node's write_() drops the chunk of a destroyed response, and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
-  if (chunk && this.destroyed && !this.finished) chunk = undefined;
+  // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on
+  // with the head unsent: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+  const droppedChunk = !!chunk && this.destroyed && !this.finished;
+  if (droppedChunk) chunk = undefined;
 
   if (hasServerResponseFinished(this, chunk, callback, true)) {
     return this;
@@ -3541,12 +3543,18 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState, true);
+  if (!droppedChunk) callWriteHeadIfObservable(this, headerState, true);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    this._header = " ";
+    // The head still counts as sent (Node's _implicitHeader() runs before _writeRaw() sees the dead socket),
+    // except when the chunk of a destroyed response was dropped above and no writeHead() came before.
+    // headersSent and _header move together.
+    if (!droppedChunk || headerState !== NodeHTTPHeaderState.none) {
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      this._header = " ";
+    }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
     this.emit("prefinish");
@@ -3737,6 +3745,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
     // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
+    // Node's _implicitHeader() ran before that, so the head counts as sent.
+    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
     return false;
   }
 

@@ -1274,6 +1274,104 @@ test("res.write()/end() after req.socket.destroy() inside the handler", async ()
   }
 });
 
+// Node.js's headersSent is `!!res._header`. end() on a dead socket still renders the head through
+// _implicitHeader(), except when write_() dropped the chunk of a destroyed response and returned
+// before it. Express's res.download() error path (send checks headersSent, then calls setHeader)
+// relies on the two agreeing. https://github.com/oven-sh/bun/issues/44925
+describe("headersSent after the client went away", () => {
+  function headerSample(res: ServerResponse) {
+    let setHeader = "ok";
+    try {
+      res.setHeader("X-Late", "1");
+    } catch (e) {
+      setHeader = (e as NodeJS.ErrnoException).code!;
+    }
+    return {
+      headersSent: res.headersSent,
+      header: res._header === null ? null : "set",
+      finished: res.finished,
+      setHeader,
+    };
+  }
+
+  // res 'close' has run, so res.destroyed is true when the handler ends it.
+  async function endFromSocketClose(chunk: string | undefined, writeHeadFirst = false) {
+    const { promise: sampled, resolve } = Promise.withResolvers<ReturnType<typeof headerSample>>();
+    const server = createServer((req, res) => {
+      if (writeHeadFirst) res.writeHead(200);
+      req.socket.on("close", () => {
+        res.statusCode = 500;
+        res.end(chunk);
+        resolve(headerSample(res));
+      });
+      client.destroy();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    try {
+      return await sampled;
+    } finally {
+      server.close();
+    }
+  }
+
+  test("res.end(chunk) of a destroyed response leaves the headers unsent and setHeader() works", async () => {
+    expect(await endFromSocketClose("late")).toEqual({
+      headersSent: false,
+      header: null,
+      finished: true,
+      setHeader: "ok",
+    });
+  });
+
+  test("res.end(chunk) of a destroyed response after writeHead() keeps the headers sent", async () => {
+    expect(await endFromSocketClose("late", true)).toEqual({
+      headersSent: true,
+      header: "set",
+      finished: true,
+      setHeader: "ERR_HTTP_HEADERS_SENT",
+    });
+  });
+
+  test("res.end() of a destroyed response marks the headers sent", async () => {
+    expect(await endFromSocketClose(undefined)).toEqual({
+      headersSent: true,
+      header: "set",
+      finished: true,
+      setHeader: "ERR_HTTP_HEADERS_SENT",
+    });
+  });
+
+  // The socket is destroyed but res 'close' has not run yet: res.destroyed is false.
+  test("res.write() and res.end() after req.socket.destroy() inside the handler mark the headers sent", async () => {
+    const { promise: sampled, resolve } = Promise.withResolvers<unknown>();
+    const server = createServer((req, res) => {
+      req.socket.destroy();
+      res.write("body");
+      // Bun renders the head natively, so _header is not compared after write().
+      const { header: _, ...afterWrite } = headerSample(res);
+      res.end("done");
+      resolve({ afterWrite, afterEnd: headerSample(res) });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    try {
+      expect(await sampled).toEqual({
+        afterWrite: { headersSent: true, finished: false, setHeader: "ERR_HTTP_HEADERS_SENT" },
+        afterEnd: { headersSent: true, header: "set", finished: true, setHeader: "ERR_HTTP_HEADERS_SENT" },
+      });
+    } finally {
+      server.close();
+    }
+  });
+});
+
 // Like Node.js's net.Socket: the connection socket (req.socket) emits 'end' for
 // the peer's FIN and 'error' (read ECONNRESET, routed to 'clientError') for the
 // peer's RST, each before 'close'. A close the server starts emits only 'close'.

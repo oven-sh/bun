@@ -1653,34 +1653,40 @@ pub enum Property {
     BorderInlineEndWidth(border::BorderSideWidth),
     BorderTopLeftRadius(
         (
-            css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+            css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
             VendorPrefix,
         ),
     ),
     BorderTopRightRadius(
         (
-            css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+            css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
             VendorPrefix,
         ),
     ),
     BorderBottomLeftRadius(
         (
-            css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+            css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
             VendorPrefix,
         ),
     ),
     BorderBottomRightRadius(
         (
-            css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+            css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
             VendorPrefix,
         ),
     ),
     BorderStartStartRadius(
-        css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+        css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
     ),
-    BorderStartEndRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
-    BorderEndStartRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
-    BorderEndEndRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
+    BorderStartEndRadius(
+        css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
+    ),
+    BorderEndStartRadius(
+        css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
+    ),
+    BorderEndEndRadius(
+        css::css_values::size::Size2D<NonNegative<css::css_values::length::LengthPercentage>>,
+    ),
     BorderRadius((border_radius::BorderRadius, VendorPrefix)),
     BorderImageSource(css::css_values::image::Image),
     BorderImageOutset(
@@ -2864,7 +2870,9 @@ impl Property {
             }
             PropertyId::BorderTopLeftRadius(pre) => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderTopLeftRadius((c, pre)));
@@ -2872,7 +2880,9 @@ impl Property {
             }
             PropertyId::BorderTopRightRadius(pre) => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderTopRightRadius((c, pre)));
@@ -2880,7 +2890,9 @@ impl Property {
             }
             PropertyId::BorderBottomLeftRadius(pre) => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderBottomLeftRadius((c, pre)));
@@ -2888,7 +2900,9 @@ impl Property {
             }
             PropertyId::BorderBottomRightRadius(pre) => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderBottomRightRadius((c, pre)));
@@ -2896,7 +2910,9 @@ impl Property {
             }
             PropertyId::BorderStartStartRadius => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderStartStartRadius(c));
@@ -2904,7 +2920,9 @@ impl Property {
             }
             PropertyId::BorderStartEndRadius => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderStartEndRadius(c));
@@ -2912,7 +2930,9 @@ impl Property {
             }
             PropertyId::BorderEndStartRadius => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderEndStartRadius(c));
@@ -2920,7 +2940,9 @@ impl Property {
             }
             PropertyId::BorderEndEndRadius => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
+                    css::css_values::size::Size2D<
+                        NonNegative<css::css_values::length::LengthPercentage>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderEndEndRadius(c));

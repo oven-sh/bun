@@ -7,8 +7,10 @@ use crate::PropertyHandlerContext;
 use crate::VendorPrefix;
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::length::LengthPercentage;
+use crate::css_values::number::NonNegative;
 use crate::css_values::rect::Rect;
 use crate::css_values::size::Size2D;
+use crate::generics::Parse as _;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
@@ -18,13 +20,13 @@ use bun_alloc::ArenaVecExt as _;
 // `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
-    pub(crate) top_left: Size2D<LengthPercentage>,
+    pub(crate) top_left: Size2D<NonNegative<LengthPercentage>>,
     /// The x and y radius values for the top right corner.
-    pub(crate) top_right: Size2D<LengthPercentage>,
+    pub(crate) top_right: Size2D<NonNegative<LengthPercentage>>,
     /// The x and y radius values for the bottom right corner.
-    pub(crate) bottom_right: Size2D<LengthPercentage>,
+    pub(crate) bottom_right: Size2D<NonNegative<LengthPercentage>>,
     /// The x and y radius values for the bottom left corner.
-    pub(crate) bottom_left: Size2D<LengthPercentage>,
+    pub(crate) bottom_left: Size2D<NonNegative<LengthPercentage>>,
 }
 
 impl BorderRadius {
@@ -45,10 +47,16 @@ impl BorderRadius {
     }
 
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let widths = Rect::<NonNegative<LengthPercentage>>::parse_with(
+            input,
+            NonNegative::<LengthPercentage>::parse,
+        )?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
+            Rect::<NonNegative<LengthPercentage>>::parse_with(
+                input,
+                NonNegative::<LengthPercentage>::parse,
+            )?
         } else {
             // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
@@ -113,16 +121,16 @@ impl BorderRadius {
         }
 
         let (wt, wr, wb, wl) = (
-            &self.top_left.a,
-            &self.top_right.a,
-            &self.bottom_right.a,
-            &self.bottom_left.a,
+            &self.top_left.a.0,
+            &self.top_right.a.0,
+            &self.bottom_right.a.0,
+            &self.bottom_left.a.0,
         );
         let (ht, hr, hb, hl) = (
-            &self.top_left.b,
-            &self.top_right.b,
-            &self.bottom_right.b,
-            &self.bottom_left.b,
+            &self.top_left.b.0,
+            &self.top_right.b.0,
+            &self.bottom_right.b.0,
+            &self.bottom_left.b.0,
         );
 
         write_rect(wt, wr, wb, wl, dest)?;
@@ -140,10 +148,10 @@ impl BorderRadius {
 
 #[derive(Default)]
 pub struct BorderRadiusHandler {
-    pub(crate) top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub(crate) top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub(crate) bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub(crate) bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
+    pub(crate) top_left: Option<(Size2D<NonNegative<LengthPercentage>>, VendorPrefix)>,
+    pub(crate) top_right: Option<(Size2D<NonNegative<LengthPercentage>>, VendorPrefix)>,
+    pub(crate) bottom_right: Option<(Size2D<NonNegative<LengthPercentage>>, VendorPrefix)>,
+    pub(crate) bottom_left: Option<(Size2D<NonNegative<LengthPercentage>>, VendorPrefix)>,
     pub(crate) start_start: Option<Property>,
     pub(crate) start_end: Option<Property>,
     pub(crate) end_end: Option<Property>,
@@ -163,10 +171,10 @@ pub struct BorderRadiusHandler {
 // method) until that protocol impl lands.
 #[inline]
 fn size2d_lp_is_compatible(
-    val: &Size2D<LengthPercentage>,
+    val: &Size2D<NonNegative<LengthPercentage>>,
     browsers: &css::targets::Browsers,
 ) -> bool {
-    val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
+    val.a.0.is_compatible(browsers) && val.b.0.is_compatible(browsers)
 }
 
 macro_rules! maybe_flush {

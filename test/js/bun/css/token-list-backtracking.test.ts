@@ -84,6 +84,20 @@ test.concurrent("deeply nested rgb() with an invalid var() in the alpha parses i
   await expectBounded(css, true);
 });
 
+test.concurrent("deeply nested relative rgb() whose alpha names a channel parses in bounded time", async () => {
+  // Such a color is refused before its alpha is buffered, so the fallback
+  // does not parse the same range a second time.
+  const depth = 96;
+  const open = "rgb(from red r g b / ";
+  const css =
+    ".a{--x:" +
+    Buffer.alloc(open.length * depth, open).toString() +
+    "calc(alpha * var(--o))" +
+    Buffer.alloc(depth, ")").toString() +
+    "}";
+  await expectBounded(css, false);
+});
+
 test("original fuzzer input parses in bounded time and memory", () => {
   // Minimized fuzzer testcase: thousands of unclosed `{` blocks, unterminated
   // strings, and a trailing run of `}`.

@@ -2216,6 +2216,18 @@ impl RelativeComponentParser {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
+    /// Whether `ident` is a channel keyword of the function, or `alpha`.
+    pub(crate) fn is_channel_keyword(&self, ident: &[u8]) -> bool {
+        [
+            self.names.0,
+            self.names.1,
+            self.names.2,
+            b"alpha".as_slice(),
+        ]
+        .into_iter()
+        .any(|name| strings::eql_case_insensitive_ascii_check_length(ident, name))
+    }
+
     fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)

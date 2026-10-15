@@ -3295,7 +3295,7 @@ test("c", () => {
       "a.test.ts",
     ]);
     const said = (JSON.parse(stdout).diagnostics as Record<string, string>[]).map(it => [it.message, it.help, it.note]);
-    expect(said).toEqual([
+    expect(said).toEqual<unknown>([
       [
         "Test is missing a timeout.",
         "Add a numeric third argument, a `{ timeout }` option object, or call `setDefaultTimeout(..)` before this test.",

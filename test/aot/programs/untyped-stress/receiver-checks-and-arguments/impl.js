@@ -1,28 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-    function applies(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (!remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-        }
-    }
-    function doesNotApply(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-        }
-    }
-    const isLowered = "lowered-builtin", isRepeated = "repeats-receiver-check-at-call";
 
     const never = function () { return null; };
     function shadowsExec(pattern) { pattern.exec = never; return "a"; }
@@ -54,8 +34,6 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     check(testAfterDefinition(/a/), false, "exec defined by the argument");
     check(testAfterShadowingTest(/a/), true, "the method was read before it was shadowed");
     check(execAfterStore(/a/), true, "exec was read before it was shadowed");
-    for (let name of ["testAfterCall", "testAfterStore", "testAfterGetter", "testAfterConversion", "testAfterBranch", "testAfterNewPrototype", "testAfterDefinition", "testAfterShadowingTest", "execAfterStore"])
-        applies(name, isLowered, isRepeated);
 
     class Other extends Array { }
     const withInheritedElement = () => ({ __proto__: Array.prototype, 1: "x" });
@@ -83,8 +61,6 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     check(atAfterNewPrototype([1, , 3]), "x", "at: an inherited element");
     check(unshiftAfterNewPrototype([1, , 3]), "0,1,2,3|0,1,x,3", "unshift: an inherited element");
     check(pushAfterNewPrototype([1, , 3]), "1,x,3,7,8", "push: an inherited element");
-    for (let name of ["sliceAfterStore", "sliceAfterCall", "concatAfterStore", "concatAfterSpecies", "spliceAfterStore", "indexOfAfterNewPrototype", "includesAfterNewPrototype", "joinAfterNewPrototype", "atAfterNewPrototype", "unshiftAfterNewPrototype", "pushAfterNewPrototype"])
-        applies(name, isLowered, isRepeated);
 
     function testsVariable(pattern, text) { return pattern.test(text); }
     function testsLiteral(pattern) { return pattern.test("a"); }
@@ -103,10 +79,6 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     check(findsNewObject([1, 2, 3]), false, "a new object");
     check(concatsClosure([1, 2, 3]), 4, "a new function");
     check(joinsWithCaptured([1, 2, 3]), "1+2+3", "a captured variable");
-    for (let name of ["testsVariable", "testsLiteral", "testsSum", "slicesFromSum", "findsVariable", "findsNewObject", "concatsClosure", "joinsWithCaptured"]) {
-        applies(name, isLowered);
-        doesNotApply(name, isRepeated);
-    }
 
     function mapHasAfterStore(map) { return map.has((map.has = () => 42, 1)); }
     function mapGetAfterNewPrototype(map) { return map.get((Object.setPrototypeOf(map, null), 1)); }
@@ -123,10 +95,5 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     }
     check(timeAfterStore(new Date(5)), 5, "Date.prototype.getTime was read before it was shadowed");
     check(sliceOfString("abc", { start: 1 }), "bc", "a string cannot change");
-    for (let name of ["mapHasAfterStore", "mapGetAfterNewPrototype", "setHasAfterNewPrototype", "weakMapGetAfterStore", "timeAfterStore", "sliceOfString"]) {
-        if (usesDataStubs || !name.startsWith("map") && !name.startsWith("set"))
-            applies(name, isLowered);
-        doesNotApply(name, isRepeated);
-    }
 })();
 console.log("passed");

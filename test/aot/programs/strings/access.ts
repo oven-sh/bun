@@ -1,11 +1,15 @@
 // `length`, `[i]`, `at`, `charAt`, `charCodeAt` and `codePointAt` on every internal representation of a string, with every kind of index.
 // CALLS- length_ CallHostFunction|operationAOTTyped(Call|GetByName)
-// CALLS- charCodeAt_ CallHostFunction|CallValue
-// CALLS- charAt_ CallHostFunction|CallValue
-// CALLS- at_ CallHostFunction|CallValue
-// CALLS- codePointAt_ CallHostFunction|CallValue
-// CALLS- element_ CallHostFunction|CallValue|GetByVal
+// On a string the character is read in place. An index that may not be an integer has the general call as its fallback; an index that is an integer needs none.
+// CALLS+ charCodeAt_ CodeUnitOfRope
+// CALLS+ charAt_ CharactersOfRope
+// CALLS+ at_ CharactersOfRope
+// CALLS+ codePointAt_ CharactersOfRope
+// CALLS+ element_ CharactersOfRope
+// CALLS- masked CallHostFunction|CallValue|GetByVal
+// CALLS- sum CallHostFunction|CallValue|GetByVal
 // CALLS+ charCodeAtOfAnything CallHostFunction|CallValue|Call1|operationAOTTypedCall
+// CALLS- charCodeAtOfAnything CodeUnitOfRope|CharactersOfSubstring|CharactersOfRope
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

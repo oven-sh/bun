@@ -1,14 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark || other.startsWith(remark + ":")) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
 
 (function () {
 let log = [];
@@ -72,16 +65,5 @@ drainMicrotasks();
 check(sums.join(), "3,5,7", "a captured variable behind a suspension that is folded away");
 check(done.slice().sort().join(), "0,0,0,1,1,1,2,2,2", "every function finishes");
 check(log.slice().sort().join(), "1,10,11,12,null,undefined", "the values used behind the suspensions that run");
-
-for (let name of ["suspensionIsFoldedAway", "oneOfTwoSuspensionsIsFoldedAway", "scopeIsSavedOnlyAtFoldedSuspension"]) {
-    says(name, "saves-at-definition");
-    says(name, "inlined-call:never");
-    says(name, "folds-branch-after-replacement");
-}
-says("suspensionStays", "saves-at-definition");
-doesNotSay("suspensionStays", "folds-branch-after-replacement");
-says("suspensionIsFoldedAway", "saves-at-definition-without-suspension");
-says("scopeIsSavedOnlyAtFoldedSuspension", "saves-at-definition-without-suspension");
-doesNotSay("suspensionStays", "saves-at-definition-without-suspension");
 })();
 console.log("passed");

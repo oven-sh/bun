@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);
@@ -33,11 +32,4 @@ check(isDifference(3, 1, 2), true, "a difference");
 check(withOneArgument(undefined), true, "one argument, undefined");
 check(withOneArgument(1), false, "one argument");
 
-let remarks = aotRemarks("is");
-if (remarks) {
-    if (!remarks.includes("lowered-builtin:Object.is"))
-        throw new Error("Object.is is not lowered: " + remarks.join(" "));
-    if (aotRemarks("withOneArgument").includes("lowered-builtin:Object.is"))
-        throw new Error("Object.is with one argument is lowered");
-}
 console.log("passed");

@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function putNumber(o) { o.added = 1; }
 function putBoolean(o) { o.added = true; }
 function putUndefined(o) { o.added = undefined; }

@@ -1542,6 +1542,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     JSC::JSObject* object = objectValue.getObject();
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+    if (JSObject* compiledNamespace = Bun::compiledNamespaceBehind(globalObject, object))
+        object = compiledNamespace;
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);

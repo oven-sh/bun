@@ -1,12 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-"use strict";
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function has(name, remark) {
-    const remarks = aotRemarks(name);
-    return remarks ? remarks.some(each => each === remark || each.startsWith(remark + ":")) : null;
 }
 
 (function () {
@@ -42,10 +36,5 @@ function has(name, remark) {
     let message = "none";
     try { globalThis.escapedFunctions[2].call(undefined); } catch (error) { message = error.constructor.name; }
     check(message, "TypeError", "a property of undefined that is this");
-
-    if (has("returnsThis", "compiled")) {
-        check(has("returnsThis", "calls:operationAOTToThis"), true, "a function that anyone may call tests its this");
-        check(has("kindOfThis", "calls:operationAOTToThis"), true, "a function that anyone may call tests its this");
-    }
 })();
 console.log("passed");

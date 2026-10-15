@@ -704,7 +704,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(unset);
         fx.b.seal(set);
         fx.b.switch_to(set);
-        let value = overridden(self, fx, known);
+        let mut value = overridden(self, fx, known);
+        if e.is_some() && fx.is_typed {
+            let checked = self.type_of_value(fx, e);
+            let want = Ty { id: self.ty_of_expression(fx, e, checked), checked };
+            let promised = self.c.awaited(checked);
+            if promised != checked {
+                let id = self.ty_of(promised);
+                self.note_untyped_inflow(Ty { id, checked: promised });
+            }
+            let mut views = Vec::new();
+            self.types_of_layouts_within(want.id, 3, &mut views);
+            for view in views {
+                self.c.note_foreign(view, TypeId::ANY);
+            }
+            fx.checked.insert(value, TypeId::ANY);
+            value = self.fit(fx, value, want, Why::Cast);
+        }
         self.write(fx, result, value);
         fx.b.jump(join);
         fx.b.switch_to(unset);
@@ -1385,7 +1401,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if !self.has_two_bodies(file, func) {
             let whole = self.declare_function_as(file, func, class, Role::Whole);
-            if class.is_none() && self.c.has_second_body_for_the_log(file, func) && self.holds_an_annotated_parameter(file, func) {
+            if (class.is_none() || self.hir(file)[func].kind == hir::FnKind::Arrow) && self.c.has_second_body_for_the_log(file, func) && self.holds_an_annotated_parameter(file, func) {
                 let entry = self.declare_function_as(file, func, class, Role::Beside);
                 if file == self.file {
                     let second = self.declare_function_as(file, func, class, Role::Second);

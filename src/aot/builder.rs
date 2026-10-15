@@ -26,6 +26,13 @@ struct Above {
     parent: BlockId,
     jump: BlockId,
     depth: u32,
+    root: BlockId,
+}
+
+enum Leap {
+    No,
+    To(BlockId),
+    Value(V),
 }
 
 #[derive(Copy, Clone)]
@@ -52,6 +59,7 @@ pub struct FuncBuilder {
     /// block parameter.
     vars: Vec<(TyId, Prediction)>,
     stored: Vec<Stored>,
+    homes: Vec<smallvec::SmallVec<[BlockId; 4]>>,
     /// By variable whose type has no room for `undefined`: see `start_var_as`.
     blanks: FxHashMap<Var, (Op, TyId)>,
     undefined: TyId,
@@ -60,7 +68,7 @@ pub struct FuncBuilder {
 impl FuncBuilder {
     /// `func` has no block yet. The entry block is made, current and sealed. `undefined`: the type of that.
     pub fn new(func: Func, undefined: TyId) -> FuncBuilder {
-        let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states: Vec::new(), vars: Vec::new(), stored: Vec::new(), blanks: FxHashMap::default(), undefined };
+        let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states: Vec::new(), vars: Vec::new(), stored: Vec::new(), homes: Vec::new(), blanks: FxHashMap::default(), undefined };
         let entry = builder.new_block();
         builder.seal(entry);
         builder
@@ -75,6 +83,7 @@ impl FuncBuilder {
     pub fn new_var(&mut self, ty: TyId) -> Var {
         self.vars.push((ty, Prediction::None));
         self.stored.push(Stored::Never);
+        self.homes.push(smallvec::SmallVec::new());
         Var(self.vars.len() as u32 - 1)
     }
 
@@ -146,11 +155,51 @@ impl FuncBuilder {
     /// The value is of the type of the variable: see `Build::write`.
     pub fn write(&mut self, var: Var, value: V) {
         self.states[self.block.idx()].defs.insert(var, value);
+        self.note_home(var, self.block);
         self.stored[var.0 as usize] = match self.stored[var.0 as usize] {
             Stored::Never => Stored::Once(value, self.block),
             Stored::Once(_, home) if home == self.block && self.is_open() => Stored::Once(value, home),
             _ => Stored::Often,
         };
+    }
+
+    fn note_home(&mut self, var: Var, block: BlockId) {
+        let homes = &mut self.homes[var.0 as usize];
+        if homes.len() <= 8 && !homes.contains(&block) {
+            homes.push(block);
+        }
+    }
+
+    fn leap(&self, var: Var, block: BlockId) -> Leap {
+        let homes = &self.homes[var.0 as usize];
+        let (true, Some(here)) = (homes.len() <= 8, self.states[block.idx()].above) else {
+            return Leap::No;
+        };
+        let mut nearest: Option<(u32, bool)> = None;
+        for &home in homes {
+            if self.states[home.idx()].above.is_none_or(|above| above.root != here.root) {
+                continue;
+            }
+            let Some(meet) = self.lowest_common(home, block) else {
+                continue;
+            };
+            if meet == block && home != block {
+                continue;
+            }
+            let depth = self.states[meet.idx()].above.map_or(0, |above| above.depth);
+            let level = if meet == home { (depth, true) } else { (depth + 1, false) };
+            nearest = nearest.max(Some(level));
+        }
+        match nearest {
+            None if here.root != block => Leap::To(here.root),
+            None => Leap::No,
+            Some((depth, _)) if depth >= here.depth => Leap::No,
+            Some((depth, is_home)) => match (self.ancestor_at(block, depth), is_home) {
+                (Some(home), true) => self.states[home.idx()].defs.get(&var).map_or(Leap::No, |&value| Leap::Value(value)),
+                (Some(join), false) => Leap::To(join),
+                (None, _) => Leap::No,
+            },
+        }
     }
 
     fn ancestor_at(&self, mut block: BlockId, depth: u32) -> Option<BlockId> {
@@ -186,9 +235,9 @@ impl FuncBuilder {
             let above = self.states[parent.idx()].above?;
             let jump = self.states[above.jump.idx()].above?;
             let is_even = above.depth - jump.depth == jump.depth - self.states[jump.jump.idx()].above?.depth;
-            Some(Above { parent, jump: if is_even { jump.jump } else { parent }, depth: above.depth + 1 })
+            Some(Above { parent, jump: if is_even { jump.jump } else { parent }, depth: above.depth + 1, root: above.root })
         });
-        self.states[block.idx()].above = Some(placed.unwrap_or(Above { parent: block, jump: block, depth: 0 }));
+        self.states[block.idx()].above = Some(placed.unwrap_or(Above { parent: block, jump: block, depth: 0, root: block }));
     }
 
     pub fn read(&mut self, var: Var) -> V {
@@ -224,12 +273,27 @@ impl FuncBuilder {
                     }
                     break v;
                 }
+                let asks = self.states[block.idx()].preds.len() != 1 || with_one_pred_in_a_row % 4 == 3;
+                match if asks { self.leap(var, block) } else { Leap::No } {
+                    Leap::Value(v) => {
+                        if !awaiting.is_empty() {
+                            found_held.insert(v);
+                        }
+                        break v;
+                    }
+                    Leap::To(root) => {
+                        block = root;
+                        continue;
+                    }
+                    Leap::No => {}
+                }
                 let (is_sealed, preds) = (self.states[block.idx()].is_sealed, self.states[block.idx()].preds.len());
                 if !is_sealed {
                     let param = self.add_param_for(var, block);
                     self.states[block.idx()].incomplete.push((var, param));
                     self.states[block.idx()].defs.insert(var, param);
                     self.stored[var.0 as usize] = Stored::Often;
+                    self.note_home(var, block);
                     break param;
                 }
                 // Or it has come round a circle of blocks that nothing leads into: a loop after a `return`. Each of those has one
@@ -242,6 +306,7 @@ impl FuncBuilder {
                     self.func.blocks[block.idx()].ops.insert(0, v);
                     self.states[block.idx()].defs.insert(var, v);
                     self.stored[var.0 as usize] = Stored::Often;
+                    self.note_home(var, block);
                     break v;
                 }
                 if preds == 1 {
@@ -280,6 +345,7 @@ impl FuncBuilder {
                             }
                             _ => {
                                 self.stored[var.0 as usize] = Stored::Often;
+                                self.note_home(var, join);
                                 param
                             }
                         };

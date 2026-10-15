@@ -1,36 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const objectIsTruthy = "inline-truthiness-of-object", numberDecides = "inline-truthiness-of-number", callsToBoolean = "calls:ToBoolean";
-const comparesNumbers = "inline-comparison-of-numbers-or-undefined", comparesWithInt32 = "inline-relational-comparison-with-int32";
-const barrierForCell = "write-barrier-only-for-cell";
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-
 function Thing(n) { this.n = n; }
 const masquerader = makeMasquerader();
 const foreignMasquerader = createGlobalObject().makeMasquerader();
@@ -59,14 +30,6 @@ check(constructed(ReturnsForeignMasquerader), "yes", "an object that masquerades
 check([0, 1, 2, 3].map(objectOrString).join(), "yes,no,yes,no", "an object or a string");
 check([0, 1, 2, 3].map(objectOrBoolean).join(), "yes,no,yes,no", "an object or a boolean");
 check([0, 1, "", "a", null, undefined, {}, masquerader, foreignMasquerader, NaN, -0, 0n, 1n, Symbol()].map(anything).join(), "no,yes,no,yes,no,no,yes,no,yes,no,no,no,yes,yes", "anything");
-applies(objectOrUndefined, objectIsTruthy);
-applies(objectOrNull, objectIsTruthy);
-applies(constructed, objectIsTruthy);
-applies(objectOrString, objectIsTruthy);
-applies(objectOrBoolean, objectIsTruthy);
-for (let f of [objectOrUndefined, objectOrNull, constructed, objectOrString, objectOrBoolean])
-    doesNotApply(f, callsToBoolean);
-doesNotApply(anything, objectIsTruthy, numberDecides);
 
 function int32OrUndefined(n, given) { let v = given === true ? n | 0 : undefined; return v ? "yes" : "no"; }
 function int32OrNull(n, given) { let v = given === true ? n | 0 : null; return !v ? "no" : "yes"; }
@@ -80,10 +43,6 @@ check([0, -0, NaN, 0.5, -0.5, 1, Infinity, -Infinity, 5e-324, "0", "7"].map(n =>
 check(numberOrUndefined(1, false), "no", "undefined in place of a number");
 check([0, 0.5, NaN].map(n => numberOrNull(n, true)).join(), "no,yes,no", "a number");
 check(numberOrNull(1, false), "no", "null in place of a number");
-applies(int32OrUndefined, numberDecides);
-applies(int32OrNull, numberDecides);
-applies(numberOrUndefined, numberDecides);
-doesNotApply(numberOrNull, numberDecides);
 
 function comparesOptional(a, hasA, b, hasB) {
     let x = hasA ? +a : undefined, y = hasB ? +b : undefined;
@@ -100,8 +59,6 @@ check(comparesOptional(1, true, 1, false), "", "1 and undefined");
 check(comparesOptional(1, false, 1, false), "", "undefined and undefined");
 check(comparesOptionalWithNull(1, false, 1), "<", "null and 1");
 check(comparesOptionalWithNull(1, true, 1), "", "1 and 1");
-applies(comparesOptional, comparesNumbers);
-doesNotApply(comparesOptionalWithNull, comparesNumbers);
 
 function withInt32(x) { return (x < 10 ? "<" : "") + (x <= 10 ? "[" : "") + (x > 10 ? ">" : "") + (x >= 10 ? "]" : ""); }
 function int32First(x) { return (10 < x ? "<" : "") + (10 <= x ? "[" : "") + (10 > x ? ">" : "") + (10 >= x ? "]" : ""); }
@@ -115,11 +72,6 @@ check(values.map(withInt32).join(), "<[,[],>],<[,<[,>],,<[,>],,,<[,<[,<[,>],<[,[
 check(values.map(int32First).join(), ">],[],<[,>],>],<[,,>],<[,,,>],>],>],<[,>],[]", "10 compared with");
 check(order.length, 8, "conversions of the object");
 check(unknownOperands(1, 2) + unknownOperands("b", "a") + unknownOperands("a", "b") + unknownOperands(2.5, {}), "<<", "unknown operands");
-if (usesDataStubs) {
-    applies(withInt32, comparesWithInt32);
-    applies(int32First, comparesWithInt32);
-}
-doesNotApply(unknownOperands, comparesWithInt32, comparesNumbers);
 let thrown = "nothing";
 try { withInt32(Symbol()); } catch (error) { thrown = error.constructor.name; }
 check(thrown, "TypeError", "a symbol compared with 10");
@@ -150,7 +102,4 @@ for (let i = 0; i < 200; ++i) {
     old.setsNumber(i + 0.5);
     check(old.gets(), i, "an Int32 in an old scope");
 }
-applies(old.setsAnything, barrierForCell);
-doesNotApply(old.setsObject, barrierForCell);
-doesNotApply(old.setsNumber, barrierForCell, "calls:WriteBarrier");
 console.log("passed");

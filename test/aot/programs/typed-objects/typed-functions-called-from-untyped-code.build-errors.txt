@@ -1,4 +1,4 @@
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `twice` expects 'number | undefined' and always gets "4".
+error: TS100013: This always throws a TypeError under --aot: argument 1 of `twice` expects 'number' and always gets "4".
 error: TS100013: This always throws a TypeError under --aot: argument 1 of `add` expects 'number' and always gets "2".
 error: TS100013: This always throws a TypeError under --aot: argument 1 of `withDefault` expects 'number | undefined' and always gets "1".
 error: TS100013: This always throws a TypeError under --aot: argument 1 of `optional` expects 'number | undefined' and always gets "x".

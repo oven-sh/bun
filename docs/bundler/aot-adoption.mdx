@@ -9,6 +9,7 @@ description: "Find what changes when your program is compiled ahead of time, fix
 
 - A value that does not match its type throws a `TypeError` at the first parameter, variable, property or return type that it reaches.
 - `value as number` converts: if `value` is `"4"` when the program runs, the result is `4`. The same goes for `as string` and `as boolean`.
+- `{ name: "x" } as User` is not checked at the cast. If the literal lacks a property of `User`, the `TypeError` comes later, when your code reads a missing `number`, `boolean` or numeric enum property. Any other missing property reads `undefined`, as in JavaScript.
 - `x!` throws if `x` is `null` or `undefined`.
 - Built-in objects are immutable.
 
@@ -140,6 +141,8 @@ Found 1 error in 1 file, checked 1 file
 | `TS100015` | a new member on the prototype of a class, or a change to an object that its type does not allow |
 | `TS100017` | `as` on a value that is always of another primitive type       |
 
+In a JavaScript file, one of these inside a `try` block that has a `catch` is the warning `TS100020` and does not stop the build. That is how packages test for a feature: the write throws, and the `catch` falls back. In a TypeScript file it stays an error.
+
 Most checks depend on data that only exists when the program runs. `--aot-explain=throws` lists them, with where the value comes from and how to fix it:
 
 ```bash terminal icon="terminal"
@@ -147,8 +150,8 @@ bun check --aot --aot-explain=throws app.ts
 ```
 
 ```txt
-[aot] type-check 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, may get any; warning; call 4d3156b73eaf; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
-[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, may get any; warning; call 4d3156b73eaf; logged as 19df4e0e09b7; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
+[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; logged as 7e37ac7b188a; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check summary: 3 checks can fail when the program runs, 0 always fail
 ```
@@ -179,10 +182,8 @@ Tests do not see all the data that production sees. Build with `--aot-type-error
 
 | What happens                                                                                                                                              | The line says            | Then                                                        |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
-| A string, number or boolean of the wrong type is passed in a call that names a function or an arrow function declared at the top level of a file: `double(x)` | `continued`              | The call runs as plain JavaScript                           |
-| The same is passed to a function that is called as a value: a callback, a listener, a handler in a table or a `Map`, above all one from another file     | `continued` or `threw`   | Most still throw                                            |
-| The same is passed to a function that is written inside another function, a method, an object literal or a class field, to a named function expression, or to a function that reads `arguments` | `threw`                  | `TypeError`                                                 |
-| The same is passed to an `async` function, a generator, a method, or a function that has `this` or a rest parameter                                       | `threw`                  | `TypeError`                                                 |
+| A string, number or boolean of the wrong type is passed to a function, an arrow function or an `async` function: by name, or as a callback, a listener, a handler in a table or a `Map` | `continued`              | The call runs as plain JavaScript                           |
+| The same is passed to a method of a class or of an object literal, a generator, a constructor, or a function that uses `this`, `arguments`, a rest parameter, `super` or a private name, or that declares a class | `threw`                  | `TypeError`                                                 |
 | A string, number, boolean, `null` or `undefined` of the wrong type reaches a variable, a property or a return type, or comes out of a call or an `await` | `threw`                  | `TypeError`                                                 |
 | `as number`, `as string` or `as boolean` on a value of another of these types                                                                             | `converted`              | The value is converted, as in step 4                        |
 | An object does not match its interface, type literal or class: parsed JSON without a property, an object from a package                                   | `continued` or `threw`   | It depends on the type. Where it goes on, a missing property reads `undefined` |
@@ -191,12 +192,14 @@ Tests do not see all the data that production sees. Build with `--aot-type-error
 | `x!` on `null` or `undefined`                                                                                                                             | `threw`                  | `TypeError`                                                 |
 | A write to a built-in object                                                                                                                              | `threw`                  | `TypeError`                                                 |
 
-To let an object in that does not match, the compiler gives up what it knows about that type, and about every type that can hold one. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. The report does not list every call of a function as a value yet. The call `double(body.visits)` has no line, because it cannot throw in this build:
+To let an object in that does not match, the compiler gives up what it knows about that type, and about every type that can hold one. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. A line of the log has the id of its line in the report. The report does not list a method, a constructor or a setter that is called with `any` yet:
 
 ```txt
+[aot] type-check 4ef4a95ba9d7 enter-function app.ts:1:1 (double): parameter 1 of `double`, which is called as a value or with `any`: expected number, may get any; warning; this log build continues here; fix: give the untyped caller a wrapper that validates, or widen the parameter and narrow inside
+[aot] type-check 4d3156b73eaf enter-argument app.ts:6:13 (module): argument 1 of `double`: expected number, may get any; warning; this log build continues here; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
 [aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; this log build throws here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
 [aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; this log build converts here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
-[aot] type-check summary: 2 checks can fail when the program runs, 0 always fail; behind its line in the log, this build continues at 0, converts at 1 and still throws at 1
+[aot] type-check summary: 4 checks can fail when the program runs, 0 always fail; behind its line in the log, this build continues at 2, converts at 1 and still throws at 1
 ```
 
 <Tabs>
@@ -260,7 +263,7 @@ TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.c
 
 Unlike a line of the log, the message of the `TypeError` contains the value. If you send error messages to a service, it receives that data.
 
-The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the kind `type-mismatch` and the action `threw`.
+The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the action `threw`. Most have the kind `type-mismatch`, and an id of their own: the report of step 2 prints it on the line of the same place, as `logged as 19df4e0e09b7`.
 
 ## Common fixes
 

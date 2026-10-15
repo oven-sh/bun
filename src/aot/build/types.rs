@@ -332,7 +332,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return Declared::part(Part::Array(self.ty_within(element, depth + 1)));
                 }
                 if let Some(extended) = self.c.built_in_extended_by(ty) {
-                    return self.ty_of_built_in(extended, depth);
+                    return self.ty_of_built_in_that_may_say_more(ty, extended, depth);
                 }
                 let mut object = None;
                 for &part in parts.iter() {
@@ -444,7 +444,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return Declared::part(Part::Array(self.ty_within(element, depth + 1)));
         }
         if let Some(extended) = self.c.built_in_extended_by(ty) {
-            return self.ty_of_built_in(extended, depth);
+            return self.ty_of_built_in_that_may_say_more(ty, extended, depth);
         }
         if self.files.flags(target).contains(SymFlags::CLASS)
             && let Some((file, Decl::Class(class))) = self.value_declaration(target)
@@ -485,6 +485,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return Declared::part(Part::Global(name, arguments));
         }
         Declared::any_object()
+    }
+
+    fn ty_of_built_in_that_may_say_more(&mut self, ty: TypeId, built_in: BuiltIn, depth: u8) -> Declared {
+        let is_called_and_says_more = matches!(built_in, BuiltIn::Function)
+            && (!self.c.signatures(ty, false).is_empty() || !self.c.signatures(ty, true).is_empty())
+            && self.c.members(ty).is_some_and(|members| !members.shape().props.is_empty());
+        if is_called_and_says_more { Declared::any_object() } else { self.ty_of_built_in(built_in, depth) }
     }
 
     fn ty_of_built_in(&mut self, built_in: BuiltIn, depth: u8) -> Declared {

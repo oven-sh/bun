@@ -19,6 +19,8 @@ use std::rc::Rc;
 pub(crate) enum HostLoads {
     Addon,
     Database,
+    Manifest,
+    OfType(Atom),
 }
 
 #[derive(Copy, Clone)]
@@ -224,9 +226,29 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.shared.constants.assets.get(path).or_else(|| self.shared.constants.texts.get(path)).map(Vec::as_slice)
     }
 
+    pub(crate) fn type_told_to_the_host(&self, file: FileId, specifier: Atom) -> Option<Atom> {
+        let hir = self.hir(file);
+        if specifier.is_none() || hir.import_attributes.is_empty() || self.shared.constants.own_paths.is_none() || self.shared.bundle.is_none() {
+            return None;
+        }
+        if self.text_imported_as(file, specifier).is_some() || self.imported_file(file, specifier).is_some() {
+            return None;
+        }
+        hir.ids(hir.body).find_map(|stmt| match hir[stmt].kind {
+            StmtKind::Import(import) if hir[import].spec == specifier => self.type_attribute(file, stmt),
+            _ => None,
+        })
+    }
+
     pub(crate) fn asset_the_host_loads(&self, file: FileId, specifier: Atom) -> Option<HostLoads> {
+        if let Some(said) = self.type_told_to_the_host(file, specifier) {
+            return Some(HostLoads::OfType(said));
+        }
         let path = self.shared.bundle.as_ref()?.resolved.get(&(file, self.c.atoms().bytes(specifier)))?.0;
-        self.shared.constants.assets.get(path)?;
+        let stands_for_it = self.shared.constants.assets.get(path)?;
+        if stands_for_it.len() == 25 && stands_for_it[16] == b'H' {
+            return Some(HostLoads::Manifest);
+        }
         let hir = self.hir(file);
         let said = hir.ids(hir.body).find_map(|stmt| match hir[stmt].kind {
             StmtKind::Import(import) if hir[import].spec == specifier => self.type_attribute(file, stmt),
@@ -418,6 +440,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             if name == Some(known::default) && self.text_imported_as(file, specifier).is_some() {
                 return ImportSource::Text { file, specifier };
+            }
+            if self.type_told_to_the_host(file, specifier).is_some() {
+                return if name == Some(known::default) { ImportSource::Text { file, specifier } } else { ImportSource::Unknown };
+            }
+            if matches!(self.asset_the_host_loads(file, specifier), Some(HostLoads::Manifest)) {
+                return ImportSource::Unknown;
             }
             let is_asset = match decl {
                 Decl::ImportDefault(import) | Decl::ImportNamespace(import) => self.is_import_of_asset(file, hir[import].stmt),
@@ -613,11 +641,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         names.into_iter().map(|name| (name, self.source_of_export(file, name))).filter(|export| !matches!(export.1, ImportSource::Unknown)).collect()
     }
 
+    fn is_exported_by_the_code_alone(&self, exported: Sym) -> bool {
+        self.hir(exported.file).is_js
+            && self.files.flags(exported).contains(SymFlags::ALIAS)
+            && !self.files.means(exported, SymFlags::VALUE)
+            && self.files.resolve_alias(exported).is_some_and(|target| {
+                let declared = self.files.decls(target);
+                declared.iter().any(|&(of, _)| self.hir(of).kind == FileKind::Declaration)
+            })
+    }
+
     /// `is_exported_whole`: by way of an `export *`, which leaves out `default`.
     fn add_exported_names(&self, file: FileId, is_exported_whole: bool, names: &mut Vec<Atom>, added: &mut FxHashSet<Atom>, seen: &mut Vec<FileId>) {
         let mut add = |name: Atom, exported: Sym, is_exported_whole: bool| {
             let flags = self.files.symbol_flags(exported);
-            if flags.intersects(SymFlags::VALUE)
+            if (flags.intersects(SymFlags::VALUE) || self.is_exported_by_the_code_alone(exported))
                 && name != known::export_equals
                 && !(is_exported_whole && name == known::default)
                 && added.insert(name)

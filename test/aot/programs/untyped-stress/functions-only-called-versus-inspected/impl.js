@@ -1,34 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const doesNotEscape = "function-does-not-escape";
-const isCompiled = !!aotRemarks("check");
-function remarksOf(name) {
-    let remarks = aotRemarks(name);
-    if (!remarks && isCompiled)
-        throw new Error("no remarks for " + name);
-    return remarks;
-}
-function staysClosed(...names) {
-    for (let name of names) {
-        let remarks = remarksOf(name);
-        if (remarks && !remarks.includes(doesNotEscape))
-            throw new Error(name + " escapes: " + remarks.join(" "));
-    }
-}
-function isOpened(...names) {
-    for (let name of names) {
-        let remarks = aotRemarks(name);
-        if (remarks && remarks.includes(doesNotEscape))
-            throw new Error(name + " does not escape, but it gets out");
-    }
-}
-function callsDirectly(caller, callee) {
-    let remarks = remarksOf(caller);
-    if (remarks && !["direct-call:", "inlined-call:", "inlined-closure:"].some(prefix => remarks.includes(prefix + callee)))
-        throw new Error(caller + " does not call " + callee + " directly: " + remarks.join(" "));
 }
 
 let leaked;
@@ -82,11 +54,6 @@ check(isRightOfInstanceof({ }) + isRightOfInstanceof(5), "55 is none55 is none",
 check(isTested(), "56,function,false,true,truthy,false,false", "tests of a function");
 check(readsBuiltinMethods(), "55,true,true,true,true,true", "methods of Function.prototype");
 check(callsThroughCall(), 56, "Function.prototype.call");
-staysClosed("sumOnlyCalled", "sumWithName", "sumAsConstructor", "sumTested", "sumCompared", "sumWithMethods");
-callsDirectly("onlyCalls", "sumOnlyCalled");
-callsDirectly("readsNameAndLength", "sumWithName");
-callsDirectly("isRightOfInstanceof", "sumAsConstructor");
-callsDirectly("callsThroughCall", "sumThroughCall");
 
 function checkSum(name) {
     check(leaked.name, name, "what got out");
@@ -95,7 +62,6 @@ function checkSum(name) {
     check(leaked(null), 0, name + " of null");
     check(leaked({ valueOf() { return 1; } }), 1, name + " of an object");
     leaked = undefined;
-    isOpened(name);
 }
 
 function leftOfInstanceof() {
@@ -222,7 +188,6 @@ function isAskedAbout(key) {
     return [sumAskedById(1) + sumAskedByValue(2) + sumDeletedById(3) + sumDeletedByValue(4), "me" in sumAskedById, key in sumAskedByValue, delete sumDeletedById.name, delete sumDeletedByValue[key], sumDeletedById.name].join();
 }
 check(isAskedAbout("length"), "20," + !isSealed + ",true,true,true,", "in and delete");
-isOpened("sumAskedById", "sumAskedByValue", "sumDeletedById", "sumDeletedByValue");
 
 function hasStaticProperty() {
     function sumWithStaticProperty(n) { return n <= 0 ? 0 : n + sumWithStaticProperty(n - 1); }
@@ -230,10 +195,6 @@ function hasStaticProperty() {
     return sumWithStaticProperty(10) + sumWithStaticProperty.displayName;
 }
 check(hasStaticProperty(), "55sum", "a property stored on a function");
-if (isSealed)
-    staysClosed("sumWithStaticProperty");
-else
-    isOpened("sumWithStaticProperty");
 
 function asyncThroughGetter() {
     async function kindOfAsync(a) { return typeof a === "number" ? "number" : "other"; }
@@ -247,8 +208,6 @@ if (!isSealed)
     leaked("x").then(value => settled.push(value));
 drainMicrotasks();
 check(settled.join(), isSealed ? "number" : "number,other", "a getter of the prototype of async functions");
-if (!isSealed)
-    isOpened("kindOfAsync");
 leaked = undefined;
 
 function add1LeftOfInstanceof() {
@@ -302,9 +261,6 @@ function calledByHasInstance() {
     return sum + " " + (readsX instanceof Caller);
 }
 check(calledByHasInstance(), "3 true", "a function that Symbol.hasInstance calls");
-isOpened("add1First", "kindOf", "firstOf", "addBoth", "readsX");
-if (!isSealed)
-    isOpened("add1Second", "add1Third");
 
 function arrowRightOfInstanceof(value) {
     const sumArrow = n => n <= 0 ? 0 : n + sumArrow(n - 1);
@@ -329,7 +285,5 @@ function throughProxy() {
 check(throughProxy(), "55undefined", "a proxy behind Function.prototype");
 if (hasProxy)
     checkSum("sumThroughProxy");
-if (!isSealed)
-    isOpened("sumThroughProxy");
 check(hasProxy, !isSealed && !builtinsAreFixed, "whether Function.prototype can get another prototype");
 console.log("passed");

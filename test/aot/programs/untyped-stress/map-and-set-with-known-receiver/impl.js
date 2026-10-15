@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...args) {
     try {
@@ -32,7 +10,6 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
-const lowered = "lowered-builtin", allocates = "allocates-collection-directly", inlineSize = "inline-size-of-collection", constructs = "direct-host-construct";
 function ropeOf(a, b) { return a + b; }
 noInline(ropeOf);
 
@@ -73,15 +50,6 @@ for (let round = 0; round < 4; ++round) {
     check(Reflect.construct(Map, [], Table) instanceof Table, true, "Reflect.construct with another new.target");
     check(emptyWeakMap() instanceof WeakMap, true, "new WeakMap()");
 }
-applies(emptyMap, allocates + ":Map");
-applies(emptySet, allocates + ":Set");
-applies(emptySizes, allocates + ":Map", allocates + ":Set", inlineSize);
-for (let f of [emptyMap, emptySet, emptySizes])
-    doesNotApply(f, constructs);
-for (let f of [mapOf, setOf, mapOfUndefined, shadowedMap, constructed, emptyTable, emptyWeakMap])
-    doesNotApply(f, allocates);
-applies(mapOf, constructs);
-applies(emptyWeakMap, constructs);
 
 const big = 2n ** 70n, symbol = Symbol(), object = {};
 function keys(round) {
@@ -146,15 +114,6 @@ for (let round = 0; round < 3; ++round) {
     check(hasInCondition("other"), "no", "has in a condition");
     check(wrongCounts(), "[object Map],undefined,true,undefined,[object Map],undefined,3,true,false,3,2", "calls with too few or too many arguments");
 }
-const usesDataStubs = (remarksOf(sizeOfAnything) || []).includes("calls:GetById");
-for (let f of [exercises, fills])
-    applies(f, inlineSize);
-if (usesDataStubs) {
-    for (let f of [exercises, fills])
-        applies(f, lowered + ":Map.prototype.get", lowered + ":Map.prototype.has", lowered + ":Map.prototype.set", lowered + ":Set.prototype.has", lowered + ":Set.prototype.add", "calls:MapGet", "calls:MapHas", "calls:MapSet", "calls:SetHas", "calls:SetAdd");
-    applies(inTailPosition, lowered + ":Map.prototype.get");
-    applies(hasInCondition, lowered + ":Set.prototype.has");
-}
 
 function ofUnknownReceiver(table, key) { return table.get(key) + "," + table.has(key) + "," + table.size; }
 function addsToUnknownReceiver(table, key) { return table.add(key).size; }
@@ -170,8 +129,6 @@ for (let round = 0; round < 3; ++round) {
     check(sizeOfAnything({ size: "mine" }), "mine", "the size of an object");
     check(sizeOfAnything("text"), undefined, "the size of a string");
 }
-for (let f of [ofUnknownReceiver, addsToUnknownReceiver, sizeOfAnything])
-    doesNotApply(f, lowered, inlineSize, "calls:MapGet", "calls:MapHas", "calls:SetAdd");
 
 function withOwnMethods(replace) {
     let map = new Map(), set = new Set();
@@ -269,7 +226,4 @@ function keepsNewValues() {
 }
 noInline(keepsNewValues);
 check(keepsNewValues(), true, "new objects in an old map and an old set");
-applies(keepsNewValues, inlineSize);
-if (usesDataStubs)
-    applies(keepsNewValues, "calls:MapSet", "calls:SetAdd", "calls:MapGet");
 console.log("passed");

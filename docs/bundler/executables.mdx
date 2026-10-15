@@ -429,6 +429,7 @@ The compiler sees your whole program at once, and the executable differs from on
 - **`bun:ffi` callbacks are unavailable.** `dlopen` and calls into native code work. `JSCallback` needs the JIT, and throws a `TypeError` that says so.
 - **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not. [Debugging and profiling with `--aot`](/bundler/aot-debugging) lists what each tool shows.
 - **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
+- **An HTML file is imported with `import page from "./page.html"`**, as in a [full-stack executable](#full-stack-executables). `import()`, `require()` and `import * as` of an HTML file are errors at build time.
 - **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
 - **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.
 
@@ -443,9 +444,13 @@ bun run --aot ./app.ts
 bun test --aot
 ```
 
-Your program sees the paths of its source files, as it does with `bun run`. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
+Your program sees the paths of its source files, as it does with `bun run`. An HTML import is what it is in an executable: Bun bundles the page once, before your program starts, and there is no hot reloading. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
 
-`bun test --aot` compiles each test file, with what it imports, before it runs it. Expect seconds per file. It does not support `--isolate` and `--parallel`. To find what your tests would hit under `--aot` without that cost, use [`bun test --aot-audit`](/bundler/aot-adoption).
+`bun test --aot` compiles each test file, with what it imports, before it runs it. Expect seconds per file. It does not support `--isolate`, `--parallel` and `--rerun-each`. Neither it nor `bun run --aot` supports `--watch` and `--hot`, because the program is built before it runs and is not built again when a file changes. Bun reports an error for each of these flags. `--coverage` is ignored, with a warning.
+
+A `--preload` script is compiled with your program. If its nearest `tsconfig.json` is not the one your entry point uses, it is left out, because a build uses a single `tsconfig.json`. Bun interprets it, like other code that the build cannot see.
+
+To find what your tests would hit under `--aot` without that cost, use [`bun test --aot-audit`](/bundler/aot-adoption).
 
 #### Typed versions of packages
 

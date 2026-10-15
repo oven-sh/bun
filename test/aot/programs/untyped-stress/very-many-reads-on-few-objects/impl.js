@@ -1,18 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTDataStubs;
-const isEager = !!options.useAOTGuardsAtEveryGuessedPlaceForTesting;
-function hasGuards(f, expected) {
-    if (!isOn)
-        return;
-    check(remarksOf(f).includes("guards-over-whole-function"), expected, f.name + " has guards over the whole function");
-    check(remarksOf(f).includes("no-guards-over-whole-function:too-few-places-for-its-size"), !expected, f.name + " has too few places for its size");
 }
 
 const kept = [];
@@ -52,6 +40,4 @@ for (let i = 0; i < 200; ++i) {
     check(dense(x, y, z), i + 33, "dense");
     check(sparse(x, y, z, i), reference(i + 33, i), "sparse");
 }
-hasGuards(dense, true);
-hasGuards(sparse, isEager);
 console.log("passed");

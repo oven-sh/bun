@@ -1,35 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function readsProperty(o) { return o.property; }
-noInline(readsProperty);
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const byBits = "strict-equality-of-different-kinds-by-bits", callsStub = "calls:StrictEqual";
-
 function stringVersusNumber(i, j, text, n) { let a = i === 0 ? "" + text : undefined; let b = j === 0 ? +n : undefined; return a === b; }
 function stringVersusNumberNegated(i, j, text, n) { let a = i === 0 ? "" + text : null; let b = j === 0 ? +n : null; return a !== b; }
 function bigIntVersusString(i, j, text) { let a = i === 0 ? 5n : undefined; let b = j === 0 ? "" + text : undefined; return a === b ? "same" : "different"; }
@@ -46,10 +18,6 @@ check([[0, 0], [0, 1], [1, 0], [1, 1]].map(([i, j]) => stringVersusNumberNegated
 check([[0, 0], [0, 1], [1, 0], [1, 1]].map(([i, j]) => bigIntVersusString(i, j, "5")).join(), "different,different,different,same", "a BigInt or undefined and a string or undefined");
 check([[0, 0], [0, 1], [1, 0], [1, 1]].map(([i, j]) => numberVersusBigInt(i, j, 5)).join(), "different,different,different,same", "a number or null and a BigInt or null");
 check([0, 1, 2].map(i => [0, 1, 2].map(j => stringVersusObjectOrNumber(i, j, "1", 1) ? 1 : 0).join("")).join(), "000,010,001", "a string, an object or undefined and a number, an object or undefined");
-for (let f of differentKinds) {
-    applies(f, byBits);
-    doesNotApply(f, callsStub);
-}
 
 function stringVersusString(i, j, text, other) { let a = i === 0 ? "" + text : undefined; let b = j === 0 ? "" + other : undefined; return a === b; }
 function numberVersusNumber(i, j, n, m) { let a = i === 0 ? +n : null; let b = j === 0 ? +m : null; return a === b; }
@@ -68,10 +36,6 @@ check([[0, 0], [0, 1], [1, 0], [1, 1]].map(([i, j]) => bigIntVersusBigInt(i, j, 
 check(bigIntVersusBigInt(0, 0, 5, 6), false, "different BigInts");
 check(objectVersusString(0, "[object Object]") || objectVersusString(1, "undefined"), false, "an object or undefined and a string");
 check([[0, 0], [0, 1], [1, 0], [1, 1]].map(([i, j]) => looselyStringVersusNumber(i, j, "5", 5)).join(), "true,false,false,true", "a string and a number that are loosely equal");
-for (let f of sameKinds)
-    doesNotApply(f, byBits);
-if (usesDataStubs)
-    applies(stringVersusString, callsStub);
 
 function strictlyEqual(a, b) { return a === b; }
 function joined(a, b) { return a + b; }
@@ -137,6 +101,4 @@ for (let i = 0; i < count; ++i) {
     let values = awkwardValues();
     check(strictlyEqual(values[i], values[i]), i !== 8, "value " + i + " and itself");
 }
-if (usesDataStubs)
-    applies(strictlyEqual, callsStub);
 console.log("passed");

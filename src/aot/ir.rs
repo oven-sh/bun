@@ -799,6 +799,8 @@ pub struct Program {
     /// A prediction.
     pub functions_by_key: Vec<(StrId, StrId, FuncId)>,
     pub accesses_of_one_row: Vec<(FuncId, V)>,
+    pub parameters_as_written: rustc_hash::FxHashMap<u32, Vec<TyId>>,
+    pub may_be_handed_what_says_nothing: rustc_hash::FxHashSet<u32>,
     pub known_places: Vec<(FuncId, V, u32)>,
     /// Runs the program.
     /// What is run first, by entry point, in their order. The first is that of the executable itself. One of them is run in an instance of the program, once.

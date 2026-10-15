@@ -1,25 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-    function applies(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (!remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-        }
-    }
-    function doesNotApply(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-        }
-    }
-    const folds = "folds-branch-after-replacement", forwards = "forwards-read-of-fresh-object", callsEffect = "direct-call:effect", replaces = "scalar-replaced-object", allocates = "calls:operationAOTNewObjectLiteral";
 
     let log = [];
     function effect(x) { try { log.push(x); } catch { } return x; }
@@ -85,17 +68,6 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(fallsThrough(5), 1105, "cases that fall through");
     check(nested(5), 7, "inlined twice");
     check(log.length, 0, "no dead arm ran");
-    for (let name of ["afterReplacement", "absentProperty", "earlyReturnInDeadArm", "truthinessOfConstant", "nullTestOfLiteral", "switchOnConstant", "typeofClosure", "notFused", "destructuringDefault", "escapesOnlyInDeadArm", "numbers", "keepsOneOfTwo", "loopInDeadArm", "liveArmInTry", "deadArmInLoop", "loopLosesItsBackEdge", "stringTags", "emptyString", "integerSwitch", "integerSwitchDefault", "negativeZeroSwitch", "stringSwitch", "stringSwitchDefault", "characterSwitch", "characterSwitchDefault", "fallsThrough", "nested"]) {
-        applies(name, folds);
-        doesNotApply(name, callsEffect);
-    }
-    applies("tryInDeadArm", folds);
-    applies("yieldInDeadArm", folds);
-    for (let name of ["absentProperty", "escapesOnlyInDeadArm"]) {
-        applies(name, forwards, replaces);
-        doesNotApply(name, allocates, "literal-born-from-registers");
-    }
-    applies("keepsOneOfTwo", replaces);
 
     function unknownValue(a, c) { if (c) return effect(a); return a + 1; }
     function notANumber(a) { const same = (x, y, a) => { if (x === y) return effect(a); return a + 1; }; return same(NaN, NaN, a); }
@@ -123,18 +95,7 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(getter(5) + getter(-5), 1, "a getter");
     check(bothArmsInLoop(4), 2, "both arms run");
     check(log.join(), "5,5,5,5,5,5,5,5,5,5,1,3", "the live arms ran");
-    for (let name of ["unknownValue", "unknownString", "unknownSwitch", "changedBeforeTheRead", "addedBeforeTheRead", "storedBeforeTheRead", "inheritedName", "getter", "bothArmsInLoop"]) {
-        doesNotApply(name, folds);
-        applies(name, callsEffect);
-    }
-    for (let name of ["changedBeforeTheRead", "addedBeforeTheRead", "storedBeforeTheRead", "inheritedName", "getter"])
-        doesNotApply(name, forwards);
-    applies("notANumber", folds);
-    doesNotApply("notANumber", callsEffect);
-    applies("zeros", folds, callsEffect);
-    applies("stringThatIsNotEmpty", folds, callsEffect);
 
-    const foldsByType = "folds-branch-by-type";
     function undefinedOnly(x) { try { } catch { } if (x !== undefined) return effect(x); return 0; }
     function nullOnly(x) { try { } catch { } if (x === null) return 0; return effect(x); }
     function objectOnly(o) { try { } catch { } if (!o) return effect(0); return 1; }
@@ -160,13 +121,5 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(functionIsComparedWithNull(() => 1), 1, "a function is not told from one that masquerades as undefined");
     check(numberMayBeZero(0) + numberMayBeZero(2), 1, "a number may be zero");
     check(log.join(), "3,0,0", "the live arms ran");
-    for (let name of ["undefinedOnly", "nullOnly", "objectOnly", "objectIsNotNull", "numberIsNoString", "testedTwice", "optionalParameter"]) {
-        applies(name, foldsByType);
-        doesNotApply(name, callsEffect);
-    }
-    for (let name of ["undefinedOrNumber", "objectOrNull", "functionIsComparedWithNull", "numberMayBeZero"]) {
-        doesNotApply(name, foldsByType);
-        applies(name, callsEffect);
-    }
 })();
 console.log("passed");

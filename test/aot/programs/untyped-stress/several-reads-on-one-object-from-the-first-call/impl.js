@@ -1,18 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTDataStubs;
-function takesDataAfresh(f, hasGuards, expected) {
-    if (!isCompiled)
-        return;
-    check(remarksOf(f).includes("guards-over-whole-function"), isOn && hasGuards, f.name + " has guards over the whole function");
-    check(remarksOf(f).includes("generic-copy-takes-data-afresh"), isOn && expected, f.name + "'s generic copy takes its data afresh");
 }
 
 const kept = [];
@@ -73,8 +61,4 @@ for (let round = 0; round < 60; ++round) {
     check(readsThreeInLoop(makeItem(1), makeItem(2), makeItem(3), 2), "tag1key2child3tag1key2child3", "readsThreeInLoop");
     check(readsOne(makeItem(round)), "tag" + round, "readsOne");
 }
-takesDataAfresh(readsThree, true, true);
-takesDataAfresh(readsThreeAndMore, true, true);
-takesDataAfresh(readsThreeInLoop, true, false);
-takesDataAfresh(readsOne, false, false);
 console.log("passed");

@@ -1,28 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(Object.is(actual, -0) ? "-0" : actual) + " instead of " + String(Object.is(expected, -0) ? "-0" : expected));
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
-}
-
-function has(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes(remark))
-        throw new Error(name + " lacks " + remark);
-}
-
-function hasNot(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && remarks.includes(remark))
-        throw new Error(name + " has " + remark);
 }
 
 function errorOf(run)
@@ -96,11 +75,6 @@ function test()
     }
     check(errorOf(() => ofAnything(null)), TypeError, "null");
     check(errorOf(() => ofAnything(5)), TypeError, "a number");
-
-    for (const name of ["dash", "hasDash", "accent", "afterTypeof"])
-        has(name, "searches-for-one-character-inline");
-    for (const name of ["euro", "nothing", "two", "from", "variable", "last", "ofAnything"])
-        hasNot(name, "searches-for-one-character-inline");
 }
 test();
 console.log("passed");

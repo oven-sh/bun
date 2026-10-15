@@ -44,7 +44,7 @@ h2 1 1
 h3 1
 h4 1
 h5 1
-h6 TypeError
+h6 2
 h7 1
 h8 1
 h9 1

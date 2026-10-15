@@ -178,6 +178,7 @@ impl Tier {
 }
 
 pub(super) struct Site {
+    pub(super) ordinal: Option<u32>,
     pub(super) is_at_an_entry: bool,
     pub(super) call: Option<(u32, u32)>,
     pub(super) risk: &'static str,
@@ -209,7 +210,7 @@ impl Site {
     fn in_a_log_build(&self) -> &'static str {
         if self.name == "as-convert" {
             "converts"
-        } else if self.goes_on_when_logged() || self.risk == "open" {
+        } else if self.goes_on_when_logged() || self.risk == "open" || self.ordinal.is_some() && self.is_at_an_entry && self.risk != "closed" {
             "continues"
         } else {
             "throws"
@@ -1666,6 +1667,8 @@ struct Report<'a, 'b> {
     call: Option<(u32, u32)>,
     is_at_an_entry: bool,
     has_an_entry_that_tests: &'b [bool],
+    ordinal: Option<u32>,
+    handed_over: Option<(u32, u32, String)>,
 }
 
 impl<'a> Report<'a, '_> {
@@ -2008,6 +2011,7 @@ impl<'a> Report<'a, '_> {
         if verdict == Verdict::Fine {
             *self.fine.entry(kind).or_default() += 1;
             (self.name, self.value, self.risk, self.call, self.is_at_an_entry) = (None, String::new(), "", None, false);
+            (self.ordinal, self.handed_over) = (None, None);
             return;
         }
         let tier = match self.tier_of(kind, origin) {
@@ -2024,8 +2028,9 @@ impl<'a> Report<'a, '_> {
         };
         let door = self.door_of(origin);
         let door = if door.is_empty() && tier == Tier::Outside && func.module.is_some() { format!("values typed `any` in {}", String::from_utf8_lossy(self.flow.program.strs.get(self.flow.program.modules[func.module.idx()].display_path))) } else { door };
-        let origin = self.origin(origin);
-        let what = match func.op(self.at) {
+        let ordinal = self.ordinal.take();
+        let origin = self.handed_over.take().or_else(|| self.origin(origin));
+        let what = match if ordinal.is_some() { None } else { func.op(self.at) } {
             Some(Op::Coerce { why, .. }) => match why {
                 Why::Store => "Store",
                 Why::Cast | Why::CastFresh => "As",
@@ -2037,6 +2042,7 @@ impl<'a> Report<'a, '_> {
             }
             .to_owned(),
             Some(_) => format!("{:?}", crate::format::record(&func.values[self.at.idx()].def).opcode),
+            None if ordinal.is_some() => "Claim".to_owned(),
             None => String::new(),
         };
         let function = if func.kind == FuncKind::Module {
@@ -2050,7 +2056,7 @@ impl<'a> Report<'a, '_> {
         let risk = std::mem::take(&mut self.risk);
         let call = self.call.take();
         let is_at_an_entry = std::mem::take(&mut self.is_at_an_entry);
-        self.sites.push(Site { is_at_an_entry, call, risk, door, name, what, function, value, tier, module: func.module.0, pos, kind, verdict, expected, found, detail, origin });
+        self.sites.push(Site { ordinal, is_at_an_entry, call, risk, door, name, what, function, value, tier, module: func.module.0, pos, kind, verdict, expected, found, detail, origin });
     }
 
     fn look_at(&mut self, index: usize, reached: &[Option<Facts>], keys: &mut Keys) {
@@ -2234,6 +2240,33 @@ impl<'a> Report<'a, '_> {
                             let into = self.name_of_function(callee);
                             self.look_at_functions_handed(index, func, pos, args, &format!("{into}, which is untyped"));
                         }
+                        if callee.has(func_flags::IS_TYPED) && !callee.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+                            let ahead = args.len().saturating_sub(callee.params.len());
+                            let blind: Vec<usize> = (args.iter().skip(ahead).zip(&callee.params).enumerate()).filter(|(_, (argument, parameter))| self.flow.says_something(**parameter) && !self.flow.says_something(func.ty(**argument))).map(|(number, _)| number).collect();
+                            if !blind.is_empty() {
+                                self.add_parameters_of(*called, &blind, (func.module.0, pos, "this call, which hands it `any`".to_owned()));
+                            }
+                        }
+                        let behind_the_entry = callee.values.iter().filter(|_| callee.has(func_flags::IS_GENERAL_ENTRY)).find_map(|value| match &value.def {
+                            Def::Op(Op::CallDirect { func: typed, .. }) => Some(*typed),
+                            _ => None,
+                        });
+                        if let Some(behind) = behind_the_entry {
+                            let typed = &program.funcs[behind.idx()];
+                            let written = program.parameters_as_written.get(&(behind.idx() as u32)).unwrap_or(&typed.params);
+                            let named = self.name_of_function(typed);
+                            let ahead = args.len().saturating_sub(callee.params.len());
+                            for (number, (&argument, &parameter)) in args.iter().skip(ahead).zip(&typed.params).enumerate() {
+                                if !self.flow.says_something(parameter) || self.flow.says_something(func.ty(argument)) {
+                                    continue;
+                                }
+                                let wanted = program.tys.get(parameter).clone();
+                                (self.ordinal, self.name, self.is_at_an_entry) = (Some(number as u32), Some("enter-argument"), true);
+                                self.risk = self.risk_of(&wanted);
+                                let origin = self.flow.origin_of(index, argument);
+                                self.add(func, pos, Kind::Argument, Verdict::Unknown, text_of(program, program.tys.get(written[number]), 0), "any".to_owned(), format!("argument {} of {named}", number + 1), origin);
+                            }
+                        }
                     }
                     &Op::ElemSet { obj, key, .. } => {
                         let is_iterator = matches!(func.op(before_casts(func, key)), Some(&Op::PropGet { obj: holder, name }) if program.strs.get(name) == b"iterator" && self.flow.names_global(func, holder, b"Symbol"));
@@ -2400,15 +2433,49 @@ impl<'a> Report<'a, '_> {
     }
 
     fn look_at_functions_handed(&mut self, index: usize, func: &Func, pos: u32, args: &[V], into: &str) {
-        let program = self.flow.program;
         for &argument in args {
-            let Some(handed) = self.function_named(index, func, argument) else { continue };
-            let made = &program.funcs[handed.idx()];
-            let checked: Vec<String> = made.params.iter().filter(|&&parameter| self.flow.says_something(parameter) && !program.tys.get(parameter).has_objects()).map(|&parameter| text_of(program, program.tys.get(parameter), 0)).collect();
-            if made.has(func_flags::IS_TYPED) && !checked.is_empty() {
-                let named = self.name_of_function(made);
-                self.add(func, pos, Kind::Parameter, Verdict::Unknown, checked.join(", "), "any".to_owned(), format!("{named} is handed to {into}: its parameters are checked at every call from there"), 0);
+            if let Some(handed) = self.function_named(index, func, argument) {
+                let all: Vec<usize> = (0..self.flow.program.funcs[handed.idx()].params.len()).collect();
+                self.add_parameters_of(handed, &all, (func.module.0, pos, format!("whoever calls it: it is handed to {into}")));
             }
+        }
+    }
+
+    fn add_parameters_of(&mut self, handed: FuncId, numbers: &[usize], from: (u32, u32, String)) {
+        let program = self.flow.program;
+        let made = &program.funcs[handed.idx()];
+        if !made.has(func_flags::IS_TYPED) || made.module.is_none() {
+            return;
+        }
+        let one_by_one = made.params.len() - usize::from(made.has(func_flags::HAS_REST) && !made.params.is_empty());
+        let named = self.name_of_function(made);
+        let written = program.parameters_as_written.get(&(handed.idx() as u32)).unwrap_or(&made.params);
+        if !self.has_an_entry_that_tests[handed.idx()] {
+            let checked: Vec<String> = written[..one_by_one].iter().filter(|&&parameter| self.flow.says_something(parameter)).map(|&parameter| text_of(program, program.tys.get(parameter), 0)).collect();
+            if !checked.is_empty() {
+                (self.ordinal, self.handed_over) = (Some(0), Some(from));
+                self.add(made, made.pos, Kind::Parameter, Verdict::Unknown, checked.join(", "), "any".to_owned(), format!("the parameters of {named}, which is called as a value or with `any`"), 0);
+            }
+            return;
+        }
+        for &number in numbers.iter().filter(|&&number| number < one_by_one) {
+            let parameter = made.params[number];
+            if !self.flow.says_something(parameter) {
+                continue;
+            }
+            let wanted = program.tys.get(parameter).clone();
+            (self.ordinal, self.handed_over) = (Some(number as u32), Some(from.clone()));
+            self.risk = self.risk_of(&wanted);
+            self.is_at_an_entry = true;
+            self.add(made, made.pos, Kind::Parameter, Verdict::Unknown, text_of(program, program.tys.get(written[number]), 0), "any".to_owned(), format!("parameter {} of {named}, which is called as a value or with `any`", number + 1), 0);
+        }
+    }
+
+    fn add_parameters_of_functions_that_have_an_entry(&mut self, logs_type_errors: bool) {
+        let program = self.flow.program;
+        for index in (0..program.funcs.len()).filter(|&index| if self.has_an_entry_that_tests[index] { logs_type_errors } else { program.may_be_handed_what_says_nothing.contains(&(index as u32)) }) {
+            let all: Vec<usize> = (0..program.funcs[index].params.len()).collect();
+            self.add_parameters_of(FuncId::new(index), &all, (u32::MAX, 0, String::new()));
         }
     }
 
@@ -2432,6 +2499,10 @@ impl<'a> Report<'a, '_> {
                 continue;
             }
             let one_by_one = callee.params.len() - usize::from(callee.has(func_flags::HAS_REST) && !callee.params.is_empty());
+            let blind: Vec<usize> = (callee.params[..one_by_one].iter().zip(handed).enumerate()).filter(|(_, (parameter, argument))| self.flow.says_something(**parameter) && !self.flow.says_something(func.ty(**argument))).map(|(number, _)| number).collect();
+            if !blind.is_empty() && !callee.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+                self.add_parameters_of(called, &blind, (func.module.0, pos, "this call, which hands it `any`".to_owned()));
+            }
             for (number, (&parameter, &argument)) in callee.params[..one_by_one].iter().zip(handed).enumerate() {
                 if !self.flow.says_something(parameter) {
                     continue;
@@ -2449,7 +2520,8 @@ impl<'a> Report<'a, '_> {
                 let named = self.name_of_function(callee);
                 self.risk = self.risk_of(&wanted);
                 self.is_at_an_entry = callee.has(func_flags::IS_VALUE) && self.has_an_entry_that_tests[called.idx()];
-                self.add(func, pos, Kind::Argument, verdict, text_of(program, &wanted, 0), found, format!("argument {} of {named}", number + 1), origin);
+                let written = program.parameters_as_written.get(&(called.idx() as u32)).map_or(wanted.clone(), |written| self.flow.get(written[number]).clone());
+                self.add(func, pos, Kind::Argument, verdict, text_of(program, &written, 0), found, format!("argument {} of {named}", number + 1), origin);
             }
         }
     }
@@ -2657,7 +2729,7 @@ impl Asked {
     }
 
     fn report<'a, 'b>(&'b self, flow: &'b mut Flow<'a>) -> Report<'a, 'b> {
-        Report { flow, sites: Vec::new(), fine: FxHashMap::default(), class_of: &self.class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests: &self.has_an_entry_that_tests }
+        Report { flow, ordinal: None, handed_over: None, sites: Vec::new(), fine: FxHashMap::default(), class_of: &self.class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests: &self.has_an_entry_that_tests }
     }
 
     fn look_at(&self, report: &mut Report<'_, '_>, run: Range<usize>) {
@@ -2688,8 +2760,8 @@ fn settle_the_sites(mut sites: Vec<Site>, passes_somewhere: &FxHashSet<(u32, u32
             site.verdict = site.verdict.min(Verdict::Unknown);
         }
     }
-    sites.sort_by(|a, b| (a.module, a.pos, a.kind, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, std::cmp::Reverse(b.verdict))));
-    sites.dedup_by(|next, kept| (next.module, next.pos, next.kind) == (kept.module, kept.pos, kept.kind));
+    sites.sort_by(|a, b| (a.module, a.pos, a.kind, a.ordinal, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, b.ordinal, std::cmp::Reverse(b.verdict))));
+    sites.dedup_by(|next, kept| (next.module, next.pos, next.kind, next.ordinal) == (kept.module, kept.pos, kept.kind, kept.ordinal));
     sites
 }
 
@@ -2717,7 +2789,7 @@ pub(super) fn always_fail(program: &Program, in_parallel: InParallel<'_>) -> Vec
     settle_the_sites(sites, &passes_somewhere, true).into_iter().filter(|site| site.verdict == Verdict::Wrong).collect()
 }
 
-fn find(program: &Program, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind, usize)>, usize, usize, [f64; 3]) {
+fn find(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind, usize)>, usize, usize, [f64; 3]) {
     let begun = Instant::now();
     let setup = Setup::new(program, true, in_parallel);
     let asked = Asked::new(program, &setup);
@@ -2738,6 +2810,7 @@ fn find(program: &Program, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind
     let settled = begun.elapsed().as_secs_f64();
     let mut report = asked.report(&mut flow);
     asked.look_at(&mut report, 0..program.funcs.len());
+    report.add_parameters_of_functions_that_have_an_entry(logs_type_errors);
     let is_sure = is_settled && !report.flow.has_given_up;
     let sites = settle_the_sites(report.sites, &report.passes_somewhere, is_sure);
     let fine = Kind::ALL.iter().map(|&kind| (kind, report.fine.get(&kind).copied().unwrap_or(0))).collect();
@@ -2745,7 +2818,7 @@ fn find(program: &Program, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind
 }
 
 pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {
-    let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, in_parallel);
+    let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, logs_type_errors, in_parallel);
     let path_of = |module: u32| String::from_utf8_lossy(program.strs.get(program.modules[module as usize].display_path)).into_owned();
     let mut lines = Vec::new();
     let mut ordinals: FxHashMap<(u32, u32, &'static str), usize> = FxHashMap::default();
@@ -2753,10 +2826,13 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
     let many = |tier: Tier| sites.iter().filter(|site| site.tier == tier && site.verdict != Verdict::Wrong).count();
     let folds_the_outside = !as_json && !lists_all && many(Tier::Outside) > MOST_LISTED;
     for site in &sites {
-        let ordinal = {
-            let next = ordinals.entry((site.module, site.pos, site.name)).or_insert(0usize);
-            *next += 1;
-            *next - 1
+        let ordinal = match site.ordinal {
+            Some(ordinal) => ordinal as usize,
+            None => {
+                let next = ordinals.entry((site.module, site.pos, site.name)).or_insert(0usize);
+                *next += 1;
+                *next - 1
+            }
         };
         if !lists_all && site.tier == Tier::Typed && site.verdict != Verdict::Wrong {
             continue;
@@ -2781,6 +2857,8 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
             let (line, column) = line_and_column(site.module, at);
             id_of(line, column, "enter-argument", parameter as usize)
         });
+        let is_named_by_the_table = site.name == "as-late-use" || matches!(site.kind, Kind::Argument | Kind::Variable | Kind::Field | Kind::Return | Kind::Integer | Kind::Read | Kind::Element | Kind::Result | Kind::Await | Kind::Arithmetic);
+        let logged_as = (!logs_type_errors && is_named_by_the_table).then(|| id_of(line, column, "type-mismatch", 0));
         if as_json {
             let mut text = format!("{{\"aot\":\"type-check\",\"id\":\"{}\",\"kind\":\"{}\",\"group\":\"{}\",\"what\":\"{}\",\"file\":\"{}\",\"line\":{line},\"col\":{column},\"fn\":\"{}\"", id, site.name, site.kind.text(), site.what, escaped(&shown_path), escaped(&site.function));
             for (key, value) in [("expected", &site.expected), ("got", &site.found), ("value", &site.value), ("detail", &site.detail)] {
@@ -2790,6 +2868,9 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
             }
             if let Some(id_of_call) = &id_of_call {
                 let _ = write!(text, ",\"callId\":\"{id_of_call}\"");
+            }
+            if let Some(logged_as) = &logged_as {
+                let _ = write!(text, ",\"loggedAs\":\"{logged_as}\"");
             }
             let _ = write!(text, ",\"action\":\"{verdict}\",\"category\":\"{}\"", site.tier.text());
             if logs_type_errors {
@@ -2820,6 +2901,9 @@ pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, 
         }
         if let Some(id_of_call) = &id_of_call {
             let _ = write!(text, "; call {id_of_call}");
+        }
+        if let Some(logged_as) = &logged_as {
+            let _ = write!(text, "; logged as {logged_as}");
         }
         if let Some((path, line, column, what)) = &from {
             let _ = write!(text, "; value from {what} at {path}:{line}:{column}");

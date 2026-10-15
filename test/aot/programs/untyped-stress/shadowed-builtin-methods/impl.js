@@ -1,28 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-    function applies(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (!remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-        }
-    }
-    function doesNotApply(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-        }
-    }
-    const isLowered = "lowered-builtin", isOnlyTested = "boolean-result-of-method-that-is-only-tested", callsToBoolean = "calls:ToBoolean";
     const answer = () => 42;
 
     function byStore() { const map = new Map(); map.has = answer; return map.has(1); }
@@ -69,9 +49,5 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     Object.setPrototypeOf(inheriting, { has(key) { return "inherited " + key; }, size: -1 });
     check([returnsHas(plain, 1), returnsHas(plain, 2), returnsHas(shadowed, 1), returnsHas(inheriting, 1)].join(), "true,false,own 1,inherited 1", "maps from outside");
     check([returnsSize(plain), returnsSize(shadowed), returnsSize(inheriting)].join(), "1,1,-1", "sizes of maps from outside");
-    if (usesDataStubs)
-        applies("returnsHas", isLowered);
-    doesNotApply("returnsHas", isOnlyTested);
-
 })();
 console.log("passed");

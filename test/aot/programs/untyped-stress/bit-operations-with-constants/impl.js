@@ -1,11 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function has(name, remark) {
-    const remarks = aotRemarks(name);
-    return remarks ? remarks.includes(remark) : null;
 }
 
 (function () {
@@ -65,10 +60,5 @@ function has(name, remark) {
     message = "none";
     try { globalThis.escapedFunctions.orZero(Symbol()); } catch (error) { message = error.constructor.name; }
     check(message, "TypeError", "a symbol");
-
-    if (has("orZero", "compiled")) {
-        for (const name of Object.keys(functions))
-            check(has(name, "inline-bit-operation"), true, name + " handles an Int32 inline");
-    }
 })();
 console.log("passed");

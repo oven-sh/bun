@@ -1,7 +1,7 @@
 // `delete` of a field that is required in the type the object was created as throws a TypeError, whichever way it is done.
 interface Author { nick: string; age?: number }
-interface Doc { id: number; title?: string; pages?: number; draft?: boolean; author: Author; editor?: Author | null; refs: number[] }
-function make(id: number): Doc { return { id, title: "t" + id, pages: id * 10, draft: false, author: { nick: "a" + id }, editor: null, refs: [id] } }
+interface Doc { id: number; title?: string; pages?: number; author: Author; editor?: Author | null; refs: number[] }
+function make(id: number): Doc { return { id, title: "t" + id, pages: id * 10, author: { nick: "a" + id }, editor: null, refs: [id] } }
 function dropAny(o: any, k: string): boolean { return delete o[k] }
 const three = make(4)
 try { delete (three as { author?: Author }).author; console.log("through a type in which it is optional: no error") } catch (e) { console.log("through a type in which it is optional:", e instanceof TypeError ? "TypeError" : "other " + e) }

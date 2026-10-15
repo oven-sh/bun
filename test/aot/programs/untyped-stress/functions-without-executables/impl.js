@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function makeArrow(k) { return x => x + k; }
 function makeFunction(k) { return function named(x, y) { return x + y + k; }; }
@@ -88,32 +66,5 @@ check(results.join(), "100,101,102", "called from a microtask");
 let other = createGlobalObject();
 check(other.Function("f", "return f(41)")(makeArrow(1)), 42, "called from another realm");
 
-function makeGenerator() { return function* () { yield 1; }; }
-function makeAsync() { return async function () { return 1; }; }
-function makeAsyncArrow() { return async () => 1; }
-function makeClass() { return class { }; }
 function makeGetter() { return Object.getOwnPropertyDescriptor({ get x() { return 1; } }, "x").get; }
-if (isAOTCompiled(makeArrow)) {
-    for (let make of [makeArrow, makeFunction, makeMethod, makeConstructor, makeFunctionComparator]) {
-        let f = make(1);
-        check(hasExecutable(f), false, "what " + make.name + " returns has no executable");
-        if (make != makeConstructor) {
-            f(1, 2);
-            check(hasExecutable(f), false, "nor after it was called from compiled code");
-        }
-    }
-    for (let make of [makeGenerator, makeAsync, makeAsyncArrow, makeClass])
-        check(hasExecutable(make()), true, "what " + make.name + " returns has an executable");
-    check(hasExecutable(print), true, "a host function has one");
-    check(hasExecutable(Array.prototype.map), true, "a builtin has one");
-    check(hasExecutable(makeArrow(1).bind(null)), true, "a bound function has one");
-    for (let [what, use] of [["name", f => f.name], ["length", f => f.length], ["toString", f => String(f)], ["prototype", f => f.prototype], ["new", f => new f], ["a property", f => { f.x = 1; }]]) {
-        let f = makeFunction(1);
-        use(f);
-        check(f(1, 2), 4, "a function still works after " + what);
-    }
-    let called = makeArrow(1);
-    [1].map(called);
-    check(called(1), 2, "a function still works after a builtin called it");
-}
 console.log("passed");

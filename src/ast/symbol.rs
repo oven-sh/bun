@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 
 use crate::ImportItemStatus;
@@ -104,19 +104,11 @@ pub struct Symbol {
 
     /// Packed boolean state — see [`SymbolFlags`].
     pub flags: SymbolFlags,
-
-    pub escapes: AtomicU8,
-}
-
-impl Symbol {
-    pub const ESCAPES: u8 = 1;
-    pub const IS_EXTERNALLY_VISIBLE: u8 = 2;
 }
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct SymbolFlags: u8 {
-        const IS_LAZY_NAMESPACE = 1 << 0;
         const MUST_START_WITH_CAPITAL_LETTER_FOR_JSX = 1 << 1;
 
         /// Certain symbols must not be renamed or minified. For example, the
@@ -187,7 +179,6 @@ impl Default for Symbol {
             kind: Kind::Other,
             import_item_status: ImportItemStatus::None,
             flags: SymbolFlags::empty(),
-            escapes: AtomicU8::new(0),
         }
     }
 }
@@ -374,18 +365,18 @@ impl Kind {
 /// A part's uses of one symbol: an estimated count, plus whether any of them
 /// was added without its scope being recorded in `Ast::scope_uses` (by the
 /// linker or a transform), in which case the renamer must assume the symbol
+/// may be printed in any scope of the part. Packed into one word because
+/// every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
 pub struct Use(u32);
 
 impl Use {
     const UNSCOPED: u32 = 1 << 31;
-    const AS_VALUE: u32 = 1 << 30;
-    const FLAGS: u32 = Self::UNSCOPED | Self::AS_VALUE;
 
     /// `count` uses whose scope is not on record.
     pub const fn unscoped(count: u32) -> Use {
-        Use(if count >= Self::AS_VALUE {
-            (Self::AS_VALUE - 1) | Self::UNSCOPED
+        Use(if count >= Self::UNSCOPED {
+            u32::MAX
         } else {
             count | Self::UNSCOPED
         })
@@ -393,7 +384,7 @@ impl Use {
 
     #[inline]
     pub const fn count_estimate(self) -> u32 {
-        self.0 & !Self::FLAGS
+        self.0 & !Self::UNSCOPED
     }
 
     #[inline]
@@ -401,34 +392,21 @@ impl Use {
         self.0 & Self::UNSCOPED != 0
     }
 
-    #[inline]
-    pub const fn is_used_as_value(self) -> bool {
-        self.0 & Self::FLAGS != 0
-    }
-
     /// The parser's `record_usage`: the use's scope is on record.
     #[inline]
-    pub fn add_scoped(&mut self, count: u32, preserves_value: bool) {
-        debug_assert!(self.count_estimate() + count < Self::AS_VALUE);
+    pub fn add_scoped(&mut self, count: u32) {
+        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
         self.0 += count;
-        if !preserves_value {
-            self.0 |= Self::AS_VALUE;
-        }
-    }
-
-    #[inline]
-    pub fn note_value(&mut self) {
-        self.0 |= Self::AS_VALUE;
     }
 
     #[inline]
     pub fn subtract(&mut self, count: u32) {
-        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::FLAGS);
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
     }
 
     pub fn merge(&mut self, other: Use) {
         let count = self.count_estimate().saturating_add(other.count_estimate());
-        self.0 = count.min(Self::AS_VALUE - 1) | ((self.0 | other.0) & Self::FLAGS);
+        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
     }
 }
 
@@ -491,20 +469,6 @@ impl Map {
             }
         }
         bun_core::output::flush();
-    }
-
-    pub fn note_escape(&self, ref_: Ref) {
-        if let Some(symbol) = self.get_const(self.follow(ref_)) {
-            symbol.escapes.fetch_or(Symbol::ESCAPES, Ordering::Relaxed);
-        }
-    }
-
-    pub fn mark_externally_visible(&self, ref_: Ref) {
-        if let Some(symbol) = self.get_const(self.follow(ref_)) {
-            symbol
-                .escapes
-                .fetch_or(Symbol::ESCAPES | Symbol::IS_EXTERNALLY_VISIBLE, Ordering::Relaxed);
-        }
     }
 
     // Takes `&self` (not `&mut self`) — the only caller

@@ -1,7 +1,7 @@
 // `a.localeCompare(b)` with one string argument, with locales or options, and with other kinds of arguments.
 // CALLS+ compared operationAOTTypedStringLocaleCompare
 // CALLS- compared CallHostFunction
-// CALLS+ sorted operationAOTTypedStringLocaleCompare
+// CALLS+ byLocale operationAOTTypedStringLocaleCompare
 // CALLS- comparedIn operationAOTTypedStringLocaleCompare
 // CALLS- comparedWithAnything operationAOTTypedStringLocaleCompare
 const print = (s: string) => console.log(s);
@@ -28,7 +28,8 @@ function part(s: string, from: number, to: number): string { return s.slice(from
 function flattened(s: string): string { s.charCodeAt(0); return s; }
 
 export function compared(a: string, b: string): number { return a.localeCompare(`${b}`); }
-export function sorted(list: string[]): string[] { return list.slice().sort((a, b) => `${a}`.localeCompare(`${b}`)); }
+function byLocale(a: string, b: string): number { return `${a}`.localeCompare(`${b}`); }
+export function sorted(list: string[]): string[] { return list.slice().sort(byLocale); }
 export function comparedIn(a: string, b: string, locale: string): number { return a.localeCompare(b, locale); }
 export function comparedWith(a: string, b: string, options: Intl.CollatorOptions): number { return a.localeCompare(b, undefined, options); }
 export function comparedWithAnything(a: string, b: any): number { return a.localeCompare(b); }

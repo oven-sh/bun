@@ -75,7 +75,7 @@
       } else if (part.k === "global") {
         const constructor = getOwnPropertyDescriptor(global, part.name)?.value;
         if (typeof constructor !== "function" || hasProxyAbove(value) || apply(hasInstance, constructor, [value])) return true;
-        if (under !== undefined && isOfKind(part.name, value)) return true;
+        if (isOfKind(part.name, value)) return true;
       } else if (part.view !== undefined) isHeldToMembers = true;
       else if (part.members === undefined || isOfOneOf(part.members, value)) return true;
       else if (under !== undefined && isInstanceOfSomeClass(value)) return true;
@@ -120,9 +120,9 @@
 
   // What becomes of an object where it enters a record type that admits no strangers. THE RULE IS THE ENGINE'S: class Coercion in
   // JavaScriptCore/aot/AOTTypedObject.cpp: coerce(), copy(), chooseLayout(), distanceTo(), mayBeCoerced(). Plain data is made one of a
-  // shape that the program allocates: every own property that the shape has a field for is a writable, enumerable, configurable data
-  // property whose value enters the type of the field in its turn; every field that is not optional is there; what the shape does not
-  // name stays. Nothing is made of a Proxy, an array, a function or a native object. test/cli/aot-audit-members.test.ts holds the two to
+  // shape that the program allocates: every own property that the shape has a field for is an enumerable data property whose value
+  // enters the type of the field in its turn (read only or not configurable: taken where objects of the shape may be frozen, which of a
+  // record only the engine knows: nothing is said); every field that is not optional is there; what the shape does not name stays. Nothing is made of a Proxy, an array, a function or a native object. test/cli/aot-audit-members.test.ts holds the two to
   // each other.
   // It errs on the side of silence. The engine takes the nearest shape and fails with it: here any will do. Whether an object that typed
   // code has made is of the type goes by its layout in a build: a literal with the tag passes, and so does whatever has another prototype
@@ -171,7 +171,7 @@
       const name = names[i];
       if (typeof name !== "string" || !hasOwn(fields, name)) continue;
       const descriptor = getOwnPropertyDescriptor(value, name), field = fields[name];
-      if (descriptor.get !== undefined || descriptor.set !== undefined || !descriptor.writable || !descriptor.enumerable || !descriptor.configurable) return false;
+      if (descriptor.get !== undefined || descriptor.set !== undefined || !descriptor.enumerable) return false;
       if (!(field.optional && descriptor.value === undefined) && !fits(field.to, descriptor.value, here)) return false;
       if (!field.optional) present++;
     }
@@ -207,7 +207,7 @@
       if (typeof name !== "string" || !hasOwn(fields, name)) continue;
       const descriptor = getOwnPropertyDescriptor(value, name), held = descriptor.value, to = fields[name].to;
       if (descriptor.get !== undefined || descriptor.set !== undefined) return at(name) + " is an accessor";
-      if (!(descriptor.writable && descriptor.enumerable && descriptor.configurable)) return at(name) + (!descriptor.writable ? " is read only" : !descriptor.enumerable ? " is not enumerable" : " is not configurable");
+      if (!descriptor.enumerable) return at(name) + " is not enumerable";
       if ((fields[name].optional && held === undefined) || fits(to, held, here)) continue;
       let canBeLookedInto = typeof held === "object" && held !== null && !isArray(held) && !isProxy(held);
       if (canBeLookedInto) {
@@ -363,7 +363,8 @@
     for (let i = 0; i < names.length; i++) {
       const name = names[i], field = shape.fields[name], descriptor = getOwnPropertyDescriptor(object, name);
       if (descriptor === undefined) continue;
-      if (descriptor.get !== undefined || descriptor.set !== undefined || !descriptor.writable || !descriptor.enumerable || !descriptor.configurable) {
+      const isData = descriptor.get === undefined && descriptor.set === undefined;
+      if (!isData || !(shape.frozen === true ? descriptor.enumerable || field.optional || field.absent === true : descriptor.writable && descriptor.enumerable && descriptor.configurable)) {
         if (step.kind === "field-redefine") reportRule(file, step, step.kind, shape.name + "." + name);
       } else if (!fits(field.to, descriptor.value) && !(field.optional && descriptor.value === undefined)) reportRule(file, step, "field-store-untyped", shape.name + "." + name, field.to, descriptor.value);
     }
@@ -459,7 +460,7 @@
     if (group.parameter) {
       const step = steps[0], type = step.to;
       if (fits(type, value)) return passed(group, value, id);
-      if ((typeof value === "object" || typeof value === "function") && (type.o || type.fn || type.parts.length)) return;
+      if ((typeof value === "object" || typeof value === "function") && (type.o || type.fn || type.parts.length) && !step.holds) return;
       if (whatACastMadeOf(type, value) !== undefined) return;
       if (waits(step, value)) return;
       if (hasLast && is(lastValue, value) && lastType === type.t) {

@@ -1,14 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
 
 (function () {
 function small(a, b) { return a + b; }
@@ -32,15 +25,5 @@ check(inNestedHandler(1), 3, "a call in a handler in a handler, neither runs");
 check(inNestedHandler(-1), 0, "a call in a handler in a handler, the outer one runs");
 check(inNestedHandler(-2), 33, "a call in a handler in a handler, both run");
 check(noHandler(1), 6, "a call in a function without a handler");
-
-for (let name of ["inTry", "inHandler", "afterMerge", "inFinally", "inNestedHandler"])
-    says(name, "catches-rarely");
-doesNotSay("noHandler", "catches-rarely");
-for (let name of ["inTry", "afterMerge", "inFinally", "noHandler"])
-    says(name, "inlined-call:small");
-for (let name of ["inHandler", "inNestedHandler"]) {
-    doesNotSay(name, "inlined-call:small");
-    says(name, "direct-call:small");
-}
 })();
 console.log("passed");

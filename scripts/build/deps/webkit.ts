@@ -1509,11 +1509,12 @@ export interface JSCProgram {
 
 /**
  * WebKit's own executables worth having beside a local build
- * (shell/CMakeLists.txt): the `jsc` shell, and `testFFI`, JSC's bun:ffi C++/ABI
- * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs. bun.ts links
+ * (shell/CMakeLists.txt): the `jsc` shell; `testFFI`, JSC's bun:ffi C++/ABI
+ * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; and `testb3`
+ * and `testair`, the tests of the B3 and Air compilers. bun.ts links
  * them, from the same dep objects bun gets, so this only says how: the sources,
  * the flags a JSC-family TU compiles with, and what a standalone JSC executable
- * needs at link. Neither is a default target: `bun run build:local --target=jsc`.
+ * needs at link. None is a default target: `bun run build:local --target=jsc`.
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (cfg.webkit !== "local") return [];
@@ -1532,6 +1533,8 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   return [
     program("jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp"], cfg.darwin ? ["-ledit"] : []),
     program("testFFI", ["ffi/tests/testFFI.cpp"], []),
+    program("testb3", [...[1, 2, 3, 4, 5, 6, 7, 8].map(n => `b3/testb3_${n}.cpp`), "b3/testb3_bun.cpp"], []),
+    program("testair", ["b3/air/testair.cpp"], []),
   ];
 }
 

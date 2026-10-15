@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);
@@ -111,38 +109,14 @@ function makeShifted(v) { return { before: 0, shared: v }; }
 function readAtOneSite(o) { return o.shared; }
 function readElsewhere(o) { return o.shared; }
 
-const isCounting = typeof aotOperationCount === "function" && !!jscOptions().useAOTOperationCounters && !!jscOptions().useAOTDataStubs && isAOTCompiled(readAtOneSite);
-function count(what) { return isCounting ? aotOperationCount(what) || 0 : 0; }
-function hitsByNameAtPlainSites() { return count("operationAOTCountReadByName:site-hits-by-name"); }
-function hitsByNameAtPolymorphicSites() {
-    let hits = 0;
-    for (let used = 0; used <= 4; ++used)
-        hits += count("operationAOTCountReadByName:polymorphic-site-of-" + used + "-hits-by-name");
-    return hits;
-}
-function arrivals() { return count("operationAOTGetById"); }
-
-if (isCounting && hitsByNameAtPolymorphicSites() < 10000)
-    throw new Error("the reads above, of one name in many Structures, are served by the name's number: " + hitsByNameAtPolymorphicSites());
-
 for (let i = 0; i < 10; ++i) {
     check(readAtOneSite(makeWithLeft(i)), i, "the first Structure at the site");
     check(readElsewhere(makeWithRight(i)), i, "another Structure at another site");
 }
-let hitsBefore = hitsByNameAtPlainSites();
-let arrivalsBefore = arrivals();
 for (let i = 0; i < 100; ++i)
     check(readAtOneSite(makeWithRight(i)), i, "another Structure with the name in the same slot");
-if (isCounting) {
-    if (hitsByNameAtPlainSites() - hitsBefore < 99)
-        throw new Error("another Structure with the name in the same slot is served by the name's number: " + (hitsByNameAtPlainSites() - hitsBefore));
-    if (arrivals() - arrivalsBefore > 1)
-        throw new Error("another Structure with the name in the same slot reaches the runtime: " + (arrivals() - arrivalsBefore));
-}
-hitsBefore = hitsByNameAtPlainSites();
 for (let i = 0; i < 100; ++i)
     check(readAtOneSite(makeShifted(i)), i, "the name in another slot");
-check(hitsByNameAtPlainSites() - hitsBefore, 0, "reads of the name in another slot that are served by the number in the first");
 for (let i = 0; i < 100; ++i) {
     const grown = makeWithLeft(i);
     delete grown.shared;

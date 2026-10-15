@@ -1,7 +1,7 @@
 // `Buffer.byteLength` of strings of every internal representation.
 // CALLS+ ofText StringUTF8Length8
 // CALLS+ ofTextByDefault StringUTF8Length8
-// CALLS+ ofTextWithHyphen StringUTF8Length8
+// CALLS+ ofTextsWithHyphen StringUTF8Length8
 // CALLS+ ofUnknown StringUTF8Length8
 // CALLS- ofLatin1 StringUTF8Length8
 // CALLS- ofEncoding StringUTF8Length8
@@ -35,10 +35,11 @@ if (!g.Buffer) {
 function ofText(s: string): number { return Buffer.byteLength(s, "utf8") }
 function ofTextByDefault(s: string): number { return Buffer.byteLength(s) }
 function ofTextWithHyphen(s: string): number { return Buffer.byteLength(s, "utf-8") }
+function ofTextsWithHyphen(list: string[]): number { let n = 0; for (const s of list) n += Buffer.byteLength(s, "utf-8"); return n }
 function ofLatin1(s: string): number { return Buffer.byteLength(s, "latin1") }
 function ofEncoding(s: string, encoding: BufferEncoding): number { return Buffer.byteLength(s, encoding) }
 function ofUnknown(s: any): number { return Buffer.byteLength(s, "utf8") }
-g.kept = [ofText, ofTextByDefault, ofTextWithHyphen, ofLatin1, ofEncoding, ofUnknown]
+g.kept = [ofText, ofTextByDefault, ofTextWithHyphen, ofTextsWithHyphen, ofLatin1, ofEncoding, ofUnknown]
 const fresh = (x: string): string => String.fromCharCode(...[...x].map(c => c.charCodeAt(0)))
 const ascii = fresh("<div class=\"a\">hello</div>")
 const latin1 = fresh("na\xefve caf\xe9 \xff\x80\x7f")
@@ -55,8 +56,8 @@ for (let i = 0; i < 1000; i++) sum += ofText(texts[i % texts.length]) + ofUnknow
 console.log(sum)
 const original = g.Buffer.byteLength
 g.Buffer.byteLength = (s: string) => -s.length
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide))
+console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts))
 g.Buffer.byteLength = original
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide))
+console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts))
 const { byteLength } = Buffer
 console.log(byteLength(latin1, "utf8"), byteLength.call(undefined, wide))

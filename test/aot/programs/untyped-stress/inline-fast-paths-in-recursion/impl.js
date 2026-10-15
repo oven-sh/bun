@@ -1,26 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(name) {
-    return typeof aotRemarks === "function" && aotRemarks(name) || null;
-}
-function applies(name, ...patterns) {
-    const remarks = remarksOf(name);
-    for (const pattern of remarks ? patterns : []) {
-        if (!remarks.includes(pattern))
-            throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(name, ...patterns) {
-    const remarks = remarksOf(name);
-    for (const pattern of remarks ? patterns : []) {
-        if (remarks.includes(pattern))
-            throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-    }
-}
-const isProfitable = "profitable-recursion", storesInline = "calls:operationAOTPutById", storesThroughStub = "calls:PutById";
 
 (function () {
     function marksTree(node) {
@@ -109,16 +90,4 @@ const isProfitable = "profitable-recursion", storesInline = "calls:operationAOTP
     }
 })();
 
-const usesDataStubs = (remarksOf("callsNothing") || []).includes(storesThroughStub);
-if (usesDataStubs) {
-    applies("marksTree", isProfitable, storesInline);
-    doesNotApply("marksTree", storesThroughStub);
-    applies("marksAfterwards", isProfitable, storesInline);
-    doesNotApply("marksAfterwards", storesThroughStub);
-    applies("dispatchesInFewArms", isProfitable, storesInline);
-    doesNotApply("dispatchesInFewArms", storesThroughStub);
-    applies("dispatchesInManyArms", storesThroughStub);
-    doesNotApply("dispatchesInManyArms", isProfitable, storesInline);
-    doesNotApply("callsNothing", isProfitable, storesInline);
-}
 console.log("passed");

@@ -64,7 +64,7 @@ impl Program<'_> {
         (self.files.modules.iter().enumerate())
             .filter(|(_, module)| {
                 let mut reported = module.hir.diagnostics.iter().filter(|found| found.kind == crate::hir::DiagnosticKind::Parse).peekable();
-                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489));
+                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489) || crate::hir::is_in_comment(&module.hir, found.start));
                 module.hir.has_parse_diagnostics && !is_what_its_text_says || module.hir.has_errors || module.hir.ran_out_of_stack
             })
             .map(|(i, _)| FileId(i as u32))

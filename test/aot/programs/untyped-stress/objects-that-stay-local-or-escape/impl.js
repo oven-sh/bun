@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -59,27 +58,4 @@ let counter = closureIsReturned(5);
 check(counter() + counter(), 11, "a closure that is returned");
 check(allocatesNothing(1), 2, "no allocation");
 
-if (aotRemarks("objectStays")) {
-    let has = (name, prefix) => aotRemarks(name).some(remark => remark.startsWith(prefix));
-    let applies = (name, prefix) => {
-        if (!has(name, prefix))
-            throw new Error(prefix + " does not apply to " + name + ": " + aotRemarks(name).join(" | "));
-    };
-    let doesNotApply = (name, prefix) => {
-        if (has(name, prefix))
-            throw new Error(prefix + " applies to " + name + ": " + aotRemarks(name).join(" | "));
-    };
-    applies("objectStays", "allocation-stays-here:object");
-    doesNotApply("objectStays", "allocation-escapes");
-    applies("arrayStays", "allocation-stays-here:array");
-    doesNotApply("arrayStays", "allocation-escapes");
-    for (let name of ["objectIsReturned", "objectIsStored", "objectIsThrown", "objectIsPassed"]) {
-        applies(name, "allocation-escapes:object");
-        doesNotApply(name, "allocation-stays-here");
-        doesNotApply(name, "allocation-is-only-borrowed");
-    }
-    applies("arrayIsReturned", "allocation-escapes:array");
-    applies("closureIsReturned", "allocation-escapes:closure");
-    doesNotApply("allocatesNothing", "allocation-");
-}
 console.log("passed");

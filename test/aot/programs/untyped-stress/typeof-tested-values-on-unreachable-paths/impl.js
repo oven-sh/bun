@@ -1,12 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isOn = !!remarksOf("check") && !!options.useAOTDataStubs && !options.useAOTInlining;
 
 (function () {
     "use strict";
@@ -43,20 +38,5 @@ const isOn = !!remarksOf("check") && !!options.useAOTDataStubs && !options.useAO
         check(usesResult(make(), false), 0, "a tested value is returned");
         check(agrees(make(), text), i & 1 ? 10 : 6, "nothing is narrowed");
     }
-
-    if (!isOn)
-        return;
-    const refused = { passesTestedValue: "argument", passesTestedValueBehindGuard: "argument", storesInCodeNeverReached: "store", returnsTestedValue: "result" };
-    const forced = options.contradictAOTAnalysisForTesting | 0;
-    const reasonsOf = name => remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join();
-    for (const [name, what] of Object.entries(refused)) {
-        check(remarksOf(name).includes("guards-over-whole-function"), false, name + " has guards over the whole function");
-        if (!forced)
-            check(reasonsOf(name), "no-guards-over-whole-function:contradicts-analysis-of-" + what, "why " + name + " has no guards");
-        check(remarksOf(name).includes("contradicts-analysis-without-guards"), forced == 2, name + " contradicts the analysis without guards");
-    }
-    check(remarksOf("agrees").includes("guards-over-whole-function"), !forced, "agrees has guards over the whole function");
-    check(reasonsOf("agrees"), forced ? "no-guards-over-whole-function:contradicts-analysis-of-result" : "", "why agrees has no guards");
-    check(remarksOf("agrees").includes("contradicts-analysis-without-guards"), forced == 2, "agrees contradicts the analysis without guards");
 })();
 console.log("passed");

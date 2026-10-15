@@ -21,8 +21,6 @@
 // REMARK+ readsBetween (Add|Strcat): stack
 // REMARK- readsBetween rejected
 // REMARK- nilPlusNumber stack
-// REMARK- notAKeyAcrossBranches stack
-// REMARK+ notAKeyAcrossBranches rejected: not in a loop and not a map key
 // REMARK- wordsNotAKey stack
 // REMARK+ wordsNotAKey rejected: string operand and not a map key
 // REMARK- readByIndex stack

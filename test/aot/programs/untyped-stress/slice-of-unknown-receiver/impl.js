@@ -1,13 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (typeof aotRemarks === "function" && aotRemarks("readsProperty") || []).includes("calls:GetById");
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function hasRemark(name, remark) { return aotRemarks(name).includes(remark); }
 
     function sliceFrom(x, start) { return x.slice(start); }
     function sliceWithEnd(x, start, end) { return x.slice(start, end); }
@@ -86,13 +81,5 @@ const usesDataStubs = (typeof aotRemarks === "function" && aotRemarks("readsProp
     let order = [];
     check(sliceWithEnd("ordered", { valueOf() { order.push("start"); return 1; } }, { valueOf() { order.push("end"); return 3; } }), "rd", "both arguments are objects");
     check(order.join(), "start,end", "the order of conversions");
-
-    if (usesDataStubs) {
-        const remark = "string-slice-through-intrinsic-stub";
-        for (let name of ["sliceFrom", "sliceWithEnd", "sliceIgnored", "readsAround"])
-            check(hasRemark(name, remark), true, remark + " applies to " + name);
-        for (let name of ["sliceAll", "sliceWithMore", "sliceOfArray", "sliceOfText"])
-            check(hasRemark(name, remark), false, remark + " applies to " + name);
-    }
 })();
 console.log("passed");

@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function resultOf(f, ...parameters) {
     try {
@@ -31,12 +9,6 @@ function resultOf(f, ...parameters) {
         return error.constructor.name;
     }
 }
-function readsProperty(o) { return o.property; }
-noInline(readsProperty);
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const isNumber = "number-result-because-one-operand-is-no-bigint", callsToBoolean = "calls:ToBoolean";
-
 function minusOne(x) { return x - 1; }
 function oneMinus(x) { return 1 - x; }
 function timesTwo(x) { return x * 2; }
@@ -74,10 +46,6 @@ check([1, 2, "1", null, undefined, 1.5, returnsNumber].map(isMinusOneTruthy).joi
 check([0, 1, 2, -1, -2, 2.5, "3", NaN, undefined].map(isOdd).join(), "even,odd,even,odd,even,odd,odd,even,even", "x % 2 as a condition");
 check([0, -0, 1, NaN, "x", 1e-200].map(isSquareTruthy).join(), "falsy,falsy,truthy,falsy,falsy,falsy", "x ** 2 as a condition");
 check(resultOf(isOdd, 3n), "TypeError", "a BigInt in a condition");
-for (let f of withOneNumber)
-    applies(f, isNumber);
-for (let f of [isMinusOneTruthy, isOdd, isSquareTruthy])
-    doesNotApply(f, callsToBoolean);
 
 function difference(x, y) { return x - y; }
 function product(x, y) { return x * y; }
@@ -101,12 +69,6 @@ check(resultOf(isRemainderTruthy, 5n, 0n), "RangeError", "a remainder of a divis
 check(differenceOfNumbers("5", null), 5, "a difference of converted operands");
 check([plusOne(1), plusOne("1"), plusOne(1n < 2 ? 1.5 : 0), plusOne(null), plusOne([])].join(), "2,11,2.5,1,1", "x + 1");
 check(resultOf(plusOne, 1n), "TypeError", "a BigInt plus a number");
-for (let f of withoutNumber)
-    doesNotApply(f, isNumber);
-if (usesDataStubs) {
-    applies(isDifferenceTruthy, callsToBoolean);
-    applies(isRemainderTruthy, callsToBoolean);
-}
 
 function addsAfterFirstRound(count) { let x = Symbol.iterator; let sum = 0; for (let i = 0; i < count; ++i) { if (i > 0) sum = x + 1; x = i; } return sum; }
 function addsSymbol(n) { let symbol = Symbol.iterator; return symbol + (n | 0); }

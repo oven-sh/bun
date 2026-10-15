@@ -91,7 +91,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 held.push(value);
                 continue;
             }
-            if let Some(&p) = written.get(index) {
+            if let Some(&p) = written.get(index)
+                && !self.entries_beside.values().any(|&entry| entry == fx.id)
+            {
                 let (no_undefined, no_null, no_objects) = self.c.what_the_written_type_leaves_out(fx.file, p);
                 let mut claimed = self.out.tys.get(to).clone();
                 if no_undefined {
@@ -408,7 +410,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         let name = self.name_of_pat(fx, decl.pat);
         if !fx.is_typed || decl.ty.is_none() {
-            return self.expr_named(fx, decl.init, name);
+            let init = if fx.is_typed { self.c.element_read_kept_unasserted(fx.file, decl.pat).unwrap_or(decl.init) } else { decl.init };
+            return self.expr_named(fx, init, name);
         }
         let mut names = Vec::new();
         self.names_of_pat(fx.file, decl.pat, &mut names);
@@ -911,7 +914,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     entered = is_decided.then_some(found);
                 }
-                let value = if entered.is_some() { V::NONE } else { self.expr(fx, expr) };
+                let switched_on = if fx.is_typed { self.c.element_read_of_no_known_integers(fx.file, expr).unwrap_or(expr) } else { expr };
+                let value = if entered.is_some() { V::NONE } else { self.expr(fx, switched_on) };
                 let exit = fx.b.new_block();
                 let mut names = Vec::new();
                 for case in cases.iter() {

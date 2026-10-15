@@ -1,30 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTDataStubs;
-
-const guardRemarksOf = f => remarksOf(f).filter(remark => remark.includes("guard")).join(" ");
-const namesIn = (f, prefix) => [...new Set(remarksOf(f).filter(remark => remark.startsWith(prefix + ":")).map(remark => remark.slice(prefix.length + 1)))].sort().join(",");
-function checks(f, mustHaveGuards, expected) {
-    if (!isOn)
-        return;
-    if (!remarksOf(f).includes("guards-over-whole-function")) {
-        if (mustHaveGuards)
-            throw new Error("no guards over the whole of " + f.name + ": " + remarksOf(f).join(" "));
-        return;
-    }
-    for (const kind of expected.kinds || ["family", "family-of-known-cell", "byte", "nothing"]) {
-        const actual = namesIn(f, "guard-checks-" + kind);
-        const wanted = (expected[kind] || []).slice().sort().join(",");
-        if (actual !== wanted)
-            throw new Error(f.name + ": the guards that check " + kind + " are on [" + actual + "] instead of [" + wanted + "]: " + guardRemarksOf(f));
-    }
 }
 
 const kept = [];
@@ -215,20 +191,4 @@ for (let round = 0; round < 3; ++round) {
     check(tested.walksList(), "pqrsxy", "walksList over another shape");
 }
 
-const first = { family: ["tag"], nothing: ["child", "key"] };
-checks(tested.readsThree, true, first);
-checks(tested.readsFourAndOneAgain, true, { family: ["tag"], nothing: ["child", "key", "sibling", "tag"] });
-checks(tested.storesThree, true, first);
-checks(tested.readsAcrossStoreToAnotherObject, true, { family: ["sibling", "tag"], nothing: ["child", "key"] });
-checks(tested.readsThroughLocalAcrossCall, true, { family: ["tag"], byte: ["key"], nothing: ["child"] });
-
-const again = { family: ["key", "tag"], nothing: ["child"] };
-checks(tested.readsAcrossCall, true, again);
-checks(tested.readsAcrossStoreToVariable, true, again);
-checks(tested.readsAcrossStoreToAnotherVariable, true, again);
-checks(tested.readsAcrossUnguardedRead, true, again);
-checks(tested.readsOnBothPaths, true, { kinds: ["byte", "nothing"], nothing: ["child", "sibling"] });
-checks(tested.readsAcrossAddition, true, { family: ["child", "tag"], nothing: ["key", "sibling"] });
-checks(tested.readsTwoVariables, true, { family: ["key", "tag"], nothing: ["child", "sibling"] });
-checks(tested.walksList, false, { family: ["tag"], nothing: ["child", "key"] });
 console.log("passed");

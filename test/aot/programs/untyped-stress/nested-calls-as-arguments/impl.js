@@ -1,19 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function isClosed(name) {
-    let remarks = aotRemarks(name);
-    return !remarks || !remarks.length || remarks.includes("function-does-not-escape");
-}
-function removesStores(name) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.includes("removes-overwritten-frame-stores") : undefined;
-}
-function isOpen(name) {
-    let remarks = aotRemarks(name);
-    return !remarks || !remarks.length || !remarks.includes("function-does-not-escape");
 }
 (function () {
     function wrap(a) { try { return a; } catch (e) { return 0; } }
@@ -41,10 +28,6 @@ function isOpen(name) {
     check(u5(1), 36, "next to a literal with 34 elements");
     check(u6([1, 2]), 5, "in for-of");
     check(u7([1]), 8, "between two for-ofs");
-    for (let name of ["wrap", "wrap3", "nestedBeforeForOf", "argumentOfMethodBeforeForOf", "firstOfThreeBeforeForOf", "lastOfThreeBeforeForOf", "nestedNextToBigLiteral", "nestedInForOf", "nestedBetweenForOfs"])
-        check(isClosed(name), true, name + " is closed");
-    for (let name of ["u1", "u2", "u3", "u4", "u5", "u7"])
-        check(removesStores(name) !== false, true, name + " loses stores that are overwritten");
 
     function oneOfTwoFirst(a) { try { return a + 1; } catch (e) { return 0; } }
     function oneOfTwoSecond(a) { try { return a + 2; } catch (e) { return 0; } }
@@ -55,14 +38,10 @@ function isOpen(name) {
     check(readByHandler(false, true), 3, "the handler reads the second function");
     check(readByHandler(false, false), 12, "no exception");
     check(u8(1)[17](1) + elementOfBigLiteral(1), 4, "a function that is an element of a literal with 34 elements");
-    for (let name of ["oneOfTwoFirst", "oneOfTwoSecond", "elementOfBigLiteral"])
-        check(isOpen(name), true, name + " is open");
     function keepsEveryStore(flag, later) { let a = 1; try { throwsIf(flag); a = 2; throwsIf(later); a = 3; } catch (e) { return a; } return a; }
     function hasNoHandler(a) { return wrap3(wrap(a), wrap(a), wrap(a)); }
     check([keepsEveryStore(true, false), keepsEveryStore(false, true), keepsEveryStore(false, false)].join(), "1,2,3", "each value a handler can see");
     check(hasNoHandler(1), 3, "no handler");
-    for (let name of ["keepsEveryStore", "hasNoHandler"])
-        check(removesStores(name) !== true, true, name + " keeps its stores");
 
     function closesIterator(log, flag) {
         const iterable = { [Symbol.iterator]() { return { next() { return { done: false, value: 1 }; }, return() { log.push("closed"); return { }; } }; } };

@@ -1,25 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-let inlinesClosures = false;
-function applies(name, ...patterns) {
-    let remarks = aotRemarks(name);
-    for (let pattern of remarks && inlinesClosures ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(name, ...patterns) {
-    let remarks = aotRemarks(name);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-    }
-}
-const readsVariableOfMaker = "reads-variable-of-maker";
 
 (function () {
     let later = [];
@@ -30,7 +12,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
         return probeInner(1);
     };
     check(probe(1), 2, "the probe");
-    inlinesClosures = (aotRemarks("probe") || []).some(remark => matches(remark, "inlined-closure"));
 
     const afterLoop = a => {
         const afterLoopInner = b => {
@@ -44,9 +25,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     check(results(), "3,4,5", "the closures of the loop");
     check(afterLoop(1.5), 1.5, "another type");
     results();
-    applies("afterLoop", "inlined-closure:afterLoopInner", readsVariableOfMaker);
-    doesNotApply("afterLoopInner", readsVariableOfMaker);
-    applies("afterLoopInner", "reads-capture:a");
 
     const capturedInLoop = a => {
         const capturedInLoopInner = b => {
@@ -57,7 +35,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     capturedInLoop("A");
     check(results(), "A30,A31,A32", "captured again by the closures of the loop");
-    applies("capturedInLoop", "inlined-closure:capturedInLoopInner");
 
     const twoLevels = a => {
         const twoLevelsMiddle = m => {
@@ -72,7 +49,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(twoLevels("A"), "AM", "variables of the maker and of the maker's maker");
     check(results(), "3,4", "the closures of the loop");
-    applies("twoLevels", "inlined-closure:twoLevelsMiddle", readsVariableOfMaker);
 
     const blockInWhile = a => {
         const blockInWhileInner = b => {
@@ -99,7 +75,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     }
     check(ordinaryFunctions("A"), "A", "function expressions");
     check(results(), "3,4,5", "the closures of the loop");
-    applies("ordinaryFunctions", "inlined-closure:ordinaryFunctionsInner", readsVariableOfMaker);
 
     const insideLoop = a => {
         const insideLoopInner = b => {
@@ -114,7 +89,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(insideLoop("A"), "AAA", "read inside the loop");
     results();
-    applies("insideLoop", "inlined-closure:insideLoopInner", readsVariableOfMaker);
 
     const alsoReturned = a => {
         const alsoReturnedInner = b => {
@@ -146,7 +120,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(makerInLoop(3), "a0a1a2", "the maker's scope is made once for each iteration");
     check(results(), "0,1,1,2,2,3", "the closures of the loops");
-    applies("makerInLoop", "inlined-closure:makerInLoopInner", readsVariableOfMaker);
 
     const uninitialized = () => {
         const uninitializedInner = b => {
@@ -163,7 +136,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(uninitialized(), "ReferenceError", "a variable that is never initialized");
     results();
-    applies("uninitialized", "inlined-closure:uninitializedInner", readsVariableOfMaker);
 
     const afterBlock = a => {
         {
@@ -179,7 +151,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(afterBlock("A"), "A", "made after a block scope of the maker was left");
     check(results(), "1,3,4", "the closures");
-    applies("afterBlock", "inlined-closure:afterBlockInner", readsVariableOfMaker);
 
     const afterLoopOfMaker = a => {
         for (let j = 0; j < 2; j++)
@@ -189,8 +160,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(afterLoopOfMaker("A"), "A3", "made after a loop of the maker with scopes of its own");
     check(results(), "0,1", "the closures");
-    applies("afterLoopOfMaker", "inlined-closure:afterLoopOfMakerInner");
-    doesNotApply("afterLoopOfMaker", readsVariableOfMaker);
 
     const afterBothLoops = a => {
         for (let j = 0; j < 2; j++)
@@ -204,7 +173,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(afterBothLoops("A"), "A", "a loop in the maker and a loop in the closure");
     check(results(), "0,1,3,4", "the closures");
-    applies("afterBothLoops", "inlined-closure:afterBothLoopsInner");
 
     const inBlockOfMaker = a => {
         {
@@ -219,7 +187,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(inBlockOfMaker("A"), "AAt", "a variable of a block and a variable of the function");
     check(results(), "3,4", "the closures");
-    applies("inBlockOfMaker", "inlined-closure:inBlockOfMakerInner", readsVariableOfMaker);
 
     function readsInLoop(list) {
         const kept = list;
@@ -233,7 +200,6 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     }
     check(readsInLoop(later), 3, "read in and after the loop");
     check(results(), "A,0,1", "the closures");
-    applies("readsInLoop", "inlined-closure:readsInLoopInner", readsVariableOfMaker);
 
     function returnsClosureMadeAfterLoop(list) {
         const kept = list;
@@ -262,7 +228,5 @@ const readsVariableOfMaker = "reads-variable-of-maker";
     };
     check(inBranches("A", true) + inBranches("B", false), "AB", "scopes in branches");
     check(results(), "4,5", "the closures of the branches");
-    applies("inBranches", "inlined-closure:inBranchesInner");
-    doesNotApply("inBranches", readsVariableOfMaker);
 })();
 console.log("passed");

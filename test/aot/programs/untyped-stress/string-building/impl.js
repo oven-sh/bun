@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...args) {
     try {
@@ -32,7 +10,6 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
-const byType = "number-to-string-by-type", concatenates = "concatenates-string-and-number", generic = "calls:operationAOTToString", genericAdd = "calls:operationAOTValueAdd";
 
 function templateOfInt32(n) { let i = n | 0; return `<${i}>`; }
 function templateOfNumber(n) { let x = +n; return `<${x}>`; }
@@ -108,23 +85,6 @@ for (let round = 0; round < 4; ++round) {
     if (round == 1)
         gc();
 }
-applies(templateOfInt32, byType);
-applies(templateOfNumber, byType);
-applies(templateOfTwo, byType);
-for (let f of [templateOfInt32, templateOfNumber, templateOfTwo])
-    doesNotApply(f, generic);
-for (let f of [templateOfAnything, templateOfString, stringPlusAnything, anythingPlusAnything])
-    doesNotApply(f, byType, concatenates);
-applies(templateOfAnything, generic);
-for (let f of [stringPlusInt32, int32PlusString, stringPlusNumber, numberPlusString, literalPlusInt32, counts]) {
-    applies(f, concatenates);
-    doesNotApply(f, genericAdd);
-}
-applies(joinsKeys, byType);
-applies(stringOfInt32, "lowered-builtin:String");
-applies(int32ToString, "lowered-builtin:Number.prototype.toString");
-for (let f of [stringOfInt32, stringOfNumber, int32ToString, numberToString])
-    doesNotApply(f, "calls:operationToString", generic);
 
 let pieces = ["xy"];
 for (let i = 1; i < 30; ++i)

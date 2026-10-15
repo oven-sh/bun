@@ -1,15 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
-function applies(f, pattern) {
-    let remarks = aotRemarks(f.name);
-    if (remarks && !remarks.includes(pattern))
-        throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-}
-function doesNotApply(f, pattern) {
-    let remarks = aotRemarks(f.name);
-    if (remarks && remarks.includes(pattern))
-        throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-}
 function describe(value) {
     return Object.is(value, -0) ? "-0" : typeof value === "bigint" ? value + "n" : String(value);
 }
@@ -25,10 +13,6 @@ function outcomeOf(f) {
         return error.constructor.name;
     }
 }
-
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
 
 function quotient(a, b) { return a / b; }
 function product(a, b) { return a * b; }
@@ -75,16 +59,4 @@ for (let i = 0; i < 20; ++i) {
     check(quotientOfStrings(6, 3), 2, "two strings");
 }
 
-if (usesDataStubs) {
-    applies(quotient, "calls:Div");
-    doesNotApply(quotient, "calls:operationAOTValueDiv");
-    applies(product, "calls:Mul");
-} else
-    doesNotApply(quotient, "calls:Div");
-
-doesNotApply(product, "calls:Div");
-doesNotApply(quotientOfInt32, "calls:Div");
-doesNotApply(quotientOfInt32, "calls:operationAOTValueDiv");
-applies(quotientOfStrings, "calls:operationAOTValueDiv");
-doesNotApply(quotientOfStrings, "calls:Div");
 console.log("passed");

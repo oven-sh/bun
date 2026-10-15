@@ -795,7 +795,6 @@ pub mod parse_worker {
                 kind,
                 import_item_status,
                 flags: s.flags,
-                escapes: core::sync::atomic::AtomicU8::new(0),
             });
         }
         out
@@ -2833,7 +2832,8 @@ pub mod parse_worker {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
-                    if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
+                    let runs_in_place = ctx.transpiler().options.preserve_source_paths && ctx.transpiler().options.compiles_ahead_of_time();
+                    if (ctx.transpiler().options.has_dev_server() || runs_in_place) && ast.log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
                             err: crate::Error::SyntaxError,
                             step: Step::Parse,

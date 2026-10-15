@@ -1,25 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 const one = { one: 1 };
 
 function literalThenNumbers(o) { let k = 1; const a = [k, k, k, k]; let x = "start"; let hits = 0; for (let i = 0; i < 4; i++) { if (x === 1) hits += o.one; x = a[i]; } return hits; }
@@ -65,7 +47,4 @@ for (let [what, value, equal, selected, truthy] of strings) {
 }
 check(equalsLiteral(one, new String("start"), 0), 1, "equal to the literal: a wrapped string");
 check(equalsLiteralLoosely(one, new String("start"), 0), 2, "loosely equal to the literal: a wrapped string");
-for (let f of all)
-    if (usesDataStubs)
-        applies(f, "split-loop");
 console.log("passed");

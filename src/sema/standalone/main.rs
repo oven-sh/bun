@@ -480,7 +480,7 @@ fn run(args: &[String]) {
                 }
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write(&translated.program, in_parallel)).is_ok();
+                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write_releasing(&mut translated.program, in_parallel)).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     let written_in = started.elapsed().as_secs_f64();

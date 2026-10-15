@@ -181,10 +181,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.replace_exports.count() > 0 {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                p.next_use_preserves_value = true;
-                let symbol = p.find_symbol(items[i].alias_loc, name);
-                p.next_use_preserves_value = false;
-                let symbol = symbol?;
+                let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
                 // reshaped for borrowck — get_ptr borrows options; clone the
@@ -225,10 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_);
-                p.next_use_preserves_value = true;
-                let symbol = p.find_symbol(items[i].alias_loc, name);
-                p.next_use_preserves_value = false;
-                let symbol = symbol?;
+                let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
                 if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound {

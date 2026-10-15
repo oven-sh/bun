@@ -1,0 +1,8 @@
+fell back: TypeError
+fell back
+fell back: true
+finally
+inner finally
+the outer catch: TypeError
+thrown in a function: TypeError
+undefined undefined 2 false undefined

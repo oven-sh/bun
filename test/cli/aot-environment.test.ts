@@ -15,6 +15,7 @@ test.concurrent.each([["--aot"], ["--bytecode"]])(
       env: {
         ...bunEnv,
         NO_COLOR: "1",
+        AOT_SWITCH_OUTLINE: "off",
         AOT_X_COLD_SET: "66:e",
         BUN_AOT: "1",
         BUN_AOT_IMMUTABLE_INTRINSICS: "1",
@@ -28,6 +29,7 @@ test.concurrent.each([["--aot"], ["--bytecode"]])(
     // Where --aot is not supported the build stops before it looks at the environment.
     if (flag === "--aot" && /^error: --aot: /m.test(stderr)) return;
     expect(stderr.match(/\S+ is set and has no effect/g)?.sort()).toEqual([
+      "AOT_SWITCH_OUTLINE is set and has no effect",
       "AOT_X_COLD_SET is set and has no effect",
       "BUN_AOT is set and has no effect",
       "BUN_AOT_IMMUTABLE_INTRINSICS is set and has no effect",

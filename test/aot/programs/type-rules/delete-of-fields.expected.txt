@@ -4,7 +4,7 @@ a number: TypeError
 Reflect.deleteProperty: no error
 line 12: TypeError
 all keys: TypeError
-id,title,pages,draft,author,editor,refs
+id,title,pages,author,editor,refs
 setPrototypeOf: no error
 false
 9

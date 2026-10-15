@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": expected " + expected + " but got " + actual);

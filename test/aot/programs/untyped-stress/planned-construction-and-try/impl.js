@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -163,15 +162,4 @@ function* yieldsInLiteral() {
     check(describe(generator.next(2).value), "a=caught,b=2,c=caught", "and the literal of the handler");
 }
 
-if (aotRemarks("NoTry")) {
-    const planned = "planned-construction";
-    for (let name of ["NoTry", "PartlyInTry", "TryAfterwards"]) {
-        if (!aotRemarks(name).includes(planned))
-            throw new Error(planned + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-    }
-    for (let name of ["AllInTry", "StrictInTry", "ClassInTry", "NestedTry", "Swallows", "WithFinally"]) {
-        if (aotRemarks(name).includes(planned))
-            throw new Error(planned + " applies to " + name);
-    }
-}
 console.log("passed");

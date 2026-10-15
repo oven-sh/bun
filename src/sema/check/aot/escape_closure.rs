@@ -911,6 +911,16 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(parameter) = self.hir(declared_in)[function].params.iter().nth(index) else { return };
         let (own, declared) = (self.type_of_expr(file, e), self.type_of_param(declared_in, parameter));
         self.note_entering_type_parameters(own, declared);
+        if matches!(self.data(declared), TypeData::TypeParam(..)) && self.is_predicted(file, e) {
+            let bound = self.base_constraint(declared);
+            let mut views: Vec<TypeId> = Vec::new();
+            for part in self.parts(bound).to_vec() {
+                if self.says_properties(part) {
+                    views.push(self.laid_out_as(part));
+                }
+            }
+            self.admits_foreign(own, &views);
+        }
     }
 
     /// What is put in for the type parameters of the function that is called.

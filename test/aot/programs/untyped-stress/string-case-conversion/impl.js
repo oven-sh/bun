@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...args) {
     try {
@@ -32,12 +10,6 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const loweredToLowerCase = "lowered-builtin:String.prototype.toLowerCase", loweredToUpperCase = "lowered-builtin:String.prototype.toUpperCase";
-const lowerStub = "calls:ToLowerCase", upperStub = "calls:ToUpperCase", lowerOperation = "calls:operationToLowerCase", upperOperation = "calls:operationToUpperCase";
-
 (function () {
     function lower(value) { return String(value).toLowerCase(); }
     function upper(value) { return String(value).toUpperCase(); }
@@ -140,20 +112,6 @@ const lowerStub = "calls:ToLowerCase", upperStub = "calls:ToUpperCase", lowerOpe
         check(upper(null), "NULL", "toUpperCase of null made a string");
         check(upper(1e21), "1E+21", "toUpperCase of a large number made a string");
     }
-    for (const f of [lower, lowerOfConcatenation, lowerOfPart, lowerTwice]) {
-        applies(f, loweredToLowerCase);
-        doesNotApply(f, loweredToUpperCase, upperStub, upperOperation);
-        applies(f, usesDataStubs ? lowerStub : lowerOperation);
-        doesNotApply(f, usesDataStubs ? lowerOperation : lowerStub);
-    }
-    for (const f of [upper, upperOfConcatenation, upperOfPart]) {
-        applies(f, loweredToUpperCase);
-        doesNotApply(f, loweredToLowerCase, lowerStub, lowerOperation);
-        applies(f, usesDataStubs ? upperStub : upperOperation);
-        doesNotApply(f, usesDataStubs ? upperOperation : upperStub);
-    }
-    for (const f of [upperThenLower, withArguments, ignoresResults])
-        applies(f, loweredToLowerCase, loweredToUpperCase, ...(usesDataStubs ? [lowerStub, upperStub] : [lowerOperation, upperOperation]));
 
     function ofUnknownReceiver(value) { return value.toLowerCase() + "," + value.toUpperCase(); }
     noInline(ofUnknownReceiver);

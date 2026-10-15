@@ -1,31 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    return typeof aotRemarks === "function" && isAOTCompiled(f) ? aotRemarks(f.name) : null;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 
 function narrow() { return "a narrow literal"; }
 function wide() { return "中文 a wide literal"; }
@@ -132,31 +108,4 @@ check(inLoop(1001), 13 * 500 + 14 * 501 + "even in a loop", "literals in a loop"
 check(inLoop(20000), 13 * 10000 + 14 * 10000 + "odd in a loop", "literals in a long loop");
 check(firstTemplate.join("|") + firstTemplate.raw.length, "a template | object2", "a template object");
 
-const kept = ["constant-from-slot", "constant-read-inline"];
-function keepsOne(f) {
-    let remarks = remarksOf(f);
-    if (remarks && !remarks.some(remark => kept.some(pattern => matches(remark, pattern))))
-        throw new Error("neither " + kept.join(" nor ") + " applies to " + f.name + ": " + remarks.join(" "));
-}
-if (usesDataStubs) {
-    for (let f of [narrow, wide, big, twice, several, compares, asDefault, inLiteral, joins, elsewhere, calledOnce, calledThrice, inTry, thrown, arrayOfIntegers, arrayOfDoubles, matchesLiteral, execsLiteral, onRarePath])
-        applies(f, "constant-from-slot");
-    keepsOne(inLoop);
-} else {
-    for (let f of [narrow, wide, big, twice, several, compares, asDefault, inLiteral, joins, elsewhere, calledOnce, calledThrice, inLoop, inTry, thrown])
-        doesNotApply(f, ...kept);
-}
-doesNotApply(immediates, ...kept);
-doesNotApply(arrayOfImmediates, ...kept);
-doesNotApply(readsProperty, ...kept);
-
-if (usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTProgramConstant") !== null) {
-    let before = aotOperationCount("operationAOTProgramConstant");
-    for (let i = 0; i < 20000; ++i) {
-        narrow();
-        several(i % 6);
-        big();
-    }
-    check(aotOperationCount("operationAOTProgramConstant") - before, 0, "constants that were made are not made again");
-}
 console.log("passed");

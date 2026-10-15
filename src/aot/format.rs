@@ -510,7 +510,30 @@ fn site_table(p: &Program) -> Vec<u32> {
     table
 }
 
+enum Slice<'a> {
+    Lent(&'a [Func]),
+    Owned(Vec<Func>),
+}
+
 pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
+    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
+    write_slices(p, p.funcs.len(), p.funcs.chunks(FUNCTIONS_OF_A_SLICE).map(Slice::Lent).collect(), table_of_sites, in_parallel)
+}
+
+pub fn write_releasing(p: &mut Program, in_parallel: InParallel<'_>) -> Vec<u8> {
+    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
+    let mut funcs = std::mem::take(&mut p.funcs);
+    let number = funcs.len();
+    let mut slices = Vec::with_capacity(number.div_ceil(FUNCTIONS_OF_A_SLICE));
+    while !funcs.is_empty() {
+        slices.push(Slice::Owned(funcs.split_off(funcs.len() - 1 - (funcs.len() - 1) % FUNCTIONS_OF_A_SLICE)));
+    }
+    slices.reverse();
+    drop(funcs);
+    write_slices(p, number, slices, table_of_sites, in_parallel)
+}
+
+fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, table_of_sites: Vec<u32>, in_parallel: InParallel<'_>) -> Vec<u8> {
     let mut w = Writer::default();
     for i in 0..p.strs.len() {
         let bytes = p.strs.get(crate::id::StrId::new(i));
@@ -579,10 +602,16 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
         w.modules.extend([w.bytes.len() as u32, module.printed.len() as u32]);
         w.bytes.extend_from_slice(&module.printed);
     }
-    let mut slices: Vec<((usize, &[Func]), Writer)> = p.funcs.chunks(FUNCTIONS_OF_A_SLICE).enumerate().map(|(number, funcs)| ((number * FUNCTIONS_OF_A_SLICE, funcs), Writer::default())).collect();
-    let none_is_marked: Vec<Vec<V>> = if p.marked_values.len() == p.funcs.len() { Vec::new() } else { vec![Vec::new(); p.funcs.len()] };
-    let marked_values = if p.marked_values.len() == p.funcs.len() { &p.marked_values } else { &none_is_marked };
-    for_each_mut(&mut slices, in_parallel, &|((first, funcs), slice)| slice.functions(funcs, *first, &p.accesses_of_one_row, marked_values, &p.known_places));
+    let mut slices: Vec<((usize, Slice<'_>), Writer)> = funcs.into_iter().enumerate().map(|(number, funcs)| ((number * FUNCTIONS_OF_A_SLICE, funcs), Writer::default())).collect();
+    let none_is_marked: Vec<Vec<V>> = if p.marked_values.len() == number_of_funcs { Vec::new() } else { vec![Vec::new(); number_of_funcs] };
+    let marked_values = if p.marked_values.len() == number_of_funcs { &p.marked_values } else { &none_is_marked };
+    for_each_mut(&mut slices, in_parallel, &|((first, funcs), slice)| {
+        match funcs {
+            Slice::Lent(funcs) => slice.functions(funcs, *first, &p.accesses_of_one_row, marked_values, &p.known_places),
+            Slice::Owned(funcs) => slice.functions(funcs, *first, &p.accesses_of_one_row, marked_values, &p.known_places),
+        }
+        *funcs = Slice::Lent(&[]);
+    });
     let mut before = [w.words.len() as u32, 0, 0, 0];
     let mut slices: Vec<(Writer, [u32; 4])> = (slices.into_iter())
         .map(|(_, slice)| {
@@ -606,7 +635,6 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
     let entries = list(&mut p.entries.iter().map(|func| func.0));
     let regexp_literals = list(&mut p.regexp_literals.iter().flat_map(|&(pattern, flags)| [pattern.0, flags.0]));
-    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
     let sites = list(&mut table_of_sites.into_iter());
 
     let number_of_bytes = w.bytes.len() as u32;

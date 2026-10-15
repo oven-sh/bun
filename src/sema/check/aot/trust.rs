@@ -272,7 +272,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let narrowed = self.type_of_expr(file, e);
-        narrowed != declared && !self.says_nothing(narrowed) && self.parts(narrowed).to_vec().into_iter().any(|part| self.says_properties(part) && self.built_in_extended_by(part).is_none() && self.element_of_array_subtype(part).is_none())
+        narrowed != declared && !self.says_nothing(narrowed) && self.parts(narrowed).to_vec().into_iter().any(|part| self.is_array_or_tuple(part) || self.says_properties(part) && self.built_in_extended_by(part).is_none() && self.element_of_array_subtype(part).is_none())
     }
 
     fn is_ambient_value(&mut self, sym: Sym) -> bool {

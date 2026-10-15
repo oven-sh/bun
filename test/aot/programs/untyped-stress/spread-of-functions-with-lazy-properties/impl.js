@@ -1,21 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...args) {
     try {
@@ -31,9 +16,6 @@ function spreadTwo(o, p) { return { ...o, ...p }; }
 function restOf(o) { const { first, ...others } = o; return others; }
 for (const f of [spreadLast, spreadTwo, restOf])
     noInline(f);
-applies(spreadLast, "copies-data-properties");
-applies(spreadTwo, "copies-data-properties");
-applies(restOf, "copies-data-properties");
 
 for (let i = 0; i < 100; i++) {
     check(Object.keys(spreadLast({ a: i, b: i })).join(), "first,a,b", "a spread of a plain object");

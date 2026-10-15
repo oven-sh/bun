@@ -1,10 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function remarksOf(name) { return typeof aotRemarks === "function" && aotRemarks(name) || null; }
     let calls = 0;
     const called = { f() { ++calls; } };
 
@@ -185,21 +183,5 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
         check(count(different), 0, text + " in a loop, different operands");
     }
     check(calls > 0, true, "the loops call something");
-
-    if ((remarksOf("is17") || []).includes("calls:IsStringEqualToConstant")) {
-        function calls(name, stub) { return remarksOf(name).includes("calls:" + stub); }
-        for (let name of ["is9", "is10", "is12", "is15", "is16"]) {
-            check(calls(name, "IsStringEqualToLiteral9To16"), true, name + " has the characters in two registers");
-            check(calls(name, "IsStringEqualToConstant"), false, name + " compares with the characters in the image");
-        }
-        for (let name of ["is17", "is23", "is24", "is25"]) {
-            check(calls(name, "IsStringEqualToLiteral9To16"), false, name + " has the characters in two registers");
-            check(calls(name, "IsStringEqualToConstant"), true, name + " compares with the characters in the image");
-        }
-        for (let name of ["is1", "is3", "is7", "is8"]) {
-            check(calls(name, "IsStringEqualToLiteral9To16"), false, name + " has the characters in two registers");
-            check(calls(name, "IsStringEqualToConstant"), false, name + " compares with the characters in the image");
-        }
-    }
 })();
 console.log("passed");

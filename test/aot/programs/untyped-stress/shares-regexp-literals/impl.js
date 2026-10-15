@@ -1,30 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const shares = "shares-regexp-literal", makes = "calls:operationAOTNewRegExp";
 function identity(x) { return x; }
 noInline(identity);
 
@@ -39,8 +16,6 @@ function splits(x) { return ("" + x).split(/b+/).join("|"); }
 function twoInARow(x) { return ("" + x).replace(/a/g, "1").replace(/c/g, "3"); }
 for (const f of [replacesOnce, replacesEvery, replacesAll, replacesWithFunction, matchesOnce, matchesEvery, searches, splits, twoInARow]) {
     noInline(f);
-    applies(f, shares);
-    doesNotApply(f, makes);
 }
 
 function receiverIsUnknown(x) { return x.replace(/b/, "-"); }
@@ -52,7 +27,6 @@ function secondArgument(x) { return ("" + x).replace("b", /c/); }
 function returned() { return /b/g; }
 for (const f of [receiverIsUnknown, keptInVariable, usedTwice, sticky, passedOn, secondArgument, returned]) {
     noInline(f);
-    doesNotApply(f, shares);
 }
 
 function reentrant(x, depth) {

@@ -83,6 +83,7 @@ const IS_TOLD_APART: u16 = 1 << 11;
 /// All its properties are primitives or functions (so whatever `IS_FLAT`): nothing has to be made of an object for it. It says one thing only: what is untyped and held to it is not copied into it. It
 /// is not taken for flat anywhere else: a type with methods has to be made, and what is not laid out does not pass a cast to it.
 pub(super) const IS_FLAT_BUT_FOR_FUNCTIONS: u16 = 1 << 12;
+pub(super) const MAY_LACK_ROOM: u16 = 1 << 13;
 
 /// Phase B asks about no more layouts than this for one target. Of a target that the program tells apart from others, or the type of the objects
 /// of a class, which cannot take any object instead: than that.
@@ -116,6 +117,7 @@ pub(super) struct Facts {
     pub constants: Box<[(u32, u64)]>,
     /// The names of the properties whose type may stand for a constant: `any`, `never`, a type parameter.
     pub open: Box<[u32]>,
+    pub hidden: Box<[u32]>,
     /// What kind of type it is, in a word that says nothing of the program: for `Subtypes::report`.
     pub kind: &'static str,
 }
@@ -307,6 +309,8 @@ pub(super) struct Gathered {
     pub logs_type_errors: bool,
     pub opens_for_the_log: OpensForTheLog,
     pub admitting_when_closed: Vec<bool>,
+    pub members_when_closed: Vec<Vec<(u32, Cause)>>,
+    pub becomes_when_closed: Vec<Vec<u32>>,
     pub about_kinds_once_more: Vec<(Question, u32, WhyForeign)>,
     /// What is not laid out and let in: the view, the type of the object if that is known, and why.
     pub foreign: Vec<(u32, Option<TypeId>, WhyForeign)>,
@@ -494,6 +498,9 @@ impl Subtypes {
         let (members_by_flow, mut gathered) = (self.members_by_flow, self.gathered);
         if gathered.opens_for_the_log == OpensForTheLog::Nothing {
             gathered.admitting_when_closed = self.is_admitting;
+            let nodes = self.nodes;
+            gathered.members_when_closed = (self.sets.iter().zip(&self.causes)).map(|(set, causes)| set.iter().copied().zip(causes.iter().copied()).take_while(|member| member.0 < nodes).collect()).collect();
+            gathered.becomes_when_closed = self.becomes;
         }
         gathered.opens_for_the_log = opens;
         gathered.about_kinds = gathered.about_kinds_once_more.clone();
@@ -619,6 +626,22 @@ impl Subtypes {
             let (view, place) = self.gathered.held_untyped[at];
             if self.flags(view) & (IS_FLAT_BUT_FOR_FUNCTIONS | IS_MADE_BY_COERCION) == IS_FLAT_BUT_FOR_FUNCTIONS {
                 self.let_in(view, self.nodes, WhyForeign::Flat { at: place });
+            }
+        }
+        let mut reached: Vec<(u32, Place)> = self.gathered.held_untyped.clone();
+        let mut is_reached: FxHashSet<u32> = reached.iter().map(|held| held.0).collect();
+        while let Some((view, place)) = reached.pop() {
+            if self.flags(view) & (IS_INSTANCE | IS_MADE_BY_COERCION) != 0 {
+                continue;
+            }
+            if self.flags(view) & MAY_LACK_ROOM != 0 {
+                self.let_in(view, self.nodes, WhyForeign::MayLackRoom { at: place });
+            }
+            let fields = &self.gathered.fields;
+            for below in fields.of_views[view as usize].iter().flat_map(|field| fields.views_in[field.1 as usize].iter().copied()) {
+                if is_reached.insert(below) {
+                    reached.push((below, place));
+                }
             }
         }
         if self.gathered.opens_for_the_log != OpensForTheLog::Nothing {
@@ -1106,8 +1129,8 @@ impl Subtypes {
         say_the_first("untested edges into it", &|view| (degrees[view][5] + degrees[view][6]) as usize);
         // Why supertypes admit untyped objects: by the reason where it starts, those that it is the reason of themselves and those that have it
         // over upcasts, declarations and casts.
-        const REASONS: [&str; 8] = ["seen to be let in", "declared in a declaration file", "untyped inflow and a kind that is of the type", "weak", "flat", "too many candidates", "made by coercion", "another"];
-        let (mut of_their_own, mut inherited) = ([0usize; 8], [0usize; 8]);
+        const REASONS: [&str; 9] = ["seen to be let in", "declared in a declaration file", "untyped inflow and a kind that is of the type", "weak", "flat", "too many candidates", "made by coercion", "another", "may lack room"];
+        let (mut of_their_own, mut inherited) = ([0usize; 9], [0usize; 9]);
         for view in (0..self.nodes).filter(|&view| self.admits_untyped(view)) {
             let (mut at, mut steps) = (view, 0);
             let reason = loop {
@@ -1125,6 +1148,7 @@ impl Subtypes {
                             Some(WhyForeign::Weak { .. }) => 3,
                             Some(WhyForeign::Flat { .. }) => 4,
                             Some(WhyForeign::TooMany { .. }) => 5,
+                            Some(WhyForeign::MayLackRoom { .. }) => 8,
                             _ => 7,
                         };
                     }
@@ -1137,7 +1161,7 @@ impl Subtypes {
             };
             if steps == 0 { of_their_own[reason] += 1 } else { inherited[reason] += 1 }
         }
-        let by_reason: Vec<String> = (0..8).filter(|&reason| of_their_own[reason] + inherited[reason] > 0).map(|reason| format!("{}: {} and {} that have it from those", REASONS[reason], of_their_own[reason], inherited[reason])).collect();
+        let by_reason: Vec<String> = (0..9).filter(|&reason| of_their_own[reason] + inherited[reason] > 0).map(|reason| format!("{}: {} and {} that have it from those", REASONS[reason], of_their_own[reason], inherited[reason])).collect();
         eprintln!("aot: sizes: supertypes that admit untyped objects: {}. {}", of_their_own.iter().chain(&inherited).sum::<usize>(), by_reason.join("; "));
         let mut views_in: Vec<usize> = self.gathered.fields.views_in.iter().map(Vec::len).collect();
         views_in.sort_unstable_by_key(|&number| std::cmp::Reverse(number));
@@ -1344,7 +1368,10 @@ impl Subtypes {
         }
         // Phase B asks for itself, and what it is told says nothing of what a cast makes of the pair.
         if from == NONE {
-            if may_fit(&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]) {
+            let (made, view) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
+            let is_kept_out_by_the_language = made.hidden.iter().any(|name| view.declared.binary_search(name).is_ok() && view.hidden.binary_search(name).is_err())
+                && (view.flags & IS_INSTANCE != 0 || self.gathered.held_untyped.binary_search_by_key(&to, |held| held.0).is_err());
+            if !is_kept_out_by_the_language && may_fit(made, view) {
                 self.sizes.pairs_asked += 1;
                 let fits = self.ask(Question::whether_made_is_assignable_to(self.gathered.types[member as usize], self.gathered.asked_as[to as usize]), false);
                 self.pairs.push(Pair { member, target: to, from, may_change, fits, is_fitted: NONE });
@@ -1771,6 +1798,23 @@ impl Subtypes {
             self.report();
         }
         let views = self.nodes as usize;
+        if self.gathered.opens_for_the_log != OpensForTheLog::Nothing {
+            for view in 0..views {
+                for &(member, cause) in &self.gathered.members_when_closed[view] {
+                    if let Err(at) = self.sets[view].binary_search(&member) {
+                        self.sets[view].insert(at, member);
+                        self.causes[view].insert(at, cause);
+                    }
+                }
+            }
+            for (becomes, when_closed) in self.becomes.iter_mut().zip(&self.gathered.becomes_when_closed) {
+                for &to in when_closed {
+                    if let Err(at) = becomes.binary_search(&to) {
+                        becomes.insert(at, to);
+                    }
+                }
+            }
+        }
         let mut reached: Vec<Reach> = Vec::new();
         reached.resize_with(views, Reach::default);
         let mut why_foreign: Vec<Option<WhyForeign>> = vec![None; views];

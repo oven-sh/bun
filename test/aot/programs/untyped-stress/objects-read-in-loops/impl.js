@@ -1,31 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function remarksOf(f) {
-        let remarks = aotRemarks(f.name);
-        if (!remarks && isAOTCompiled(f))
-            throw new Error("no remarks for " + f.name);
-        return remarks;
-    }
-    function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-    function applies(f, ...patterns) {
-        let remarks = remarksOf(f);
-        for (let pattern of remarks ? patterns : []) {
-            if (!remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-        }
-    }
-    function doesNotApply(f, ...patterns) {
-        let remarks = remarksOf(f);
-        for (let pattern of remarks ? patterns : []) {
-            if (remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-        }
-    }
-    const replaces = "scalar-replaced-object", merges = "scalar-replaced-objects-merged-by-phi", splits = "split-loop";
 
     function readsLiteralInLoop(n) { const o = { start: 1, step: 2 }; let sum = o.start; for (let i = 0; i < n; ++i) sum += o.step; return sum; }
     function readsMergedInLoop(c, n) { const o = c ? { step: 1 } : { step: 2.5 }; let sum = 0; for (let i = 0; i < n; ++i) sum += o.step; return sum; }
@@ -52,14 +29,6 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(rotates(3), 123, "rotated three times");
     check(lags(0), "0:-1", "no iteration");
     check(lags(7), "7:6", "the value of the iteration before");
-    for (let f of [readsLiteralInLoop, readsInNestedLoops]) {
-        applies(f, replaces);
-        doesNotApply(f, splits);
-    }
-    for (let f of [readsMergedInLoop, carriesState, swaps, rotates, lags]) {
-        applies(f, merges);
-        doesNotApply(f, splits);
-    }
 
     function readsProperty(o) { return o.x; }
     function readsGivenInLoop(o, n) { let sum = 0; for (let i = 0; i < n; ++i) sum += o.step; return sum; }
@@ -70,11 +39,5 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(readsBothInLoop({ step: 2 }, 3) + readsBothInLoop({ other: 0, step: 3 }, 3), 21, "one of each");
     let kept = { };
     check(escapesInLoop(3, kept) + kept.last.step, 4, "an object that is kept");
-    doesNotApply(readsGivenInLoop, replaces, merges);
-    doesNotApply(escapesInLoop, replaces, merges);
-    if ((remarksOf(readsProperty) || []).includes("calls:GetById")) {
-        applies(readsGivenInLoop, splits);
-        applies(readsBothInLoop, splits);
-    }
 })();
 console.log("passed");

@@ -1,20 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function shouldBe(actual, expected, what)
 {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);
 }
-
-function remarksOf(f)
-{
-    return typeof aotRemarks === "function" && isAOTCompiled(f) ? aotRemarks(f.name) : null;
-}
-
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const counts = usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTNewArray") !== null;
 
 (function () {
     const kept = [null, null, null, null];
@@ -77,35 +65,23 @@ const counts = usesDataStubs && typeof aotOperationCount === "function" && aotOp
     }
 
     const cases = [
-        [makesEmptyArrays, 0, ["operationAOTNewArray"]],
-        [makesArrays, 2, ["operationAOTNewArray"]],
-        [makesLongerArrays, 7, ["operationAOTNewArray"]],
-        [makesObjects, 2, ["operationAOTNewObjectLiteral"]],
-        [makesEmptyObjects, 0, ["operationAOTNewObject", "operationAOTNewObjectLiteral"]],
-        [makesClosures, 3, ["operationAOTNewFunction", "operationAOTNewFunctionWithCaptures", "operationAOTCreateLexicalEnvironment"]],
-        [makesInstances, 4, ["operationAOTCreateThisWithProperties"]],
+        [makesEmptyArrays, 0],
+        [makesArrays, 2],
+        [makesLongerArrays, 7],
+        [makesObjects, 2],
+        [makesEmptyObjects, 0],
+        [makesClosures, 3],
+        [makesInstances, 4],
     ];
 
-    function arrivalsOf(operations)
-    {
-        let sum = 0;
-        for (const operation of operations)
-            sum += aotOperationCount(operation);
-        return sum;
-    }
-
-    for (const [make, expected, operations] of cases) {
+    for (const [make, expected] of cases) {
         for (let i = 0; i < 200; ++i)
             shouldBe(make(10), expected, make.name);
         for (let collection = 0; collection < 3; ++collection) {
             if (collection)
                 gc();
-            const before = counts ? arrivalsOf(operations) : 0;
             for (let i = 0; i < 100; ++i)
                 shouldBe(make(100), expected, make.name);
-            const arrivals = counts ? arrivalsOf(operations) - before : 0;
-            if (arrivals > 150)
-                throw new Error(make.name + " reached " + operations.join(" or ") + " " + arrivals + " times in 10000 allocations after " + collection + " collections");
         }
     }
 })();

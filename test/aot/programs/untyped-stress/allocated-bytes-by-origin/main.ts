@@ -1,3 +1,3 @@
-// The garbage collector's accounting of allocated bytes is right for objects allocated by compiled code.
+// Very many small objects, large arrays, long strings and array buffers, with full and eden collections between them.
 import "../../jsc-shell-functions.ts";
 import "./program.ts";

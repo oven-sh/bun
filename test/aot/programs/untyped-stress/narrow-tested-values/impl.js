@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
 function same(actual, expected, what) {
     if (!Object.is(actual, expected))
@@ -89,27 +88,5 @@ function isNotUsedAfter(k) { let x = k ? 5 : undefined; if (x !== undefined) ret
 function testsParameter(x) { if (x !== undefined) return x + 1; return -1; }
 same(comparesWithNumber(1), 1, "compared with a number"); same(isNotUsedAfter(0), 0, "not used after the test"); same(testsParameter("a"), "a1", "a parameter");
 
-if (aotRemarks("coalesces")) {
-    let has = name => aotRemarks(name).includes("narrowed-tested-value");
-    for (let name of ["notStrictlyUndefined", "strictlyUndefined", "notStrictlyNull", "notLooselyNull", "looselyNull", "coalesces", "truthy", "falsy", "and", "or", "conditional",
-        "typeofNumber", "typeofString", "typeofBoolean", "typeofUndefined", "typeofObject", "typeofFunction", "stringOrMissing", "objectOrMissing", "arrayOrMissing",
-        "afterTheJoin", "otherBranch", "loopInside", "testInsideLoop", "nested", "returnsEarly"]) {
-        if (!has(name))
-            throw new Error("nothing is narrowed in " + name + ": " + aotRemarks(name).join(" "));
-    }
-    for (let name of ["comparesWithNumber", "isNotUsedAfter", "testsParameter", "notStrictlyUndefinedOf", "coalescesOf", "truthyOf"]) {
-        if (has(name))
-            throw new Error("something is narrowed in " + name);
-    }
-    let callsStub = (name, stub) => aotRemarks(name).includes("calls:" + stub);
-    for (let name of ["notStrictlyUndefined", "strictlyUndefined", "notLooselyNull", "coalesces", "conditional", "loopInside"]) {
-        if (callsStub(name, "Add") || callsStub(name, "Mul"))
-            throw new Error("the arithmetic of " + name + " is not inline: " + aotRemarks(name).join(" "));
-    }
-    if (!callsStub("notStrictlyUndefinedOf", "Add") && (aotRemarks("readsProperty") || []).includes("calls:GetById"))
-        throw new Error("the arithmetic of notStrictlyUndefinedOf is inline");
-}
-function readsProperty(o) { return o.p; }
-readsProperty({ p: 1 });
 })();
 console.log("passed");

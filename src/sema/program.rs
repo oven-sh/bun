@@ -6496,11 +6496,12 @@ impl<'s> Files<'s> {
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !crate::resolve::is_jsx_file_name(module.file_name()) {
+        let is_named_so = crate::resolve::is_jsx_file_name(module.file_name());
+        if !is_named_so && !(module.hir.is_js && module.hir.exprs.iter().any(|e| matches!(e.kind, crate::hir::ExprKind::Jsx(_)))) {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;
-        self.atoms.lookup(&runtime)
+        if is_named_so { self.atoms.lookup(&runtime) } else { Some(self.atoms.intern(&runtime)) }
     }
 
     // ───────────────────────────── merging ─────────────────────────────

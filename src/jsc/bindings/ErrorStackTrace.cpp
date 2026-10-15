@@ -582,7 +582,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
 
 #if ENABLE(AOT)
         if (frame.isTypedAOTFrame() && codeType == JSC::CodeType::FunctionCode && !(frame.isAsyncFrame() && JSC::AOT::typedFunctionHasGivenName(frame.typedAOTFunction()))) {
-            functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction());
+            functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction(), frame.isAsyncFrame());
         }
 #endif
 
@@ -593,7 +593,7 @@ String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* fla
         functionName = Zig::functionName(vm, callee);
 #if ENABLE(AOT)
     } else if (frame.isTypedAOTFrame()) {
-        functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction());
+        functionName = JSC::AOT::typedFunctionName(frame.typedAOTFunction(), frame.isAsyncFrame());
 #endif
     }
 

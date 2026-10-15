@@ -1157,6 +1157,14 @@ impl<'p, 's> Checker<'p, 's> {
                 found.kept_expressions.insert(func, (activation, 0));
             }
             raw.entry(Node::Code(self.code_of_fn(file, func))).or_default().insert(Need::Environment(activation, Sym { file, id: name }));
+            if name.is_some() && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)) && self.activation_binding(file, Decl::Fn(func)).is_none() {
+                for &mention in index.of(ExprTag::Ident) {
+                    let parent = bound.expr_parent[mention.idx()];
+                    if bound.expr_symbol[mention.idx()] == name && parent != Parent::None && !bound.is_in_type_query(mention) {
+                        raw.entry(Node::Code(self.code_at(file, parent))).or_default().insert(Need::Environment(activation, Sym { file, id: name }));
+                    }
+                }
+            }
         }
 
         // From here on a variable that lives in an environment stands for that: the sets stay small however many variables a scope has.

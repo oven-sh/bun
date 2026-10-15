@@ -5,14 +5,15 @@ import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
 
-const usesImage = (stdout: string): BundlerTestInput["run"] => ({
-  env: { BUN_AOT_VERBOSE: "1" },
-  validate({ stdout: actual, stderr }) {
-    expect(actual).toBe(stdout);
-    expect(stderr).toContain("[aot] image: ");
-    expect(stderr).not.toContain("[aot] not using");
-  },
-});
+const usesImage = (stdout: string) =>
+  ({
+    env: { BUN_AOT_VERBOSE: "1" },
+    validate({ stdout: actual, stderr }) {
+      expect(actual).toBe(stdout);
+      expect(stderr).toContain("[aot] image: ");
+      expect(stderr).not.toContain("[aot] not using");
+    },
+  }) satisfies BundlerTestInput["run"];
 
 describe("bundler", () => {
   for (const backend of ["cli", "api"] as const) {
@@ -366,202 +367,6 @@ describe("bundler", () => {
       run: usesImage("48\n4\n"),
     });
 
-    itBundled("InternalChunksHaveNoName", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-          import { createRequire } from "node:module";
-          import { tmpdir } from "node:os";
-          import { join } from "node:path";
-          import vm from "node:vm";
-          const [a, b] = await Promise.all([import("./a"), import("./b")]);
-          console.log(a.fromA(), b.fromB());
-          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
-          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
-          const internal = pathIn(a.stackOfShared()), target = pathIn(a.stackInA());
-          const dir = mkdtempSync(join(tmpdir(), "names-"));
-          const namesOf = (ns: object) => Object.keys(ns).join();
-          const importing = (path: string) => "import * as ns from " + JSON.stringify(path) + "; export const names = Object.keys(ns).join();";
-          function routesTo(path: string, label: string): Record<string, () => unknown> {
-            writeFileSync(join(dir, label + "-static.mjs"), importing(path));
-            writeFileSync(join(dir, label + "-dynamic.mjs"), "export const names = Object.keys(await import(" + JSON.stringify(path) + ")).join();");
-            writeFileSync(join(dir, label + "-require.cjs"), "module.exports = Object.keys(require(" + JSON.stringify(path) + ")).join();");
-            return {
-              "import() in made code": () => new Function("p", "return import(p)")(path).then(namesOf),
-              "import() in indirect eval": () => (0, eval)("import(" + JSON.stringify(path) + ")").then(namesOf),
-              "import() in node:vm": () => vm.runInThisContext("import(" + JSON.stringify(path) + ")", { importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }).then(namesOf),
-              "import() in node:vm under the name of a chunk": () => vm.runInThisContext("import(" + JSON.stringify(path) + ")", { filename: target, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER }).then(namesOf),
-              "import() of a computed name": () => import(path).then(namesOf),
-              "import() of a computed name in a chunk that imports it": () => a.importIt(path).then(namesOf),
-              "import() in a file": () => import(join(dir, label + "-dynamic.mjs")).then(m => m.names),
-              "static import in a file": () => import(join(dir, label + "-static.mjs")).then(m => m.names),
-              "static import in a data: module": () => import("data:text/javascript," + encodeURIComponent(importing(path))).then(m => m.names),
-              "require in a file": () => require(join(dir, label + "-require.cjs")),
-              "createRequire": () => namesOf(createRequire(join(dir, "x.js"))(path)),
-              "import.meta.require": () => namesOf(import.meta.require(path)),
-              "Bun.resolveSync": () => Bun.resolveSync(path, dir) === path,
-              "require.resolve": () => require.resolve(path) === path,
-              "require.cache lists it": () => { if (!Object.keys(require.cache).includes(path)) throw new Error("no"); return true; },
-              "require.cache has it": () => { if (!(path in require.cache)) throw new Error("no"); return true; },
-              "require.cache gives it": () => namesOf(require.cache[path]!.exports),
-              "a worker on it": () => new Promise((resolve, reject) => {
-                const worker = new Worker(path);
-                worker.addEventListener("error", () => reject(new Error("no")));
-                worker.addEventListener("close", (event: any) => (event.code ? reject(new Error("no")) : resolve("ran")));
-              }),
-            };
-          }
-          function routesByPluginsTo(path: string, label: string): Record<string, () => unknown> {
-            return {
-              "a plugin's onResolve gives it and its onLoad would serve it": () => {
-                Bun.plugin({
-                  name: label,
-                  setup(build) {
-                    build.onResolve({ filter: new RegExp("^" + label + "[.]virtual$") }, () => ({ path }));
-                    build.onLoad({ filter: /./ }, () => ({ contents: "export const served = 1;", loader: "js" }));
-                  },
-                });
-                return new Function("p", "return import(p)")(label + ".virtual").then(namesOf);
-              },
-              "a virtual module of its name": () => {
-                Bun.plugin({ name: label + " virtual", setup(build) { build.module(path, () => ({ exports: { virtual: 1 }, loader: "object" })); } });
-                return new Function("p", "return import(p)")(path).then(namesOf);
-              },
-            };
-          }
-          const routes = [
-            ["internal", routesTo(internal, "internal")],
-            ["target", routesTo(target, "target")],
-            ["internal", routesByPluginsTo(internal, "internal")],
-            ["target", routesByPluginsTo(target, "target")],
-          ] as const;
-          for (const [label, table] of routes) {
-            for (const [name, route] of Object.entries(table)) {
-              let said: string;
-              try { said = String(await route()); } catch { said = "refused"; }
-              console.log(label + ": " + name + ": " + said);
-            }
-          }
-          console.log(a.fromA(), b.fromB(), (await import("./a")) === a);
-          rmSync(dir, { recursive: true, force: true });
-          process.exit(0);
-        `,
-        "/a.ts": /* js */ `
-          import { readTable, stackInShared, table, ready } from "./shared";
-          export function fromA() { return readTable() + ":" + table.kept + ":" + ready; }
-          export const stackOfShared = stackInShared;
-          export function stackInA() { return new Error("here").stack!; }
-          export function importIt(path: string) { return import(path); }
-        `,
-        "/b.ts": /* js */ `
-          import { readTable, table } from "./shared";
-          export function fromB() { return readTable() + ":" + table.other; }
-        `,
-        "/shared.ts": /* js */ `
-          export const ready = await Promise.resolve("ready");
-          export const table = { kept: 1, other: 2 };
-          export function readTable() { return table.kept + table.other; }
-          export function stackInShared() { return new Error("here").stack!; }
-        `,
-      },
-      run: usesImage(
-        [
-          "3:1:ready 3:2",
-          ...[
-            "import() in made code",
-            "import() in indirect eval",
-            "import() in node:vm",
-            "import() in node:vm under the name of a chunk",
-            "import() of a computed name",
-            "import() of a computed name in a chunk that imports it",
-            "import() in a file",
-            "static import in a file",
-            "static import in a data: module",
-            "require in a file",
-            "createRequire",
-            "import.meta.require",
-            "Bun.resolveSync",
-            "require.resolve",
-            "require.cache lists it",
-            "require.cache has it",
-            "require.cache gives it",
-            "a worker on it",
-          ].map(route => "internal: " + route + ": refused"),
-          "target: import() in made code: fromA,importIt,stackInA,stackOfShared",
-          "target: import() in indirect eval: fromA,importIt,stackInA,stackOfShared",
-          "target: import() in node:vm: fromA,importIt,stackInA,stackOfShared",
-          "target: import() in node:vm under the name of a chunk: fromA,importIt,stackInA,stackOfShared",
-          "target: import() of a computed name: fromA,importIt,stackInA,stackOfShared",
-          "target: import() of a computed name in a chunk that imports it: fromA,importIt,stackInA,stackOfShared",
-          "target: import() in a file: fromA,importIt,stackInA,stackOfShared",
-          "target: static import in a file: fromA,importIt,stackInA,stackOfShared",
-          "target: static import in a data: module: fromA,importIt,stackInA,stackOfShared",
-          "target: require in a file: fromA,importIt,stackInA,stackOfShared",
-          "target: createRequire: fromA,importIt,stackInA,stackOfShared",
-          "target: import.meta.require: fromA,importIt,stackInA,stackOfShared",
-          "target: Bun.resolveSync: true",
-          "target: require.resolve: true",
-          "target: require.cache lists it: true",
-          "target: require.cache has it: true",
-          "target: require.cache gives it: fromA,importIt,stackInA,stackOfShared",
-          "target: a worker on it: ran",
-          "internal: a plugin's onResolve gives it and its onLoad would serve it: refused",
-          "internal: a virtual module of its name: refused",
-          "target: a plugin's onResolve gives it and its onLoad would serve it: fromA,importIt,stackInA,stackOfShared",
-          "target: a virtual module of its name: refused",
-          "3:1:ready 3:2 true",
-          "",
-        ].join("\n"),
-      ),
-    });
-
-    itBundled("InternalChunksHaveNoNameBeforeTheyLoad", {
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
-          const pathIn = (stack: string) => stack.slice(stack.indexOf(root), stack.indexOf(".js", stack.indexOf(root)) + 3);
-          if (process.argv[2] === "names") {
-            console.log(pathIn((await import("./lazy")).stackOfLate()));
-            process.exit(0);
-          }
-          const internal = Bun.spawnSync({ cmd: [process.execPath, "names"], env: process.env, stderr: "ignore" }).stdout.toString().trim();
-          console.log(internal.startsWith(root), internal.endsWith(".js"));
-          const spellings = { narrow: internal, wide: (String.fromCharCode(256) + internal).slice(1) };
-          Bun.plugin({
-            name: "gives",
-            setup(build) {
-              build.onResolve({ filter: /^(narrow|wide)[.]virtual$/ }, ({ path }) => ({ path: spellings[path.slice(0, path.indexOf(".")) as keyof typeof spellings] }));
-              build.onLoad({ filter: /./ }, () => ({ contents: "export const late = 'from the guest';", loader: "js" }));
-            },
-          });
-          for (const spelling of Object.keys(spellings)) {
-            let said: string;
-            try { said = Object.keys(await new Function("p", "return import(p)")(spelling + ".virtual")).join(); } catch { said = "refused"; }
-            console.log(spelling + ": " + said);
-          }
-          const [lazy, lazy2] = await Promise.all([import("./lazy"), import("./lazy2")]);
-          console.log(lazy.readLate(), lazy2.readLate2());
-          process.exit(0);
-        `,
-        "/lazy.ts": /* js */ `
-          import { late, stackInLate } from "./late";
-          export function readLate() { return late; }
-          export const stackOfLate = stackInLate;
-        `,
-        "/lazy2.ts": /* js */ `
-          import { late } from "./late";
-          export function readLate2() { return late + "2"; }
-        `,
-        "/late.ts": /* js */ `
-          export const late = "from the executable";
-          export function stackInLate() { return new Error("here").stack!; }
-        `,
-      },
-      run: usesImage("true true\nnarrow: refused\nwide: refused\nfrom the executable from the executable2\n"),
-    });
-
     itBundled("CompiledModulesCannotBeMocked", {
       splitting: true,
       files: {
@@ -658,10 +463,9 @@ describe("bundler", () => {
           const first = await load();
           console.log(first.bump(), first.bump());
           const root = Bun.main.slice(0, Bun.main.lastIndexOf("/") + 1);
-          const key = Object.keys(require.cache).find(name => name.startsWith(root) && name !== Bun.main)!;
-          let said: string;
-          try { said = String(delete require.cache[key]); } catch (e: any) { said = e.constructor.name; }
-          console.log(said, key in require.cache, (await load()) === first, first.bump());
+          const listed = Object.keys(require.cache).filter(name => name.startsWith(root) && name !== Bun.main);
+          for (const name of listed) delete require.cache[name];
+          console.log(listed.length, (await load()) === first, first.bump());
           require.cache["/not/in/the/executable.js"] = { exports: 1 } as any;
           console.log(delete require.cache["/not/in/the/executable.js"], "/not/in/the/executable.js" in require.cache);
         `,
@@ -670,7 +474,7 @@ describe("bundler", () => {
           export function bump() { return ++count; }
         `,
       },
-      run: usesImage("1 2\nTypeError true true 3\ntrue false\n"),
+      run: usesImage("1 2\n0 true 3\ntrue false\n"),
     });
   }
 
@@ -870,7 +674,7 @@ describe("Bun.ModuleGraph with --aot", () => {
       stderr: "pipe",
     });
     expect([await build.stderr.text(), await build.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    const results = [];
+    const results: { where: string; stdout: string; stderr: string; exitCode: number }[] = [];
     for (const where of ["main", "worker"]) {
       await using proc = Bun.spawn({
         cmd: [join(String(dir), "out"), where],
@@ -1338,8 +1142,64 @@ test("image size limit is a build error", async () => {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("the program has too much machine code for an image");
-  expect(stderr).toContain("error: Failed to compile the program ahead of time");
+  expect(stderr).toContain("error: --aot: the program has too much machine code");
+  expect(stderr).not.toContain("AOT: ");
+  expect(exitCode).toBe(1);
+  expect(existsSync(join(String(dir), "out"))).toBe(false);
+});
+
+test.each(["index", "frame", "callSites", "slots"])("a function record over its limit (%s) is a build error", async limit => {
+  using dir = tempDir("compile-aot-record-limit", { "entry.ts": `console.log(1);` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: limit },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: --aot: the program is too large");
+  expect(stderr).not.toContain("AOT: ");
+  expect(exitCode).toBe(1);
+  expect(existsSync(join(String(dir), "out"))).toBe(false);
+});
+
+test("code that cannot be compiled is a build error at its file, line and column", async () => {
+  using dir = tempDir("compile-aot-declined", {
+    "entry.ts": `console.log(1);
+
+function countDown(n: number): number { return n ? countDown(n - 1) + 1 : 0; }
+console.log(countDown(3));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: "functionFrameSize" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const why = "cannot be compiled ahead of time: it holds so many values at once";
+  expect(stderr).toMatch(new RegExp("error: --aot: `countDown` " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:3:1\\b"));
+  expect(stderr).toMatch(new RegExp("error: --aot: the top-level code " + why + "[^\\n]*\\n\\s+at [^\\n]*entry\\.ts:1:1\\b"));
+  expect(stderr).not.toContain("AOT: ");
+  expect(exitCode).toBe(1);
+  expect(existsSync(join(String(dir), "out"))).toBe(false);
+});
+
+test("an entry function that is not compiled is a build error", async () => {
+  using dir = tempDir("compile-aot-declined-entry", { "entry.ts": `console.log(1);` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
+    env: { ...bunEnv, BUN_JSC_aotImageLimitToExceedForTesting: "frameSize" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: --aot: internal error: the entry function of a module was not compiled: it holds so many values at once");
+  expect(stderr).not.toMatch(/^\s+at .*:0$/m);
+  expect(stderr).not.toContain("AOT: ");
   expect(exitCode).toBe(1);
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });

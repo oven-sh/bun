@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function plain() { return 1; }
 class WithConstructor { constructor() { this.x = 2; } method() { return 3; } }
 class WithoutConstructor { }

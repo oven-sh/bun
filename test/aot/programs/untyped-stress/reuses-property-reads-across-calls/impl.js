@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function repeat(f) {
     for (let i = 0; i < 100; i++)
@@ -58,11 +36,6 @@ function aroundStoresComputed(o, key, v) { const before = o.a; const r = storesC
 function aroundDeletes(o) { const before = o.a; const r = deletes(o); return String(before) + String(o.a) + String(r - r); }
 function aroundConstructs(o) { const before = o.a; const r = constructs(o); return before * 1000 + o.a + r - r; }
 function aroundStoresBReadsB(o, v) { const before = o.b; const r = storesB(o, v); return before * 1000 + o.b + r - r; }
-
-for (const f of [aroundReadsOnly, aroundStoresB, aroundCallsReadsOnly, aroundRecurses])
-    applies(f, "call-keeps-property-reads", "reuses-property-read:a");
-for (const f of [aroundStoresA, aroundCallsStoresA, aroundRecursesAndStoresA, aroundCallsUnknown, aroundStoresComputed, aroundDeletes, aroundConstructs, aroundStoresBReadsB])
-    doesNotApply(f, "reuses-property-read");
 
 repeat(i => {
     check(aroundReadsOnly({ a: i, b: 1, kind: 2 }), i * 1001, "a call that only reads");
@@ -119,11 +92,6 @@ function aroundPush(o, array) { const before = o.a; array.push(1); return before
 function aroundOtherMethod(o, map, key) { const before = o.a; const r = map.lookUp(key); return before * 1000 + o.a + r - r; }
 for (const f of [aroundMapGet, aroundMapHas, aroundMapSet, aroundSetAdd, aroundCharCodeAt, aroundPush, aroundOtherMethod])
     noInline(f);
-if (remarksOf(aroundMapGet)?.some(remark => matches(remark, "cached-call"))) {
-    for (const f of [aroundMapGet, aroundMapHas, aroundMapSet, aroundSetAdd, aroundCharCodeAt, aroundPush])
-        applies(f, "reuses-property-read:a");
-}
-doesNotApply(aroundOtherMethod, "reuses-property-read");
 
 repeat(i => {
     check(aroundMapGet({ a: i }, table, "k"), i * 1001, "Map.prototype.get");
@@ -173,10 +141,6 @@ function readsOnOnePathOnly(o, c) { let x = 0; if (c) x = o.a; return x * 1000 +
 function callsOnOnePath(o, c) { const before = o.a; if (c) unknown(o); return before * 1000 + o.a; }
 for (const f of [storesOnOnePath, storesOnBothPaths, readsOnOnePathOnly, callsOnOnePath])
     noInline(f);
-applies(storesOnOnePath, "reuses-property-read:a");
-applies(storesOnBothPaths, "reuses-property-read:a");
-doesNotApply(readsOnOnePathOnly, "reuses-property-read");
-doesNotApply(callsOnOnePath, "reuses-property-read");
 repeat(i => {
     check(storesOnOnePath({ a: i }, true), i * 1000 + 5, "a store on the path that is taken");
     check(storesOnOnePath({ a: i }, false), i * 1001, "a store on the path that is not taken");
@@ -207,13 +171,6 @@ function readsInNestedLoopsInnerStores(o, n) { let sum = o.a; for (let i = 0; i 
 const loops = [readsInLoop, readsInLoopThatStoresAnother, readsInLoopThatCallsHarmless, readsInLoopThatStores, readsInLoopThatStoresThroughAnother, readsInLoopThatCallsUnknown, readsInLoopThatCallsStoresA, readsInNestedLoops, readsInNestedLoopsInnerStores];
 for (const f of loops)
     noInline(f);
-applies(readsInLoopThatCallsHarmless, "reuses-property-read:a", "call-keeps-property-reads");
-for (const f of [readsInLoop, readsInLoopThatStoresAnother, readsInNestedLoops]) {
-    if (!remarksOf(f)?.some(remark => matches(remark, "split-loop")))
-        applies(f, "reuses-property-read:a");
-}
-for (const f of [readsInLoopThatStores, readsInLoopThatStoresThroughAnother, readsInLoopThatCallsUnknown, readsInLoopThatCallsStoresA, readsInNestedLoopsInnerStores])
-    doesNotApply(f, "reuses-property-read");
 
 repeat(i => {
     check(readsInLoop({ a: i }, 4), 5 * i + 6, "a loop that only reads");

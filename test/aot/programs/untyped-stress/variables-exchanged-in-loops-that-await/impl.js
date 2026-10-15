@@ -1,18 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const doesNotSaveRestoredValue = "does-not-save-restored-value:";
-function applies(name) {
-    let remarks = aotRemarks(name);
-    if (remarks && !remarks.some(remark => remark.startsWith(doesNotSaveRestoredValue)))
-        throw new Error(doesNotSaveRestoredValue + " does not apply to " + name + ": " + remarks.join(" "));
-}
-function doesNotApply(name) {
-    let remarks = aotRemarks(name);
-    if (remarks && remarks.some(remark => remark.startsWith(doesNotSaveRestoredValue)))
-        throw new Error(doesNotSaveRestoredValue + " applies to " + name + ": " + remarks.join(" "));
 }
 function resultOf(promise) {
     let result;
@@ -41,7 +29,6 @@ function resultOf(promise) {
         return t;
     }
     check(resultOf(unchangedInLoop(3)), 31.5, "values that stay the same in a loop that awaits");
-    applies("unchangedInLoop");
 
     async function awaitsOnce() {
         let x = make(5);
@@ -49,7 +36,6 @@ function resultOf(promise) {
         return x.v + v;
     }
     check(resultOf(awaitsOnce()), 6, "one suspension");
-    doesNotApply("awaitsOnce");
 
     async function changesSometimes(n) {
         let log = "";
@@ -155,7 +141,6 @@ function resultOf(promise) {
         }
     }
     check([...yields(2)].join(), "-1,0,1,5,-1,10,12,6", "a generator");
-    applies("yields");
 
     function* finishes() {
         let x = make(1);
@@ -204,8 +189,6 @@ function resultOf(promise) {
         return log.join();
     }
     check(resultOf(consumes(4)), "p100,p100,p101,p104,p105", "an async generator and its consumer");
-    applies("produces");
-    applies("consumes");
 
     async function uninitialized(n) {
         let log = "";
@@ -237,6 +220,5 @@ function resultOf(promise) {
         return t;
     }
     check(resultOf(Promise.all([manyActivations(1, 3), manyActivations(10, 2), manyActivations(100, 4)])).join(), "3,20,400", "activations that take turns");
-    applies("manyActivations");
 })();
 console.log("passed");

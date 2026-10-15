@@ -4057,6 +4057,7 @@ fn check_named_files(
         for file in compiled.filter_map(|path| program.files.by_path.get(&path)) {
             is_left_out[file.idx()] = true;
         }
+        to_check.retain(|file| !(matches!(modules[file.idx()].hir.kind, FileKind::Ts | FileKind::Tsx) && package_holding(modules[file.idx()].path.text).is_some()));
         for file in &to_check {
             is_left_out[file.idx()] = false;
         }
@@ -4450,6 +4451,10 @@ fn check_named_files(
         // The diagnostics that were found are reported. Others may be missing, so the report lists
         // the file as incomplete.
         for file in outcome.incomplete {
+            let path = program.files.modules[file.idx()].file_name();
+            if !request.code.is_empty() && !request.code.iter().any(|code| host::from_argument(&host::from_native(request.cwd), code) == path) {
+                continue;
+            }
             incomplete.lock().push(Incomplete {
                 path: program.files.modules[file.idx()].file_name().to_vec(),
                 is_nested_too_deeply: program.files.hir(file).ran_out_of_stack,
@@ -4566,8 +4571,13 @@ fn check_named_files(
     let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| {
         host.parallel(count, work);
     };
+    let of_the_bundle: FxHashSet<FileId> = (request.code.iter())
+        .filter_map(|path| program.files.by_path.get(&host::from_argument(&host::from_native(request.cwd), path)))
+        .collect();
+    let is_outside_the_bundle = |file: FileId| !of_the_bundle.is_empty() && !of_the_bundle.contains(&file);
+    let has_whole_trees = program.files_without_whole_trees().into_iter().all(is_outside_the_bundle);
     searches_in_the_plan.store(
-        visits_in_tasks && checker_count == 0 && is_any_type_checked && !plan.steps.is_empty() && plan.ahead.is_empty() && program.files_without_whole_trees().is_empty(),
+        visits_in_tasks && checker_count == 0 && is_any_type_checked && !plan.steps.is_empty() && plan.ahead.is_empty() && has_whole_trees,
         Ordering::Relaxed,
     );
     struct Permits {
@@ -4943,8 +4953,12 @@ fn check_named_files(
             let syntactic = std::mem::take(&mut *found.lock());
             let fails_no_build = |found: &Diagnostic| {
                 request.after_file.is_some()
-                    && found.code == 18030
-                    && (program.files.by_path.get(&found.path)).is_some_and(|file| program.files.hir(file).is_js)
+                    && (program.files.by_path.get(&found.path)).is_some_and(|file| {
+                        let hir = program.files.hir(file);
+                        is_outside_the_bundle(file) && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+                            || hir.is_js && (found.code == 18030 || hir.check_directive.is_none() && options.check_js.is_none() && !found.has_undefined_range && bun_sema::hir::is_in_comment(hir, found.start))
+                            || hir.kind == FileKind::Declaration && package_holding(program.files.modules[file.idx()].path.text).is_some()
+                    })
             };
             if !syntactic.iter().all(fails_no_build) {
                 // `GetProgramDiagnostics` is not called. An incremental program asks for them when
@@ -4981,7 +4995,7 @@ fn check_named_files(
             }
         }
         let emits_first = options.emits_first && !options.no_emit_on_error;
-        if visits_in_tasks && program.files_without_whole_trees().is_empty() {
+        if visits_in_tasks && has_whole_trees {
             let at_once = |count: usize, work: &(dyn Fn(usize) + Sync)| {
                 std::thread::scope(|scope| {
                     for index in 0..count {
@@ -5150,6 +5164,14 @@ fn check_named_files(
             reported.category = Category::Warning;
             std::mem::take(&mut is_first)
         });
+    }
+    if request.is_one_program && program.files.options.check_js.is_none() {
+        for reported in report.diagnostics.iter_mut().filter(|reported| reported.category == Category::Error && reported.code == 2839) {
+            let hir = program.files.by_path.get(&reported.path).map(|file| &program.files.modules[file.idx()].hir);
+            if hir.is_some_and(|hir| hir.is_js && hir.check_directive.is_none()) {
+                reported.category = Category::Warning;
+            }
+        }
     }
     report.unreadable.extend(unreadable);
     sort_and_deduplicate(&mut report.diagnostics);

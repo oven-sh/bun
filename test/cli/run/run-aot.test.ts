@@ -46,6 +46,19 @@ async function expectSameAsBunRun(files: Record<string, string>, entry: string, 
 }
 
 describe.skipIf(!supported)("bun run --aot", () => {
+  test.concurrent("a preload that throws is reported", async () => {
+    const { stderr, exitCode } = await expectSameAsBunRun(
+      {
+        "entry.ts": `console.log("the entry point runs");`,
+        "preload.ts": `console.log("the preload begins"); throw new Error("thrown by the preload");`,
+      },
+      "entry.ts",
+      { flags: ["--preload=./app/preload.ts"] },
+    );
+    expect(stderr).toContain("error: thrown by the preload");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("prints nothing of its own", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `` });
     expect(await run(String(dir), true, "entry.ts")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
@@ -78,6 +91,21 @@ describe.skipIf(!supported)("bun run --aot", () => {
       { "entry.cjs": `console.log(__dirname, __filename, require.main === module);` },
       "entry.cjs",
     );
+  });
+
+  test.concurrent("require.main === module in an ES module", async () => {
+    const { stdout } = await expectSameAsBunRun(
+      {
+        "entry.ts": `
+          import { other } from "./other";
+          if (require.main === module) console.log("main");
+          console.log(require.main === module, module === require.main, require.main !== module, other());
+        `,
+        "other.ts": `export const other = () => [require.main === module, require.main !== module];`,
+      },
+      "entry.ts",
+    );
+    expect(stdout).toBe("main\ntrue true false [ false, true ]\n");
   });
 
   test.concurrent("process.argv, process.execPath and Bun.main", async () => {
@@ -367,6 +395,14 @@ describe.skipIf(!supported)("bun run --aot", () => {
     });
     expect(stdout).toBe("");
     expect(stderr).toContain("the debugger is not supported with --aot");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each(["--watch", "--hot"])("%s is not supported", async flag => {
+    using dir = tempDir("run-aot", { "entry.ts": `console.log("ran");` });
+    const { stdout, stderr, exitCode } = await run(String(dir), true, "entry.ts", { flags: [flag], builds: false });
+    expect(stdout).toBe("");
+    expect(stderr).toContain(`error: --aot does not support ${flag}: `);
     expect(exitCode).toBe(1);
   });
 });

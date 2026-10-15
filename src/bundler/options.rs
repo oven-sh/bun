@@ -1520,8 +1520,7 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
     out
 }
 
-const ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT: [&[u8]; 6] = [
-    b"AOT_SWITCH_OUTLINE",
+const ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT: [&[u8]; 5] = [
     b"BUN_AOT_TYPED_FILE",
     b"BUN_AOT_TYPED_SNAPSHOT",
     b"BUN_AOT_TYPE_ERROR_LOG",

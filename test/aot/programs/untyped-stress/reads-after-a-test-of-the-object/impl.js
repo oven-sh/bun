@@ -1,12 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isOn = !!remarksOf("check") && !!options.useAOTDataStubs;
 
 (function () {
     function first() { return 2; }
@@ -52,21 +47,5 @@ const isOn = !!remarksOf("check") && !!options.useAOTDataStubs;
         check(keptOfMerged === 0 ? 0 : keptOfMerged === null ? -1 : keptOfMerged(), expectedOfMerged, "what the test of a merged value kept");
         check(keptOfMergedVar === 0 ? 0 : keptOfMergedVar === null ? -1 : keptOfMergedVar(), expectedOfMerged, "what the test of a merged value that is never empty kept");
     }
-
-    if (!isOn)
-        return;
-    const reasons = name => remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join();
-    const has = (name, remark) => remarksOf(name).includes(remark);
-    const forced = options.contradictAOTAnalysisForTesting | 0;
-    for (const name of ["readsThreeAndKeeps", "readsThreeAndKeepsInOneStep", "readsThreeAndKeepsMergedVar"]) {
-        check(has(name, "guards-over-whole-function"), !forced, name + " has guards over the whole function");
-        check(reasons(name), forced ? "no-guards-over-whole-function:contradicts-analysis-of-result" : "", "why " + name + " has no guards");
-        check(has(name, "contradicts-analysis-without-guards"), forced == 2, name + " contradicts the analysis without guards");
-    }
-    check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), !reasons("readsThreeAndKeepsMerged"), "readsThreeAndKeepsMerged has guards over the whole function or says why not");
-    if (forced)
-        check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), false, "readsThreeAndKeepsMerged has guards over the whole function");
-    if (forced == 2)
-        check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), true, "readsThreeAndKeepsMerged contradicts the analysis without guards");
 })();
 console.log("passed");

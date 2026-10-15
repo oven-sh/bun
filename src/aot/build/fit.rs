@@ -898,7 +898,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             _ => value,
         };
-        if fx.is_typed && (matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.defines_accessor(fx, e) || self.c.yields_redefined_literal(fx.file, e)) {
+        let is_left_a_dictionary = fx.is_typed
+            && matches!(fx.b.func.op(value), Some(Op::NewObject))
+            && matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_))
+            && self.c.contextual_type_of_literal(fx.file, e).is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything)
+            && {
+                let own = self.c.type_of_expr(fx.file, e);
+                self.c.members(own).is_some_and(|members| !members.shape().index.is_empty())
+            };
+        let may_be_overridden = fx.is_typed && matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.may_be_overridden_by_a_spread(fx, e);
+        if fx.is_typed && (matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.defines_accessor(fx, e) || self.c.yields_redefined_literal(fx.file, e) || is_left_a_dictionary || may_be_overridden) {
             let own = self.c.type_of_expr(fx.file, e);
             fx.stays_ordinary.insert(value, own);
             for held_as in [Some(own), Some(self.c.widened(own)), self.c.contextual_type_of_literal(fx.file, e)].into_iter().flatten() {
@@ -947,7 +956,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if !is_handed_back {
                 self.note_cast_of_declared_result(fx, e, want.id);
             }
-            let held = self.fit(fx, value, want, sink.why);
+            let is_literal_as_built = matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) && matches!(fx.b.func.op(value), Some(Op::NewObject | Op::Operation { .. }));
+            let why = if is_literal_as_built && matches!(sink.why, Why::NonNull(_)) { Why::Cast } else { sink.why };
+            let held = self.fit(fx, value, want, why);
+            if fx.is_typed && why == Why::Cast && matches!(fx.b.func.op(value), Some(Op::CallDirect { .. })) && self.c.yields_what_a_call_has_just_made(fx.file, e) {
+                self.mark_cast_of_what_is_fresh(fx, held, value);
+            }
             self.forget_what_a_test_showed(fx, e, value, known_before);
             return held;
         }
@@ -1012,6 +1026,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => Why::Flow,
         };
         let checked = self.type_of_value(fx, e);
+        if why == Why::Claim && read.is_some_and(|read| self.c.says_nothing(read.declared)) && self.c.parts(checked).to_vec().into_iter().any(|part| self.c.is_array(part)) {
+            return self.predict_expression(fx, value, e);
+        }
         let mut want = Ty { id: self.ty_of_expression(fx, e, checked), checked };
         // What a literal is checked against is what it is made as. `async () => ({ ...base(), b })`, `resolve({ b, ...base() })`: `T | PromiseLike<T>`.
         let value = if why == Why::Cast && self.is_left_ordinary_by(fx, value, e, want.id) {
@@ -1059,6 +1076,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let ExprKind::Object(props) = self.hir(fx.file)[written].kind
             && self.methods_needing_home_object(fx, props).is_empty()
         {
+            self.mark_cast_of_what_is_fresh(fx, value, made);
+        }
+        if why == Why::Cast && matches!(fx.b.func.op(made), Some(Op::CallDirect { .. })) && self.c.yields_what_a_call_has_just_made(fx.file, e) {
             self.mark_cast_of_what_is_fresh(fx, value, made);
         }
         let value = self.as_written(fx, value, want);
@@ -1773,7 +1793,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn types_of_layouts_within(&self, ty: TyId, further: u32, found: &mut Vec<TypeId>) {
+    pub(crate) fn types_of_layouts_within(&self, ty: TyId, further: u32, found: &mut Vec<TypeId>) {
         found.extend(self.types_of_layouts_in(ty));
         if ty.is_none() || further == 0 {
             return;

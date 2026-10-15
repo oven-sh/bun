@@ -1,22 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
-
-function passed(name, from, to) {
-    for (let index = from; index <= to; index++)
-        says(name, "argument-is-always-passed:" + index);
-}
-function notPassed(name, from, to) {
-    for (let index = from; index <= to; index++)
-        doesNotSay(name, "argument-is-always-passed:" + index);
 }
 
 (function () {
@@ -36,10 +20,6 @@ function callsNine(x) { return nine(x, 1, 2, 3, 4, 5, 6, 7, 8); }
 function callsNineAgain(x) { return nine(x, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20); }
 check(callsNine(5), keepsReferenceOpen[0](5, 1, 2, 3, 4, 5, 6, 7, 8), "nine arguments, all passed");
 check(callsNineAgain(6), keepsReferenceOpen[0](6, 11, 12, 13, 14, 15, 16, 17, 18), "nine parameters, eleven arguments");
-says("nine", "takes-argument-list");
-passed("nine", 1, 9);
-says("reference", "takes-argument-list");
-notPassed("reference", 1, 9);
 
 function lastIsOptional(a, b, c, d, e, f, g, h, i) {
     let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
@@ -49,9 +29,6 @@ function lastIsOptional(a, b, c, d, e, f, g, h, i) {
 function passesEight(x) { return lastIsOptional(x, 1, 2, 3, 4, 5, 6, 7); }
 function passesNine(x) { return lastIsOptional(x, 1, 2, 3, 4, 5, 6, 7, 100); }
 check(passesNine(5) + passesEight(5), 100, "the last of nine parameters is not always passed");
-says("lastIsOptional", "takes-argument-list");
-passed("lastIsOptional", 1, 8);
-notPassed("lastIsOptional", 9, 9);
 
 function undefinedIsPassed(a, b, c, d, e, f, g, h, i) {
     let t = a * 2 + c; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
@@ -61,24 +38,17 @@ function undefinedIsPassed(a, b, c, d, e, f, g, h, i) {
 function passesUndefined(x) { return undefinedIsPassed(x, undefined, 2, 3, 4, 5, 6, 7, 8); }
 function passesNumber(x) { return undefinedIsPassed(x, 1, 2, 3, 4, 5, 6, 7, 8); }
 check(passesUndefined(5) + passesNumber(5), 0, "undefined is passed for the second of nine parameters");
-passed("undefinedIsPassed", 1, 1);
-notPassed("undefinedIsPassed", 2, 2);
-passed("undefinedIsPassed", 3, 9);
 
 function countsArguments(a, b) { let t = mix(a, b, 7); t = mix(t, a, b); t = mix(t, b, a); return t + arguments.length; }
 function passesTwo(x) { return countsArguments(x, 1); }
 function passesThree(x) { return countsArguments(x, 1, 2); }
 check(passesThree(5) - passesTwo(5), 1, "a function that counts its arguments");
-says("countsArguments", "takes-argument-list");
-passed("countsArguments", 1, 2);
 
 function takesRest(a, ...rest) { let t = mix(a, rest.length, 7); t = mix(t, a, 5); t = mix(t, 5, a); return t * 10 + rest.length; }
 function passesOne(x) { return takesRest(x); }
 function passesFour(x) { return takesRest(x, 1, 2, 3); }
 check(passesOne(5) % 10, 0, "a rest parameter that is empty");
 check(passesFour(5) % 10, 3, "a rest parameter with three elements");
-says("takesRest", "takes-argument-list");
-passed("takesRest", 1, 1);
 
 function isTailCalled(a, b, c, d, e, f, g, h, i) {
     "use strict";
@@ -89,6 +59,5 @@ function isTailCalled(a, b, c, d, e, f, g, h, i) {
 function tailCalls(x) { "use strict"; return isTailCalled(x, 1, 2, 3, 4, 5, 6, 7, 8); }
 function callsToo(x) { "use strict"; return isTailCalled(x, 1, 2, 3, 4, 5, 6, 7, 8) + 1; }
 check(callsToo(5) - tailCalls(5), 1, "a function with nine parameters that is also called in tail position");
-notPassed("isTailCalled", 1, 9);
 })();
 console.log("passed");

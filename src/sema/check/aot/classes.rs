@@ -484,7 +484,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(target) = self.files().resolve_alias(own)
             {
                 let declared: Vec<FileId> = self.files().decls(target).into_iter().map(|(of, _)| of).collect();
-                if !declared.is_empty() && declared.iter().all(|&of| self.hir(of).kind == FileKind::Declaration) {
+                if declared.iter().any(|&of| self.hir(of).kind == FileKind::Declaration) {
                     return Some(own);
                 }
             }
@@ -1145,6 +1145,11 @@ impl<'p, 's> Checker<'p, 's> {
             if signatures.is_empty() {
                 let errors: [&[u8]; 8] = [b"Error", b"AggregateError", b"EvalError", b"RangeError", b"ReferenceError", b"SyntaxError", b"TypeError", b"URIError"];
                 out.extend(errors.map(|name| self.atoms().intern(name)));
+                if let ExprKind::Ident(name) | ExprKind::Dot { name, .. } = hir[c.extends].kind
+                    && self.global_type_symbol(name).is_some()
+                {
+                    out.push(name);
+                }
             }
             for signature in signatures {
                 let made = self.sig_return(signature);
@@ -1628,6 +1633,22 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &e in index.of(ExprTag::Call) {
             let ExprKind::Call(call) = hir[e].kind else { continue };
+            let spies = match hir[hir[call].callee].kind {
+                ExprKind::Ident(function) => self.atoms().bytes(function) == b"spyOn",
+                ExprKind::Dot { obj, name: function, .. } => self.atoms().bytes(function) == b"spyOn" && matches!(hir[obj].kind, ExprKind::Ident(runner) if matches!(self.atoms().bytes(runner), b"jest" | b"vi")),
+                _ => false,
+            };
+            if spies {
+                let mut args = hir.ids(hir[call].args);
+                if let (Some(target), Some(key)) = (args.next(), args.next()) {
+                    for name in self.names_of_key(file, key) {
+                        if matters(name, false) {
+                            self.add_store_to_method(file, target, name, false, out);
+                        }
+                    }
+                }
+                continue;
+            }
             let ExprKind::Dot { obj: global, name: function, .. } = hir[hir[call].callee].kind else { continue };
             let ExprKind::Ident(global_name) = hir[global].kind else { continue };
             let (names_by_key, defines) = match (self.atoms().bytes(global_name), self.atoms().bytes(function)) {

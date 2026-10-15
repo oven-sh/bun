@@ -1,3 +1,3 @@
-// Array and object allocations in hot loops do not call into the C++ runtime.
+// Array and object allocations in hot loops, with collections between them.
 import "../../jsc-shell-functions.ts";
 import "./program.ts";

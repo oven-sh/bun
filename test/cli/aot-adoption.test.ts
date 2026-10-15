@@ -506,9 +506,9 @@ show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } re
       const dir = project("aot-log-report", { "app.ts": roads });
       const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
       const report = lines(build.stdout + build.stderr, "type-check").map(line => line.text);
-      expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(4);
+      expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(5);
       expect(report.filter(text => text.includes("; this log build throws here")).map(text => /expected ([^,]+),/.exec(text)![1])).toEqual(["Session[]", "number"]);
-      expect(build.stdout + build.stderr).toContain("this build continues at 4, converts at 0 and still throws at 2");
+      expect(build.stdout + build.stderr).toContain("this build continues at 5, converts at 0 and still throws at 2");
       const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "app");
       expect(other.stdout + other.stderr).not.toContain("log build");
     }, 240_000);
@@ -527,6 +527,106 @@ console.log(next(parse('{"id":"z","n":3}')));
       );
       const { stdout, exitCode } = await spawned([join(dir, "app")], dir);
       expect(stdout).toBe("a 2\ny NaN\nz 4\n");
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("the shape of a server: a handler of one file, registered in another, called as a value", async () => {
+      const dir = project("aot-log-server", {
+        "handlers.ts": `export function forJavaScript(n: number): string { return "n=" + n; }
+export function forTypeScript(n: number): string { return "n=" + n; }
+export function inAMap(n: number): string { return "n=" + n; }
+export function forAnEmitter(n: number): void { console.log("emitter " + n); }
+export async function later(n: number): Promise<string> { await null; return "n=" + n; }
+export const routes: Record<string, (n: number) => string> = { "/a": function routeA(n: number): string { return "n=" + n; }, "/b": (n: number): string => "n=" + n };
+`,
+        "untyped.js": `export function callsFromJavaScript(f) { return f("wrong"); }\n`,
+        "untyped.d.ts": `export function callsFromJavaScript(f: (n: number) => string): string;\n`,
+        "events.d.ts": `declare module "node:events" { export class EventEmitter { on(name: string, listener: (...args: any[]) => void): this; emit(name: string, ...args: any[]): boolean; } }\n`,
+        "app.ts": `import { EventEmitter } from "node:events";
+import { callsFromJavaScript } from "./untyped.js";
+import { forAnEmitter, forJavaScript, forTypeScript, inAMap, later, routes } from "./handlers";
+const row = (n: number, f: () => unknown) => { try { console.log(n, String(f())); } catch { console.log(n, "thrown"); } };
+const body: any = JSON.parse('{"n":"wrong","path":"/a","other":"/b"}');
+function dispatch(handler: (n: number) => string, from: any): string { return handler(from.n); }
+const byName = new Map<string, (n: number) => string>([["h", inAMap]]);
+row(1, () => callsFromJavaScript(forJavaScript));
+row(2, () => dispatch(forTypeScript, body));
+row(3, () => byName.get("h")!(body.n));
+row(4, () => { const e = new EventEmitter(); e.on("x", forAnEmitter); return e.emit("x", body.n); });
+row(5, () => routes[body.path](body.n));
+row(6, () => routes[body.other](body.n));
+try { console.log(7, await later(body.n)); } catch { console.log(7, "thrown"); }
+`,
+      });
+      const plain = await bun(dir, "app.ts");
+      expect(plain.stdout).toBe("1 n=wrong\n2 n=wrong\n3 n=wrong\nemitter wrong\n4 true\n5 n=wrong\n6 n=wrong\n7 n=wrong\n");
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(build.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      const logged = lines(stderr, "type-error").filter(line => !line.text.endsWith("; total"));
+      expect(logged.map(line => line.action)).toEqual(Array(7).fill("continued"));
+      const foretold = lines(build.stdout + build.stderr, "type-check").filter(line => line.text.includes("; this log build continues here"));
+      const ids = new Set(foretold.flatMap(line => [line.id, line.call]));
+      expect(logged.filter(line => !ids.has(line.id)).map(line => line.text)).toEqual([]);
+      expect(exitCode).toBe(0);
+      const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "throws");
+      expect(other.exitCode).toBe(0);
+      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n6 thrown\n7 thrown\n");
+      const named = lines(other.stdout + other.stderr, "type-check").filter(line => line.kind === "enter-function");
+      expect(named.map(line => line.place)).toEqual(["1:1", "2:1", "3:1", "4:1", "6:70", "6:133"].map(place => "handlers.ts:" + place));
+    }, 240_000);
+
+    test("a class-based server: arrows in a method, a class field, a static field", async () => {
+      const dir = await built(
+        "aot-log-class",
+        `const body: any = JSON.parse('{"n":"wrong","five":5}');
+class Router { routes = new Map<string, (n: number) => string>(); get(path: string, handler: (n: number) => string): void { this.routes.set(path, handler); } run(path: string, from: any): string { return this.routes.get(path)!(from); } }
+class App {
+  prefix = "p"; count = 0; router = new Router();
+  field = (n: number): string => this.prefix + " field " + n + " " + ++this.count;
+  static shared = "S";
+  static fixed = (n: number): string => App.shared + " static " + n + " " + (this === App);
+  register(): void { this.router.get("/m", (n: number) => this.prefix + " method " + n + " " + ++this.count); this.router.get("/f", this.field); this.router.get("/s", App.fixed); }
+}
+const app = new App(); app.register();
+for (const path of ["/m", "/f", "/s"]) console.log(app.router.run(path, body.n), "|", app.router.run(path, body.five));
+console.log(app.count);
+`,
+      );
+      const plain = await bun(dir, "app.ts");
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      expect(stdout).toBe("p method wrong 1 | p method 5 2\np field wrong 3 | p field 5 4\nS static wrong true | S static 5 true\n4\n");
+      expect(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")).map(line => line.action)).toEqual(["continued", "continued", "continued"]);
+      expect(exitCode).toBe(0);
+    }, 120_000);
+
+    test("a valid program has no line: what the default build accepts, this build accepts in silence", async () => {
+      const dir = await built(
+        "aot-log-valid",
+        `interface Ctx { cwd: string }
+interface A { type: "s"; id: string; ctx: Ctx }
+interface B { type: "s"; id: string; ctx: Ctx }
+interface Holds { name: string; a: A }
+class K { type = "s" as const; id = "k"; ctx: Ctx = { cwd: "/" }; more = 1; }
+function makeB(id: string): B { return { type: "s", id, ctx: { cwd: "/" } }; }
+function makeA(id: string): A { return { type: "s", id, ctx: { cwd: "/" } }; }
+function show(a: A): string { return a.type + a.id + a.ctx.cwd; }
+function showHolds(h: Holds): string { return h.name + show(h.a); }
+function holds(): Holds { return { name: "h", a: makeA("i") }; }
+const any = (x: unknown) => x as any;
+const parse = (text: string): any => JSON.parse(text);
+const fromOutside: A = parse('{"type":"s","id":"o","ctx":{"cwd":"/"}}');
+console.log(show(fromOutside), show(makeA("a")), showHolds(holds()));
+console.log(show(any(makeB("b"))), show(any(new K())));
+const built = parse('{"name":"u"}'); built.a = makeB("c"); console.log(showHolds(built));
+const other = parse('{"name":"w"}'); other.a = new K(); console.log(showHolds(other));
+`,
+      );
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("so/ sa/ hsi/\nsb/ sk/\nusc/\nwsk/\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     }, 120_000);
 
@@ -552,7 +652,11 @@ console.log(next(parse('{"id":"z","n":3}')));
     expect(at(log, "app.ts:6:13").id).toBe(at(audit, "app.ts:6:20").call!);
     expect(at(report, "app.ts:7:14").id).toBe(at(audit, "app.ts:7:14").id);
     expect(at(log, "app.ts:7:14").id).toBe(at(audit, "app.ts:7:14").id);
-  }, 120_000);
+    expect((await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "throws")).exitCode).toBe(0);
+    const thrown = lines((await spawned([join(dir, "throws")], dir, { BUN_AOT_TYPE_ERROR_LOG: "stderr" })).stderr, "type-error");
+    expect(brief(thrown.filter(line => !line.text.endsWith("; total")))).toEqual(["type-mismatch app.ts:6:20 threw"]);
+    expect(at(report, "app.ts:6:20").text).toContain("; logged as " + at(thrown, "app.ts:6:20").id + ";");
+  }, 240_000);
 });
 
 describe.concurrent("--help", () => {

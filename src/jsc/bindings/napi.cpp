@@ -2798,9 +2798,8 @@ extern "C" napi_status napi_create_object(napi_env env, napi_value* result)
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = JSC::getVM(globalObject);
 
-    JSValue value = JSValue(NapiPrototype::create(vm, globalObject->NapiPrototypeStructure()));
+    JSValue value = JSValue(JSC::constructEmptyObject(globalObject));
 
     *result = toNapi(value, globalObject);
     JSC::EnsureStillAliveScope ensureStillAlive(value);

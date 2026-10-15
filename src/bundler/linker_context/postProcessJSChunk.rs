@@ -441,8 +441,7 @@ pub(crate) fn post_process_js_chunk(
     // generateChunksInParallel after final chunk paths are computed, so that
     // cross-chunk import specifiers (which use unique_key placeholders during
     // printing) can be resolved to actual paths.
-    if let Some(mut mi) = module_info {
-        record_chunk_bindings(c, chunk, chunk_index as u32, &mut mi);
+    if let Some(mi) = module_info {
         chunk.content.javascript_mut().module_info = Some(mi);
     }
 
@@ -1397,101 +1396,4 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         // The exports were recorded straight into the chunk's ModuleInfo above.
         module_info: None,
     }
-}
-
-fn record_chunk_bindings(
-    c: &LinkerContext,
-    chunk: &mut Chunk,
-    chunk_index: u32,
-    module_info: &mut ModuleInfo,
-) {
-    use crate::WrapKind;
-    use crate::prelinked_module_graph::binding_flags as flag;
-    use bun_ast::symbol::Kind;
-    use bun_ast::{DeclaredSymbol, Ref};
-
-    let crate::chunk::Content::Javascript(js) = &chunk.content else {
-        return;
-    };
-    let all_exports_are_visible = chunk.is_entry_point() && {
-        let source_index = chunk.entry_point.source_index() as usize;
-        c.graph.files.items_entry_point_kind()[source_index] == crate::entry_point::Kind::UserSpecified
-            || matches!(
-                c.graph.meta.items_dynamic_import_referenced_aliases()[source_index],
-                crate::js_meta::DynamicImportReferencedAliases::All
-            )
-    };
-    let has_direct_eval = chunk_has_direct_eval(c, chunk);
-    let symbols = &c.graph.symbols;
-    let mut found: Vec<(Ref, u32)> = Vec::new();
-    let mut seen: bun_collections::HashMap<Ref, ()> = Default::default();
-    for &source_index in chunk.files_with_parts_in_chunk.keys() {
-        let source_index = source_index as usize;
-        let wrap = c.graph.meta.items_flags()[source_index].wrap;
-        if wrap == WrapKind::Cjs {
-            continue;
-        }
-        let parts_live = &c.graph.parts_live[source_index];
-        for (part_index, part) in c.graph.ast.items_parts()[source_index].iter().enumerate() {
-            if !parts_live.is_set(part_index) {
-                continue;
-            }
-            let mut declared: Vec<Ref> = Vec::new();
-            DeclaredSymbol::for_each_top_level_symbol(
-                &part.declared_symbols,
-                &mut declared,
-                |declared, ref_| declared.push(ref_),
-            );
-            for ref_ in declared {
-                let ref_ = symbols.follow(ref_);
-                let symbol = symbols.get_const(ref_).unwrap();
-                if (c.graph.code_splitting && symbol.chunk_index() != Some(chunk_index))
-                    || seen.insert(ref_, ()).is_some()
-                {
-                    continue;
-                }
-                let mut flags = match symbol.kind {
-                    Kind::HoistedFunction => flag::KIND_FUNCTION,
-                    Kind::GeneratorOrAsyncFunction => flag::KIND_GENERATOR_OR_ASYNC_FUNCTION,
-                    Kind::Class => flag::KIND_CLASS,
-                    Kind::Constant => flag::KIND_CONST,
-                    _ => continue,
-                };
-                if symbol.has_been_assigned_to() || has_direct_eval {
-                    flags |= flag::IS_ASSIGNED;
-                }
-                let escapes = symbol.escapes.load(core::sync::atomic::Ordering::Relaxed);
-                if escapes & bun_ast::Symbol::ESCAPES != 0
-                    || has_direct_eval
-                    || (all_exports_are_visible && js.exports_to_other_chunks.contains(&ref_))
-                {
-                    flags |= flag::ESCAPES;
-                }
-                if escapes & bun_ast::Symbol::IS_EXTERNALLY_VISIBLE != 0
-                    || has_direct_eval
-                    || (all_exports_are_visible && js.exports_to_other_chunks.contains(&ref_))
-                {
-                    flags |= flag::IS_EXTERNALLY_VISIBLE;
-                }
-                if symbol.call_ignores_this() {
-                    flags |= flag::CALL_IGNORES_THIS;
-                }
-                found.push((ref_, flags));
-            }
-        }
-    }
-    let mut renamer = chunk.renamer.as_renamer();
-    for (ref_, flags) in found {
-        let name = module_info.str(renamer.name_for_symbol(ref_));
-        module_info.bindings.push((name, flags));
-    }
-}
-
-pub(crate) fn chunk_has_direct_eval(c: &LinkerContext, chunk: &Chunk) -> bool {
-    let module_scopes = c.graph.ast.items_module_scope();
-    chunk
-        .files_with_parts_in_chunk
-        .keys()
-        .iter()
-        .any(|&source_index| module_scopes[source_index as usize].contains_direct_eval)
 }

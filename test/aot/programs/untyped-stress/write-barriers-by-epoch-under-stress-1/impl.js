@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -211,38 +210,4 @@ for (let i = 0; i < 20; i++) {
     check(settled.pop(), i * 4 + "text " + i + "text " + i, "values that live across an await");
 }
 
-if (aotRemarks("capturesParameters")) {
-    const usesDataStubs = aotRemarks("readsProperty").includes("calls:GetById");
-    const isNew = "no-write-barrier-for-new-environment", shares = "shares-write-barrier", onlyForCell = "write-barrier-only-for-cell", calls = usesDataStubs ? "calls:WriteBarrier" : "calls:operationAOTWriteBarrier";
-    let applies = (name, ...remarks) => {
-        for (let remark of remarks) {
-            if (!aotRemarks(name).includes(remark))
-                throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-        }
-    };
-    let doesNotApply = (name, ...remarks) => {
-        for (let remark of remarks) {
-            if (aotRemarks(name).includes(remark))
-                throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" "));
-        }
-    };
-    applies("capturesParameters", isNew);
-    doesNotApply("capturesParameters", calls, onlyForCell);
-    applies("capturesVariable", isNew);
-    doesNotApply("capturesVariable", calls, onlyForCell);
-    doesNotApply("collectsBeforeStoring", isNew);
-    applies("collectsBeforeStoring", calls);
-    doesNotApply("allocatesBeforeStoring", isNew);
-    applies("allocatesBeforeStoring", calls);
-    doesNotApply("storesString", isNew);
-    applies("storesTwoObjects", shares, calls);
-    applies("storesAnythingThenObject", shares, calls);
-    doesNotApply("storesAnythingThenObject", onlyForCell);
-    doesNotApply("storesObjectThenAnything", shares);
-    applies("storesObjectThenAnything", onlyForCell, calls);
-    doesNotApply("storesObjectThenNumber", shares);
-    applies("storesObjectThenNumber", calls);
-    doesNotApply("callsBetweenStores", shares);
-    doesNotApply("storesInTwoEnvironments", shares);
-}
 console.log("passed");

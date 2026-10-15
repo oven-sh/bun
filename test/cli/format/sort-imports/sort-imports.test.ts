@@ -44,7 +44,7 @@ for (const [tool, config] of Object.entries(tools)) {
   describe.concurrent(tool, () => {
     for (const [options, group] of groups) {
       test(`${group[0].name} .. ${options}`, async () => {
-        const [name, contents] = config(JSON.parse(options));
+        const [name, contents] = config(JSON.parse(options)) as [string, object];
         const names = group.map((it, index) => `${index}-${it.filename}`);
         const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
         const result = await format({ [name]: JSON.stringify(contents), ...files }, names);

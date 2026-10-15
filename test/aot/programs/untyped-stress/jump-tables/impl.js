@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -326,15 +325,4 @@ let thrown = null;
 try { lastInFunction(7); } catch (error) { thrown = error; }
 check(thrown instanceof RangeError && thrown.message, "seven", "the case that throws");
 
-if (aotRemarks("dense")) {
-    const remark = "jump-table";
-    for (let name of ["dense", "denseWithoutDefault", "aroundZero", "onlyNegative", "atTheEnds", "withHoles", "fallsThrough", "ofInt32", "ofNumber", "chain", "inLoop", "nested", "ofCharacter", "large", "lastInFunction"]) {
-        if (!aotRemarks(name).includes(remark))
-            throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-    }
-    for (let name of ["sparse", "few", "check", "isInteger"]) {
-        if (aotRemarks(name).includes(remark))
-            throw new Error(remark + " applies to " + name);
-    }
-}
 console.log("passed");

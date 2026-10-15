@@ -90,7 +90,7 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         auto len = properties.size() + 1;
@@ -724,6 +724,19 @@ bool overrideExportOfCompiledNamespace(Zig::GlobalObject* globalObject, JSC::JSO
     return isDone.isTrue();
 }
 
+JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* namespaceObject = dynamicDowncast<JSC::JSModuleNamespaceObject>(object);
+    if (!namespaceObject || !hasFilesOfCompiledProgram(globalObject) || !dynamicDowncast<JSC::SyntheticModuleRecord>(namespaceObject->moduleRecord()))
+        return nullptr;
+    JSValue compiled = askCompiledProgramForFile(globalObject, namespaceObject->moduleRecord()->moduleKey().string(), jsUndefined(), AskedOfCompiledProgram::Namespace);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* result = compiled.getObject();
+    return result && JSC::AOT::Typed::isModuleNamespace(result) ? result : nullptr;
+}
+
 NEVER_INLINE static void registerFilesOfCompiledProgramThatHaveRun(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -778,6 +791,8 @@ bool overrideExportsOfCompiledModule(Zig::GlobalObject* globalObject, const Stri
     JSString* key = jsString(vm, path);
     JSValue isKnown = askCompiledProgram(globalObject, key, jsUndefined(), 5, jsUndefined());
     RETURN_IF_EXCEPTION(scope, false);
+    if (isKnown.isInt32())
+        return true;
     if (!isKnown.isBoolean())
         return false;
     for (size_t i = 0; i < names.size(); ++i) {
@@ -1122,6 +1137,16 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
+}
+
+extern "C" void Bun__AOT__keepTypeErrorsThrown()
+{
+    JSC::AOT::keepTypeErrorsThrown();
+}
+
+extern "C" BunString Bun__AOT__typeErrorsThrown()
+{
+    return Bun::toStringRef(JSC::AOT::typeErrorsThrown());
 }
 
 extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)

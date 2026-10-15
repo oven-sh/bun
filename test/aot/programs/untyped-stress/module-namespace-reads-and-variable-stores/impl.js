@@ -1,29 +1,9 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 import * as self from "./impl.js";
 import * as other from "./other.js";
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function applies(name, ...remarks) {
-    let all = aotRemarks(name);
-    for (let remark of all ? remarks : []) {
-        if (!all.includes(remark))
-            throw new Error(remark + " does not apply to '" + name + "'");
-    }
-}
-function doesNotApply(name, ...remarks) {
-    let all = aotRemarks(name);
-    for (let remark of all ? remarks : []) {
-        if (all.includes(remark))
-            throw new Error(remark + " applies to '" + name + "'");
-    }
-}
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
-const moduleCode = "";
-
 export let storedBetweenReads = 0;
 {
     const ns = self;
@@ -37,7 +17,6 @@ export let storedBetweenReads = 0;
     }
     check(wrong, 0, "two reads around a store to the variable");
 }
-doesNotApply(moduleCode, "reuses-property-read:storedBetweenReads");
 
 let local = 0;
 export { local as exportedUnderAnotherName };
@@ -53,7 +32,6 @@ export { local as exportedUnderAnotherName };
     }
     check(wrong, 0, "the property has another name than the variable");
 }
-doesNotApply(moduleCode, "reuses-property-read:exportedUnderAnotherName");
 
 export let exportedAgain = 0;
 {
@@ -69,7 +47,6 @@ export let exportedAgain = 0;
     }
     check(wrong, 0, "the namespace object of a module that exports the variable again");
 }
-doesNotApply(moduleCode, "reuses-property-read:exportedAgain", "reuses-property-read:exportedAgainUnderAnotherName");
 
 export let storedToAnotherVariable = 7;
 let notExported = 0;
@@ -103,7 +80,6 @@ export let notStoredBetweenReads = 7;
     check(wrong, 0, "two reads around a store to a variable of a block");
     check(readCaptured(), 200, "the variable of the block");
 }
-applies(moduleCode, "reuses-property-read:notStoredBetweenReads");
 
 export let initializedLate;
 {
@@ -136,7 +112,6 @@ export let storedInLoop = 0;
     }
     check(wrong, 0, "one read in a loop that stores to the variable");
 }
-doesNotApply(moduleCode, "hoists-guarded-property-read:storedInLoop");
 
 export let storedBetweenReadsInLoop = 0;
 {
@@ -154,7 +129,6 @@ export let storedBetweenReadsInLoop = 0;
     }
     check(wrong, 0, "two reads around a store in a loop");
 }
-doesNotApply(moduleCode, "hoists-guarded-property-read:storedBetweenReadsInLoop", "reuses-guarded-property-read:storedBetweenReadsInLoop");
 
 export let storedOnOnePath = 0;
 {
@@ -174,7 +148,6 @@ export let storedOnOnePath = 0;
     }
     check(wrong, 0, "two reads around a store on one path through a loop");
 }
-doesNotApply(moduleCode, "hoists-guarded-property-read:storedOnOnePath", "reuses-guarded-property-read:storedOnOnePath");
 
 let localStoredInLoop = 0;
 export { localStoredInLoop as storedInLoopUnderAnotherName };
@@ -191,7 +164,6 @@ export { localStoredInLoop as storedInLoopUnderAnotherName };
     }
     check(wrong, 0, "in a loop, the property has another name than the variable");
 }
-doesNotApply(moduleCode, "hoists-guarded-property-read:storedInLoopUnderAnotherName");
 
 export let invariantInLoop = 7;
 export let readTwiceOnOnePath = 7;
@@ -217,8 +189,6 @@ export let readTwiceOnOnePath = 7;
     check(hits, 800, "reads in a loop that only stores to a variable of a block");
     check(readCaptured(), 100, "the variable of the block, after the loops");
 }
-if (usesDataStubs)
-    applies(moduleCode, "split-loop", "hoists-guarded-property-read:invariantInLoop", "reuses-guarded-property-read:readTwiceOnOnePath");
 
 export let storedByFunction = 0;
 function readsAroundStoreToModuleVariable(ns, i) {
@@ -246,7 +216,4 @@ for (let i = 1; i <= 200; i++)
 storedByFunction = 0;
 for (let i = 1; i <= 200; i++)
     check(readsAroundCall(self, i), true, "a function calls one that stores to the variable between two reads");
-doesNotApply("readsAroundStoreToModuleVariable", "reuses-property-read:storedByFunction");
-doesNotApply("readsAroundCall", "reuses-property-read:storedByFunction");
-applies("readsAroundStoreToOwnVariable", "reuses-property-read:storedByFunction");
 console.log("passed");

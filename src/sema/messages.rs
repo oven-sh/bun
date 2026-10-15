@@ -84,6 +84,7 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100017, Category::Error, "'as {0}' is applied to a value that is always {1}: under --aot the cast converts it or throws, where plain JavaScript leaves it as it is."),
     (100018, Category::Message, "The value comes from {0}."),
     (100019, Category::Warning, "{2} expects '{1}' and always gets {0}: with --aot-type-errors=log the executable writes a record here and goes on as plain JavaScript does; any other --aot build stops with TS100013."),
+    (100020, Category::Warning, "{0} The 'catch' around it runs instead."),
 ];
 
 const _: () = {

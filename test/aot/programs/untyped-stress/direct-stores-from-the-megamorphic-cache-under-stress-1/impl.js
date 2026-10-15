@@ -1,12 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function atMost(actual, limit, what) {
-    if (actual > limit)
-        throw new Error(what + ": " + actual + ", not at most " + limit);
 }
 function describe(object, name) {
     const d = Object.getOwnPropertyDescriptor(object, name);
@@ -25,9 +19,6 @@ function definesProto(e, __proto__) { return { ...e, __proto__ }; }
 function assigns(o, v) { o.one = v; return o; }
 for (let f of [definesSix, definesOne, definesOverAccessor, definesWithPrototype, makesWithPrototype, definesProto, assigns])
     noInline(f);
-
-const isCounting = typeof aotOperationCount === "function" && !!aotRemarks("check") && !!jscOptions().useAOTOperationCounters && (aotRemarks("definesSix") || []).includes("calls:PutById");
-function count(name) { return isCounting ? aotOperationCount(name) || 0 : 0; }
 
 const shapes = 40;
 function shaped(k, more) {
@@ -54,15 +45,8 @@ function shaped(k, more) {
     for (let r = 0; r < 30; ++r)
         round(r);
     const rounds = 50;
-    const before = [count("operationAOTPutById"), count("operationAOTPutById:grows-storage-by-entry")];
     for (let r = 0; r < rounds; ++r)
         round(r);
-    const arrivals = count("operationAOTPutById") - before[0], grown = count("operationAOTPutById:grows-storage-by-entry") - before[1];
-    if (isCounting) {
-        const stores = rounds * shapes * 12;
-        atMost(arrivals - grown, stores / 50, "definitions after a spread that arrive, of " + stores + ", but for those that grow the storage");
-        atMost(arrivals, rounds * shapes * 2, "definitions after a spread that arrive, of " + stores);
-    }
 }
 
 function manyShapes(use) {

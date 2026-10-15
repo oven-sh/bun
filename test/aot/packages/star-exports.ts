@@ -159,4 +159,68 @@ ${js}t("x", () => [v, bump(), v]);
 `,
     },
   },
+  {
+    // lodash-es: lodash.default.js imports the wrapper, gives it its methods and exports it, and the package says "sideEffects": false.
+    name: "handed-on-under-side-effects-false",
+    files: {
+      ...pkg(
+        "handed_on",
+        {
+          "wrapper.js": `export default function wrapper() {}
+export const table = {};
+`,
+          "as_default.js": `import wrapper from "./wrapper.js";
+wrapper.byDefault = 1;
+export default wrapper;
+`,
+          "as_default_by_list.js": `import wrapper from "./wrapper.js";
+wrapper.byList = 1;
+export { wrapper as default };
+`,
+          "by_name.js": `import { table } from "./wrapper.js";
+table.byName = 1;
+export { table };
+`,
+          "from.js": `import wrapper from "./wrapper.js";
+wrapper.from = 1;
+export { default } from "./wrapper.js";
+`,
+          "star.js": `import { table } from "./wrapper.js";
+table.star = 1;
+export * from "./wrapper.js";
+`,
+          "index.js": `export { default } from "./as_default.js";
+`,
+        },
+        { type: "module", main: "index.js", sideEffects: false },
+      ),
+    },
+    importers: {
+      "namespace.mjs": `import * as ns from "handed_on";
+${js}t("x", () => ns.default.byDefault);
+`,
+      "dynamic.mjs": `${js}await ta("x", async () => (await import("handed_on")).default.byDefault);
+`,
+      "required.cjs": `${js}t("x", () => require("handed_on").default.byDefault);
+`,
+      "default.mjs": `import wrapper from "handed_on";
+${js}t("x", () => wrapper.byDefault);
+`,
+      "list.mjs": `import wrapper from "handed_on/as_default_by_list.js";
+${js}t("x", () => wrapper.byList);
+`,
+      "name.mjs": `import { table } from "handed_on/by_name.js";
+${js}t("x", () => table.byName);
+`,
+      "from.mjs": `import wrapper from "handed_on/from.js";
+${js}t("x", () => wrapper.from);
+`,
+      "star.mjs": `import { table } from "handed_on/star.js";
+${js}t("x", () => table.star);
+`,
+      "name_by_namespace.mjs": `import * as ns from "handed_on/by_name.js";
+${js}t("x", () => ns.table.byName);
+`,
+    },
+  },
 ];

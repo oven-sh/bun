@@ -158,6 +158,10 @@ fn either(a: Found, b: Found) -> Found {
     Some(a?.or(b?))
 }
 
+fn is_operator_on_numbers(op: BinOp) -> bool {
+    matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
+}
+
 fn both(a: Found, b: Found) -> Found {
     match (a, b) {
         (Some(a), Some(b)) => Some(a.and(b)),
@@ -638,6 +642,131 @@ impl<'p, 's> Checker<'p, 's> {
             all = all.or(Numbers::integers(least, most));
         }
         Some(all)
+    }
+
+    pub fn element_read_of_no_known_integers(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
+        let hir = self.hir(file);
+        let ExprKind::NonNull(read) = hir[e].kind else { return None };
+        let ExprKind::Index { obj, index, chain: Chain::No } = hir[read].kind else { return None };
+        if matches!(hir[obj].kind, ExprKind::Super) || self.is_untyped_file(file) {
+            return None;
+        }
+        let ty = self.type_relied_on(file, read).0;
+        (self.numbers_by_type(ty).is_none() && self.numbers_of_element(file, obj, index).is_none()).then_some(read)
+    }
+
+    fn is_only_tested(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        match bound.expr_parent[e.idx()] {
+            Parent::Expr(around) if around.is_some() => match hir[around].kind {
+                ExprKind::Unary { op: UnOp::Not, .. } => true,
+                ExprKind::Cond { test, .. } => test == e,
+                ExprKind::Binary { op: BinOp::And | BinOp::Or, .. } => self.is_only_tested(file, around),
+                _ => false,
+            },
+            Parent::Stmt(stmt) if stmt.is_some() => match hir[stmt].kind {
+                StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } | StmtKind::For { test, .. } => test == e,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn shows_that_it_is_there(&self, file: FileId, test: ExprId, sense: bool, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let names_it = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(_)) && bound.expr_symbol[e.idx()] == symbol;
+        let is_undefined = |e: ExprId| matches!(hir[e].kind, ExprKind::Ident(name) if name == known::undefined);
+        let is_nil = |e: ExprId| is_undefined(e) || matches!(hir[e].kind, ExprKind::Null);
+        match hir[test].kind {
+            ExprKind::Ident(_) => sense && names_it(test),
+            ExprKind::Unary { op: UnOp::Not, operand } => self.shows_that_it_is_there(file, operand, !sense, symbol),
+            ExprKind::Binary { op: op @ (BinOp::EqEqEq | BinOp::NotEqEq), left, right } => sense == (op == BinOp::NotEqEq) && (names_it(left) && is_undefined(right) || names_it(right) && is_undefined(left)),
+            ExprKind::Binary { op: op @ (BinOp::EqEq | BinOp::NotEq), left, right } => sense == (op == BinOp::NotEq) && (names_it(left) && is_nil(right) || names_it(right) && is_nil(left)),
+            _ => false,
+        }
+    }
+
+    fn is_behind_a_test_that_it_is_there(&self, file: FileId, mut flow: FlowId, symbol: SymbolId, known: &mut FxHashMap<FlowId, bool>) -> bool {
+        let bound = self.bound(file);
+        let mut passed: SmallVec<[FlowId; 16]> = SmallVec::new();
+        let answer = loop {
+            if flow.is_none() || known.len() + passed.len() > 4096 || self.is_half_of_stack_in_use() {
+                break false;
+            }
+            if let Some(&answer) = known.get(&flow) {
+                break answer;
+            }
+            passed.push(flow);
+            flow = match bound.flow[flow.idx()] {
+                Flow::Unreachable => break true,
+                Flow::Cond { expr, sense, .. } if self.shows_that_it_is_there(file, expr, sense, symbol) => break true,
+                Flow::Cond { before, .. } | Flow::Assign { before, .. } | Flow::Switch { before, .. } | Flow::Call { before, .. } | Flow::ArrayMutation { before, .. } => before,
+                Flow::Label { start, len } => break len > 0 && bound.edges(start, len).iter().all(|&edge| self.is_behind_a_test_that_it_is_there(file, edge, symbol, known)),
+                Flow::Loop { start, len } => match bound.edges(start, len).first() {
+                    Some(&entry) => entry,
+                    None => break false,
+                },
+                _ => break false,
+            };
+        };
+        for flow in passed {
+            known.insert(flow, answer);
+        }
+        answer
+    }
+
+    pub(super) fn is_mentioned_where_it_is_shown_to_be_there(&self, file: FileId, e: ExprId, known: &mut FxHashMap<FlowId, bool>) -> bool {
+        let bound = self.bound(file);
+        self.is_behind_a_test_that_it_is_there(file, bound.expr_flow[e.idx()], bound.expr_symbol[e.idx()], known)
+    }
+
+    pub(super) fn is_used_where_undefined_has_an_answer(&mut self, file: FileId, e: ExprId) -> bool {
+        if self.is_only_tested(file, e) {
+            return true;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let around = match bound.expr_parent[e.idx()] {
+            Parent::Expr(around) if around.is_some() => around,
+            Parent::Stmt(stmt) if stmt.is_some() => return matches!(hir[stmt].kind, StmtKind::Switch { expr, .. } if expr == e),
+            _ => return false,
+        };
+        let is_arithmetic = match hir[around].kind {
+            ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq, .. } | ExprKind::Unary { op: UnOp::Typeof, .. } => false,
+            ExprKind::Binary { op: BinOp::Or, left, .. } if left == e => false,
+            ExprKind::Binary { op, .. } if is_operator_on_numbers(op) => true,
+            ExprKind::Assign { op: Some(op), value, .. } if value == e && is_operator_on_numbers(op) => true,
+            ExprKind::Unary { op: UnOp::Minus | UnOp::Plus | UnOp::BitNot, .. } => true,
+            _ => return false,
+        };
+        !is_arithmetic || {
+            let (operand, whole) = (self.type_of_expr(file, e), self.type_of_expr(file, around));
+            self.is_type_of_numbers(operand) && self.is_type_of_numbers(whole)
+        }
+    }
+
+    pub fn element_read_left_unasserted(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let ExprKind::NonNull(read) = hir[e].kind else { return None };
+        let ExprKind::Index { obj, index, chain: Chain::No } = hir[read].kind else { return None };
+        let Parent::Expr(around) = bound.expr_parent[e.idx()] else { return None };
+        let is_arithmetic = match hir[around].kind {
+            ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, .. } => false,
+            ExprKind::Binary { op, .. } if is_operator_on_numbers(op) => true,
+            ExprKind::Assign { op: Some(op), value, .. } if value == e && is_operator_on_numbers(op) => true,
+            ExprKind::Unary { op: UnOp::Minus | UnOp::Plus | UnOp::BitNot, .. } => true,
+            _ => return None,
+        };
+        if matches!(hir[obj].kind, ExprKind::Super) || self.is_untyped_file(file) {
+            return None;
+        }
+        if is_arithmetic {
+            let (operand, whole) = (self.type_of_expr(file, e), self.type_of_expr(file, around));
+            if !self.is_type_of_numbers(operand) || !self.is_type_of_numbers(whole) {
+                return None;
+            }
+        }
+        let ty = self.type_relied_on(file, read).0;
+        (self.numbers_by_type(ty).is_none() && self.numbers_of_element(file, obj, index).is_none()).then_some(read)
     }
 
     // ───────────────────────────── expressions ─────────────────────────────

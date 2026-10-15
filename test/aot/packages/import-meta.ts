@@ -3,6 +3,31 @@ import { js, pkg, ts, type Case } from "./run-packages";
 
 export const cases: Case[] = [
   {
+    // prisma: `eval("__dirname")`, to hide the name from bundlers, in a file that also names it outright.
+    name: "eval-of-dirname",
+    files: {
+      ...pkg(
+        "evaluates_dirname",
+        {
+          "index.js": `"use strict";
+var named = [typeof __dirname, typeof __filename];
+function where() { const dir = eval("__dirname"); return typeof dir + " " + (dir === __dirname); }
+function file() { return typeof eval("__filename") + " " + (eval("__filename") === __filename); }
+module.exports = { where, file, named };
+`,
+        },
+        { main: "index.js" },
+      ),
+    },
+    importers: {
+      "import.mjs": `import it from "evaluates_dirname";
+${js}t("x", () => [it.named, it.where(), it.file()]);
+`,
+      "require.cjs": `${js}t("x", () => { const it = require("evaluates_dirname"); return [it.named, it.where(), it.file()]; });
+`,
+    },
+  },
+  {
     name: "import-meta",
     files: {
       ...pkg("meta", {

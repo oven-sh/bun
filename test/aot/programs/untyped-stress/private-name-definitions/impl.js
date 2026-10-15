@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -11,32 +10,6 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function remarksOfAny(...names) {
-    let all = null;
-    for (let name of names) {
-        let remarks = aotRemarks(name);
-        if (remarks)
-            all = (all || []).concat(remarks);
-    }
-    return all;
-}
-function appliesToOneOf(names, ...patterns) {
-    let remarks = remarksOfAny(...names);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + names.join(" or ") + ": " + remarks.join(" "));
-    }
-}
-function doesNotApplyTo(name, ...patterns) {
-    let remarks = aotRemarks(name);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-    }
-}
-const definition = "caches-private-name-definition", brand = "caches-private-brand";
-const usesDataStubs = (aotRemarks("read") || []).includes("calls:GetPrivateName");
 const rounds = 300;
 
 class Point {
@@ -67,12 +40,6 @@ for (let i = 0; i < rounds; ++i) {
     check(makesPoint3D(i).readAll(), "1," + i + ",11,z,public", "the private fields of an instance of a subclass");
     check(Point.has(point) && Point.has(makesPoint3D(i)) && !Point.has({}), true, "which objects have a private field");
 }
-if (usesDataStubs)
-    appliesToOneOf(["Point", "", "makesPoint"], definition, "calls:DefinePrivateName");
-else
-    doesNotApplyTo("", definition, "calls:DefinePrivateName");
-doesNotApplyTo("write", definition, "calls:DefinePrivateName");
-doesNotApplyTo("read", definition, "calls:DefinePrivateName", brand);
 
 class ReturnsArgument { constructor(o) { return o; } }
 class Stamper extends ReturnsArgument {
@@ -185,11 +152,6 @@ for (let i = 0; i < rounds; ++i) {
     check(WithMethod.callStatic(), "static", "a static private method");
     check(WithMethod.has(makesWithMethod()) && WithMethod.has(makesWithMethodAndField()) && !WithMethod.has({}), true, "which objects have a private method");
 }
-if (usesDataStubs)
-    appliesToOneOf(["WithMethod", "makesWithMethod"], brand, "calls:SetPrivateBrand");
-else
-    doesNotApplyTo("WithMethod", brand, "calls:SetPrivateBrand");
-doesNotApplyTo("call", brand, "calls:SetPrivateBrand");
 
 class Brander extends ReturnsArgument {
     #method() { return "branded"; }

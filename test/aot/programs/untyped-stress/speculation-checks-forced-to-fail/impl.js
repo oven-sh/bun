@@ -1,16 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const count = name => typeof aotOperationCount === "function" && aotOperationCount(name) || 0;
-const hasTwins = !!remarksOf(check) && !!options.useAOTDataStubs;
-if (remarksOf(check))
-    check("failEveryNthAOTGuardForTesting" in options, true, "the option exists");
-const period = options.failEveryNthAOTGuardForTesting || 0;
 
 const kept = [];
 function keep(o) { kept.push(o); if (kept.length > 64) kept.length = 0; return o; }
@@ -114,23 +105,6 @@ for (let i = 0; i < 100; ++i) {
     runAll(which => build("child", which + 2, "key", which + 1, "tag", which, "next", null), i);
     runAll(which => Object.defineProperty(makeItem(which), "key", { get() { return this.tag + 1; }, set(value) { }, configurable: true }), 0);
     runAll(makeItem, i);
-}
-
-if (hasTwins) {
-    for (const f of [readsThree, storesThree, readsAroundCalls, logsBetween, countsUp])
-        check(remarksOf(f).includes("guards-over-whole-function"), true, f.name + " has guards over the whole function");
-}
-if (hasTwins && options.useAOTOperationCounters && period < 2) {
-    const items = [];
-    for (let i = 0; i < 100; ++i)
-        items.push(new Steady(i, i + 1, i + 2));
-    check(remarksOf(readsThreeOfSteady).includes("guards-over-whole-function"), true, "readsThreeOfSteady has guards over the whole function");
-    const before = count("operationAOTCountReadByName");
-    let total = 0;
-    for (let i = 0; i < 100; ++i)
-        total += readsThreeOfSteady(items[i]);
-    check(total, 15150, "a hundred calls");
-    check(count("operationAOTCountReadByName") - before, period ? 300 : 0, period ? "each call leaves at its first guard and reads all three in the generic copy" : "each call passes its three guards and reads nothing in the generic copy");
 }
 
 (function () {

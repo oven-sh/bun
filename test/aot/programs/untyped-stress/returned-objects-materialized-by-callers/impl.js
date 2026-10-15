@@ -1,17 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function applies(name, remark) {
-    let all = aotRemarks(name);
-    if (all && !all.includes(remark))
-        throw new Error(remark + " does not apply to " + name + ": " + all.join(" "));
-}
-function doesNotApply(name, remark) {
-    let all = aotRemarks(name);
-    if (all && all.includes(remark))
-        throw new Error(remark + " applies to " + name);
 }
 (function () {
     "use strict";
@@ -68,14 +57,6 @@ function doesNotApply(name, remark) {
     check(sum, 20000 * 20001 / 2, "many objects");
     check(new Set(many).size, 20000, "all of them different");
 
-    applies("readsPair", "reads-returned-object-from-registers:makesPair");
-    applies("readsOneOfPair", "reads-returned-object-from-registers:makesPair");
-    doesNotApply("readsPair", "materializes-returned-object:makesPair");
-    for (const name of ["keepsPair", "returnsPairOn", "passesPairOn", "comparesPairs", "writesToPair", "mergesPairs", "keepsPairForHandler"]) {
-        applies(name, "materializes-returned-object:makesPair");
-        doesNotApply(name, "reads-returned-object-from-registers:makesPair");
-    }
-
     function makesEveryKind(x) { return { int32: work(x) | 0, double: x / 2 + 0.25, boolean: x > 1, string: "s" + x, object: [x] }; }
     function readsEveryKind(x) { const all = makesEveryKind(x); return all.int32 + all.double + all.string + all.boolean + all.object.length; }
     function keepsEveryKind(x) { kept = makesEveryKind(x); return kept.int32; }
@@ -84,8 +65,6 @@ function doesNotApply(name, remark) {
     check(JSON.stringify(kept), '{"int32":' + work(2) + ',"double":1.25,"boolean":true,"string":"s2","object":[2]}', "values of every kind are kept");
     keepsEveryKind(1);
     check(JSON.stringify(kept), '{"int32":' + work(1) + ',"double":0.75,"boolean":false,"string":"s1","object":[1]}', "other values");
-    applies("readsEveryKind", "reads-returned-object-from-registers:makesEveryKind");
-    applies("keepsEveryKind", "materializes-returned-object:makesEveryKind");
 
     function makesOtherKinds(x) { return { nothing: undefined, none: null, number: work(x) > 3 ? 1.5 : 1 }; }
     function readsOtherKinds(x) { const all = makesOtherKinds(x); return "" + all.nothing + all.none + all.number; }
@@ -95,8 +74,6 @@ function doesNotApply(name, remark) {
     check(Object.keys(kept).join() + kept.nothing + kept.none + kept.number, "nothing,none,numberundefinednull" + (work(2) > 3 ? 1.5 : 1), "undefined, null and a number are kept");
     keepsOtherKinds(0);
     check(kept.number, work(0) > 3 ? 1.5 : 1, "the other number");
-    applies("readsOtherKinds", "reads-returned-object-from-registers:makesOtherKinds");
-    applies("keepsOtherKinds", "materializes-returned-object:makesOtherKinds");
 
     function returnsInTwoPlaces(x) {
         if (x > 1)
@@ -111,21 +88,16 @@ function doesNotApply(name, remark) {
     check(JSON.stringify(kept), '{"low":1,"high":' + work(2) + '}', "the first return is kept");
     keepsFromTwoPlaces(1);
     check(JSON.stringify(kept), '{"low":' + work(1) + ',"high":1}', "the second return is kept");
-    applies("readsFromTwoPlaces", "reads-returned-object-from-registers:returnsInTwoPlaces");
-    applies("keepsFromTwoPlaces", "materializes-returned-object:returnsInTwoPlaces");
 
     function calledInTailPosition(x) { return { a: work(x), b: 2 }; }
     function callsInTailPosition(x) { return calledInTailPosition(x); }
     function readsWhatIsAlsoTailCalled(x) { const { a, b } = calledInTailPosition(x); return a + b; }
     check(JSON.stringify(callsInTailPosition(3)), '{"a":' + work(3) + ',"b":2}', "a tail call");
     check(readsWhatIsAlsoTailCalled(3), work(3) + 2, "a read of what another function calls in tail position");
-    doesNotApply("readsWhatIsAlsoTailCalled", "reads-returned-object-from-registers:calledInTailPosition");
-    doesNotApply("readsWhatIsAlsoTailCalled", "materializes-returned-object:calledInTailPosition");
 
     function returnsNineValues(x) { return { a: work(x), b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9 }; }
     function readsNineValues(x) { const all = returnsNineValues(x); return all.a + all.i; }
     check(readsNineValues(1), work(1) + 9, "nine values");
-    doesNotApply("readsNineValues", "reads-returned-object-from-registers:returnsNineValues");
 
     function sometimesReturnsNothing(x) {
         if (x > 1)
@@ -137,7 +109,6 @@ function doesNotApply(name, remark) {
     check(kept, undefined, "nothing");
     keepsWhatMayBeNothing(1);
     check(JSON.stringify(kept), '{"a":' + work(1) + ',"b":2}', "something");
-    doesNotApply("keepsWhatMayBeNothing", "materializes-returned-object:sometimesReturnsNothing");
 
     function makesInner(x) { return { depth: work(x), below: null }; }
     function returnsInnerInLiteral(x) { const below = makesInner(x); return { depth: 1, below }; }
@@ -147,9 +118,6 @@ function doesNotApply(name, remark) {
     check(readsInnerInLiteral(3), 1 + work(3), "its caller reads both");
     keepsInnerInLiteral(2);
     check(JSON.stringify(kept), '{"depth":1,"below":{"depth":' + work(2) + ',"below":null}}', "its caller keeps it");
-    applies("returnsInnerInLiteral", "materializes-returned-object:makesInner");
-    applies("readsInnerInLiteral", "reads-returned-object-from-registers:returnsInnerInLiteral");
-    applies("keepsInnerInLiteral", "materializes-returned-object:returnsInnerInLiteral");
 
     function callsItself(depth) {
         if (!depth)

@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...args) {
     try {
@@ -32,13 +10,6 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const lowered = "lowered-builtin";
-const stubs = ["calls:WeakMapGet", "calls:WeakMapHas", "calls:WeakSetHas"];
-const operations = ["calls:operationAOTWeakMapGet", "calls:operationAOTWeakMapHas", "calls:operationAOTWeakSetHas"];
-
 (function () {
     const notHeldWeakly = [undefined, null, true, false, 0, -0, 1, 1.5, NaN, Infinity, "", "text", "a" + String(1), 10n, Symbol.for("registered")];
 
@@ -165,21 +136,6 @@ const operations = ["calls:operationAOTWeakMapGet", "calls:operationAOTWeakMapHa
         check(seesChangesInLoop({}, 100), 1000 * 50 + 49 * 50, "looking up in a loop that changes the map");
         check(survivesCollections(3), "right", "looking up after collections");
     }
-    for (const f of [looksUpInEmpty, looksUp, fills, seesChanges, survivesCollections, ignoresResults])
-        applies(f, lowered + ":WeakMap.prototype.get", lowered + ":WeakMap.prototype.has", lowered + ":WeakSet.prototype.has");
-    for (const f of usesDataStubs ? [looksUpInEmpty, looksUp, fills, seesChanges, survivesCollections] : []) {
-        applies(f, ...stubs);
-        doesNotApply(f, ...operations);
-    }
-    if (usesDataStubs) {
-        applies(holds, stubs[0], stubs[1]);
-        applies(seesChangesInLoop, stubs[0], stubs[1]);
-    } else {
-        for (const f of [looksUpInEmpty, looksUp, fills]) {
-            applies(f, ...operations);
-            doesNotApply(f, ...stubs);
-        }
-    }
 
     function ofUnknownReceiver(collection, key) { return String(collection.get(key)) + "," + collection.has(key); }
     function hasOfUnknownReceiver(collection, key) { return collection.has(key); }
@@ -195,8 +151,6 @@ const operations = ["calls:operationAOTWeakMapGet", "calls:operationAOTWeakMapHa
         check(hasOfUnknownReceiver(new WeakSet(), key), false, "an empty WeakSet as a parameter");
         check(hasOfUnknownReceiver(new Set([key]), key), true, "a Set as a parameter");
     }
-    for (const f of [ofUnknownReceiver, hasOfUnknownReceiver])
-        doesNotApply(f, lowered + ":WeakMap.prototype.get", lowered + ":WeakMap.prototype.has", lowered + ":WeakSet.prototype.has", ...stubs, ...operations);
 
     class Overriding extends WeakMap {
         get(key) { return "overridden " + super.get(key); }

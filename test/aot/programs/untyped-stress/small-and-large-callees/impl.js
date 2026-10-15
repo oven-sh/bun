@@ -1,26 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
-const reasons = ["callee-is-too-big-to-inline", "callee-needs-own-frame", "callee-with-loop-is-called-in-loop", "caller-has-inlined-enough", "callee-is-too-deep-to-inline", "call-is-recursive"];
-function saysOnly(name, callee, reason) {
-    for (let other of reasons) {
-        if (other === reason)
-            says(name, other + ":" + callee);
-        else
-            doesNotSay(name, other + ":" + callee);
-    }
-    if (reason)
-        doesNotSay(name, "inlined-call:" + callee);
-    else
-        says(name, "inlined-call:" + callee);
 }
 
 (function () {
@@ -29,8 +9,6 @@ function callsSmall(count) { let sum = 0; for (let i = 0; i < count; i++) sum +=
 function callsSmallAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += small(i, 2); return sum; }
 check(callsSmall(4), 10, "a small callee");
 check(callsSmallAgain(4), 14, "a small callee, its second site");
-saysOnly("callsSmall", "small", null);
-saysOnly("callsSmallAgain", "small", null);
 
 function big(a, b, c) {
     let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ a) + (b | c); if (t < 0) t = -t; t = t % 1000;
@@ -41,32 +19,23 @@ function callsBig(count) { let sum = 0; for (let i = 0; i < count; i++) sum += b
 function callsBigAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += big(i, 4, 6); return sum; }
 check(callsBig(3), big(0, 3, 5) + big(1, 3, 5) + big(2, 3, 5), "a big callee");
 check(callsBigAgain(3), big(0, 4, 6) + big(1, 4, 6) + big(2, 4, 6), "a big callee, its second site");
-saysOnly("callsBig", "big", "callee-is-too-big-to-inline");
-saysOnly("callsBigAgain", "big", "callee-is-too-big-to-inline");
-says("callsBig", "direct-call:big");
 
 function catches(a) { try { return a.length; } catch { return -1; } }
 function callsCatches(count) { let sum = 0; for (let i = 0; i < count; i++) sum += catches(i ? "ab" : null); return sum; }
 check(callsCatches(3), 3, "a callee that catches");
-saysOnly("callsCatches", "catches", "callee-needs-own-frame");
 
 function readsArguments() { let all = arguments; return all[0] + all.length; }
 function callsReadsArguments(count) { let sum = 0; for (let i = 0; i < count; i++) sum += readsArguments(i, i); return sum; }
 check(callsReadsArguments(3), 9, "a callee that reads its arguments object");
-saysOnly("callsReadsArguments", "readsArguments", "callee-needs-own-frame");
 
 function down(n) { return n ? down(n - 1) + 1 : 0; }
 function callsDown(count) { let sum = 0; for (let i = 0; i < count; i++) sum += down(i); return sum; }
 check(callsDown(4), 6, "a callee that calls itself");
-says("callsDown", "inlined-call:down");
-says("callsDown", "call-is-recursive:down");
-doesNotSay("callsDown", "callee-needs-own-frame:down");
 
 function loops(n) { let sum = 0; for (let i = 0; i < n; i++) sum += i; return sum; }
 function callsLoops(count) { let sum = 0; for (let i = 0; i < count; i++) sum += loops(i); return sum; }
 function callsLoopsAgain(count) { let sum = 0; for (let i = 0; i < count; i++) sum += loops(i + 1); return sum; }
 check(callsLoops(4), 4, "a callee with a loop, called in a loop");
 check(callsLoopsAgain(3), 4, "a callee with a loop, called in a loop, its second site");
-saysOnly("callsLoops", "loops", "callee-with-loop-is-called-in-loop");
 })();
 console.log("passed");

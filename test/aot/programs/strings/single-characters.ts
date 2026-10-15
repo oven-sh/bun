@@ -1,8 +1,9 @@
-// A one-character string that was just read from a string is compared with a one-character literal or with another such string.
-// CALLS- slashAt StringHasAt|StringIsText
+// A one-character string that was just read from a string, in a loop or where the read stands in place, is compared with a one-character literal or with another such string.
+// CALLS+ slashAt tests for equality with [0-9 ]*\b47\b
 // CALLS- slashCharAt StringHasAt|StringIsText
 // CALLS- slashByAt StringHasAt|StringIsText
 // CALLS- kept StringHasAt|StringIsText
+// CALLS- keptInLoop StringHasAt|StringIsText
 // CALLS- samePlace StringEq|StringsAreEqual
 // CALLS+ samePlaceHandled StringEq|StringsAreEqual
 // CALLS+ slashHandled StringHasAt|StringIsText
@@ -35,6 +36,7 @@ export function slashAt(s: string, i: number): boolean { return s[i] === "/"; }
 export function slashCharAt(s: string, i: number): boolean { return s.charAt(i) === "/"; }
 export function slashByAt(s: string, i: number): boolean { return s.at(i) === "/"; }
 export function kept(s: string, i: number): string { const x = s[i]; return x === "/" ? "slash" : x + "!"; }
+export function keptInLoop(s: string): string { let out = ""; for (let i = 0; i < s.length; i++) { const x = s[i]; out += x === "/" ? "slash" : x + "!"; } return out; }
 export function samePlace(s: string, t: string, i: number): boolean { return s[i] === t[i]; }
 function mayThrow(i: number): void { if (i === 7) throw new Error("seven"); }
 export function samePlaceHandled(s: string, t: string, i: number): boolean { let a = "", b = ""; try { a = s[i]; b = t[i]; mayThrow(i); return a === b; } catch { return a === b; } }
@@ -87,6 +89,7 @@ for (const s of strings) {
         print("  " + show(t) + " " + [[0, 0], [1, 1], [0, 1], [1, 0], [5, 5], [5, 0], [0, 5], [-1, -1], [2, 2]].map(([i, j]) => pairs(s, t, i!, j!)).join(" "));
 }
 print(attempt(() => anything(["/", "a"], 0)) + " " + attempt(() => anything({ 0: "/", charAt: () => "/", at: () => "x" }, 0)) + " " + attempt(() => anything(null, 0)) + " " + attempt(() => anything("a/", "1")) + " " + attempt(() => anything(new String("/"), 0)));
+print(keptInLoop("a/b//c") + " " + show(keptInLoop("")));
 let big = ""; for (let i = 0; i < 3000; i++) big += i % 7 === 0 ? "/" : String.fromCharCode(32 + i % 90); print(countByIndex(big) + " " + countByCharAt(big) + " " + countByAt(big) + " " + classify(big).length);
 // The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
-(globalThis as any).kept = [slashAt, slashCharAt, slashByAt, kept, samePlace, samePlaceHandled, slashHandled, twoCharacters, notASCII, oneArmOnly]; console.log("number");
+(globalThis as any).kept = [slashAt, slashCharAt, slashByAt, kept, keptInLoop, samePlace, samePlaceHandled, slashHandled, twoCharacters, notASCII, oneArmOnly]; console.log("number");

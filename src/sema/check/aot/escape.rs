@@ -5,7 +5,7 @@ use super::callees::{Callee, Yielded};
 use super::storage::Query;
 use crate::bind::{Decl, Parent, PatParent, SymbolId};
 use crate::check::Checker;
-use crate::hir::{BinOp, CallId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, ParamId, PatKind, StmtKind, UnOp};
+use crate::hir::{BinOp, CallId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, ParamId, PatId, PatKind, StmtKind, UnOp, VarKind};
 use crate::program::FileId;
 use crate::util::{FxHashMap, FxHashSet};
 
@@ -68,6 +68,22 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let [Decl::Param(pat) | Decl::Var(pat)] = *bound.symbols.get(symbol.idx())?.decls.as_slice() else { return None };
         matches!(bound.pat_parent[pat.idx()], PatParent::Param(_) | PatParent::Var(_)).then(|| self.uses_in_file(file).of_parameters.get(&symbol).map_or(&[][..], Vec::as_slice))
+    }
+
+    pub fn element_read_kept_unasserted(&mut self, file: FileId, pat: PatId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return None };
+        let decl = &hir[d];
+        if decl.kind != VarKind::Const || decl.ty.is_some() || decl.init.is_none() || decl.pat != pat || !matches!(hir[pat].kind, PatKind::Ident(_)) {
+            return None;
+        }
+        let read = self.element_read_of_no_known_integers(file, decl.init)?;
+        if self.enclosing_fn_of_expr(file, decl.init).is_none_or(|func| func.is_none()) || self.has_direct_eval(file) {
+            return None;
+        }
+        let references = self.references_to(file, bound.pat_symbol[pat.idx()])?;
+        let mut known = FxHashMap::default();
+        references.iter().all(|&mention| self.is_used_where_undefined_has_an_answer(file, mention) || self.is_mentioned_where_it_is_shown_to_be_there(file, mention, &mut known)).then_some(read)
     }
 
     pub fn use_of_argument(&mut self, file: FileId, p: ParamId) -> u8 {

@@ -6,6 +6,122 @@ const differs =
 
 export const cases: Case[] = [
   {
+    // @jridgewell/remapping 2.3.5: the .d.cts that "require" leads to does not parse. Nobody who builds can edit it, and plain Bun never reads it.
+    name: "declarations-that-do-not-parse",
+    files: {
+      ...pkg(
+        "declares_badly",
+        {
+          "index.cjs": `module.exports = function remap(a) { return [a, "cjs"]; };\n`,
+          "index.mjs": `export default function remap(a) { return [a, "mjs"]; }\n`,
+          "types/index.d.mts": `export default function remap(a: string): string[];\n`,
+          "types/index.d.cts": `export type Options = { a?: number };
+export =       function remap(a: string): string[];
+`,
+        },
+        {
+          main: "index.cjs",
+          module: "index.mjs",
+          exports: { ".": { import: { types: "./types/index.d.mts", default: "./index.mjs" }, default: { types: "./types/index.d.cts", default: "./index.cjs" } } },
+        },
+      ),
+    },
+    importers: {
+      "require.cjs": `${js}t("x", () => require("declares_badly")("x"));
+`,
+      "import.mjs": `import remap from "declares_badly";
+${js}t("x", () => remap("x"));
+`,
+    },
+  },
+  {
+    // A package whose entry is TypeScript is checked under the options of whoever imports it, who cannot edit it: its type errors make it untyped code, with a warning, and stop no build.
+    name: "typescript-with-type-errors",
+    files: {
+      ...pkg("undeclared", { "index.js": `exports.load = function load(s) { return { text: s }; };\n` }, { main: "index.js" }),
+      ...pkg(
+        "ships_typescript",
+        {
+          "index.ts": `import { load } from "undeclared";
+import { twice } from "./twice";
+import type { Options } from "./types";
+export function parse(s: string, options?: Options): unknown { return load(s); }
+export function loose(x) { return x.length; }
+const wrong: number = "a text";
+export const length: number = String(wrong).length;
+export { twice };
+`,
+          "twice.ts": `export function twice(n: number): number { return n * 2; }\n`,
+          "types.ts": `import type { Loaded } from "undeclared";
+import type { Nothing } from "not_installed";
+export interface Options { loaded?: Loaded; nothing?: Nothing }
+`,
+        },
+        { main: "index.ts", module: "index.ts", types: "index.ts" },
+      ),
+    },
+    importers: {
+      "import.mjs": `import { parse, loose, length, twice } from "ships_typescript";
+${js}t("x", () => [parse("a"), loose("abc"), length, twice(4)]);
+`,
+      "import.ts": `import { parse, loose, length, twice } from "ships_typescript";
+${ts}t("x", () => [parse("a"), loose("abc"), length, twice(4)]);
+`,
+      "require.cjs": `${js}t("x", () => { const it = require("ships_typescript"); return [it.parse("a"), it.loose("abc"), it.length, it.twice(4)]; });
+`,
+    },
+  },
+  {
+    // tsdown and rolldown cut code and declarations into chunks and shorten the names of their exports separately, so `a` is a function in core.js and an interface in core.d.ts.
+    name: "chunk-exports-shortened-separately",
+    files: {
+      ...pkg(
+        "shortened",
+        {
+          "dist/core.js": `function namespaces() { return "namespaces"; }
+function enabled() { return "enabled"; }
+function disable() { return "disable"; }
+export { namespaces as a, enabled as i, disable as n };
+`,
+          "dist/core.d.ts": `interface Debugger { (x: string): void }
+interface DebugOptions { a?: number }
+declare function enabled(): string;
+declare function namespaces(): string;
+declare function disable(): string;
+export { Debugger as a, DebugOptions as i, enabled as n, namespaces as r, disable as t };
+`,
+          "dist/node.js": `import { a as namespaces, i as enabled, n as disable } from "./core.js";
+function createDebug() { return [namespaces(), enabled(), disable()].join(); }
+export { createDebug, disable, enabled, namespaces };
+`,
+          "dist/node.d.ts": `import { a as Debugger, i as DebugOptions, n as enabled, r as namespaces, t as disable } from "./core.js";
+declare function createDebug(): string;
+export { type DebugOptions, type Debugger, createDebug, disable, enabled, namespaces };
+`,
+        },
+        { type: "module", main: "./dist/node.js", types: "./dist/node.d.ts" },
+      ),
+    },
+    importers: {
+      "namespace.mjs": `import * as ns from "shortened";
+${js}t("x", () => [keys(ns), ns.enabled(), ns.namespaces(), ns.createDebug()]);
+`,
+      "dynamic.mjs": `${js}await ta("x", async () => { const ns = await import("shortened"); return [keys(ns), typeof ns.enabled, typeof ns.namespaces]; });
+`,
+      "required.cjs": `${js}t("x", () => { const ns = require("shortened"); return [keys(ns), typeof ns.enabled, typeof ns.namespaces]; });
+`,
+      "names.mjs": `import { enabled, namespaces, disable } from "shortened";
+${js}t("x", () => [enabled(), namespaces(), disable()]);
+`,
+      "namespace.ts": `import * as ns from "shortened";
+${ts}t("x", () => [keys(ns), ns.enabled(), ns.namespaces()]);
+`,
+      "names.ts": `import { enabled, namespaces, disable } from "shortened";
+${ts}t("x", () => [enabled(), namespaces(), disable()]);
+`,
+    },
+  },
+  {
     name: "typed",
     differs,
     files: {

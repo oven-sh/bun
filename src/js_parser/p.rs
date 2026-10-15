@@ -548,7 +548,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
-    pub(crate) next_use_preserves_value: bool,
     pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
@@ -2073,12 +2072,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self.part_uses[index].1
     }
 
-    pub(crate) fn record_value_use(&mut self, ref_: Ref) {
-        if let Some(use_) = self.existing_part_use(ref_) {
-            use_.note_value();
-        }
-    }
-
     fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
         let slot = *self.part_use_slot.get(ref_.inner_index() as usize)?;
         if (slot >> 32) as u32 != self.part_generation {
@@ -2123,8 +2116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            let preserves_value = self.next_use_preserves_value;
-            self.part_use(ref_).add_scoped(1, preserves_value);
+            self.part_use(ref_).add_scoped(1);
             if scope_use {
                 self.record_scope_use(ref_);
             }
@@ -3728,7 +3720,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
-                                self.record_assignment(member_in_scope.ref_);
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
                                     self.set_must_not_be_renamed_through_links(
                                         member_in_scope.ref_,
@@ -4018,6 +4009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr: ExprNodeIndex,
         invalid_loc: &mut LocList,
     ) -> Option<Binding> {
+        let expr = bun_ast::audited::unmarked(expr);
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
             js_ast::ExprData::EIdentifier(ex) => {
@@ -5286,9 +5278,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].kind = js_ast::symbol::Kind::PrivateStaticGetSetPair;
                 }
                 MR::OverwriteWithNew => {}
-            }
-            if !matches!(merge, MR::Forbidden) {
-                self.record_assignment(ref_);
             }
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
@@ -7071,7 +7060,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "name = (enclosing.name ||= {})"
                     self.record_usage(namespace);
                     self.record_usage(name_ref);
-                    self.record_assignment(name_ref);
                     let left = self.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(namespace, name_loc),
@@ -7099,7 +7087,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "name ||= {}"
             self.record_usage(name_ref);
-            self.record_assignment(name_ref);
             let right = self.new_expr(E::Object::default(), name_loc);
             self.new_expr(
                 E::Binary {
@@ -7797,7 +7784,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     self.record_usage(class_ref);
                     self.record_usage(class_ref);
-                    self.record_assignment(class_ref);
                 }
                 stmts.into_bump_slice_mut()
             }
@@ -9825,7 +9811,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
-            next_use_preserves_value: false,
             template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),

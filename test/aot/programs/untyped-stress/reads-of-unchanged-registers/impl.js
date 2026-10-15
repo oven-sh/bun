@@ -1,18 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const readsUnchangedRegisterFromFrame = "reads-unchanged-register-from-frame:";
-function applies(name, pattern = readsUnchangedRegisterFromFrame) {
-    let remarks = aotRemarks(name);
-    if (remarks && !remarks.some(remark => remark.startsWith(pattern)))
-        throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-}
-function doesNotApply(name, pattern = readsUnchangedRegisterFromFrame) {
-    let remarks = aotRemarks(name);
-    if (remarks && remarks.some(remark => remark.startsWith(pattern)))
-        throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
 }
 function resultOf(promise) {
     let result;
@@ -47,7 +35,6 @@ function resultOf(promise) {
         return log;
     }
     check(resultOf(keptAcrossHandlers(3)), 10, "a variable that a handler reads and nothing changes");
-    applies("keptAcrossHandlers");
 
     async function awaitsOnceInTry() {
         let x = make(5);
@@ -58,7 +45,6 @@ function resultOf(promise) {
         }
     }
     check(resultOf(awaitsOnceInTry()), 6, "one suspension");
-    doesNotApply("awaitsOnceInTry");
 
     async function usedAfterLoop(n) {
         let t = 0;
@@ -75,7 +61,6 @@ function resultOf(promise) {
     }
     check(resultOf(usedAfterLoop(3)), 35.5, "values that are only used behind a loop that awaits");
     check(resultOf(usedAfterLoop(0)), 29.5, "no iteration");
-    applies("usedAfterLoop");
 
     async function passedAfterLoop(n) {
         let list = [];
@@ -91,7 +76,6 @@ function resultOf(promise) {
         return list.map(item => item.v).join();
     }
     check(resultOf(passedAfterLoop(2)), "3,4,7", "values that are passed in calls behind the loop");
-    applies("passedAfterLoop");
 
     async function changedOnOnePath(n, flag) {
         let log = "";

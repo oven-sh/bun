@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function repeat(f) {
     for (let i = 0; i < 200; i++)
@@ -49,19 +27,9 @@ const getDeclared = () => declared;
 const getClass = () => Declared;
 const getLater = () => later;
 const getLivePlusOne = () => live + 1;
-const getWithParameter = unused => live;
 const getConstant = () => 5;
-const getTwice = () => { live; return live; };
-function getWithFunction() { return live; }
 function makeGetLocal() { let local = "local"; return { get: function getLocal() { return local; }, set(value) { local = value; } }; }
 const local = makeGetLocal();
-
-for (const f of [getLive, getFixed, getDeclared, getClass, getLater, getWithFunction, local.get])
-    applies(f, "returns-scope-variable");
-doesNotApply(getLivePlusOne, "returns-scope-variable");
-doesNotApply(getWithParameter, "returns-scope-variable");
-doesNotApply(getConstant, "returns-scope-variable");
-doesNotApply(getTwice, "returns-scope-variable");
 
 function define(target, all) {
     for (const name in all)

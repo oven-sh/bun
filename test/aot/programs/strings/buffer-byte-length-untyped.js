@@ -42,6 +42,12 @@ function ofTextByDefault(s) {
 function ofTextWithHyphen(s) {
   return Buffer.byteLength(s, "utf-8");
 }
+function ofTextsWithHyphen(list) {
+  let n = 0;
+  for (const s of list)
+    n += Buffer.byteLength(s, "utf-8");
+  return n;
+}
 function ofLatin1(s) {
   return Buffer.byteLength(s, "latin1");
 }
@@ -51,7 +57,7 @@ function ofEncoding(s, encoding) {
 function ofUnknown(s) {
   return Buffer.byteLength(s, "utf8");
 }
-g.kept = [ofText, ofTextByDefault, ofTextWithHyphen, ofLatin1, ofEncoding, ofUnknown];
+g.kept = [ofText, ofTextByDefault, ofTextWithHyphen, ofTextsWithHyphen, ofLatin1, ofEncoding, ofUnknown];
 const fresh = (x) => String.fromCharCode(...[...x].map((c) => c.charCodeAt(0)));
 const ascii = fresh('<div class="a">hello</div>');
 const latin1 = fresh("na\xEFve caf\xE9 \xFF\x80\x7F");
@@ -74,8 +80,8 @@ for (let i = 0;i < 1000; i++)
 console.log(sum);
 const original = g.Buffer.byteLength;
 g.Buffer.byteLength = (s) => -s.length;
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide));
+console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts));
 g.Buffer.byteLength = original;
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide));
+console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts));
 const { byteLength } = Buffer;
 console.log(byteLength(latin1, "utf8"), byteLength.call(undefined, wide));

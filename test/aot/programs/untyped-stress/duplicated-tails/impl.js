@@ -1,30 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function applies(f, pattern) {
-    let remarks = remarksOf(f);
-    if (remarks && !remarks.includes(pattern))
-        throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-}
-function doesNotApply(f, pattern) {
-    let remarks = remarksOf(f);
-    if (remarks && remarks.includes(pattern))
-        throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-}
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const duplicates = "duplicated-tails";
-
 function comparesWithInt32(x) { return x < 10 ? "less" : "not less"; }
 function comparesInLoop(list) { let n = 0; for (let i = 0; i < list.length; ++i) { if (list[i] >= 3) ++n; } return n; }
 function testsObjectOrString(which) { let o = which === 0 ? { a: 1 } : which === 1 ? "" : which === 2 ? "text" : undefined; return o ? "yes" : "no"; }
@@ -44,13 +22,5 @@ check(returnsConstant(), 42, "a constant");
 let thrown = "nothing";
 try { comparesWithInt32(Symbol()); } catch (error) { thrown = error.constructor.name; }
 check(thrown, "TypeError", "a symbol");
-
-if (usesDataStubs) {
-    applies(comparesWithInt32, duplicates);
-    applies(negates, duplicates);
-    applies(comparesInLoop, duplicates);
-}
-doesNotApply(returnsConstant, duplicates);
-doesNotApply(onlyCalls, duplicates);
 })();
 console.log("passed");

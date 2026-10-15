@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => true, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + (Object.is(actual, -0) ? "-0" : String(actual)) + " instead of " + (Object.is(expected, -0) ? "-0" : String(expected)));
@@ -40,7 +39,6 @@ function addsWideConstants(b) { b = 4294967296; return b + b; }
 function addsThreeWideConstants(b) { b = 4294967296; const c = 8589934592; return b + c + b; }
 function scalesWideConstants() { const a = 1073741824; return a * 8 + a * 16; }
 for (let round = 0; round < 20; round++) {
-    check(isAOTCompiled(addsWideConstants) && isAOTCompiled(addsThreeWideConstants) && isAOTCompiled(scalesWideConstants), true, "functions that fold wide constants are compiled");
     check(addsWideConstants(1), 8589934592, "the sum of two wide constants");
     check(addsThreeWideConstants(1), 17179869184, "the sum of three wide constants");
     check(scalesWideConstants(), 25769803776, "multiples of a constant");

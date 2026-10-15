@@ -1,21 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTDataStubs && !!options.useAOTLoopSplitting;
-function expectRemark(f, remark) {
-    if (isOn)
-        check(remarksOf(f).includes(remark), true, f.name + " has " + remark + " among " + remarksOf(f).filter(other => other.includes("guards-over")).join(" "));
-}
-function applies(f) { expectRemark(f, "guards-over-whole-function"); }
-function isRefused(f, reason) {
-    expectRemark(f, "no-guards-over-whole-function:" + reason);
-    if (isOn)
-        check(remarksOf(f).includes("guards-over-whole-function"), false, f.name + " has guards over the whole function");
 }
 
 const kept = [];
@@ -93,13 +78,6 @@ for (let i = 0; i < 200; ++i) {
     check(sumsWithCalls(x, y, z, array), i + 11 + 10 + 4 * 23, "sumsWithCalls");
     kept.length = 0;
 }
-for (let f of [sumsArrayOnly, sumsArrayAndFlags, sumsInTwoLoops, sumsInNestedLoops, skipsOddElements]) {
-    isRefused(f, "has-loop-without-calls");
-    expectRemark(f, "split-loop");
-}
-applies(sumsWithCalls);
-if (isOn)
-    check(remarksOf(sumsWithCalls).includes("split-loop"), false, "the loop of sumsWithCalls is split");
 
 let odd = build(["other", 0], ["flags", 100]);
 check(sumsArrayAndFlags(makeItem(0), makeItem(10), odd, array), 0 + 11 + 10 + 400, "a receiver that fails inside the loop");

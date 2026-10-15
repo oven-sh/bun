@@ -1618,6 +1618,8 @@ pub enum Elsewhere {
     PrivateNameInOptionalChain,
     PrivateNameOfEnclosingClass,
     StaticMemberNamedConstructor,
+    CommentOfJavaScript,
+    DeclarationsOfPackage,
 }
 
 /// The files that are no modules of the program and that a module of the program imports, straight away or through others of them: for
@@ -1686,6 +1688,27 @@ fn place_of_error(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, 
         }
     }
     None
+}
+
+fn is_in_try_block_with_catch(checked: &Checked<'_>, file: FileId, pos: u32) -> bool {
+    use bun_sema::bind::Parent;
+    let (hir, bound, c) = (checked.files.hir(file), checked.files.bound(file), checked.checker());
+    let around = (0..hir.exprs.len() as u32).map(hir::ExprId).filter(|&e| hir[e].pos <= pos && pos < hir[e].end);
+    let Some(innermost) = around.min_by_key(|&e| hir[e].end - hir[e].pos) else { return false };
+    let (mut child, mut parent) = (hir::StmtId::NONE, bound.expr_parent[innermost.idx()]);
+    loop {
+        match parent {
+            Parent::Stmt(outer) if outer.is_some() => {
+                if matches!(hir[outer].kind, StmtKind::Try { block, handler, .. } if block == child && handler.is_some()) {
+                    return true;
+                }
+                child = outer;
+            }
+            Parent::FnBody(_) | Parent::ParamDefault(_) | Parent::MemberInit(_) | Parent::Module(_) | Parent::File | Parent::None => return false,
+            _ => {}
+        }
+        parent = c.parent_of_node(file, parent);
+    }
 }
 
 /// `fragments`: one for each file that has been translated, in any order. `roots`: the files that the program starts with.
@@ -1789,14 +1812,16 @@ pub fn link(
     }
     for fragment in &fragments {
         for function in &fragment.funcs {
+            let is_of_an_arrow = matches!(function.key, FuncKey::EntryBeside(file, root) if checked.files.hir(file)[root].kind == hir::FnKind::Arrow);
             if let (FuncKey::EntryBeside(file, root), Some(body)) = (function.key, &function.body)
                 && body.class.is_some()
+                && !is_of_an_arrow
                 && !not_translated.contains(&(file, root))
             {
                 entries_beside.entry(fragment.layouts[body.class.idx()].key).or_default().push(function.key);
             }
             if let (FuncKey::EntryBeside(file, root), Some(body)) = (function.key, &function.body)
-                && body.class.is_none()
+                && (body.class.is_none() || is_of_an_arrow)
                 && !not_translated.contains(&(file, root))
             {
                 entries_beside_functions.push((FuncKey::Function(file, root), function.key));
@@ -1912,11 +1937,20 @@ pub fn link(
         let hir = checked.files.hir(file);
         hir.is_js && hir.members.iter().any(|member| (member.name_pos == pos || hir.modifier_list(member.modifiers).iter().any(|modifier| modifier.pos == pos && modifier.kind == hir::ModifierKind::Keyword(Flags::STATIC))) && member.flags.contains(Flags::STATIC) && matches!(member.kind, hir::MemberKind::Method | hir::MemberKind::Getter | hir::MemberKind::Setter) && matches!(member.key, hir::PropKey::Name(name) if checked.files.atoms.bytes(name) == b"constructor"))
     };
+    let is_in_comment_of_javascript = |(file, pos): (FileId, u32)| {
+        let hir = checked.files.hir(file);
+        hir.is_js && hir.check_directive.is_none() && checked.files.options.check_js.is_none() && hir::is_in_comment(hir, pos)
+    };
+    let is_in_declarations_of_package = |(file, _): (FileId, u32)| {
+        checked.files.hir(file).kind == hir::FileKind::Declaration && checked.files.module(file).path.text.windows(14).any(|part| part == b"/node_modules/")
+    };
     let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| {
         let elsewhere = place_of_error(checked, &fragments, &index, &reach, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(Elsewhere::DroppedImport));
         elsewhere.or_else(|| is_in_regexp_literal(place).then_some(Elsewhere::RegExpLiteral)).or_else(|| is_private_name_in_optional_chain(place).then_some(Elsewhere::PrivateNameInOptionalChain))
             .or_else(|| is_private_name_of_enclosing_class(place).then_some(Elsewhere::PrivateNameOfEnclosingClass))
             .or_else(|| is_static_member_named_constructor(place).then_some(Elsewhere::StaticMemberNamedConstructor))
+            .or_else(|| is_in_comment_of_javascript(place).then_some(Elsewhere::CommentOfJavaScript))
+            .or_else(|| is_in_declarations_of_package(place).then_some(Elsewhere::DeclarationsOfPackage))
     };
     let errors: Vec<Option<Elsewhere>> = places.iter().zip(in_dropped_imports).map(place_of).collect();
     // Nothing comes of a program with an error in it.
@@ -2531,7 +2565,10 @@ pub fn link(
     times.add("answers", &mut since);
     let deleted = nil::make_room_for_deletions(&mut program, in_parallel);
     reads::type_by_the_members(&mut program, in_parallel);
+    let written: Vec<Vec<TyId>> = program.funcs.iter().map(|func| func.params.clone()).collect();
     nil::make_room_for_nil(&mut program, in_parallel);
+    let written = written.into_iter().enumerate().filter(|(index, written)| program.funcs[*index].params != *written).map(|(index, written)| (index as u32, written)).collect();
+    program.parameters_as_written = written;
     times.add("nil", &mut since);
     say("the subtypes are in the program");
     times.add("members", &mut since);
@@ -2647,6 +2684,17 @@ pub fn link(
             let before = &text[(starts[line] as usize).min(text.len())..(pos as usize).min(text.len())];
             (line as u32 + 1, String::from_utf8_lossy(before).encode_utf16().count() as u32 + 1)
         };
+        let mut asked: Vec<(FuncId, FileId, hir::FnId)> = (func_ids.iter())
+            .filter_map(|(key, &func)| match *key {
+                FuncKey::Function(file, root) => Some((func, file, root)),
+                _ => None,
+            })
+            .filter(|asked| program.funcs[asked.0.idx()].has(func_flags::IS_TYPED))
+            .collect();
+        asked.sort_unstable_by_key(|asked| asked.0);
+        in_parallel(64, &|_| checked.checker().help_find_who_may_be_handed_what_says_nothing());
+        let mut asking = checked.checker();
+        program.may_be_handed_what_says_nothing = asked.into_iter().filter(|&(func, file, root)| asking.may_be_handed_what_says_nothing(file, root, program.funcs[func.idx()].has(func_flags::IS_VALUE))).map(|asked| asked.0.idx() as u32).collect();
         explained.append(&mut throws::explain(&program, checked.checker().logs_type_errors(), explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
     }
     if explain.integers {
@@ -2682,6 +2730,14 @@ pub fn link(
         let (file, start, end) = span(site.module, site.pos);
         let (code, args) = site.message();
         let code = if code == 100013 && logs_type_errors && site.goes_on_when_logged() { 100019 } else { code };
+        let (code, args) = match bun_sema::messages::message(code) {
+            Some((bun_sema::messages::Category::Error, words)) if checked.files.hir(file).is_js && is_in_try_block_with_catch(checked, file, start) => {
+                let mut said = Vec::new();
+                bun_sema::messages::format(&mut said, words, &args);
+                (100020, vec![said])
+            }
+            _ => (code, args),
+        };
         let related = site.origin.iter().filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)).map(|(module, pos, what)| {
             let (file, start, end) = span(*module, *pos);
             CompilerDiagnostic { file, start, end, code: 100018, args: vec![what.clone().into_bytes()], related: Vec::new() }

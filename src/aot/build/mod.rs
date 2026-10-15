@@ -419,7 +419,19 @@ impl<'a> Shared<'a> {
         let fits = |file: FileId| constants.own_paths.is_none() && program.files.module(file).builtin.is_none() && !shared.roots.contains(&file) && !shared.prelude.contains(&file) && !shared.async_modules.contains(&file);
         let is_bundled = shared.bundle.is_some();
         let mut is_licensed = |file: FileId| if is_bundled { constants.without_side_effects.contains(program.files.module(file).file_name()) } else { c.is_in_package_without_side_effects(file) } && !c.is_wholly_inert(file);
-        let licensed: Vec<FileId> = shared.modules.iter().copied().filter(|&file| fits(file) && is_licensed(file)).collect();
+        let hands_on_what_it_imports = |file: FileId| {
+            let hir = program.files.hir(file);
+            let imports = || hir.ids(hir.body).filter_map(|stmt| if let StmtKind::Import(import) = hir[stmt].kind { Some(&hir[import]) } else { None });
+            let is_imported = |name: Atom| imports().any(|import| import.default == name || import.namespace == name || import.named.iter().any(|named| hir[named].local == name));
+            hir.ids(hir.body).any(|stmt| match hir[stmt].kind {
+                StmtKind::ExportStar { type_only, .. } => !type_only,
+                StmtKind::ExportNamed(export) => !hir[export].type_only && (hir[export].has_module_specifier || hir[export].items.iter().any(|item| !hir[item].type_only && is_imported(hir[item].local))),
+                StmtKind::ExportDefault(e) => matches!(hir[e].kind, hir::ExprKind::Ident(name) if is_imported(name)),
+                StmtKind::ImportEquals(import) => matches!(hir[import].target, hir::ImportEqualsTarget::Entity(_)),
+                _ => false,
+            })
+        };
+        let licensed: Vec<FileId> = shared.modules.iter().copied().filter(|&file| fits(file) && is_licensed(file) && !hands_on_what_it_imports(file)).collect();
         let asks_in_its_body = |file: FileId| {
             let hir = program.files.hir(file);
             program.files.module(file).is_commonjs() || hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::ImportEquals(import) if matches!(hir[import].target, hir::ImportEqualsTarget::Require(_))))
@@ -1142,14 +1154,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(runtime) = self.jsx_runtime(file)
             && hir.exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Jsx(_)))
         {
-            specifiers.push((runtime, false));
+            let key_name = self.c.atoms().lookup(b"key");
+            let has_key_behind_spread = |jsx: hir::JsxId| {
+                let attributes = hir[jsx].attrs;
+                let first_spread = attributes.iter().position(|p| hir[p].kind == hir::PropKind::Spread);
+                first_spread.is_some_and(|first| attributes.iter().skip(first).any(|p| hir[p].kind != hir::PropKind::Spread && matches!(hir[p].key, hir::PropKey::Name(name) if Some(name) == key_name)))
+            };
+            if hir.exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Jsx(jsx) if !has_key_behind_spread(jsx))) {
+                specifiers.push((runtime, false));
+            }
+            if hir.exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Jsx(jsx) if has_key_behind_spread(jsx))) {
+                let text = self.c.atoms().bytes(runtime);
+                let package = text.strip_suffix(b"/jsx-runtime").or_else(|| text.strip_suffix(b"/jsx-dev-runtime")).unwrap_or(text);
+                specifiers.push((self.c.atoms().intern(package), false));
+            }
         }
         if self.files.lowers_decorators(file) {
             specifiers.push((self.c.atoms().intern(b"bun:wrap"), false));
         }
         for stmt in hir.ids(hir.body) {
             let specifier = match hir[stmt].kind {
-                StmtKind::Import(import) if self.text_imported_as(file, hir[import].spec).is_some() => continue,
+                StmtKind::Import(import) if self.text_imported_as(file, hir[import].spec).is_some() || self.type_told_to_the_host(file, hir[import].spec).is_some() => continue,
                 StmtKind::Import(import) if !hir[import].type_only => hir[import].spec,
                 StmtKind::ExportNamed(export) if !hir[export].type_only => hir[export].spec,
                 StmtKind::ExportStar { spec, type_only: false, .. } => spec,
@@ -1390,6 +1415,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir::ExprKind::Ident(name) = self.hir(fx.file)[e].kind else { return None };
         let sym = self.c.binding_of_identifier(fx.file, e, name)?;
         let sym = self.value_symbol(sym);
+        Some((sym, self.lazy_function_held_by(fx, sym)?))
+    }
+
+    pub(crate) fn lazy_function_held_by(&mut self, fx: &Fx, sym: Sym) -> Option<FuncId> {
         if !self.is_lazy(sym) {
             return None;
         }
@@ -1408,7 +1437,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.given_function_names.entry((file, func)).or_insert(name);
         }
         let id = self.function_of_declaration(fx, file, func)?;
-        self.captures.get(&id).is_none_or(|captures| captures.is_empty()).then_some((sym, id))
+        self.captures.get(&id).is_none_or(|captures| captures.is_empty()).then_some(id)
     }
 
     /// The reference `e` to a lazy variable whose value is not asked for throws if the variable is in its dead zone.
@@ -1658,7 +1687,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let stmt = hir.ids(hir.body).find(is_the_import);
                     let pos = stmt.map_or(0, |stmt| hir[stmt].start);
                     if !is_the_importer {
-                    } else if self.is_in_the_bundle_only(file, specifier) {
+                    } else if self.shared.constants.own_paths.is_none() && self.is_in_the_bundle_only(file, specifier) {
                         self.problem(file, pos, "an import of a file that is neither code nor data the bundler can inline");
                     } else if self.shared.bundle.is_some() && stmt.is_some_and(|stmt| self.is_import_of_asset(file, stmt)) {
                         // The host is asked by the specifier alone.
@@ -1800,7 +1829,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
         }
         let namespace = if self.c.module_with_export_variables(file).is_some() {
-            self.emit(fx, Op::Bool(true))
+            self.emit(fx, Op::NewObject)
         } else if self.exports_an_object(file) {
             self.namespace_of_exported_object_as(fx, is_node_mode, file)
         } else {
@@ -1930,24 +1959,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return 0;
         }
         if let Source::Function { file, .. } | Source::DefaultConstructor { file, .. } = source
-            && self.hir(file).text.ends_with(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it")
+            && bun_sema::direct_eval::text_without_note_of_insertions(&self.hir(file).text).ends_with(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it")
         {
             return 0;
         }
-        let place = match source {
+        let (file, place) = match source {
             Source::Function { file, func, class, .. } => {
                 let f = &self.hir(file)[func];
                 match (f.kind, class) {
-                    (hir::FnKind::Constructor, Some((file, class))) => self.hir(file)[class].body_pos,
+                    (hir::FnKind::Constructor, Some((file, class))) => (file, self.hir(file)[class].body_pos),
                     (hir::FnKind::Constructor, None) => return 0,
-                    (hir::FnKind::Arrow, _) => f.start,
-                    _ => f.anchor,
+                    (hir::FnKind::Arrow, _) => (file, f.start),
+                    _ => (file, f.anchor),
                 }
             }
-            Source::DefaultConstructor { file, class } => self.hir(file)[class].body_pos,
+            Source::DefaultConstructor { file, class } => (file, self.hir(file)[class].body_pos),
             _ => return 0,
         };
-        place + 1
+        bun_sema::direct_eval::position_in_source(&self.hir(file).text, place) + 1
     }
 
     /// A function without a body, which is built later if it is built here.

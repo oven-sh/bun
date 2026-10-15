@@ -368,6 +368,8 @@ pub(super) struct State {
     pub(super) objects_of: FxHashMap<TypeId, std::rc::Rc<super::alterations::ObjectsOf>>,
     pub(super) carried: FxHashMap<(TypeId, TypeId), std::rc::Rc<[(TypeId, TypeId)]>>,
     pub(super) saying_nothing_of_objects: FxHashMap<TypeId, bool>,
+    held_and_called_by: FxHashMap<TypeId, ([Option<TypeId>; 2], [bool; 2])>,
+    function_members_of: FxHashMap<TypeId, std::rc::Rc<[(Atom, TypeId)]>>,
     pub(super) takes_primitives_by_itself: FxHashMap<TypeId, bool>,
     pub(super) function_types: Option<[TypeId; 3]>,
     /// `is_tainted`, as far as it has been asked.
@@ -792,6 +794,7 @@ pub enum WhyForeign {
     Weak { at: Place },
     /// All its properties are primitives, and something untyped is held to it: nothing has to be made of that.
     Flat { at: Place },
+    MayLackRoom { at: Place },
     /// More layouts may fit it than phase B asks about for one target, and a value that only its type vouches for is held to it.
     TooMany { at: Place },
     ForTheLog { at: Place },
@@ -3479,7 +3482,7 @@ impl<'p, 's> Checker<'p, 's> {
         if source == target || self.says_nothing(source) || self.says_nothing(target) || !self.aot.flows.held_entering.insert((source, target)) {
             return entering;
         }
-        let mut functions_of: Vec<Option<Vec<(Atom, TypeId)>>> = vec![None; self.parts(target).len()];
+        let mut functions_of: Vec<Option<std::rc::Rc<[(Atom, TypeId)]>>> = vec![None; self.parts(target).len()];
         let mut said_by: Vec<Option<([Option<TypeId>; 2], [bool; 2])>> = vec![None; self.parts(target).len()];
         for &from in self.parts(source) {
             if self.has_primitive_flag(from) {
@@ -3537,22 +3540,9 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 if functions_of[number].is_none() {
-                    let mut functions = Vec::new();
-                    if self.is_record_written_by_the_program(to)
-                        && let Some(members) = self.members(to)
-                    {
-                        let names: Vec<Atom> = members.shape().props.iter().map(|prop| prop.name).collect();
-                        for name in names {
-                            if let Some(held_as) = self.type_of_property(to, name)
-                                && self.parts(held_as).iter().any(|&part| !self.signatures(part, false).is_empty())
-                            {
-                                functions.push((name, held_as));
-                            }
-                        }
-                    }
-                    functions_of[number] = Some(functions);
+                    functions_of[number] = Some(self.function_members_of(to));
                 }
-                for index in 0..functions_of[number].as_ref().map_or(0, Vec::len) {
+                for index in 0..functions_of[number].as_ref().map_or(0, |functions| functions.len()) {
                     let Some(&(name, held_as)) = functions_of[number].as_ref().and_then(|functions| functions.get(index)) else { break };
                     if let Some(held) = self.type_of_property(from, name)
                         && held != held_as
@@ -3566,9 +3556,44 @@ impl<'p, 's> Checker<'p, 's> {
         entering
     }
 
+    fn function_members_of(&mut self, ty: TypeId) -> std::rc::Rc<[(Atom, TypeId)]> {
+        let may_be_kept = !self.answers_are_provisional();
+        if may_be_kept && let Some(known) = self.aot.flows.function_members_of.get(&ty) {
+            return std::rc::Rc::clone(known);
+        }
+        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let mut functions = Vec::new();
+        if self.is_record_written_by_the_program(ty)
+            && let Some(members) = self.members(ty)
+        {
+            let names: Vec<Atom> = members.shape().props.iter().map(|prop| prop.name).collect();
+            for name in names {
+                if let Some(held_as) = self.type_of_property(ty, name)
+                    && self.parts(held_as).iter().any(|&part| !self.signatures(part, false).is_empty())
+                {
+                    functions.push((name, held_as));
+                }
+            }
+        }
+        let functions: std::rc::Rc<[(Atom, TypeId)]> = functions.into();
+        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+            self.aot.flows.function_members_of.insert(ty, std::rc::Rc::clone(&functions));
+        }
+        functions
+    }
+
     fn held_and_called(&mut self, ty: TypeId) -> ([Option<TypeId>; 2], [bool; 2]) {
+        let may_be_kept = !self.answers_are_provisional();
+        if may_be_kept && let Some(&known) = self.aot.flows.held_and_called_by.get(&ty) {
+            return known;
+        }
+        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
         let held = [TypeId::NUMBER, TypeId::STRING].map(|key| self.index_type_of_type(ty, key));
-        (held, [false, true].map(|constructs| !self.signatures(ty, constructs).is_empty()))
+        let found = (held, [false, true].map(|constructs| !self.signatures(ty, constructs).is_empty()));
+        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+            self.aot.flows.held_and_called_by.insert(ty, found);
+        }
+        found
     }
 
     fn applied_by(&self, ty: TypeId) -> Applied {
@@ -4918,6 +4943,8 @@ impl<'p, 's> Checker<'p, 's> {
             logs_type_errors: self.logs_type_errors(),
             opens_for_the_log: OpensForTheLog::Nothing,
             admitting_when_closed: Vec::new(),
+            members_when_closed: Vec::new(),
+            becomes_when_closed: Vec::new(),
             about_kinds_once_more: Vec::new(),
             foreign,
             about_kinds,
@@ -4960,6 +4987,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else { return Facts { flags, kind, ..Facts::default() } };
         let shape = members.shape();
         let (mut declared, mut live, mut required, mut open): (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) = Default::default();
+        let mut hidden: Vec<u32> = shape.props.iter().filter(|prop| prop.flags.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED)).map(|prop| prop.name.0).collect();
         let mut constants: Vec<(u32, u64)> = Vec::new();
         let (mut requires_a_property, mut is_flat, mut is_flat_but_for_functions) = (false, true, true);
         for prop in shape.props.iter() {
@@ -5009,6 +5037,9 @@ impl<'p, 's> Checker<'p, 's> {
                 Literal::Number(number) => (name, number.to_bits()),
             }));
         }
+        if live.len() > 6 && flags & subtypes::IS_INSTANCE == 0 && self.is_shaped_as_data(ty, &mut FxHashSet::default()) {
+            flags |= subtypes::MAY_LACK_ROOM;
+        }
         if !shape.index.is_empty() {
             flags |= subtypes::HAS_INDEX_SIGNATURE;
         } else if !requires_a_property {
@@ -5020,12 +5051,12 @@ impl<'p, 's> Checker<'p, 's> {
                 flags |= subtypes::IS_FLAT;
             }
         }
-        for names in [&mut declared, &mut live, &mut required, &mut open] {
+        for names in [&mut declared, &mut live, &mut required, &mut open, &mut hidden] {
             names.sort_unstable();
         }
         constants.sort_unstable();
         constants.dedup();
-        Facts { flags, declared: declared.into(), live: live.into(), required: required.into(), constants: constants.into(), open: open.into(), kind }
+        Facts { flags, declared: declared.into(), live: live.into(), required: required.into(), constants: constants.into(), open: open.into(), hidden: hidden.into(), kind }
     }
 
     /// Appends the views that `ty` declares as supertypes: what it `extends`, the parts of an intersection. Beyond one that is no view, what
@@ -5124,6 +5155,7 @@ impl<'p, 's> Checker<'p, 's> {
                     WhyForeign::ForTheLog { at } => line += &format!("for the log: something untyped is held to it at {}, and few views open with it", self.place_for_people(at)),
                     WhyForeign::Instance => line += "a class: the text shows that an object its constructor has not made can come to be: an object of it or a method of it is handed to what is not typed code, or to a built-in that lets it out",
                     WhyForeign::Flat { at } => line += &format!("flat: all its properties are primitives, and something untyped is held to it at {}", self.place_for_people(at)),
+                    WhyForeign::MayLackRoom { at } => line += &format!("room: it has over six fields, and something untyped is held to it or to what holds it at {}: an object that matches it may be too small to become one", self.place_for_people(at)),
                     WhyForeign::TooMany { at } => line += &format!("too many layouts may fit it to ask about each, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
                     WhyForeign::NothingIsMadeAsIt { at } => line += &format!("nothing is made as it and no layout fits it, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
                     WhyForeign::Weak { at } => line += &format!("weak: it requires no live field, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),

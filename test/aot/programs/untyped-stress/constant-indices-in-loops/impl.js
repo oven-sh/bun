@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => true, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -9,9 +8,6 @@ function readsMaximum(a) { let last; for (let i = 0; i < a.length; i++) last = a
 function readsLarge(a) { let last; for (let i = 0; i < a.length; i++) last = a[536870912]; return last; }
 function writesMinusOne(a) { for (let i = 0; i < a.length; i++) a[-1] = i; return a[-1]; }
 function writesLarge(a) { for (let i = 0, n = a.length; i < n; i++) a[1073741824] = i; return a[1073741824]; }
-const functions = [readsMinusOne, readsMinimum, readsMaximum, readsLarge, writesMinusOne, writesLarge];
-for (const f of functions)
-    check(isAOTCompiled(f), true, f.name + " is compiled");
 const typedArrays = [Uint8Array, Int8Array, Uint16Array, Int16Array, Int32Array, Uint32Array, Float32Array, Float64Array, Uint8ClampedArray];
 for (let round = 0; round < 3; round++) {
     for (const f of [readsMinusOne, readsMinimum, readsMaximum, readsLarge]) {

@@ -2928,6 +2928,11 @@ pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
     }
 }
 
+pub fn is_in_comment(hir: &File, pos: u32) -> bool {
+    let after = hir.comments.partition_point(|comment| comment.0 <= pos);
+    after > 0 && pos < hir.comments[after - 1].1
+}
+
 /// `IsPrivateIdentifier` for the name at `pos`.
 #[inline]
 pub fn is_private_name_at(hir: &File, pos: u32) -> bool {

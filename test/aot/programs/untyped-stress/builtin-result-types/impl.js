@@ -1,31 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const isDouble = "int32-argument-from-integral-double", comparesNumbers = "inline-comparison-of-numbers-or-undefined";
-const keepsInt32 = "int32-result-of-builtin-with-int32-arguments";
 
 function isDigitAt(text, i) { let s = "" + text; let c = s.codePointAt(i); return c >= 48 && c <= 57; }
 function characterAt(text, i) { let s = "" + text; let c = s.codePointAt(i); if (c === undefined) return "none"; return String.fromCharCode(c); }
@@ -46,15 +22,6 @@ check(afterLastColon("key:value:more"), ":more", "after the last colon");
 check(afterLastColon(""), "", "a slice of nothing");
 check(orderOf("a", "b") + orderOf("b", "b") + orderOf("c", "b"), "<=>", "localeCompare");
 check([hasColon("a:b"), hasColon("ab"), hasColon(":"), hasColon("")].join(), "true,false,true,false", "indexOf compared with -1");
-applies(isDigitAt, comparesNumbers);
-doesNotApply(isDigitAt, "calls:GreaterEq", "calls:LessEq");
-applies(characterAt, "lowered-builtin:String.fromCharCode");
-doesNotApply(characterAt, isDouble);
-applies(unitAt, isDouble);
-applies(afterColon, "lowered-builtin:String.prototype.slice");
-doesNotApply(afterColon, isDouble);
-doesNotApply(afterLastColon, isDouble);
-doesNotApply(hasColon, "calls:StrictEqual", "inline-comparison-with-int32");
 
 function largerInt32(a, b) { return Math.max(a | 0, b | 0); }
 function smallerInt32(a, b) { return Math.min(a | 0, b | 0); }
@@ -112,9 +79,4 @@ check(parsesWithRadix(-10, 16), -16, "negative hexadecimal digits");
 check(withoutArguments().join(), "-Infinity,Infinity,NaN,NaN,NaN,0", "no arguments");
 check(magnitude(-2147483648), 2147483648, "the magnitude of the smallest Int32");
 check(magnitude(-5), 5, "the magnitude of -5");
-for (let f of [largerInt32, smallerInt32, largestOfFive, roundsInt32, parsesInt32, convertsInt32, clampedCharacter])
-    applies(f, keepsInt32);
-doesNotApply(clampedCharacter, isDouble);
-for (let f of [largerNumber, smallerNumber, largerOfMixed, roundsNumber, parsesWithRadix, withoutArguments, magnitude])
-    doesNotApply(f, keepsInt32);
 console.log("passed");

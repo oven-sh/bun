@@ -187,20 +187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         }
 
-        let is_call_target = matches!(p.call_target.tag(), Tag::EIdentifier)
-            && e_.ref_.eql(
-                p.call_target
-                    .e_identifier()
-                    .expect("infallible: variant checked")
-                    .ref_,
-            );
-        p.next_use_preserves_value = is_call_target;
-        let result = p.find_symbol(expr.loc, name);
-        p.next_use_preserves_value = false;
-        let result = result.expect("unreachable");
-        if is_call_target && result.is_inside_with_scope {
-            p.record_value_use(result.r#ref);
-        }
+        let result = p.find_symbol(expr.loc, name).expect("unreachable");
 
         // Order matters: assigning a fresh `Ref` clears the packed user-bit
         // flags (intentional — the parse-time ref carries no flags), so set
@@ -1720,6 +1707,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             } else {
                 has_spread = true;
+            }
+
+            if in_.assign_target != js_ast::AssignTarget::None && property.flags.contains(Flags::Property::WasShorthand) {
+                property.value = property.value.map(bun_ast::audited::unmarked);
             }
 
             // Extract the initializer for expressions like "({ a: b = c } = d)"

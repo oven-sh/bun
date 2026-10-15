@@ -104,6 +104,7 @@ bool hasFilesOfCompiledProgram(JSC::JSGlobalObject*);
 JSC::JSPromise* importFileOfCompiledProgram(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
 JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject*, const String& key);
 bool overrideExportOfCompiledNamespace(Zig::GlobalObject*, JSC::JSObject* namespaceObject, const JSC::Identifier& name, JSC::JSValue);
+JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject*, JSC::JSObject* namespaceObject);
 bool overrideExportsOfCompiledModule(Zig::GlobalObject*, const String& path, JSC::JSObject* exports);
 void noteThatRequireCacheIsRead(Zig::GlobalObject*);
 

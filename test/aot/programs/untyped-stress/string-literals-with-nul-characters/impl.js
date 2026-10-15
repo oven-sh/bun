@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -47,10 +46,5 @@ function check(actual, expected, what) {
     check(which(join("abcd", "ef\0\0")), 2, "which of eight");
     check(which(join("ab", "cd")), 3, "which without nulls");
     check(which(join("ab", "\0")), 0, "which of three");
-
-    if (isAOTCompiled(isOrdinary)) {
-        for (const f of [...all, isNotFourWithTwoNulls, which])
-            check(isAOTCompiled(f), true, f.name + " is compiled");
-    }
 })();
 console.log("passed");

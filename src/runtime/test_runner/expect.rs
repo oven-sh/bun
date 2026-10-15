@@ -1124,7 +1124,7 @@ impl Expect {
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        mut value: JSValue,
         property_matchers: Option<JSValue>,
         pretty_value: &mut impl bun_io::Write,
         fn_name: &'static str,
@@ -1135,7 +1135,8 @@ impl Expect {
                 return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
             }
 
-            let prop_matchers = _prop_matchers;
+            let prop_matchers = _prop_matchers.jest_copy_along_property_matchers(value, global_this)?;
+            value = value.jest_copy_along_property_matchers(prop_matchers, global_this)?;
 
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers

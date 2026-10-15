@@ -1447,7 +1447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    fn mark_audited(
+    pub(crate) fn mark_audited(
         p: &mut Self,
         audited: &'static bun_ast::audited::AuditedFile,
         left: &mut Expr,

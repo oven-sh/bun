@@ -1,16 +1,9 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 const failures = [];
 
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         failures.push(what + ": " + String(actual) + " instead of " + String(expected));
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
 }
 
 function test()
@@ -61,11 +54,6 @@ function test()
         check(aPrototype(), "truthy", "a prototype");
         check(aConstructor(), "truthy", "a constructor");
         check([0, "s", "", null].map(x => truthinessOfAnything(x)).join(), "falsy,truthy,falsy,falsy", "anything");
-    }
-    for (const name of ["aFunction", "anObject", "aPrototype", "aConstructor"]) {
-        const remarks = remarksOf(name);
-        if (remarks && remarks.includes("calls:ToBoolean"))
-            failures.push(name + " computes a truthiness that its kind decides");
     }
 }
 test();

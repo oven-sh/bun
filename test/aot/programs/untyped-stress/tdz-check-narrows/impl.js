@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...parameters) {
     try {
@@ -32,7 +10,6 @@ function thrownBy(f, ...parameters) {
     }
     return "nothing";
 }
-const narrows = "narrowed-after-tdz-check";
 
 function makeAddsStep(start) {
     function addsStep(n) { return (n | 0) + step; }
@@ -70,12 +47,6 @@ check(makeScales("2")(4), 8, "a captured number that was a string");
 check(greets(), 9, "a captured string");
 check(makeGreets("")(), 6, "a shorter captured string");
 check(negates() + makeNegates(1)(), "setclear", "a captured boolean");
-for (let f of [addsStep, scales, greets, negates])
-    applies(f, narrows);
-doesNotApply(addsStep, "calls:Add");
-doesNotApply(scales, "calls:Mul");
-doesNotApply(greets, "calls:GetLength");
-doesNotApply(negates, "calls:ToBoolean");
 
 function fallsIntoCase(which) {
     switch (which) {
@@ -121,7 +92,6 @@ check(readsTooEarly(), "ReferenceError:6", "a closure called before and after th
 check(readsInLoop(3), "ReferenceError,0,ReferenceError,2,ReferenceError,4", "a variable of each iteration");
 check(constructsDerived(true), 3, "this after super");
 check(thrownBy(constructsDerived, false), "ReferenceError", "this without super");
-applies(fallsIntoCase, narrows);
 
 function makeReadsAnything(value) {
     function readsAnything() { return anything; }
@@ -150,8 +120,4 @@ check([1, -0, NaN, "", null, undefined, 5n].map(value => Object.is(makeReadsAnyt
 check(readsOptionalObject() + makeReadsOptionalObject(false)(), 1, "a captured object or undefined");
 check(readsWithoutCheck(3), 5, "a captured Int32 that needs no check");
 check(callsHelper(4), 5, "a captured function");
-doesNotApply(readsAnything, narrows);
-doesNotApply(readsOptionalObject, narrows);
-doesNotApply(readsWithoutCheck, narrows, "calls:Add");
-applies(callsHelper, "direct-call:helper");
 console.log("passed");

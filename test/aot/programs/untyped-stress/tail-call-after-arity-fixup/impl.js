@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-"use strict";
 function callee(a, b, c, d, e, f) { return a + b + c + d + e + f; }
 noInline(callee);
 function fewer(a, b, c, d, e, f, g, h) { return callee(1, 2, 3, 4, 5, 6); }

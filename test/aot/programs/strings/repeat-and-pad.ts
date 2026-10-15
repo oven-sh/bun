@@ -7,6 +7,9 @@
 // CALLS+ filledAtStart operationAOTTypedStringPad
 // CALLS- withAnyFiller operationAOTTypedStringPad
 // CALLS- withAnyCount operationAOTTypedStringRepeat
+// CALLS+ indented operationAOTTypedStringRepeat
+// CALLS+ indented operationAOTTypedStringPad
+// CALLS- indentedByAnything operationAOTTypedStringRepeat|operationAOTTypedStringPad
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")
@@ -40,6 +43,7 @@ export function withAnyFiller(s: string, n: number, f: any): string { return s.p
 export function withAnyCount(s: string, n: any): string { return s.repeat(n); }
 export function indented(lines: string[], width: number): string { let out = ""; for (let j = 0; j < lines.length; j++) out += "  ".repeat(j & 3) + lines[j].padEnd(width) + "|" + String(j).padStart(3, "0") + "\n"; return out; }
 // Short results whole; long ones by length, ends and a sum.
+export function indentedByAnything(lines: string[], width: any, filler: any): string { let out = ""; for (let j = 0; j < lines.length; j++) out += "  ".repeat(width) + lines[j].padEnd(width, filler) + "\n"; return out; }
 function brief(f: () => string): string {
     let s: string;
     try { s = f(); } catch (e) { return "throws " + (e as Error).name + ": " + (e as Error).message; }
@@ -61,5 +65,6 @@ for (let n = 0; n < 10; n++) print(show(repeatedByInteger("ab", n)) + show(repea
 print(show(indented(["one", box + "two", "", "a long line that is longer than the width", "five"], 8)));
 // Whatever else is handed over goes the general way.
 print([undefined, null, 5, "", "ab", { toString() { return "<>"; } }, true].map(f => brief(() => withAnyFiller("s", 6, f))).join(" ") + " " + ["3", null, undefined, true, { valueOf() { return 2; } }, "x", [2], 2n, Symbol.iterator].map(n => brief(() => withAnyCount("ab", n))).join(" "));
+print(show(indentedByAnything(["a", "bc"], 3, "-")) + " " + show(indentedByAnything(["a"], "2", 7)));
 print(attempt(() => repeated(undefined as any, 2)) + " " + attempt(() => paddedAtEnd(null as any, 2)) + " " + attempt(() => filledAtStart(undefined as any, 2, "x")));
-(globalThis as any).kept = [repeated, repeatedByInteger, paddedAtEnd, paddedAtStart, filledAtEnd, filledAtStart, withAnyFiller, withAnyCount, indented]; console.log("number");
+(globalThis as any).kept = [repeated, repeatedByInteger, paddedAtEnd, paddedAtStart, filledAtEnd, filledAtStart, withAnyFiller, withAnyCount, indented, indentedByAnything]; console.log("number");

@@ -1,2 +1,2 @@
-// How often a call site's callee cache misses: one function, a new closure every time, two functions in turn.
+// Calls through one site of one function, of a new closure every time, of two functions in turn and of two host functions in turn.
 import "./impl.js";

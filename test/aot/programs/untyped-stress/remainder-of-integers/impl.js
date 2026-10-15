@@ -1,28 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(Object.is(actual, -0) ? "-0" : actual) + " instead of " + String(Object.is(expected, -0) ? "-0" : expected));
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
-}
-
-function has(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes(remark))
-        throw new Error(name + " lacks " + remark);
-}
-
-function hasNot(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && remarks.includes(remark))
-        throw new Error(name + " has " + remark);
 }
 
 function errorOf(run)
@@ -83,11 +62,6 @@ function test()
     }
     check(errorOf(() => ofBigInts(7n, 0n)), RangeError, "a BigInt by zero");
     check(errorOf(() => ofAnything(7n, 3)), TypeError, "a BigInt and a number");
-
-    for (const name of ["ofNumbers", "byConstant", "ofProduct", "ofInt32", "ofWideProduct", "byNegativeConstant", "byZero"])
-        has(name, "integer-remainder-of-numbers");
-    for (const name of ["ofAnything", "ofBigInts", "inLoop"])
-        hasNot(name, "integer-remainder-of-numbers");
 }
 test();
 console.log("passed");

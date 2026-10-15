@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function resultOf(promise) {
     let result;
@@ -89,11 +67,6 @@ function program() {
     return [callsKnownAfterAwait, readsClosureVariableAfterAwait, readsInnerScopeAfterAwait];
 }
 const [callsKnownAfterAwait, readsClosureVariableAfterAwait, readsInnerScopeAfterAwait] = program();
-
-doesNotApply(addsInt32AfterAwait, "calls:Add", "calls:operationAOTValueAdd");
-doesNotApply(addsInt32AfterYield, "calls:Add", "calls:operationAOTValueAdd");
-applies(addsEitherAfterAwait, "calls");
-applies(callsKnownAfterAwait, "direct-call:known");
 
 for (let i = 0; i < 50; i++) {
     check(resultOf(addsInt32AfterAwait()), 5, "an int32 that is kept across an await");

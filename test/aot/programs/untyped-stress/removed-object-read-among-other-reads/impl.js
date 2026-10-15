@@ -1,13 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isCompiled = !!remarksOf("check");
-const isOn = isCompiled && !!options.useAOTDataStubs && !options.useAOTInlining;
 
 (function makesConstantObject() {
     "use strict";
@@ -46,17 +40,5 @@ const isOn = isCompiled && !!options.useAOTDataStubs && !options.useAOTInlining;
         check(readsObjectEachTime(make()), 19, "the object is read each time");
         check(readsNoSuchObject(make()), 6, "no such object is read");
     }
-
-    if (isCompiled) {
-        for (const name of ["readInFront", "readBetween", "readEachTime"])
-            check(remarksOf("makesConstantObject").includes("does-not-allocate-constant-object:" + name), true, name + " is never allocated");
-    }
-    if (!isOn)
-        return;
-    for (const name of ["readsObjectInFrontOfGuards", "readsObjectBetweenGuards", "readsObjectEachTime"]) {
-        check(remarksOf(name).includes("guards-over-whole-function"), false, name + " has guards over the whole function");
-        check(remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join(), "no-guards-over-whole-function:reads-object-that-is-never-allocated", "why " + name + " has no guards");
-    }
-    check(remarksOf("readsNoSuchObject").includes("guards-over-whole-function"), true, "readsNoSuchObject has guards over the whole function");
 })();
 console.log("passed");

@@ -61,6 +61,13 @@ export function indented(lines, width) {
 `;
   return out;
 }
+export function indentedByAnything(lines, width, filler) {
+  let out = "";
+  for (let j = 0;j < lines.length; j++)
+    out += "  ".repeat(width) + lines[j].padEnd(width, filler) + `
+`;
+  return out;
+}
 function brief(f) {
   let s;
   try {
@@ -100,6 +107,7 @@ print([undefined, null, 5, "", "ab", { toString() {
 } }, true].map((f) => brief(() => withAnyFiller("s", 6, f))).join(" ") + " " + ["3", null, undefined, true, { valueOf() {
   return 2;
 } }, "x", [2], 2n, Symbol.iterator].map((n) => brief(() => withAnyCount("ab", n))).join(" "));
+print(show(indentedByAnything(["a", "bc"], 3, "-")) + " " + show(indentedByAnything(["a"], "2", 7)));
 print(attempt(() => repeated(undefined, 2)) + " " + attempt(() => paddedAtEnd(null, 2)) + " " + attempt(() => filledAtStart(undefined, 2, "x")));
-globalThis.kept = [repeated, repeatedByInteger, paddedAtEnd, paddedAtStart, filledAtEnd, filledAtStart, withAnyFiller, withAnyCount, indented];
+globalThis.kept = [repeated, repeatedByInteger, paddedAtEnd, paddedAtStart, filledAtEnd, filledAtStart, withAnyFiller, withAnyCount, indented, indentedByAnything];
 console.log("number");

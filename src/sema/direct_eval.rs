@@ -5,6 +5,36 @@ use crate::util::FxHashSet;
 
 pub const KEY_OF_SCOPE: &[u8] = b"\0eval";
 
+const END_OF_INSERTIONS: &[u8] = b" (bun --aot: where direct evals were given their scopes)";
+
+fn insertions_noted_in(text: &[u8]) -> Option<(usize, &[u8])> {
+    let noted = text.strip_suffix(END_OF_INSERTIONS)?;
+    let start = noted.iter().rposition(|&c| c == b'\n')?;
+    let list = noted[start..].strip_prefix(b"\n//")?;
+    list.iter().all(|c| c.is_ascii_digit() || matches!(c, b' ' | b'+')).then_some((start, list))
+}
+
+pub fn text_without_note_of_insertions(text: &[u8]) -> &[u8] {
+    insertions_noted_in(text).map_or(text, |(start, _)| &text[..start])
+}
+
+pub fn position_in_source(text: &[u8], pos: u32) -> u32 {
+    let Some((_, noted)) = insertions_noted_in(text) else { return pos };
+    let mut inserted = 0;
+    for entry in noted.split(|&c| c == b' ').filter(|entry| !entry.is_empty()) {
+        let mut numbers = entry.split(|&c| c == b'+').map(|digits| digits.iter().fold(0u32, |n, c| n.saturating_mul(10).saturating_add(u32::from(c - b'0'))));
+        let (Some(at), Some(len)) = (numbers.next(), numbers.next()) else { break };
+        if pos < at + inserted {
+            break;
+        }
+        if pos < at + inserted + len {
+            return at;
+        }
+        inserted += len;
+    }
+    pos - inserted
+}
+
 const RESERVED: [&[u8]; 47] = [
     b"arguments", b"await", b"break", b"case", b"catch", b"class", b"const", b"continue", b"debugger", b"default", b"delete", b"do", b"else", b"enum", b"eval", b"export", b"extends",
     b"false", b"finally", b"for", b"function", b"if", b"implements", b"import", b"in", b"instanceof", b"interface", b"let", b"new", b"null", b"package", b"private", b"protected",
@@ -43,6 +73,11 @@ pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, ato
         copied = at;
     }
     rewritten.extend_from_slice(&text[copied..]);
+    rewritten.extend_from_slice(b"\n//");
+    for (at, inserted) in &it.insertions {
+        rewritten.extend_from_slice(format!(" {}+{}", (*at as usize).min(text.len()), inserted.len()).as_bytes());
+    }
+    rewritten.extend_from_slice(END_OF_INSERTIONS);
     Some(rewritten)
 }
 
@@ -66,6 +101,11 @@ impl<'a, 's> Rewriting<'a, 's> {
             self.insertions.push((hir[source].pos, object));
             self.insertions.push((hir[source].end, b")".to_vec()));
         }
+    }
+
+    fn is_named_freely(&self, name: &[u8]) -> bool {
+        let named = |(i, e): (usize, &crate::hir::Expr)| matches!(e.kind, ExprKind::Ident(it) if self.atoms.bytes(it) == name) && self.bound.expr_symbol[i].is_none();
+        self.hir.exprs.iter().enumerate().any(named)
     }
 
     fn is_assignable(&self, symbol: SymbolId) -> bool {
@@ -207,8 +247,17 @@ impl<'a, 's> Rewriting<'a, 's> {
         if bound.commonjs_indicator.is_some() {
             for (name, is_in_bundles) in [(&b"module"[..], true), (b"exports", true), (b"require", false), (b"__filename", false), (b"__dirname", false)] {
                 if !names.iter().any(|it| self.atoms.bytes(it.0) == name) {
+                    let is_in_bundles = is_in_bundles || name.starts_with(b"__") && self.is_named_freely(name);
                     let (before, behind) = if is_in_bundles { (&b",get "[..], &b"(){return "[..]) } else { (&b",get \"\\u0000"[..], &b"\"(){return "[..]) };
                     for part in [before, name, behind, name, b"}"] {
+                        text.extend_from_slice(part);
+                    }
+                }
+            }
+        } else {
+            for name in [&b"__filename"[..], b"__dirname"] {
+                if !names.iter().any(|it| self.atoms.bytes(it.0) == name) && self.is_named_freely(name) {
+                    for part in [&b",get "[..], name, b"(){return ", name, b"}"] {
                         text.extend_from_slice(part);
                     }
                 }

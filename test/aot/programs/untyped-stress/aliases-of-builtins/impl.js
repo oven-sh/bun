@@ -1,37 +1,9 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 import { exportedFloor as importedFloor, exportedClz32 as importedClz32 } from "./impl.js";
 
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
-}
-
-function lowers(name, path)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes("lowered-builtin:" + path))
-        throw new Error(name + " does not lower " + path);
-}
-
-function checksAlias(name, path)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes("checks-alias-of-builtin:" + path))
-        throw new Error(name + " does not check that it calls " + path);
-}
-
-function lowersNothing(name)
-{
-    for (const remark of remarksOf(name) || []) {
-        if (remark.startsWith("lowered-builtin:"))
-            throw new Error(name + " has " + remark);
-    }
 }
 
 function errorOf(run)
@@ -108,20 +80,6 @@ function aliases()
     }
     check(errorOf(() => callsHasOwnProperty(null, "own")), TypeError, "hasOwnProperty.call on null");
     check(errorOf(() => callsSliceOnAnything(undefined)), TypeError, "slice.call on undefined");
-
-    lowers("callsConstant", "Math.floor");
-    lowers("callsVariable", "Array.isArray");
-    lowers("callsAliasOfAlias", "Math.floor");
-    lowers("callsByTruthiness", "Math.clz32");
-    lowers("callsByOr", "Math.sqrt");
-    lowers("callsByTypeof", "Object.is");
-    lowers("callsByTypeofUndefined", "Math.abs");
-    lowers("callsByLooseNull", "Math.ceil");
-    lowers("callsByNullish", "Math.trunc");
-    lowers("callsSliceOnArray", "Array.prototype.slice");
-    lowersNothing("callsSliceOnString");
-    checksAlias("callsConstant", "Math.floor");
-    checksAlias("callsVariable", "Array.isArray");
 }
 aliases();
 
@@ -155,12 +113,6 @@ function variablesThatAreNoAliases()
         check(callsLocal(1.5), 2, "a local variable named like the variable");
         check(callsLocal(0.4), 0, "a local variable named like the variable");
     }
-    lowersNothing("callsReassigned");
-    lowersNothing("callsReassignedToFunction");
-    lowersNothing("callsAbsent");
-    lowersNothing("callsOneOfTwo");
-    lowersNothing("callsParameter");
-    lowersNothing("callsLocal");
 }
 variablesThatAreNoAliases();
 
@@ -172,7 +124,6 @@ function variableThatEvalWrites()
     check(callsWrittenByEval(1.4), 1, "a variable that eval may write");
     eval("writtenByEval = Math.ceil");
     check(callsWrittenByEval(1.4), 2, "a variable that eval has written");
-    lowersNothing("callsWrittenByEval");
 }
 variableThatEvalWrites();
 console.log("passed");

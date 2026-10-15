@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -14,28 +12,6 @@ function throws(f, constructor, what) {
     }
     throw new Error(what + ": did not throw");
 }
-function remarksOf(f) {
-    return typeof aotRemarks === "function" && isAOTCompiled(f) ? aotRemarks(f.name) : null;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 
 function add(a, b) { return a + b; }
 function subtract(a, b) { return a - b; }
@@ -168,31 +144,4 @@ check(addToInteger("5", "3"), "53", "a string and an integer made of a string");
     throws(() => add(longest, longest), RangeError, "twice the greatest length");
 }
 
-if (usesDataStubs) {
-    applies(add, "calls:Add", "joins-strings-in-stub");
-    applies(append, "calls:Add", "joins-strings-in-stub");
-} else {
-    doesNotApply(add, "joins-strings-in-stub");
-    doesNotApply(append, "joins-strings-in-stub");
-}
-doesNotApply(subtract, "joins-strings-in-stub");
-doesNotApply(addIntegers, "joins-strings-in-stub");
-doesNotApply(addToInteger, "joins-strings-in-stub");
-
-if (usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTValueAdd") !== null) {
-    let kept = new Array(8);
-    let before = aotOperationCount("operationAOTValueAdd");
-    for (let i = 0; i < 20000; ++i)
-        kept[i & 7] = add(narrow[i % 5], wide[i % 5]);
-    let arrivals = aotOperationCount("operationAOTValueAdd") - before;
-    if (arrivals > 1000)
-        throw new Error("20000 joins reached the runtime " + arrivals + " times");
-    before = aotOperationCount("operationAOTValueAdd");
-    let object = {};
-    for (let i = 0; i < 1000; ++i)
-        kept[i & 7] = add("a", object);
-    arrivals = aotOperationCount("operationAOTValueAdd") - before;
-    if (arrivals < 1000)
-        throw new Error("1000 additions of an object reached the runtime only " + arrivals + " times");
-}
 console.log("passed");

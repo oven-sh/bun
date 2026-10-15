@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function repeat(f) {
     for (let i = 0; i < 200; i++)
@@ -49,13 +27,6 @@ function isInstance(v, C) { return v instanceof C; }
 function noTest(v) { return typeof v; }
 for (const f of [isBase, isPlain, isInstance, noTest])
     noInline(f);
-function readsProperty(o) { return o.property; }
-let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-if (usesDataStubs) {
-    applies(isBase, "cached-instanceof");
-    applies(isInstance, "cached-instanceof");
-}
-doesNotApply(noTest, "cached-instanceof");
 
 {
     const values = [new Base, new Derived, new Other, { }, [], null, undefined, 5, "text", Symbol("s"), () => { }, Object.create(null), Object.create(Base.prototype), Object.create(new Derived)];

@@ -1,14 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (actual !== expected)
         throw new Error(what + ": " + actual + " instead of " + expected);
-}
-function applies(f, pattern) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    if (remarks && !remarks.some(remark => remark === pattern))
-        throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
 }
 function linesOf(name, stack) { return stack.split("\n").filter(line => line.startsWith(name + "@")).map(line => Number(line.split(":").slice(-2)[0])); }
 
@@ -58,6 +50,4 @@ check(seen.join(), String(first + 1), "after a run inside a setter has thrown");
 check(lineWhere(fill, throwsFor("a")), String(first), "nothing is left behind");
 check(Object.keys(fill({})).join(""), "abcd", "a plain object");
 
-applies(fill, "property-run:4");
-applies(fillStrictly, "property-run:4");
 console.log("passed");

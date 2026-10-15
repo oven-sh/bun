@@ -90,6 +90,30 @@ struct LookedAt {
 }
 
 #[derive(Default)]
+struct CalledWithWhatSaysNothing {
+    by_name: FxHashSet<Sym>,
+    by_parameters: FxHashSet<Vec<super::Identity>>,
+    handed_over: FxHashSet<Sym>,
+    by_parameters_as_values: FxHashSet<Vec<super::Identity>>,
+}
+
+impl CalledWithWhatSaysNothing {
+    fn absorb(&mut self, more: CalledWithWhatSaysNothing) {
+        self.by_name.extend(more.by_name);
+        self.by_parameters.extend(more.by_parameters);
+        self.handed_over.extend(more.handed_over);
+        self.by_parameters_as_values.extend(more.by_parameters_as_values);
+    }
+}
+
+#[derive(Default)]
+struct LookingForCalls {
+    next_file: std::sync::atomic::AtomicU32,
+    looked_at: std::sync::Mutex<(u32, Option<CalledWithWhatSaysNothing>)>,
+    is_all_looked_at: std::sync::Condvar,
+}
+
+#[derive(Default)]
 pub(super) struct Shared {
     /// Unset: nobody has said which module evaluates which.
     modules: OnceLock<ModuleGraph>,
@@ -112,7 +136,9 @@ pub(super) struct Shared {
     pub(super) names_stored: OnceLock<std::sync::Arc<Vec<u64>>>,
     pub(super) pairs_compared: std::sync::Mutex<Vec<(super::Identity, super::Identity)>>,
     handed_strangers_by_untyped_code: OnceLock<FxHashSet<Sym>>,
-    called_with_what_says_nothing: OnceLock<FxHashSet<Sym>>,
+    imports_that_may_be_handed_on: OnceLock<FxHashMap<Sym, Vec<(FileId, ExprId)>>>,
+    called_with_what_says_nothing: OnceLock<CalledWithWhatSaysNothing>,
+    looking_for_that: [LookingForCalls; 2],
     pub(super) evidence_of_strangers_noted: OnceLock<Box<[std::sync::Mutex<Option<Box<super::alterations::Alterations<Sym>>>>]>>,
     pub(super) evidence_of_strangers: OnceLock<FxHashSet<Sym>>,
     calls_that_may_redefine: OnceLock<Vec<(FileId, ExprId)>>,
@@ -164,11 +190,13 @@ pub(super) struct State {
     /// By function expression: see `is_host_callback`.
     host_callbacks: FxHashMap<(FileId, FnId), bool>,
     let_out: FxHashMap<(FileId, FnId), bool>,
+    is_asking_of_another_file: bool,
     mentions: FxHashMap<FileId, Rc<FxHashMap<SymbolId, Vec<ExprId>>>>,
     second_bodies: FxHashMap<(FileId, FnId), bool>,
     second_bodies_for_the_log: FxHashMap<(FileId, FnId), bool>,
     pub(in crate::check) accessed_within: Option<FileId>,
     second_bodies_on: Option<(FileId, Rc<[(u32, u32)]>)>,
+    is_looking_for_calls: bool,
     set_aside: Option<Box<SetAside>>,
     untyped_state_is_of: Option<(FileId, Rc<[(u32, u32)]>)>,
     /// By property: see `may_find_field_blank`.
@@ -1401,6 +1429,10 @@ impl<'p, 's> Checker<'p, 's> {
         !self.is_untyped_file(file) && self.mentions_of(file, symbol).into_iter().any(|mention| self.is_handed_to_host(file, mention))
     }
 
+    pub fn is_for_the_host(&mut self, file: FileId, e: ExprId) -> bool {
+        !self.is_untyped_file(file) && self.is_handed_to_host(file, e)
+    }
+
     fn is_handed_to_host(&mut self, file: FileId, mut e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
@@ -1438,6 +1470,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                 }
                 ExprKind::Assign { op: None, target, value } if value == e => return self.is_predicted(file, target),
+                ExprKind::Jsx(jsx) if hir[jsx].tag == e => return true,
                 ExprKind::Jsx(_) => return self.is_jsx_prop_for_host(file, parent, None),
                 ExprKind::Array(_) => {}
                 ExprKind::Cond { test, .. } if test != e => {}
@@ -1559,7 +1592,9 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let found = self.find_has_second_body(file, func);
-        self.aot.storage.second_bodies.insert((file, func), found);
+        if !self.aot.storage.is_asking_of_another_file {
+            self.aot.storage.second_bodies.insert((file, func), found);
+        }
         found
     }
 
@@ -1576,36 +1611,54 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(&known) = self.aot.storage.second_bodies_for_the_log.get(&(file, func)) {
             return known;
         }
-        let found = !self.has_second_body(file, func) && self.could_have_second_body(file, func) && (self.is_reached_by_who_does_not_know_it(file, func) || self.is_called_with_what_says_nothing(file, func));
+        let found = !self.has_second_body(file, func) && self.could_have_second_body(file, func, true) && (self.is_reached_by_who_does_not_know_it(file, func) || self.is_called_with_what_says_nothing(file, func, None));
         self.aot.storage.second_bodies_for_the_log.insert((file, func), found);
         found
     }
 
+    pub fn help_find_who_may_be_handed_what_says_nothing(&mut self) {
+        if self.p.aot.storage.called_with_what_says_nothing.get().is_none() {
+            self.help_find_called_with_what_says_nothing();
+        }
+    }
+
+    pub fn may_be_handed_what_says_nothing(&mut self, file: FileId, func: FnId, is_used_as_a_value: bool) -> bool {
+        if func.is_none() || self.is_untyped_file(file) || !self.is_compiled(file) || self.files().module(file).builtin.is_some() {
+            return false;
+        }
+        self.while_translating(|c| !c.has_second_body(file, func) && (c.is_reached_by_who_does_not_know_it(file, func) || c.is_called_with_what_says_nothing(file, func, Some(is_used_as_a_value))))
+    }
+
     fn find_has_second_body(&mut self, file: FileId, func: FnId) -> bool {
-        self.could_have_second_body(file, func) && !self.places_taking_objects(file, func).is_empty() && self.is_reached_by_who_does_not_know_it(file, func)
+        self.could_have_second_body(file, func, false) && !self.places_taking_objects(file, func).is_empty() && self.is_reached_by_who_does_not_know_it(file, func)
     }
 
     fn is_reached_by_who_does_not_know_it(&mut self, file: FileId, func: FnId) -> bool {
-        self.is_host_callback(file, func) || self.is_let_out(file, func) || self.is_handed_strangers_by_untyped_code(file, func) || self.is_handed_to_host_by_name(file, func)
+        self.is_host_callback(file, func) || self.is_let_out(file, func) || self.is_handed_strangers_by_untyped_code(file, func) || self.is_handed_to_host_by_name(file, func) || self.is_handed_out_in_another_file(file, func)
     }
 
-    fn could_have_second_body(&mut self, file: FileId, func: FnId) -> bool {
+    fn could_have_second_body(&mut self, file: FileId, func: FnId, is_for_the_log: bool) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         if !matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_) | FnOwner::Stmt(_)) || matches!(f.body, FnBody::None) {
             return false;
         }
-        if f.this_param.is_some() || f.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || f.params.iter().any(|p| hir[p].flags.contains(Flags::REST)) {
+        if f.this_param.is_some() || f.flags.contains(Flags::GENERATOR) || !is_for_the_log && f.flags.contains(Flags::ASYNC) || f.params.iter().any(|p| hir[p].flags.contains(Flags::REST)) {
             return false;
         }
         let sees_nothing_of_a_call = match f.kind {
             FnKind::Arrow => match self.receiver_of_arrow(file, func) {
                 Receiver::None => true,
                 Receiver::Function(around) => !self.mentions_new_target(file, around) && !self.mentions_super(file, around) && !self.mentions_arguments_object(file, around) && !self.names_private_member_within(file, func),
-                Receiver::Instance(_) | Receiver::Static(_) => false,
+                Receiver::Instance(_) | Receiver::Static(_) => {
+                    let (start, end) = (f.start, self.end_of_fn(file, func));
+                    let index = self.exprs_by_kind_of(file);
+                    let seen_of_the_call = index.of(ExprTag::Super).iter().chain(index.of(ExprTag::NewTarget)).chain(&bound.arguments_objects);
+                    is_for_the_log && !self.names_private_member_within(file, func) && !seen_of_the_call.into_iter().any(|&e| start <= hir[e].pos && hir[e].pos < end)
+                }
             },
             FnKind::Decl => !bound.fns[func.idx()].contains_this,
-            FnKind::Expr => !bound.fns[func.idx()].contains_this && f.name.is_none(),
+            FnKind::Expr => !bound.fns[func.idx()].contains_this && (f.name.is_none() || is_for_the_log && self.mentions_of(file, bound.symbol_of_declaration(Decl::Fn(func))).is_empty()),
             _ => false,
         };
         if !sees_nothing_of_a_call || self.mentions_new_target(file, func) {
@@ -1663,6 +1716,75 @@ impl<'p, 's> Checker<'p, 's> {
             .collect()
     }
 
+    fn is_handed_out_in_another_file(&mut self, file: FileId, func: FnId) -> bool {
+        if self.aot.storage.is_asking_of_another_file {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = match bound.fns[func.idx()].owner {
+            FnOwner::Stmt(_) => bound.symbol_of_declaration(Decl::Fn(func)),
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::VarInit(d) if matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => bound.pat_symbol[hir[d].pat.idx()],
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if symbol.is_none() {
+            return false;
+        }
+        let sym = self.files().sym(file, symbol);
+        let exported = self.files().export_symbol_of_value_symbol_if_exported(sym);
+        let program = self.p;
+        let standing = program.aot.storage.imports_that_may_be_handed_on.get_or_init(|| self.find_imports_that_may_be_handed_on());
+        let mut mentions: Vec<(FileId, ExprId)> = standing.get(&sym).into_iter().flatten().copied().collect();
+        if exported != sym {
+            mentions.extend(standing.get(&exported).into_iter().flatten().copied());
+        }
+        self.aot.storage.is_asking_of_another_file = true;
+        let found = mentions.into_iter().any(|(other, name)| self.is_handed_to_host(other, name) || self.enters_place_that_says_nothing(other, name));
+        self.aot.storage.is_asking_of_another_file = false;
+        found
+    }
+
+    fn find_imports_that_may_be_handed_on(&mut self) -> FxHashMap<Sym, Vec<(FileId, ExprId)>> {
+        let mut standing: FxHashMap<Sym, Vec<(FileId, ExprId)>> = FxHashMap::default();
+        for other in (0..self.files().modules.len() as u32).map(FileId) {
+            if !self.is_compiled(other) || self.is_untyped_file(other) {
+                continue;
+            }
+            let (hir, bound) = (self.hir(other), self.bound(other));
+            for &name in self.exprs_by_kind_of(other).of(ExprTag::Ident) {
+                let local = bound.expr_symbol[name.idx()];
+                if local.is_none() {
+                    continue;
+                }
+                let may_be_handed_on = match bound.expr_parent[name.idx()] {
+                    Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                        ExprKind::Call(call) | ExprKind::New(call) => hir[call].callee != name,
+                        ExprKind::Assign { op: None, value, .. } => value == name,
+                        ExprKind::As { .. } | ExprKind::Array(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::Cond { .. } | ExprKind::Binary { .. } | ExprKind::Jsx(_) => true,
+                        _ => false,
+                    },
+                    Parent::Prop(_) | Parent::VarInit(_) | Parent::FnBody(_) | Parent::Stmt(_) => true,
+                    _ => false,
+                };
+                if !may_be_handed_on {
+                    continue;
+                }
+                let local = self.files().sym(other, local);
+                if !self.files().flags(local).contains(SymFlags::ALIAS) {
+                    continue;
+                }
+                let Some(target) = self.files().resolve_alias(local) else { continue };
+                if self.is_untyped_file(target.file) || !matches!(self.files().value_declaration(target), Some((_, Decl::Fn(_) | Decl::Var(_)))) {
+                    continue;
+                }
+                standing.entry(target).or_default().push((other, name));
+            }
+        }
+        standing
+    }
+
     fn is_handed_strangers_by_untyped_code(&mut self, file: FileId, func: FnId) -> bool {
         let program = self.p;
         program.aot.storage.handed_strangers_by_untyped_code.get_or_init(|| self.find_handed_strangers_by_untyped_code());
@@ -1683,14 +1805,24 @@ impl<'p, 's> Checker<'p, 's> {
         program.aot.storage.handed_strangers_by_untyped_code.get().is_some_and(|handed| handed.contains(&sym) || handed.contains(&exported))
     }
 
-    fn is_called_with_what_says_nothing(&mut self, file: FileId, func: FnId) -> bool {
+    fn is_called_with_what_says_nothing(&mut self, file: FileId, func: FnId, for_the_report: Option<bool>) -> bool {
         let program = self.p;
-        program.aot.storage.called_with_what_says_nothing.get_or_init(|| {
-            let mut asking = program.checker();
-            asking.begin_task(0, 0, false);
-            (asking.stack_base, asking.stack_limit) = (self.stack_base, self.stack_limit);
-            asking.while_translating(|asking| asking.find_called_with_what_says_nothing())
-        });
+        if self.aot.storage.is_looking_for_calls {
+            return true;
+        }
+        if program.aot.storage.called_with_what_says_nothing.get().is_none() {
+            self.help_find_called_with_what_says_nothing();
+        }
+        let Some(called) = program.aot.storage.called_with_what_says_nothing.get() else { return false };
+        let (by_name, by_parameters) = if for_the_report.is_some() { (&called.handed_over, &called.by_parameters_as_values) } else { (&called.by_name, &called.by_parameters) };
+        if !by_parameters.is_empty() && for_the_report != Some(false) {
+            let parameters: Vec<ParamId> = self.hir(file)[func].params.iter().collect();
+            let types: Vec<TypeId> = parameters.into_iter().map(|p| self.type_of_param(file, p)).collect();
+            let identities: Vec<super::Identity> = types.into_iter().map(|ty| self.identity_of_type(ty)).collect();
+            if by_parameters.contains(&identities) {
+                return true;
+            }
+        }
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = match bound.fns[func.idx()].owner {
             FnOwner::Stmt(_) => bound.symbol_of_declaration(Decl::Fn(func)),
@@ -1705,12 +1837,65 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let sym = self.files().sym(file, symbol);
         let exported = self.files().export_symbol_of_value_symbol_if_exported(sym);
-        program.aot.storage.called_with_what_says_nothing.get().is_some_and(|called| called.contains(&sym) || called.contains(&exported))
+        by_name.contains(&sym) || by_name.contains(&exported)
     }
 
-    fn find_called_with_what_says_nothing(&mut self) -> FxHashSet<Sym> {
+    fn help_find_called_with_what_says_nothing(&mut self) {
+        const AT_ONCE: u32 = 8;
+        let program = self.p;
+        let storage = &program.aot.storage;
+        let looking = &storage.looking_for_that[usize::from(self.is_warming_up())];
+        let files = program.files.modules.len() as u32;
+        let mut asking = None;
+        let (mut looked_at, mut mine) = (0, CalledWithWhatSaysNothing::default());
+        loop {
+            let first = looking.next_file.fetch_add(AT_ONCE, std::sync::atomic::Ordering::Relaxed).min(files);
+            let behind = (first + AT_ONCE).min(files);
+            if first == behind {
+                break;
+            }
+            let asking = asking.get_or_insert_with(|| {
+                let mut asking = program.checker();
+                asking.begin_task(0, 0, false);
+                (asking.stack_base, asking.stack_limit) = (self.stack_base, self.stack_limit);
+                asking.aot.storage.is_looking_for_calls = true;
+                asking
+            });
+            let found = asking.while_translating(|asking| asking.find_called_with_what_says_nothing(first..behind));
+            mine.absorb(found);
+            looked_at += behind - first;
+        }
+        let mut all = looking.looked_at.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if looked_at != 0 || files == 0 {
+            all.0 += looked_at;
+            all.1.get_or_insert_with(Default::default).absorb(mine);
+        }
+        if all.0 == files {
+            storage.called_with_what_says_nothing.get_or_init(|| all.1.take().expect("what was found is taken once"));
+            looking.is_all_looked_at.notify_all();
+        }
+        while storage.called_with_what_says_nothing.get().is_none() {
+            all = looking.is_all_looked_at.wait(all).unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn names_a_function(&mut self, target: Sym) -> bool {
+        match self.files().value_declaration(target) {
+            Some((_, Decl::Fn(_))) => true,
+            Some((of, Decl::Var(pat))) => match root_declaration(self.bound(of), pat) {
+                PatParent::Var(d) if self.hir(of)[d].pat == pat && self.hir(of)[d].init.is_some() => matches!(self.hir(of)[self.hir(of)[d].init].kind, ExprKind::Fn(_)),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn find_called_with_what_says_nothing(&mut self, files: std::ops::Range<u32>) -> CalledWithWhatSaysNothing {
         let mut found: FxHashSet<Sym> = FxHashSet::default();
-        for other in (0..self.files().modules.len() as u32).map(FileId) {
+        let mut by_parameters: FxHashSet<Vec<super::Identity>> = FxHashSet::default();
+        let mut handed_over: FxHashSet<Sym> = FxHashSet::default();
+        let mut by_parameters_as_values: FxHashSet<Vec<super::Identity>> = FxHashSet::default();
+        for other in files.map(FileId) {
             if !self.is_compiled(other) {
                 continue;
             }
@@ -1728,13 +1913,21 @@ impl<'p, 's> Checker<'p, 's> {
                     },
                     _ => None,
                 };
-                if call.is_none() && !is_untyped {
-                    continue;
-                }
                 let local = self.files().sym(other, local);
                 let target = if self.files().flags(local).contains(SymFlags::ALIAS) { self.files().resolve_alias(local) } else { Some(local) };
                 let Some(target) = target else { continue };
-                if self.is_untyped_file(target.file) || found.contains(&target) {
+                if self.is_untyped_file(target.file) || handed_over.contains(&target) || call.is_some() && !is_untyped && found.contains(&target) {
+                    continue;
+                }
+                if call.is_none() && !is_untyped {
+                    let names_a_function = self.names_a_function(target);
+                    if names_a_function {
+                        self.prepare_enclosing(other, name);
+                        if self.enters_place_that_says_nothing(other, name) || self.is_handed_to_host(other, name) {
+                            found.insert(target);
+                            handed_over.insert(target);
+                        }
+                    }
                     continue;
                 }
                 let says_nothing = is_untyped
@@ -1749,9 +1942,53 @@ impl<'p, 's> Checker<'p, 's> {
                 if says_nothing {
                     found.insert(target);
                 }
+                if is_untyped {
+                    handed_over.insert(target);
+                }
+            }
+            if is_untyped {
+                continue;
+            }
+            for &e in self.exprs_by_kind_of(other).of(ExprTag::Call) {
+                let ExprKind::Call(call) = hir[e].kind else { continue };
+                let callee = hir[call].callee;
+                if matches!(hir[callee].kind, ExprKind::Super | ExprKind::Fn(_)) {
+                    continue;
+                }
+                let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+                if arguments.is_empty() || arguments.iter().any(|&argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+                    continue;
+                }
+                let may_be_any = |argument: ExprId| !matches!(hir[argument].kind, ExprKind::Fn(_) | ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::Template { .. } | ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::This);
+                if !arguments.iter().any(|&argument| may_be_any(argument)) {
+                    continue;
+                }
+                self.prepare_enclosing(other, e);
+                if !arguments.iter().any(|&argument| may_be_any(argument) && self.type_of_expr(other, argument).is_any()) {
+                    continue;
+                }
+                let local = bound.expr_symbol[callee.idx()];
+                let is_by_name = matches!(hir[callee].kind, ExprKind::Ident(_)) && local.is_some() && {
+                    let local = self.files().sym(other, local);
+                    let target = if self.files().flags(local).contains(SymFlags::ALIAS) { self.files().resolve_alias(local) } else { Some(local) };
+                    target.is_some_and(|target| self.names_a_function(target))
+                };
+                let called = self.type_of_expr(other, callee);
+                for &part in self.parts(called) {
+                    for &sig in self.signatures(part, false).iter() {
+                        let types: Vec<TypeId> = self.sig_params(sig).iter().map(|parameter| parameter.ty).collect();
+                        if !types.is_empty() && !types.iter().all(|&ty| self.says_nothing(ty)) {
+                            let identities: Vec<super::Identity> = types.into_iter().map(|ty| self.identity_of_type(ty)).collect();
+                            if !is_by_name {
+                                by_parameters_as_values.insert(identities.clone());
+                            }
+                            by_parameters.insert(identities);
+                        }
+                    }
+                }
             }
         }
-        found
+        CalledWithWhatSaysNothing { by_name: found, by_parameters, handed_over, by_parameters_as_values }
     }
 
     fn find_handed_strangers_by_untyped_code(&mut self) -> FxHashSet<Sym> {
@@ -1876,6 +2113,23 @@ impl<'p, 's> Checker<'p, 's> {
             match hir[parent].kind {
                 ExprKind::Call(call) | ExprKind::New(call) => {
                     if hir[call].callee == e {
+                        return false;
+                    }
+                    if self.aot.storage.is_asking_of_another_file && !hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+                        let Some(index) = hir.ids(hir[call].args).position(|argument| argument == e) else { return false };
+                        let called = self.type_of_expr(file, hir[call].callee);
+                        if self.says_nothing(called) {
+                            return true;
+                        }
+                        let is_constructed = matches!(hir[parent].kind, ExprKind::New(_));
+                        for part in self.parts(called).to_vec() {
+                            for &sig in self.signatures(part, is_constructed).iter() {
+                                let parameters = self.sig_params(sig);
+                                if self.param_type_at(&parameters, index).is_some_and(|taking| self.says_nothing(taking)) {
+                                    return true;
+                                }
+                            }
+                        }
                         return false;
                     }
                     self.prepare_enclosing(file, e);
@@ -2214,6 +2468,41 @@ impl<'p, 's> Checker<'p, 's> {
             known.1 = made.clone();
         }
         made
+    }
+
+    pub fn yields_what_a_call_has_just_made(&mut self, file: FileId, e: ExprId) -> bool {
+        matches!(self.hir(file)[e].kind, ExprKind::Call(_)) && self.is_just_made_by(file, e, &mut Vec::new())
+    }
+
+    fn is_just_made_by(&mut self, file: FileId, e: ExprId, within: &mut Vec<(FileId, FnId)>) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::Object(props) => {
+                let hir = self.hir(file);
+                props.iter().all(|p| matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand | PropKind::Spread))
+            }
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) => self.is_just_made_by(file, expr, within),
+            ExprKind::Cond { yes, no, .. } => self.is_just_made_by(file, yes, within) && self.is_just_made_by(file, no, within),
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => self.is_just_made_by(file, right, within),
+            ExprKind::Call(_) => {
+                let Some(sig) = self.resolved_signature(file, e).sig else { return false };
+                let Some((of, func, _)) = self.sig_decl(sig) else { return false };
+                let (of, func) = if matches!(self.hir(of)[func].body, FnBody::None) { self.implementation_of(of, func).unwrap_or((of, func)) } else { (of, func) };
+                let (hir, bound) = (self.hir(of), self.bound(of));
+                if !self.is_compiled(of) || hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR) || within.len() == 4 || within.contains(&(of, func)) {
+                    return false;
+                }
+                let returned: Vec<ExprId> = match hir[func].body {
+                    FnBody::None => Vec::new(),
+                    FnBody::Expr(body) => vec![body],
+                    FnBody::Block(_) => bound.ids(bound.fns[func.idx()].returns).filter_map(|stmt: StmtId| if let StmtKind::Return(value) = hir[stmt].kind { Some(value) } else { None }).collect(),
+                };
+                within.push((of, func));
+                let is_made = !returned.is_empty() && returned.into_iter().all(|value| value.is_some() && self.is_just_made_by(of, value, within));
+                within.pop();
+                is_made
+            }
+            _ => false,
+        }
     }
 
     fn what_is_made_by_either(&mut self, file: FileId, one: ExprId, other: ExprId, looked_at: &mut LookedAt) -> Option<Made> {

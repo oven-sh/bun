@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 const failures = [];
 
 function check(actual, expected, what)
@@ -15,25 +13,6 @@ function outcomeOf(run)
     } catch (error) {
         return error.constructor.name;
     }
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
-}
-
-function has(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes(remark))
-        failures.push(name + " lacks " + remark);
-}
-
-function hasNot(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && remarks.includes(remark))
-        failures.push(name + " has " + remark);
 }
 
 function test()
@@ -1019,14 +998,8 @@ function test()
         check(outcomeOf(() => hasValueOfOfNumberOrUndefined(true)), "TypeError", "hasValueOfOfNumberOrUndefined of the second kind");
     }
 
-    for (const name of ["hasCallOfNull", "hasApplyOfNull", "hasBindOfNull", "hasCallOfUndefined", "hasApplyOfUndefined", "hasBindOfUndefined", "hasCallOfOnlyTheFunction", "hasApplyOfOnlyTheFunction", "hasBindOfOnlyTheFunction", "hasToFixedOfNumber", "hasToFixedOfNumberOrNull", "hasToFixedOfNumberOrUndefined", "hasToStringOfNumber", "hasToStringOfNumberOrNull", "hasToStringOfNumberOrUndefined", "hasToFixedOfInt32", "hasToFixedOfInt32OrNull", "hasToFixedOfInt32OrUndefined", "hasTrimOfString", "hasTrimOfStringOrNull", "hasTrimOfStringOrUndefined", "hasToStringOfString", "hasToStringOfStringOrNull", "hasToStringOfStringOrUndefined", "hasToStringOfBoolean", "hasToStringOfBooleanOrNull", "hasToStringOfBooleanOrUndefined", "hasToStringOfSymbol", "hasToStringOfSymbolOrNull", "hasToStringOfSymbolOrUndefined", "hasValueOfOfNumber", "hasValueOfOfNumberOrNull", "hasValueOfOfNumberOrUndefined"])
-        hasNot(name, "calls:ToBoolean");
     function truthinessOfAnything(x) { return x ? "yes" : "no"; }
     check([0, "s", null, plainObject].map(x => truthinessOfAnything(x)).join(), "no,yes,no,yes", "the truthiness of anything");
-    if ((remarksOf("truthinessOfAnything") || []).includes("calls:ToBoolean")) {
-        for (const name of ["hasCallOfInt32", "hasApplyOfInt32", "hasBindOfInt32", "hasCallOfDouble", "hasApplyOfDouble", "hasBindOfDouble", "hasCallOfString", "hasApplyOfString", "hasBindOfString", "hasCallOfBoolean", "hasApplyOfBoolean", "hasBindOfBoolean", "hasCallOfSymbol", "hasApplyOfSymbol", "hasBindOfSymbol", "hasCallOfBigInt", "hasApplyOfBigInt", "hasBindOfBigInt", "hasCallOfPlainObject", "hasApplyOfPlainObject", "hasBindOfPlainObject", "hasCallOfObjectWithItsOwn", "hasApplyOfObjectWithItsOwn", "hasBindOfObjectWithItsOwn", "hasCallOfProgramFunction", "hasApplyOfProgramFunction", "hasBindOfProgramFunction", "hasCallOfProgramFunctionWithItsOwn", "hasApplyOfProgramFunctionWithItsOwn", "hasBindOfProgramFunctionWithItsOwn", "hasToFixedOfNumberOrString", "hasToFixedOfNumberOrBoolean", "hasToFixedOfNumberOrSymbol", "hasToFixedOfNumberOrBigInt", "hasToFixedOfNumberOrPlainObject", "hasToFixedOfNumberOrObjectWithItsOwn", "hasToStringOfNumberOrString", "hasToStringOfNumberOrBoolean", "hasToStringOfNumberOrSymbol", "hasToStringOfNumberOrBigInt", "hasToStringOfNumberOrPlainObject", "hasToStringOfNumberOrObjectWithItsOwn", "hasToFixedOfInt32OrString", "hasToFixedOfInt32OrBoolean", "hasToFixedOfInt32OrSymbol", "hasToFixedOfInt32OrBigInt", "hasToFixedOfInt32OrPlainObject", "hasToFixedOfInt32OrObjectWithItsOwn", "hasTrimOfStringOrNumber", "hasTrimOfStringOrInt32", "hasTrimOfStringOrBoolean", "hasTrimOfStringOrSymbol", "hasTrimOfStringOrBigInt", "hasTrimOfStringOrPlainObject", "hasTrimOfStringOrObjectWithItsOwn", "hasToStringOfStringOrNumber", "hasToStringOfStringOrInt32", "hasToStringOfStringOrBoolean", "hasToStringOfStringOrSymbol", "hasToStringOfStringOrBigInt", "hasToStringOfStringOrPlainObject", "hasToStringOfStringOrObjectWithItsOwn", "hasToStringOfBooleanOrNumber", "hasToStringOfBooleanOrInt32", "hasToStringOfBooleanOrString", "hasToStringOfBooleanOrSymbol", "hasToStringOfBooleanOrBigInt", "hasToStringOfBooleanOrPlainObject", "hasToStringOfBooleanOrObjectWithItsOwn", "hasToStringOfSymbolOrNumber", "hasToStringOfSymbolOrInt32", "hasToStringOfSymbolOrString", "hasToStringOfSymbolOrBoolean", "hasToStringOfSymbolOrBigInt", "hasToStringOfSymbolOrPlainObject", "hasToStringOfSymbolOrObjectWithItsOwn", "hasValueOfOfNumberOrString", "hasValueOfOfNumberOrBoolean", "hasValueOfOfNumberOrSymbol", "hasValueOfOfNumberOrBigInt", "hasValueOfOfNumberOrPlainObject", "hasValueOfOfNumberOrObjectWithItsOwn"])
-            has(name, "calls:ToBoolean");
-    }
 }
 test();
 if (failures.length)

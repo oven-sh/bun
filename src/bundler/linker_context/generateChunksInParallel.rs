@@ -636,20 +636,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 chunk_indices.push(chunk_index as u32);
             }
             if complete && !inputs.is_empty() {
-                let mut redundant_requests_dropped = 0usize;
                 prelinked_graph = crate::prelinked_module_graph::build(
                     &inputs,
                     &mut module_info_strings,
                     external_string_table,
-                    c.options.aot.then_some(&mut redundant_requests_dropped),
                 )
                 .map(|bytes| (bytes, chunk_indices));
-                if redundant_requests_dropped != 0 {
-                    bun_core::Output::print_errorln(format_args!(
-                        "module graph: {} redundant requests dropped",
-                        redundant_requests_dropped
-                    ));
-                }
             }
         }
 
@@ -692,6 +684,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 false => cheap_prefix_normalizer(c.options.public_path, path).concat(),
             };
             for bytes in [&key[..], &path[..]] {
+                replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                replaced_strings.extend_from_slice(bytes);
+            }
+        }
+        for index in 0..graph.html_imports.server_source_indices.len() as u32 {
+            let key = [&c.unique_key_prefix[..], format!("H{index:08}").as_bytes()].concat();
+            let manifest = format!("{}", crate::html_import_manifest::HTMLImportManifest { index, graph, chunks: &*chunks, linker_graph: &c.graph }).into_bytes();
+            for bytes in [&key[..], &manifest[..]] {
                 replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                 replaced_strings.extend_from_slice(bytes);
             }
@@ -1483,7 +1483,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         };
         if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
             if !linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings) {
-                c.log_mut().add_error(None, bun_ast::Loc::EMPTY, b"The engine refused the typed program: see the \"AOT:\" lines above");
+                add_aot_build_errors(c, linked.encoder.take_build_errors());
                 return Err(crate::Error::BuildFailed);
             }
         }
@@ -1596,6 +1596,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ),
             None => linked.encoder.finish(),
         };
+        let aot_build_errors = linked.encoder.take_build_errors();
+        if !aot_build_errors.is_empty() {
+            add_aot_build_errors(c, aot_build_errors);
+            return Err(crate::Error::BuildFailed);
+        }
         match finished {
             Some(crate::bytecode_order::LinkedPayload {
                 payload,
@@ -1761,11 +1766,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }));
     }
     if c.options.aot && !has_program_data {
-        c.log_mut().add_error(
-            None,
-            bun_ast::Loc::EMPTY,
-            b"Failed to compile the program ahead of time",
-        );
+        add_aot_build_errors(c, Vec::new());
         return Err(crate::Error::BuildFailed);
     }
     if !aot_image.is_empty() {
@@ -1789,6 +1790,37 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
+}
+
+fn add_aot_build_errors(c: &mut LinkerContext, errors: Vec<crate::bytecode_order::AotBuildError>) {
+    if errors.is_empty() {
+        c.log_mut().add_error(
+            None,
+            bun_ast::Loc::EMPTY,
+            b"--aot: internal error: the program could not be compiled ahead of time",
+        );
+        return;
+    }
+    for error in errors {
+        let mut text = b"--aot: ".to_vec();
+        text.extend_from_slice(&error.message);
+        let location = (!error.path.is_empty()).then(|| bun_ast::Location {
+            file: std::borrow::Cow::Owned(error.path),
+            line: if error.line == 0 { -1 } else { error.line as i32 },
+            column: if error.line == 0 { -1 } else { error.column as i32 },
+            ..Default::default()
+        });
+        let log = c.log_mut();
+        log.errors += 1;
+        log.add_msg(bun_ast::Msg {
+            kind: bun_ast::Kind::Err,
+            data: bun_ast::Data {
+                text: std::borrow::Cow::Owned(text),
+                location,
+            },
+            ..Default::default()
+        });
+    }
 }
 
 /// Debug check: no in-memory output may still contain the per-build `unique_key` placeholder prefix.

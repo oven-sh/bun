@@ -36,13 +36,13 @@
     "output": "ok [\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"true,false,true\",\"true,true,true\",\"true,true,true\",false,true,true,true,false]\n"
   },
   "guarded-by-try-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\nerror: TS100014: This always fails under --aot: `Function.prototype.mine` is assigned: built-in prototypes are frozen.\n"
+    "output": "ok [\"fell back\",\"fell back\"]\n"
   },
   "guarded-by-try-sloppy.require.cjs": {
     "output": "ok [\"fell back\",\"fell back\"]\n"
   },
   "guarded-by-try-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\nerror: TS100014: This always fails under --aot: `Function.prototype.mine` is assigned: built-in prototypes are frozen.\n"
+    "output": "ok [\"fell back\",\"fell back\"]\n"
   },
   "guarded-by-try-strict.require.cjs": {
     "output": "ok [\"fell back\",\"fell back\"]\n"

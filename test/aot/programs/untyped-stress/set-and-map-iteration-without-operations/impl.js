@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -33,21 +32,6 @@ function firstTwo(iterable) {
     return String(first) + " " + String(second);
 }
 
-const operation = "operationAOTIteratorNextTryFast";
-const countsOperations = typeof aotOperationCount === "function" && isAOTCompiled(joined) && (aotRemarks("joined") || []).includes("calls:IteratorNext") && aotOperationCount(operation) !== null;
-function operationsDuring(f) {
-    if (!countsOperations) {
-        f();
-        return -1;
-    }
-    const before = aotOperationCount(operation);
-    f();
-    return aotOperationCount(operation) - before;
-}
-function checkOperations(actual, atLeast, atMost, what) {
-    if (actual >= 0 && (actual < atLeast || actual > atMost))
-        throw new Error(what + ": " + actual + " calls of the operation, not " + atLeast + " to " + atMost);
-}
 function range(count) {
     const result = [];
     for (let i = 0; i < count; i++)
@@ -60,20 +44,16 @@ function range(count) {
     const map = new Map(range(100).map(i => [i, "v" + i]));
     const expectedKeys = range(100).join(";") + ";";
     const expectedValues = range(100).map(i => "v" + i).join(";") + ";";
-    checkOperations(operationsDuring(() => {
-        for (let round = 0; round < 10; round++) {
-            check(joined(set), expectedKeys, "a set");
-            check(joined(set.values()), expectedKeys, "the values of a set");
-            check(joined(set.keys()), expectedKeys, "the keys of a set");
-            check(joined(map.keys()), expectedKeys, "the keys of a map");
-            check(joined(map.values()), expectedValues, "the values of a map");
-        }
-    }), 0, 0, "sets, and keys and values of maps");
-    checkOperations(operationsDuring(() => {
-        check(joinedPairs(map), range(100).map(i => i + "=v" + i).join(";") + ";", "a map");
-        check(joinedPairs(set.entries()), range(100).map(i => i + "=" + i).join(";") + ";", "the entries of a set");
-        check(joinedPairs(map.entries()), range(100).map(i => i + "=v" + i).join(";") + ";", "the entries of a map");
-    }), 0, 30, "entries");
+    for (let round = 0; round < 10; round++) {
+        check(joined(set), expectedKeys, "a set");
+        check(joined(set.values()), expectedKeys, "the values of a set");
+        check(joined(set.keys()), expectedKeys, "the keys of a set");
+        check(joined(map.keys()), expectedKeys, "the keys of a map");
+        check(joined(map.values()), expectedValues, "the values of a map");
+    }
+    check(joinedPairs(map), range(100).map(i => i + "=v" + i).join(";") + ";", "a map");
+    check(joinedPairs(set.entries()), range(100).map(i => i + "=" + i).join(";") + ";", "the entries of a set");
+    check(joinedPairs(map.entries()), range(100).map(i => i + "=v" + i).join(";") + ";", "the entries of a map");
     const pairs = [];
     for (const pair of map)
         pairs.push(pair);
@@ -127,7 +107,7 @@ function range(count) {
     check(joinedWhile(set, x => set.delete(x)), "0;1;2;3;4;5;", "each element deleted when it is seen");
     check(set.size, 0, "each element deleted when it is seen");
     set = new Set(range(6));
-    checkOperations(operationsDuring(() => check(joinedWhile(set, x => set.delete(x + 1)), "0;2;4;", "the next element deleted")), 1, 6, "deleted elements ahead");
+    check(joinedWhile(set, x => set.delete(x + 1)), "0;2;4;", "the next element deleted");
     set = new Set(range(6));
     check(joinedWhile(set, x => { if (x) set.delete(x - 1); }), "0;1;2;3;4;5;", "the previous element deleted");
     set = new Set(range(6));

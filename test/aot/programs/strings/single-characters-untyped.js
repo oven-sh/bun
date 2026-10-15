@@ -43,6 +43,14 @@ export function kept(s, i) {
   const x = s[i];
   return x === "/" ? "slash" : x + "!";
 }
+export function keptInLoop(s) {
+  let out = "";
+  for (let i = 0;i < s.length; i++) {
+    const x = s[i];
+    out += x === "/" ? "slash" : x + "!";
+  }
+  return out;
+}
 export function samePlace(s, t, i) {
   return s[i] === t[i];
 }
@@ -219,9 +227,10 @@ for (const s of strings) {
     print("  " + show(t) + " " + [[0, 0], [1, 1], [0, 1], [1, 0], [5, 5], [5, 0], [0, 5], [-1, -1], [2, 2]].map(([i, j]) => pairs(s, t, i, j)).join(" "));
 }
 print(attempt(() => anything(["/", "a"], 0)) + " " + attempt(() => anything({ 0: "/", charAt: () => "/", at: () => "x" }, 0)) + " " + attempt(() => anything(null, 0)) + " " + attempt(() => anything("a/", "1")) + " " + attempt(() => anything(new String("/"), 0)));
+print(keptInLoop("a/b//c") + " " + show(keptInLoop("")));
 let big = "";
 for (let i = 0;i < 3000; i++)
   big += i % 7 === 0 ? "/" : String.fromCharCode(32 + i % 90);
 print(countByIndex(big) + " " + countByCharAt(big) + " " + countByAt(big) + " " + classify(big).length);
-globalThis.kept = [slashAt, slashCharAt, slashByAt, kept, samePlace, samePlaceHandled, slashHandled, twoCharacters, notASCII, oneArmOnly];
+globalThis.kept = [slashAt, slashCharAt, slashByAt, kept, keptInLoop, samePlace, samePlaceHandled, slashHandled, twoCharacters, notASCII, oneArmOnly];
 console.log("number");

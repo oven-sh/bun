@@ -1,16 +1,19 @@
 // `s === "literal"` inside and outside loops, for every length, every internal representation of the string and every kind of value.
-// CALLS- is5L StringIsText
-// CALLS+ is5L StringHasAt
-// CALLS- ofAnyL StringIsText
-// CALLS+ is5 StringIsText
+// In a loop the characters are compared in place and only the rarely taken arm for 16-bit strings calls out, handing over the literal's number.
+// Outside a loop the whole comparison is one call of the stub.
+// CALLS- is5L (?<!Typed)StringIsText
+// CALLS+ is5L operationAOTTypedStringIsText
+// CALLS- is5L StringHasAt
+// CALLS- ofAnyL (?<!Typed)StringIsText
+// CALLS+ is5 (?<!Typed)StringIsText
 // CALLS- is5 (^|[ f])TypedString(;|$)
-// CALLS+ branch1 StringIsText
-// CALLS+ branch2 StringIsText
-// CALLS+ branch3 StringIsText
-// CALLS+ switched StringIsText
+// CALLS+ branch1 (?<!Typed)StringIsText
+// CALLS+ branch2 (?<!Typed)StringIsText
+// CALLS+ branch3 (?<!Typed)StringIsText
+// CALLS+ switched (?<!Typed)StringIsText
 // CALLS- branch3 StringHasAt|Flatten
-// CALLS- inLoop StringIsText
-// CALLS+ ofAny StringIsText
+// CALLS- inLoop (?<!Typed)StringIsText
+// CALLS+ ofAny (?<!Typed)StringIsText
 // CALLS- isEmpty StringIsText
 // CALLS- isAccented StringIsText
 const print = (s: string) => console.log(s);

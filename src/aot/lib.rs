@@ -139,6 +139,10 @@ impl<'a> Translation<'a> {
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
         let mut without_whole_trees = program.files_without_whole_trees();
         without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
+        if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !without_whole_trees.is_empty()) {
+            let of_the_bundle: rustc_hash::FxHashSet<FileId> = resolved.values().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
+            without_whole_trees.retain(|file| of_the_bundle.contains(file));
+        }
         let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
         let most = usize::from(u16::MAX);
         let mut suspects: Vec<(FileId, Option<u32>)> = match &translating {
@@ -276,6 +280,8 @@ impl<'a> Translation<'a> {
                     Elsewhere::PrivateNameInOptionalChain => "a private name in an optional chain of JavaScript, which ECMAScript has".to_owned(),
                     Elsewhere::PrivateNameOfEnclosingClass => "a private name of JavaScript that an enclosing class declares, which ECMAScript looks for when it runs".to_owned(),
                     Elsewhere::StaticMemberNamedConstructor => "a static member of JavaScript named `constructor`, which ECMAScript has".to_owned(),
+                    Elsewhere::CommentOfJavaScript => "in a comment of JavaScript, which is no code".to_owned(),
+                    Elsewhere::DeclarationsOfPackage => "in the declarations of a package, which are no code".to_owned(),
                 })
             })
             .collect();
@@ -286,7 +292,7 @@ impl<'a> Translation<'a> {
         let problems = linked.problems.iter().map(shown).collect();
         let builtin_modules_left_out = linked.builtin_modules_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let builtin_functions_left_out = linked.builtin_functions_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
-        let always_fails = linked.found.iter().any(|found| found.code != 100019);
+        let always_fails = linked.found.iter().any(|found| !matches!(found.code, 100019 | 100020));
         program.found_by_the_compiler.lock().extend(linked.found);
         Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times }
     }
@@ -294,13 +300,13 @@ impl<'a> Translation<'a> {
     /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an
     /// error stands.
     pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> ForEngine {
-        let Translated { program: linked, problems, errors_that_stand, always_fails, explained, .. } = self.finish(program, in_parallel, errors);
+        let Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, .. } = self.finish(program, in_parallel, errors);
         let written = if errors_that_stand.contains(&true) || always_fails {
             Err(Vec::new())
         } else if !problems.is_empty() {
             Err(problems)
         } else {
-            Ok(format::write(&linked, in_parallel))
+            Ok(format::write_releasing(&mut linked, in_parallel))
         };
         release(linked, in_parallel);
         ForEngine { written, errors_that_stand, explained }

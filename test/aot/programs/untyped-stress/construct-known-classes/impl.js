@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
 function check(actual, expected, what) {
     if (actual !== expected)
@@ -242,38 +241,5 @@ check(countsNodes(50), 51, "a constructor that makes another of its class");
 
 checkThrows(() => Point(1, 2), TypeError, "a class called without new");
 check(new Point(1, 2).constructor, Point, "the constructor property");
-
-if (aotRemarks("sumsPoints")) {
-    let applies = (name, remark) => {
-        if (!aotRemarks(name).includes(remark))
-            throw new Error(name + " lacks " + remark + ": " + aotRemarks(name).join(" "));
-    };
-    let doesNotApply = (name, prefix) => {
-        for (let remark of aotRemarks(name)) {
-            if (remark.startsWith(prefix))
-                throw new Error(name + " has " + remark);
-        }
-    };
-    applies("sumsPoints", "inlined-construct:Point");
-    applies("plus", "direct-construct:Point");
-    applies("sumsBase", "inlined-construct:Base");
-    applies("sumsPlain", "inlined-construct:Plain");
-    applies("makesWithSetter", "inlined-construct:WithSetter");
-    applies("makesGetsSetterLater", "inlined-construct:GetsSetterLater");
-    applies("makesEarly", "inlined-construct:Late");
-    applies("makesInDeadZone", "inlined-construct:Later");
-    applies("makesThrows", "inlined-construct:Throws");
-    applies("makesReturnsObject", "inlined-construct:ReturnsObject");
-    applies("sumsDerived", "direct-construct:Derived");
-    applies("sumsCatches", "direct-construct:Catches");
-
-    doesNotApply("sumsDerived", "inlined-construct:Derived");
-    doesNotApply("sumsCatches", "inlined-construct");
-    doesNotApply("twin", "inlined-construct:WithoutConstructor");
-    doesNotApply("makesReassigned", "inlined-construct");
-    doesNotApply("makesReassigned", "direct-construct");
-    doesNotApply("makesParameter", "inlined-construct");
-    doesNotApply("makesParameter", "direct-construct");
-}
 })();
 console.log("passed");

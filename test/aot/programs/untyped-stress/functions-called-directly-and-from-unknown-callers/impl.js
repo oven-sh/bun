@@ -1,16 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-// Typed bodies are switched off (AOT::mayHaveGeneralBody admits no function) until every exact call site is checked against the types its callee's typed body was compiled for. The assertions that a function has one are skipped meanwhile. Every value must hold either way.
-const typedBodiesAreSwitchedOff = true;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark || other.startsWith(remark + ":")) : undefined;
-}
-function hasTwoBodies(name) { check([has(name, "is-typed-body") !== false, has(name, "is-general-body") !== false].join(), "true,true", name + " has two bodies"); }
-function hasOneBody(name) { check([has(name, "is-typed-body") !== true, has(name, "is-general-body") !== true].join(), "true,true", name + " has one body"); }
 function thrownBy(f, ...parameters) {
     try {
         f(...parameters);
@@ -19,7 +10,6 @@ function thrownBy(f, ...parameters) {
     }
     return "nothing";
 }
-const usesInlining = has("probeCaller", "inlined-call:probe");
 let kept = { };
 function keep(name, value) { kept[name] = value; return value; }
 noInline(keep);
@@ -80,15 +70,4 @@ check([kept.readsObject({ x: 1 }, 1), kept.readsObject({ y: 0, x: "s" }, 1), kep
 check(Object.defineProperty({ }, "p", { get: kept.takesAnything }).p, 9, "as a getter");
 check([kept.appliesCallback(x => x + "!", "a"), thrownBy(kept.appliesCallback, 1, 2), kept.countsDown(2), kept.countsDown("2"), kept.countsDown(-1)].join(), "a!,TypeError,2,2,0", "the helper and the recursive function from outside");
 
-if (usesInlining === false && !typedBodiesAreSwitchedOff) {
-    for (let name of ["addsInt32", "scalesDouble", "lengthOfString", "readsObject", "appliesCallback"])
-        hasTwoBodies(name);
-    for (let [caller, callee] of [["callsAddsInt32", "addsInt32"], ["callsScalesDouble", "scalesDouble"], ["callsLengthOfString", "lengthOfString"], ["callsReadsObject", "readsObject"], ["passesCallback", "appliesCallback"]])
-        check(has(caller, "calls-typed-body:" + callee) !== false, true, caller + " calls the typed body of " + callee);
-    check(has("callsAddsInt32", "calls:Add") !== true, true, "the result of the typed body is an Int32 or a double");
-    check(has("staysClosed", "function-does-not-escape") !== false, true, "the callback stays closed");
-}
-for (let name of ["usesThis", "takesAnything", "firstOfPhi", "secondOfPhi", "generates", "awaits", "usesArguments", "makesClosure", "staysClosed", "probe"])
-    hasOneBody(name);
-check(has("callsTakesAnything", "calls-typed-body") !== true, true, "a function whose direct calls pass anything has no typed body to call");
 console.log("passed");

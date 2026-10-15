@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function thrownBy(f, ...parameters) {
     try {
@@ -32,13 +10,6 @@ function thrownBy(f, ...parameters) {
     }
     return "nothing";
 }
-function readsProperty(o) { return o.property; }
-noInline(readsProperty);
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const typedUnlessNullish = "typed-builtin-call-unless-receiver-is-nullish", lengthUnlessNullish = "inline-length-unless-nullish";
-const comparesWithInt32 = "inline-relational-comparison-with-int32";
-
 let order = [];
 function noted(what, value) { order.push(what); return value; }
 noInline(noted);
@@ -75,16 +46,6 @@ check(textOfStringOrNumber("abc", 1), "5", "a number");
 check(thrownBy(textOfStringOrNumber, "abc", 2), "TypeError", "toString of undefined");
 check(thrownBy(alwaysNullish, 1), "TypeError", "undefined and nothing else");
 check(thrownBy(alwaysNullish, 0), "TypeError", "null and nothing else");
-applies(codeOfOptional, typedUnlessNullish);
-applies(codeOfOptionalOrNull, typedUnlessNullish);
-applies(placeInOptional, typedUnlessNullish);
-for (let f of [codeOfOptional, codeOfOptionalOrNull, placeInOptional])
-    doesNotApply(f, comparesWithInt32, "calls:Less", "calls:GreaterEq");
-doesNotApply(codeOfAnything, typedUnlessNullish);
-doesNotApply(textOfStringOrNumber, typedUnlessNullish);
-doesNotApply(alwaysNullish, typedUnlessNullish);
-if (usesDataStubs)
-    applies(codeOfAnything, comparesWithInt32);
 
 function lengthOfOptionalString(text, given) { let s = given ? "" + text : undefined; return s.length; }
 function lengthOfOptionalArray(a, b, given) { let list = given ? [a, b] : null; return list.length; }
@@ -120,14 +81,4 @@ check([lengthOfAnything("ab"), lengthOfAnything([1, 2, 3]), lengthOfAnything({ l
 check(thrownBy(lengthOfAnything, undefined), "TypeError", "the length of undefined in place of anything");
 check([0, 1].map(lengthOfStringOrObject).join(), "3,long", "the length of a string or an object");
 check(thrownBy(lengthOfStringOrObject, 2), "TypeError", "the length of undefined in place of a string or an object");
-applies(lengthOfOptionalString, lengthUnlessNullish);
-applies(lengthOfOptionalArray, lengthUnlessNullish);
-applies(lengthOfOptionalEmptyArray, lengthUnlessNullish);
-applies(lengthAfterResizing, lengthUnlessNullish);
-applies(lengthOfStringOrArray, lengthUnlessNullish);
-for (let f of [lengthOfOptionalString, lengthOfOptionalArray, lengthOfOptionalEmptyArray, lengthAfterResizing])
-    doesNotApply(f, "calls:GetLength");
-doesNotApply(lengthOfString, lengthUnlessNullish);
-doesNotApply(lengthOfAnything, lengthUnlessNullish);
-doesNotApply(lengthOfStringOrObject, lengthUnlessNullish);
 console.log("passed");

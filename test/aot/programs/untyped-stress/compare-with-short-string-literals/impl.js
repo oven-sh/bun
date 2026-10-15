@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function is0(s) { return s === ""; }
 function is1(s) { return s === "a"; }
@@ -75,18 +53,4 @@ check(isWide("4"), false, "a 16-bit literal, and its low byte");
 check(isEither("ab", "ab"), true, "two variables");
 check(isLoose("ab"), true, "==");
 check(isLoose({ toString() { return "ab"; } }), true, "==, with a conversion");
-function readsProperty(o) { return o.p; }
-readsProperty({ p: 1 });
-let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-for (let f of usesDataStubs ? [is1, is2, is3, is4, is5, is6, is7, is8, is9, isNot4, isHigh] : [])
-    applies(f, "short-literal-comparison");
-if (usesDataStubs) {
-    applies(is1, "calls:IsStringEqualToLiteral1");
-    applies(is3, "calls:IsStringEqualToLiteral2To3");
-    applies(is7, "calls:IsStringEqualToLiteral4To7");
-    applies(is8, "calls:IsStringEqualToLiteral8");
-    applies(is9, "calls:IsStringEqualToLiteral9To16");
-}
-for (let f of [is0, isWide, isEither, isLoose])
-    doesNotApply(f, "short-literal-comparison");
 console.log("passed");

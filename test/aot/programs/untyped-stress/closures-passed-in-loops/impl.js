@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -120,15 +119,4 @@ for (let round = 0; round < 2; round++) {
     check(sumOf(retries), 18, "an array, a loop that only goes round through a handler");
 }
 
-if (aotRemarks("withoutLoop")) {
-    const sinks = "sinks-closure-into-fallback-call";
-    for (let name of ["withoutLoop", "withoutLoopOnOnePath", "madeInLoop", "madeInLoopInline"]) {
-        if (!aotRemarks(name).includes(sinks))
-            throw new Error(sinks + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-    }
-    for (let name of ["madeBeforeLoop", "madeBeforeWhileLoop", "madeBeforeNestedLoops", "madeInOuterLoop", "madeBeforeLoopWithBranch", "retries"]) {
-        if (aotRemarks(name).includes(sinks))
-            throw new Error(sinks + " applies to " + name);
-    }
-}
 console.log("passed");

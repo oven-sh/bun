@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
@@ -154,38 +153,6 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     {
         let o = {};
         check(fillsWhatItCaptures(o, 1, 2)() + describe(o), "3a=1,b=2,c=1,d=2", "values from variables that a closure made here reads");
-    }
-
-    if (aotRemarks("fillsFromParameters")) {
-        const run = "property-run", ends = "variable-read-ends-property-run";
-        let has = (name, pattern) => aotRemarks(name).some(remark => remark === pattern || remark.startsWith(pattern + ":"));
-        let applies = (name, ...patterns) => {
-            for (let pattern of patterns) {
-                if (!has(name, pattern))
-                    throw new Error(pattern + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-            }
-        };
-        let doesNotApply = (name, ...patterns) => {
-            for (let pattern of patterns) {
-                if (has(name, pattern))
-                    throw new Error(pattern + " applies to " + name + ": " + aotRemarks(name).join(" "));
-            }
-        };
-        for (let name of ["fillsWithCounter", "fillsTarget", "storesVariableSecond", "storesToVariable", "storesToConstant", "storesToInstanceInVariable", "throwsHalfWay", "storesLiteralOfVariable"]) {
-            doesNotApply(name, run);
-            applies(name, ends);
-        }
-        applies("usesVariableAfterwards", run + ":4");
-        applies("readsBeforeStoring", run + ":4");
-        doesNotApply("readsBeforeStoring", ends);
-        applies("readsInTheMiddle", run + ":4", ends);
-        doesNotApply("readsInTheMiddle", run + ":8");
-        applies("fillsFromParameters", run + ":4");
-        doesNotApply("fillsFromParameters", ends);
-        applies("fillsFromCaptures", "reads-capture", run + ":4");
-        doesNotApply("fillsFromCaptures", ends);
-        applies("fillsWhatItCaptures", "captures-by-value", run + ":4");
-        doesNotApply("fillsWhatItCaptures", ends);
     }
 })();
 console.log("passed");

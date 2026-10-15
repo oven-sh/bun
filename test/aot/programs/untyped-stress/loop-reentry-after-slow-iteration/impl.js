@@ -1,14 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function countersOf(name, opcode) {
-    let operations = aotTypeCoverage(name).map(line => line.split(" ")).filter(fields => fields[1] === opcode);
-    return {
-        timesRun: Math.max(...operations.map(fields => Number(fields[3]))),
-        stubCalls: Math.max(...operations.map(fields => Number(fields[4]))),
-    };
 }
 
 function fromZero(objects) {
@@ -116,31 +108,4 @@ check(fromAnywhere(objects, 0), 4950, "a counter from a parameter");
 check(byTwo(objects), 2450, "a counter that goes up by two");
 check(fromFraction(objects, 0.5), 4950, "a counter that is no integer");
 
-if (aotTypeCoverage("fromZero") && aotRemarks("fromZero").includes("split-loop")) {
-    const covers = "entry-range-covers-reentry";
-    let expectations = [
-        ["fromZero", "op_get_by_id", 100, true],
-        ["fromOne", "op_get_by_id", 99, true],
-        ["downFromConstant", "op_get_by_id", 100, true],
-        ["whileLoop", "op_get_by_id", 100, true],
-        ["doWhileLoop", "op_get_by_id", 100, true],
-        ["twoCounters", "op_get_by_id", 100, true],
-        ["nested", "op_get_by_id", 100, true],
-        ["overHole", "op_get_by_val", 100, true],
-        ["fromAnywhere", "op_get_by_id", 100, false],
-        ["byTwo", "op_get_by_id", 50, false],
-    ];
-    for (let [name, opcode, timesRun, rangeIsWidened] of expectations) {
-        if (!aotRemarks(name).includes("split-loop"))
-            throw new Error("the loop of " + name + " is not split: " + aotRemarks(name).join(" "));
-        let counters = countersOf(name, opcode);
-        check(counters.timesRun, timesRun, "how often " + opcode + " runs in " + name);
-        if (counters.stubCalls > 4)
-            throw new Error(name + " stays in the generic copy of its loop: " + counters.stubCalls + " of " + counters.timesRun + " times");
-        check(aotRemarks(name).includes(covers), rangeIsWidened, covers + " applies to " + name);
-    }
-    let counters = countersOf("fromFraction", "op_get_by_id");
-    check(counters.timesRun, 99, "how often op_get_by_id runs in fromFraction");
-    check(counters.stubCalls, 99, "a counter that is no integer stays in the generic copy");
-}
 console.log("passed");

@@ -2268,7 +2268,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
+                    if (replacePropsWithAsymmetricMatchers && !obj->structure()->hasImmutableShape()) {
                         obj->putDirectMayBeIndex(globalObject, property, subsetProp);
                         RETURN_IF_EXCEPTION(throwScope, false);
                     }
@@ -2282,7 +2282,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
+                    if (replacePropsWithAsymmetricMatchers && !subsetObj->structure()->hasImmutableShape()) {
                         subsetObj->putDirectMayBeIndex(globalObject, property, prop);
                         RETURN_IF_EXCEPTION(throwScope, false);
                     }
@@ -3282,6 +3282,101 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 }
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
+
+struct CopiesAlongPropertyMatchers {
+    struct Shared {
+        JSObject* holder;
+        Identifier name;
+        JSObject* original;
+        unsigned attributes;
+    };
+    WTF::UncheckedKeyHashMap<JSObject*, JSObject*> made;
+    Vector<Shared> shared;
+};
+
+static JSValue copyAlongPropertyMatchers(JSGlobalObject* globalObject, ThrowScope& scope, JSValue received, JSValue matchers, CopiesAlongPropertyMatchers& copies)
+{
+    VM& vm = globalObject->vm();
+    if (!received.isObject() || !matchers.isObject() || matchers.asCell()->type() == JSC::JSType(JSDOMWrapperType) || !vm.isSafeToRecurse())
+        return received;
+    JSObject* object = asObject(received);
+    JSObject* subset = asObject(matchers);
+    if (JSObject* made = copies.made.get(object))
+        return made;
+    bool isArray = object->type() == ArrayType;
+    if (!isArray && object->type() != FinalObjectType && !object->structure()->hasImmutableShape())
+        return received;
+
+    JSObject* copy;
+    if (isArray)
+        copy = constructEmptyArray(globalObject, nullptr, object->getArrayLength());
+    else {
+        JSValue prototype = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    copies.made.add(object, copy);
+
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (const auto& name : names) {
+        if (isArray && name == vm.propertyNames->length)
+            continue;
+        PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool isThere = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isThere)
+            continue;
+        if (slot.isAccessor()) {
+            copy->putDirectAccessor(globalObject, name, slot.getterSetter(), slot.attributes());
+            RETURN_IF_EXCEPTION(scope, {});
+            continue;
+        }
+        JSValue value = slot.getValue(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, {});
+        unsigned attributes = slot.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+        if (value.isObject() && value.asCell()->type() != JSC::JSType(JSDOMWrapperType)) {
+            PropertySlot ofSubset(subset, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool leadsOn = subset->getPropertySlot(globalObject, name, ofSubset);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (leadsOn && ofSubset.isValue() && !ofSubset.isTaintedByOpaqueObject()) {
+                JSValue below = ofSubset.getValue(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, {});
+                value = copyAlongPropertyMatchers(globalObject, scope, value, below, copies);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else
+                copies.shared.append({ copy, name, asObject(value), attributes });
+        }
+        if (parseIndex(name))
+            copy->putDirectMayBeIndex(globalObject, name, value);
+        else
+            copy->putDirect(vm, name, value, attributes);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return copy;
+}
+
+JSC::EncodedJSValue JSC__JSValue__jestCopyAlongPropertyMatchers(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    CopiesAlongPropertyMatchers copies;
+    JSValue copy = copyAlongPropertyMatchers(globalObject, scope, JSValue::decode(JSValue0), JSValue::decode(JSValue1), copies);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (auto& shared : copies.shared) {
+        JSObject* made = copies.made.get(shared.original);
+        if (!made)
+            continue;
+        if (parseIndex(shared.name))
+            shared.holder->putDirectMayBeIndex(globalObject, shared.name, made);
+        else
+            shared.holder->putDirect(vm, shared.name, made, shared.attributes);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(copy);
+}
 
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
 {

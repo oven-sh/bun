@@ -1,14 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark || other.startsWith(remark + ":")) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
 
 (function () {
 let log = [];
@@ -51,14 +44,5 @@ for (let i = 0; i < 4; i++) {
     let values = [...yieldsThenTests(i, i & 2)];
     check(values.join(), i & 1 ? (i & 2 ? "1,3" : "2,3") : (i & 2 ? "1" : "2"), "what a generator yields");
 }
-
-for (let [name, callee] of [["testsObject", "takesObject"], ["testsString", "takesString"], ["testsNumber", "takesNumber"], ["testsDouble", "takesDouble"], ["testsBoolean", "takesBoolean"], ["yieldsThenTests", "takesObject"]]) {
-    says(name, "reads-unchanged-register-from-frame");
-    says(name, "direct-call:" + callee);
-    says(name, "narrowed-tested-value");
-}
-says("doesNotTest", "reads-unchanged-register-from-frame");
-says("doesNotTest", "direct-call:takesAnything");
-doesNotSay("doesNotTest", "narrowed-tested-value");
 })();
 console.log("passed");

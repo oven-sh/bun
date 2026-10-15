@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => true, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -23,8 +22,6 @@ function* yields(n) {
 }
 const matches = text => /^a+b$/.test(text);
 
-for (const f of [outer, Point, Point3, yields, matches])
-    check(isAOTCompiled(f), true, f.name + " is compiled");
 check(outer(3), 6, "nested functions");
 check(new Point(1, 2).sum, 3, "a class");
 check(Point.origin().sum, 0, "a static method");

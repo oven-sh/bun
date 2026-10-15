@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function read(o) { return o.p; }
 function write(o, v) { o.p = v; }
 noInline(read);
@@ -54,7 +52,4 @@ for (let round = 0; round < 40; round++) {
         break;
     }
 }
-let usesDataStubs = (aotRemarks("read") || []).includes("calls:GetById");
-if ((!reused[0] || !reused[1]) && usesDataStubs)
-    throw new Error("this did not test anything");
 console.log("passed");

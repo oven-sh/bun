@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
@@ -186,41 +185,5 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
         return x;
     }
     check(onlyReturns(-5) + onlyReturns(5), 10, "no throw at all");
-
-    if (aotRemarks("throwsWhenNegative")) {
-        const throws = "throws-rarely", neverReturns = "call-never-returns", catches = "catches-rarely";
-        let applies = (name, ...remarks) => {
-            for (let remark of remarks) {
-                if (!aotRemarks(name).includes(remark))
-                    throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-            }
-        };
-        let doesNotApply = (name, ...remarks) => {
-            for (let remark of remarks) {
-                if (aotRemarks(name).includes(remark))
-                    throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" "));
-            }
-        };
-        applies("throwsWhenNegative", throws);
-        doesNotApply("throwsWhenNegative", neverReturns, catches);
-        applies("preparesBeforeThrowing", throws);
-        applies("throwsInLoop", throws);
-        applies("rethrows", catches);
-        applies("fails", throws);
-        applies("failsSometimes", throws);
-        applies("failsThroughAnother", neverReturns);
-        applies("failsOnEveryPath", throws, neverReturns);
-        applies("callsFails", neverReturns);
-        doesNotApply("callsFails", throws, catches);
-        applies("usesResultOfFails", neverReturns);
-        applies("callsFailsOnEveryPath", neverReturns);
-        applies("catchesOwnFailure", neverReturns, catches);
-        applies("continuesAfterFailures", neverReturns, catches);
-        applies("switchesWithFailure", neverReturns);
-        doesNotApply("callsFailsSometimes", neverReturns);
-        doesNotApply("callsNotes", neverReturns, throws);
-        doesNotApply("onlyReturns", neverReturns, throws, catches);
-        doesNotApply("notes", neverReturns, throws);
-    }
 })();
 console.log("passed");

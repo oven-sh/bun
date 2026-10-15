@@ -1,34 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function readsProperty(o) { return o.property; }
-noInline(readsProperty);
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-const takesIntegralDouble = "int32-argument-from-integral-double", boxesAsInt32 = "boxes-integral-double-as-int32";
 const awkward = [0, -0, 1, 2, 3.5, -1, -1.5, 7, 100, NaN, Infinity, -Infinity, 2147483647, 2147483648, -2147483648, -2147483649, 4294967297, 1e300, "2", undefined, null, true];
 
 function sliceWithDoubles(text, a, b) { let s = "" + text; return s.slice(+a, +b); }
@@ -51,14 +24,6 @@ check(awkward.map(from => indexOfFromDouble("abcabc", from)).join(), "0,0,3,3,3,
 check(awkward.map(code => fromCharCodeOfDouble(code).charCodeAt(0)).join(), "0,0,1,2,3,65535,65535,7,100,0,0,0,65535,0,0,65535,1,0,2,0,0,1", "fromCharCode");
 check(awkward.map(i => String(atDouble(i))).join(), "10,10,20,30,undefined,30,30,undefined,undefined,10,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,30,10,10,20", "at");
 check([0, 1, 2, 3, 4].map(n => halves("abcdefgh", n)).join("|"), "|a|bc|bcd|cdef", "slice between products");
-applies(sliceWithDoubles, takesIntegralDouble, "lowered-builtin:String.prototype.slice");
-applies(substringWithDoubles, takesIntegralDouble);
-applies(indexOfFromDouble, takesIntegralDouble);
-applies(fromCharCodeOfDouble, takesIntegralDouble);
-applies(atDouble, takesIntegralDouble);
-applies(halves, takesIntegralDouble);
-doesNotApply(sliceWithInt32, takesIntegralDouble);
-doesNotApply(sliceWithAnything, takesIntegralDouble);
 
 function charCodeAtDouble(text, i) { let s = "" + text; return s.charCodeAt(+i); }
 function codePointAtDouble(text, i) { let s = "" + text; return s.codePointAt(+i); }
@@ -98,8 +63,4 @@ check(stored[0], "at 0", "the element at negative zero");
 check(stored["1.5"], "at 1.5", "a property named by a fraction");
 check(stored["NaN"], "at NaN", "a property named NaN");
 check(stored["-1"], "at -1", "a property named by a negative number");
-for (let f of usesDataStubs ? [charCodeAtDouble, codePointAtDouble, charAtDouble, pushesDouble, looksUpDouble, hasDouble, storesAtDouble] : [])
-    applies(f, boxesAsInt32);
-doesNotApply(charCodeAtInt32, boxesAsInt32);
-doesNotApply(charCodeAtAnything, boxesAsInt32);
 console.log("passed");

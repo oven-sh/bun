@@ -1,30 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const isTyped = "typed-call-with-untouched-regexp-literal";
 
 function replacesLiteral(text) { let s = "" + text; let r = s.replace(/a/g, "b"); return r ? r : "empty"; }
 function replacesAllLiteral(text) { let s = "" + text; let r = s.replaceAll(/a/g, ""); return r ? r : "empty"; }
@@ -46,12 +23,6 @@ check([searchesLiteral("abc"), searchesLiteral("xyz"), searchesLiteral("")].join
 check(replacesNamedLiteral("aa"), "ba", "replace with a literal in a variable");
 check(replacesInLoop("aba", 3), 15, "replace with the same literal several times");
 check(replacesLiteralInLoop("aba", 3), 15, "replace with a literal in a loop");
-for (let f of typed)
-    applies(f, isTyped);
-for (let f of [replacesLiteral, replacesAllLiteral, replacesWithCallback, replacesNamedLiteral])
-    doesNotApply(f, "calls:ToBoolean");
-doesNotApply(splitsAtLiteral, "calls:GetLength");
-doesNotApply(searchesLiteral, "calls:GreaterEq", "inline-relational-comparison-with-int32");
 
 function touch(pattern) { pattern[Symbol.replace] = function () { return 42; }; }
 noInline(touch);
@@ -91,6 +62,4 @@ check(changedLastIndex(), "ayc", "a lastIndex that is an object");
 check(usedTwiceInCall(), "a/b/c", "a literal that is both arguments");
 check(oneOfTwoLiterals(0) + oneOfTwoLiterals(1), "ybcayc", "one of two literals");
 check([anyPattern(/b/), anyPattern("b"), anyPattern({ [Symbol.replace]() { return 0; } }), anyPattern({ toString() { return "c"; } })].join(), "ayc,ayc,empty,aby", "any pattern");
-for (let f of untyped)
-    doesNotApply(f, isTyped);
 console.log("passed");

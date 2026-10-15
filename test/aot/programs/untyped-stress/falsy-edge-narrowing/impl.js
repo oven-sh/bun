@@ -1,30 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const narrowsFalsy = "narrowed-falsy-value", callsToBoolean = "calls:ToBoolean";
 
 function objectAndNumber(given, n) { let o = given === true ? { a: 1 } : undefined; let result = o && (n | 0); return result ? "truthy" : "falsy"; }
 function arrayAndNumber(given, n) { let list = given === true ? [1] : null; let result = list && (n | 0); return result ? "truthy" : "falsy"; }
@@ -51,10 +28,6 @@ check(objectOrZero(2), -0, "negative zero and not an object");
 check(objectOrZero(3), NaN, "NaN and not an object");
 check([0, 1, 2].map(objectOrFlag).join(), "truthy,falsy,truthy", "an array or a boolean");
 check([0, 1, 3].map(lastOfChain).join(), "0,1,2", "a loop that ends at null");
-for (let f of narrowed)
-    applies(f, narrowsFalsy);
-for (let f of [objectAndNumber, arrayAndNumber, mapAndFlag, symbolAndNumber, regExpAndNumber])
-    doesNotApply(f, callsToBoolean);
 
 function functionAndNumber(given, n) { let f = given ? () => 1 : undefined; let result = f && (n | 0); return result ? "truthy" : "falsy"; }
 function stringAndNumber(which, n) { let text = which === 0 ? "text" : which === 1 ? "" : undefined; let result = text && (n | 0); return result === "" ? "empty" : result ? "truthy" : "falsy"; }
@@ -88,6 +61,4 @@ if (typeof makeMasquerader === "function") {
     check(returnsFalsyAnything(masquerader), masquerader, "an object that masquerades as undefined and is returned");
 }
 check(objectThatIsNotUsed(true) + objectThatIsNotUsed(false), 1, "an object that is not used where it is missing");
-for (let f of notNarrowed)
-    doesNotApply(f, narrowsFalsy);
 console.log("passed");

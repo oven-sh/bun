@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -94,20 +93,4 @@ for (let round = 1; round <= 30; ++round) {
         fullGC();
 }
 
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = typeof aotRemarks === "function" && isAOTCompiled(readsProperty) && (aotRemarks("readsProperty") || []).includes("calls:GetById");
-function outcomesOf(name) {
-    const lines = aotTypeCoverage(name);
-    if (!lines)
-        throw new Error("no coverage for " + name);
-    return lines.flatMap(line => line.split(" ").slice(7));
-}
-if (usesDataStubs) {
-    for (const name of ["storesIntoEnvironment", "storesAnythingIntoEnvironment", "storesIntoFieldsOneByOne", "storesIntoElementsOneByOne"]) {
-        check(outcomesOf(name).includes("calls:WriteBarrier"), false, name + " calls the stub on the usual path");
-        check(outcomesOf(name).includes("rarely-calls:WriteBarrier"), true, name + " calls the stub off the usual path");
-    }
-    check(outcomesOf("storesNumber").some(outcome => outcome.endsWith("calls:WriteBarrier")), false, "a number needs a barrier");
-}
 console.log("passed");

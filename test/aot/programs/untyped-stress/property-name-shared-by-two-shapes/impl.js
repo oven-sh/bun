@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -30,9 +29,6 @@ function makesReaders() {
 }
 let [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither, readsAndWritesStateOfEither] = makesReaders();
 
-let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("Family::guard:" + detail) || 0;
-let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell") + countOf("exits-departed");
-
 for (let i = 0; i < 100; i++) {
     setsHook(makesHook(i));
     setsNode(makesNode(i));
@@ -52,7 +48,6 @@ for (let i = 0; i < 100; i++) {
     check(readsKeyOfEither(), i & 1 ? undefined : i + 2, "a name of the second shape on that variable");
 }
 {
-    let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++) {
         setsHook(makesHook(i));
         setsNode(makesNode(i));
@@ -61,10 +56,6 @@ for (let i = 0; i < 100; i++) {
         readsQueueOfHook();
         readsKeyOfNode();
         readsThreeOfHook();
-    }
-    if (jscOptions().useAOTOperationCounters && jscOptions().useAOTDataStubs) {
-        check(countOf("passes") - before[0] >= 200, true, "the guards pass what the variables usually hold");
-        check(exits() - before[1], 0, "no guard fails on what the variables usually hold");
     }
 }
 for (let i = 0; i < 100; i++) {
@@ -83,43 +74,4 @@ for (let i = 0; i < 100; i++) {
     check(readsStateOfHook(), i + 1, "a getter read alone");
 }
 
-if (aotRemarks("readsQueueOfHook") && jscOptions().useAOTDataStubs) {
-    let has = (name, remark) => aotRemarks(name).includes(remark);
-    let applies = (name, remark) => {
-        if (!has(name, remark))
-            throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" | "));
-    };
-    let doesNotApply = (name, remark) => {
-        if (has(name, remark))
-            throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" | "));
-    };
-    for (let name of ["readsStateOfHook", "writesStateOfHook", "readsStateOfNode", "readsThreeOfHook"]) {
-        applies(name, "guessed-place:sharedState");
-        applies(name, "guessed-place-by-names-on-variable:sharedState");
-        doesNotApply(name, "no-guess:disagree");
-        doesNotApply(name, "no-guess:no-family");
-    }
-    applies("readsQueueOfHook", "guessed-place:hookQueue");
-    applies("readsNextOfHook", "guessed-place:hookNext");
-    applies("readsKeyOfNode", "guessed-place:nodeKey");
-    applies("readsStateOfParameter", "no-guess:disagree");
-    doesNotApply("readsStateOfParameter", "guessed-place:sharedState");
-    applies("readsQueueOfEither", "guessed-place:hookQueue");
-    applies("readsKeyOfEither", "guessed-place:nodeKey");
-    doesNotApply("readsQueueOfEither", "guessed-place-by-names-on-variable:hookQueue");
-    doesNotApply("readsKeyOfEither", "guessed-place-by-names-on-variable:nodeKey");
-    doesNotApply("readsQueueOfEither", "no-guess:no-shape");
-    applies("readsStateOfEither", "no-guess:disagree");
-    doesNotApply("readsStateOfEither", "guessed-place:sharedState");
-    applies("readsThreeOfHook", "guards-over-whole-function");
-    for (let name of ["sharedState", "hookQueue", "hookNext"])
-        applies("readsThreeOfHook", "family-guards-read:" + name);
-    doesNotApply("readsThreeOfHook", "no-guards-over-whole-function:too-few-places");
-    applies("readsAndWritesStateOfEither", "no-guess:disagree");
-    doesNotApply("readsAndWritesStateOfEither", "guessed-place:sharedState");
-    doesNotApply("readsAndWritesStateOfEither", "guards-over-whole-function");
-    applies("readsAndWritesStateOfEither", "no-guards-over-whole-function:too-few-places");
-    if (jscOptions().useAOTOperationCounters)
-        check(exits() >= 300, true, "a guard fails whenever the variable holds something else");
-}
 console.log("passed");

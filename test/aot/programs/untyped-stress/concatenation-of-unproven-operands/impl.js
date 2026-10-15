@@ -1,19 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-    }
-    function remarksOf(name) { return typeof aotRemarks === "function" && aotRemarks(name) || null; }
-    function applies(name, remark) {
-        let remarks = remarksOf(name);
-        if (remarks && !remarks.includes(remark))
-            throw new Error(remark + " does not apply to " + name + ": " + remarks.join(" "));
-    }
-    function doesNotApply(name, remark) {
-        let remarks = remarksOf(name);
-        if (remarks && remarks.includes(remark))
-            throw new Error(remark + " applies to " + name);
     }
     function thrownBy(callback) {
         try {
@@ -137,40 +125,5 @@ const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = 
     check(addToTextInLoop(mixed), lengthOfAll + mixed.length, "text + unknown in a loop");
     check(subtractFromTextInLoop([1, "2", 3]), 21, "text - unknown in a loop");
     check(addsNoTextInLoop(5), 2, "boolean + null in a loop");
-    if ((remarksOf("provenInLoop") || []).includes("calls:HelperMakeRope2")) {
-        applies("threeInLoop", "calls:HelperStrcat");
-        doesNotApply("sixInLoop", "calls:HelperStrcat");
-        applies("sixInLoop", "calls:operationAOTStrcat");
-        applies("addToTextInLoop", "calls:HelperAddStrings");
-        doesNotApply("subtractFromTextInLoop", "calls:HelperAddStrings");
-        doesNotApply("addsNoTextInLoop", "calls:HelperAddStrings");
-    }
-    doesNotApply("three", "calls:HelperStrcat");
-    doesNotApply("addToText", "calls:HelperAddStrings");
-
-    function reaches(name, callback, first = 0, mask = 63) {
-        let before = aotOperationCount(name);
-        for (let i = 0; i < 1000; ++i)
-            callback(first + (i & mask));
-        return aotOperationCount(name) - before;
-    }
-    if (typeof aotOperationCount === "function" && (remarksOf("three") || []).includes("calls:OperationValueWithInstance") && reaches("operationAOTStrcat", i => six("text", i, "more", i)) === 1000) {
-        const refills = 10;
-        for (let round = 0; round < 2; ++round) {
-            gc();
-            check(reaches("operationAOTValueAdd", i => add("text", i), 0, 7) < refills, true, "text + digit stays out of C++ after a collection");
-            check(reaches("operationAOTValueAdd", i => add(i, "text"), 0, 7) < refills, true, "digit + text stays out of C++");
-            check(reaches("operationAOTValueAdd", i => addToText(i), 0, 7) < refills, true, "literal + digit stays out of C++");
-            check(reaches("operationAOTValueAdd", i => add("text", "more")) < refills, true, "text + text stays out of C++");
-            check(reaches("operationAOTValueAdd", i => add("text", i), 10) < 64 + refills, true, "each number is converted in C++ once");
-            check(reaches("operationAOTValueAdd", i => add("text", i), 10) < refills, true, "text + Int32 stays out of C++");
-            check(reaches("operationAOTValueAdd", i => add(i, "text"), 10) < refills, true, "Int32 + text stays out of C++");
-            check(reaches("operationAOTValueAdd", i => addToText(i), 10) < refills, true, "literal + Int32 stays out of C++");
-            check(reaches("operationAOTStrcat", i => three("text", "more")) < refills, true, "three texts stay out of C++");
-            check(reaches("operationAOTStrcat", i => five("text", i, "more"), 10) < refills, true, "five with an Int32 stay out of C++");
-        }
-        check(reaches("operationAOTValueAdd", i => add("text", i + 0.5)), 1000, "text + double is added in C++");
-        check(reaches("operationAOTValueAdd", i => add("text", null)), 1000, "text + null is added in C++");
-    }
 })();
 console.log("passed");

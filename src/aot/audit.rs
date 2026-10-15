@@ -824,6 +824,7 @@ fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<
     let mut text = String::from("{\"name\":");
     quoted(&mut text, name_of_layout(program, layout).as_bytes());
     text.push_str(",\"fields\":{");
+    let seen_as: Vec<&crate::ir::Layout> = if linked.is_some() { program.layouts.iter().filter(|view| view.members.contains(&layout)).collect() } else { Vec::new() };
     for (i, field) in described.fields.iter().filter(|field| field.flags & (crate::ir::field_flags::METHOD | crate::ir::field_flags::NEVER_STORED) == 0).enumerate() {
         if i > 0 {
             text.push(',');
@@ -831,9 +832,12 @@ fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<
         quoted(&mut text, program.strs.get(field.name));
         let _ = write!(text, ":{{\"optional\":{},\"to\":", field.flags & crate::ir::field_flags::OPTIONAL != 0);
         write_type(program, &mut text, if field.declared.is_some() { field.declared } else { program.tys.anything }, 0, linked);
+        if field.flags & crate::ir::field_flags::OPTIONAL == 0 && seen_as.iter().any(|view| view.fields.iter().any(|other| other.name == field.name && other.flags & crate::ir::field_flags::OPTIONAL != 0)) {
+            text.push_str(",\"absent\":true");
+        }
         text.push('}');
     }
-    text.push_str("}}");
+    text.push_str(if linked.is_some() && (described.kind == LayoutKind::Record || described.may_be_frozen) { "},\"frozen\":true}" } else { "}}" });
     text
 }
 
@@ -1030,6 +1034,10 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
     let lines: Vec<Option<Lines>> = program.modules.iter().map(|module| Lines::read(&module.line_table)).collect();
     let linked = is_linked.then(|| Linked::of(program));
     let linked = linked.as_ref();
+    let entered_by_a_second_body: rustc_hash::FxHashSet<(usize, u32)> = (program.funcs.iter())
+        .filter(|entry| entry.kind == crate::ir::FuncKind::Method && entry.has(func_flags::IS_GENERAL_ENTRY) && entry.module.is_some())
+        .map(|entry| (entry.module.idx(), entry.pos))
+        .collect();
     let mut numbers = Numbers::default();
     let mut chains_by_module: Vec<Vec<Chain>> = program.modules.iter().map(|_| Vec::new()).collect();
     let mut modules: Vec<Module> = (program.modules.iter())
@@ -1155,7 +1163,8 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
             chain.steps.sort_by_key(|step| step.0);
         }
         let mut parameters: Vec<Parameter> = Vec::new();
-        if !is_linked || func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method {
+        let is_entered_by_a_second_body = func.kind == crate::ir::FuncKind::Method && entered_by_a_second_body.contains(&(module, func.pos));
+        if !is_entered_by_a_second_body && (!is_linked || func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method) {
             let body = func.spans.iter().find(|span| span.value.is_none() && span.step > STORED);
             let first = func.captures.len() + usize::from(func.has(func_flags::HAS_THIS));
             let entry = func.blocks.first().map_or(&[][..], |block| &block.params[..]);
@@ -1168,13 +1177,18 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 }
                 let mut rest = format!(",\"index\":{index},\"to\":");
                 write_type(program, &mut rest, param, 0, None);
+                let takes = program.tys.get(param);
+                let holds = is_linked && !takes.any_object && !takes.any_function && !takes.parts.is_empty() && takes.parts.iter().all(|part| matches!(part, Part::Global(..)));
+                if holds {
+                    rest.push_str(",\"holds\":true");
+                }
                 if !is_linked {
                     rest.push_str(if func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method { ",\"unsure\":1" } else { ",\"unsure\":2" });
                 }
                 let step = step(func.pos, Kind::EnterFunction, "As", &rest, Some(index as u32));
                 let (Some(body), Some(span)) = (body, spans.get(&v)) else { continue };
                 let declared = program.tys.get(param);
-                let objects = if declared.has_objects() { class::OBJECT | class::FUNCTION } else { 0 };
+                let objects = if declared.has_objects() && !holds { class::OBJECT | class::FUNCTION } else { 0 };
                 parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: passes(program, declared, None) | objects, least: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).0, most: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).1, step });
             }
         }

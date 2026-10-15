@@ -3816,7 +3816,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         JSC::JSSourceCode* compiled = Bun::sourceOfFileOfCompiledProgram(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
-        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        if (scope.exception()) [[unlikely]] {
+            JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
+            rejected->markAsHandled();
+            return rejected->rejectWithCaughtException(vm, scope);
+        }
         if (compiled)
             return resolvedInternalPromise(globalObject, compiled);
     }

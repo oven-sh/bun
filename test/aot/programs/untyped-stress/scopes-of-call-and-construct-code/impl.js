@@ -1,15 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function knowsCallee(name, callee) {
-    let remarks = aotRemarks(name);
-    return !remarks || remarks.includes("inlined-call:" + callee) || remarks.includes("direct-call:" + callee);
-}
-function knowsNoCallee(name) {
-    let remarks = aotRemarks(name);
-    return !remarks || !remarks.some(remark => remark.startsWith("inlined-call:") || remark.startsWith("direct-call:"));
 }
 
 (function () {
@@ -19,7 +10,6 @@ function knowsNoCallee(name) {
         this.get = function readsOnlyConstructed() { return twice(n) + 1; };
     }
     check(new OnlyConstructed(3).get(), 7, "only constructed");
-    check(knowsCallee("readsOnlyConstructed", "twice"), true, "the function in a variable of a function that is only constructed is known");
 
     function OnlyCalled(start) {
         var n = start;
@@ -27,7 +17,6 @@ function knowsNoCallee(name) {
         return { owner: this, get: function readsOnlyCalled() { return halves(n) + 1; } };
     }
     check(OnlyCalled(4).get(), 3, "only called");
-    check(knowsCallee("readsOnlyCalled", "halves"), true, "the function in a variable of a function that is only called is known");
 
     function Both(start) {
         var m = start;
@@ -41,7 +30,6 @@ function knowsNoCallee(name) {
     check(new Both(2)(), 7, "constructed");
     check(Both(1.5)(), 5.5, "called with a double");
     check(new Both("2")(), 7, "constructed with a string");
-    check(knowsCallee("readsBoth", "thrice"), true, "the same function stored by both is known");
 
     function Differs() {
         var pick = new.target ? function whenConstructed(x) { return x + 1; } : function whenCalled(x) { return x + 2; };
@@ -49,7 +37,6 @@ function knowsNoCallee(name) {
     }
     check(Differs()(1), 3, "the function stored by the call");
     check(new Differs()(1), 2, "the function stored by the construction");
-    check(knowsNoCallee("runsPick"), true, "different functions stored by the two are not known");
 
     function MakesEither() {
         return new.target ? function madeByConstruction(x) { return x + 1; } : function madeByCall(x) { return x + 2; };

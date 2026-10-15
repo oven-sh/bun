@@ -1,13 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isOn = !!remarksOf("check") && !!options.useAOTDataStubs;
-const bound = options.numberOfAOTFamiliesWithByteForTesting | 0;
 
 (function () {
     let onEffect = null;
@@ -43,18 +37,5 @@ const bound = options.numberOfAOTFamiliesWithByteForTesting | 0;
         onEffect = null;
         check(reads(make()), 6, "another member afterwards, in " + reads.name);
     }
-
-    if (!isOn)
-        return;
-    const familyOf = (name, property) => Number(remarksOf(name).find(remark => remark.startsWith("guessed-family:") && remark.endsWith(":" + property)).split(":")[1]);
-    const checksOf = name => remarksOf(name).filter(remark => remark.startsWith("guard-checks-")).sort().join();
-    for (const name of ["readsOften", "readsSeldom"])
-        check(remarksOf(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
-    check(familyOf("readsOften", "oftenFirst"), 1, "the number of the family with the most sites");
-    check(familyOf("readsSeldom", "zzSeldomFirst") >= 2, true, "the family with few sites has a higher number");
-    check(checksOf("readsOften"), "guard-checks-byte:oftenSecond,guard-checks-byte:oftenThird,guard-checks-family:oftenFirst", "behind an effect a family with a byte reads the byte");
-    check(checksOf("readsSeldom"), bound
-        ? "guard-checks-family-of-known-cell:zzSeldomSecond,guard-checks-family-of-known-cell:zzSeldomThird,guard-checks-family:zzSeldomFirst"
-        : "guard-checks-byte:zzSeldomSecond,guard-checks-byte:zzSeldomThird,guard-checks-family:zzSeldomFirst", "behind an effect a family without a byte compares the number again");
 })();
 console.log("passed");

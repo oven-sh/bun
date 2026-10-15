@@ -1,21 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
 }
 
 function spreadLast(o) { return { z: 0, ...o }; }
@@ -23,9 +8,6 @@ function spreadTwo(o, p) { return { ...o, ...p }; }
 function restOf(o) { const { k0, k1, k2, k3, k4, k5, k6, k7, k8, k9, ...rest } = o; return rest; }
 for (const f of [spreadLast, spreadTwo, restOf])
     noInline(f);
-applies(spreadLast, "copies-data-properties");
-applies(spreadTwo, "copies-data-properties");
-applies(restOf, "copies-data-properties");
 
 function makeDictionary(hidden, visible) {
     const result = {};

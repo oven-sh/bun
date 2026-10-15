@@ -1,31 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    return typeof aotRemarks === "function" && isAOTCompiled(f) ? aotRemarks(f.name) : null;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
 
 let kept = null;
 function object1(a) { kept = { p: a }; return kept; }
@@ -125,42 +101,4 @@ for (let round = 0; round < rounds; ++round) {
     check(t.q[1], "x", "in a try block");
 }
 
-if (usesDataStubs) {
-    for (let i = 0; i < 4; ++i)
-        applies(objects[i], "literal-born-from-registers:" + (i + 1), "calls:NewObjectLiteral" + (i + 1));
-    for (let f of [object1, object2, object3, object4])
-        doesNotApply(f, "calls:operationAOTNewObjectLiteral");
-    applies(constants, "allocation-escapes");
-    applies(nested, "literal-born-from-registers:4", "literal-born-from-registers:1", "array-born-from-registers:2");
-    applies(inTry, "literal-born-from-registers:2", "array-born-from-registers:2");
-    for (let i = 0; i < 4; ++i) {
-        applies(arrays[i], "array-born-from-registers:" + (i + 1), "calls:NewArrayLiteral" + (i + 1));
-        doesNotApply(arrays[i], "calls:operationAOTNewArray", "calls:NewInt32ArrayLiteral" + (i + 1));
-    }
-    applies(int32Array, "array-born-from-registers:3", "calls:NewInt32ArrayLiteral3");
-    doesNotApply(int32Array, "calls:NewArrayLiteral3");
-}
-for (let f of [object7, object10]) {
-    doesNotApply(f, "literal-born-from-registers");
-    applies(f, "calls:operationAOTNewObjectLiteral");
-}
-for (let f of [array5, emptyArray])
-    doesNotApply(f, "array-born-from-registers");
-if (!usesDataStubs) {
-    for (let f of [...objects, constants, nested, inTry])
-        doesNotApply(f, "literal-born-from-registers");
-    for (let f of [...arrays, int32Array, nested, inTry])
-        doesNotApply(f, "array-born-from-registers");
-}
-
-if (usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTNewObjectLiteral") !== null) {
-    let before = aotOperationCount("operationAOTNewObjectLiteral") + aotOperationCount("operationAOTNewArray");
-    for (let i = 0; i < 20000; ++i) {
-        object5(i, i, i, i, i);
-        array2(i, i);
-    }
-    let arrivals = aotOperationCount("operationAOTNewObjectLiteral") + aotOperationCount("operationAOTNewArray") - before;
-    if (arrivals > 2000)
-        throw new Error("40000 births reached the runtime " + arrivals + " times");
-}
 console.log("passed");

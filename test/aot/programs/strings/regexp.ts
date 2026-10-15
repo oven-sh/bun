@@ -2,7 +2,7 @@
 // CALLS+ literal NewRegExpLiteral
 // CALLS- literal ConstructInternalFunction
 // CALLS+ constants NewRegExpLiteral
-// CALLS+ fromSource operationAOTTypedNewRegExp
+// CALLS+ fromSources operationAOTTypedNewRegExp
 // CALLS+ fromBoth ConstructInternalFunction2
 // CALLS+ vowels StringReplaceRegExpString
 // CALLS+ shout operationAOTTypedStringReplaceRegExp
@@ -39,6 +39,7 @@ function flattened(s: string): string { s.charCodeAt(0); return s; }
 export function literal(): RegExp { return /a+(b)?/gi; }
 export function constants(): RegExp { return new RegExp("a+(b)?", "gi"); }
 export function fromSource(s: string): RegExp { return new RegExp(s, "g"); }
+export function fromSources(list: string[]): RegExp[] { const out: RegExp[] = []; for (const s of list) out.push(new RegExp(s, "g")); return out; }
 export function fromBoth(s: string, f: string): RegExp { return new RegExp(s, f); }
 export function vowels(s: string, re: RegExp, by: string): string { return s.replace(re, by); }
 // What is of another kind than a parameter's type says is refused where it is handed over: such values go in by parameters that take anything.
@@ -91,4 +92,5 @@ print([() => shout("abc", /b/, () => { throw new RangeError("mine"); }), () => s
 print([RegExp.$1, RegExp.lastMatch, (RegExp as any)["$`"]].map(show).join() + " " + (vowels("xaby", /a(b)/, "_"), [RegExp.$1, RegExp.lastMatch, (RegExp as any)["$`"]].map(show).join()) + " " + (found("xcdy", /c(d)/), [RegExp.$1, RegExp.lastMatch].map(show).join()) + " " + (where("xefy", /e(f)/), [RegExp.$1, RegExp.lastMatch].map(show).join()) + " " + (words("xghy", /g(h)/), [RegExp.$1, RegExp.lastMatch].map(show).join()));
 let sum = 0; for (let i = 0; i < 20000; i++) { const s = "item " + i + ", value " + (i * 7); sum = (sum + s.replace(/\d+/g, "#").length + s.split(/,\s*/).length + (/value (\d+)/.exec(s)![1]!.length) + (/9/.test(s) ? 1 : 0) + s.search(/v/) + s.match(/\d/g)!.length) % 1000003; } print(String(sum));
 // The functions the expectations name stay functions: one that is copied into all its callers has no code of its own.
-(globalThis as any).kept = [literal, constants, fromSource, fromBoth, vowels, shout, swap, words, parts, found, where, isGlobal, flagsOf, sourceOf]; console.log("number");
+print(fromSources(["a.c", "\\d+", ""]).join());
+(globalThis as any).kept = [literal, constants, fromSource, fromSources, fromBoth, vowels, shout, swap, words, parts, found, where, isGlobal, flagsOf, sourceOf]; console.log("number");

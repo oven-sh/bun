@@ -63,6 +63,11 @@ use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
+unsafe extern "C" {
+    safe fn Bun__AOT__keepTypeErrorsThrown();
+    safe fn Bun__AOT__typeErrorsThrown() -> bun_core::String;
+}
+
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -1789,6 +1794,9 @@ impl TestCommand {
             use_aot: aot_graph.is_some_and(|graph| !graph.aot_image().is_empty()),
             ..Default::default()
         });
+        if aot_graph.is_some() {
+            Bun__AOT__keepTypeErrorsThrown();
+        }
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -2685,6 +2693,22 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        if aot_graph.is_some() {
+            let thrown = Bun__AOT__typeErrorsThrown();
+            let thrown = thrown.to_utf8();
+            let places = thrown.split(|&byte| byte == b'\n').filter(|place| !place.is_empty());
+            let count = places.clone().filter(|place| !place.starts_with(b"...")).count();
+            if count > 0 {
+                pretty_error!(
+                    "<yellow>{} type error{} of --aot<r> thrown during this run, caught or not:\n",
+                    count,
+                    if count == 1 { "" } else { "s" }
+                );
+                for place in places {
+                    pretty_error!("  {}\n", bstr::BStr::new(place));
+                }
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();

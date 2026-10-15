@@ -1,44 +1,10 @@
 # <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
-calls-fast-paths/constructor-at-any-depth	// IR= 0 top CallDirect
-calls-fast-paths/listener-under-a-constant-key	// IR= 1 run CallDirect
-calls-fast-paths/rest-callee-called-by-name	// IR+ CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
-strings/access	// CALLS- at_ CallHostFunction|CallValue
-strings/access	// CALLS- charAt_ CallHostFunction|CallValue
-strings/access	// CALLS- charCodeAt_ CallHostFunction|CallValue
-strings/access	// CALLS- codePointAt_ CallHostFunction|CallValue
-strings/access	// CALLS- element_ CallHostFunction|CallValue|GetByVal
-strings/buffer-byte-length	// CALLS+ ofTextWithHyphen StringUTF8Length8
-strings/characters-outside-loops	// CALLS- byIndex Flatten
-strings/characters-outside-loops	// CALLS- endsWithNewline StringIsText|StringHasAt|(^|[ f])TypedString(;|$)
-strings/keys-in-one-piece	// CALLS+ cached operationAOTTypedConcatenateWithIntegers
-strings/keys-in-one-piece	// CALLS+ getPair operationAOTTypedConcatenateWithIntegers
-strings/keys-in-one-piece	// CALLS+ property operationAOTTypedConcatenateWithIntegers
-strings/keys-in-one-piece	// CALLS+ throughJoin operationAOTTypedConcatenateWithIntegers
-strings/locale-compare	// CALLS+ sorted operationAOTTypedStringLocaleCompare
-strings/regexp	// CALLS+ fromSource operationAOTTypedNewRegExp
+# By design: outside a loop, code size matters more than speed. `repeat`, `padStart` and `padEnd` call the engine's own function there, and `s[i]` goes through a body that all such sites share, which returns a string. The same programs check the fast forms inside a loop (`indented`, `keptInLoop`).
 strings/repeat-and-pad	// CALLS+ filledAtEnd operationAOTTypedStringPad
 strings/repeat-and-pad	// CALLS+ filledAtStart operationAOTTypedStringPad
 strings/repeat-and-pad	// CALLS+ paddedAtEnd operationAOTTypedStringPad
 strings/repeat-and-pad	// CALLS+ paddedAtStart operationAOTTypedStringPad
 strings/repeat-and-pad	// CALLS+ repeated operationAOTTypedStringRepeat
-strings/searches-outside-loops	// CALLS+ ends5 StringEndsWithText
-strings/searches-outside-loops	// CALLS+ includesText operationAOTTypedStringIndexOfText
-strings/searches-outside-loops	// CALLS+ indexOfCharacter operationAOTTypedStringFindCharacter8
-strings/searches-outside-loops	// CALLS+ indexOfCharacter operationAOTTypedStringIndexOfText
-strings/searches-outside-loops	// CALLS+ indexOfText operationAOTTypedStringFindText8
-strings/searches-outside-loops	// CALLS+ lastIndexOfText operationAOTTypedStringLastIndexOfText
-strings/searches-outside-loops	// CALLS+ lastIndexOfText operationAOTTypedStringReverseFindText8
-strings/searches-outside-loops	// CALLS+ starts5 StringStartsWithText
-strings/searches-outside-loops	// CALLS- includesText (^|[ f])TypedString(;|$)
-strings/searches-outside-loops	// CALLS- starts5 (^|[ f])TypedString(;|$)
 strings/single-characters	// CALLS- kept StringHasAt|StringIsText
-strings/single-characters	// CALLS- slashAt StringHasAt|StringIsText
-strings/string-from-char-code-concat-normalize	// CALLS- fromCharCode1 CallHostFunction|CallValue
+# Open: a key that is built from a string and integers is not yet built in one piece.
 strings/strings-built-and-consumed-in-one-function	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
-strings/strings-built-and-consumed-in-one-function	// REMARK+ acrossBranches (Add|Strcat): stack
-strings/strings-built-and-consumed-in-one-function	// REMARK+ nearTheLimit (Add|Strcat): stack
-strings/strings-built-and-consumed-in-one-function	// REMARK+ notAKeyAcrossBranches rejected: not in a loop and not a map key
-strings/strings-built-and-consumed-in-one-function	// REMARK+ startsFromString (Add|Strcat): stack
-strings/strings-built-and-consumed-in-one-function	// REMARK+ withNilOperands (Add|Strcat): stack
-strings/strings-built-and-consumed-in-one-function	// REMARK+ wordsAndNumbers (Add|Strcat): stack
-strings/strings-built-and-consumed-in-one-function	// REMARK- nearTheLimit rejected

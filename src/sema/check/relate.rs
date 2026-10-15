@@ -6107,7 +6107,10 @@ impl<'p, 's> Checker<'p, 's> {
         skip_optional: bool,
     ) -> Ternary {
         let (source, target) = of;
-        let (sf, tf) = (source_prop.flags, target_prop.flags);
+        let (mut sf, tf) = (source_prop.flags, target_prop.flags);
+        if r.relation == Relation::AssignableAsStored && !tf.intersects(PropFlags::PRIVATE | PropFlags::PROTECTED) {
+            sf.remove(PropFlags::PRIVATE | PropFlags::PROTECTED);
+        }
         if sf.contains(PropFlags::PRIVATE) || tf.contains(PropFlags::PRIVATE) {
             if Self::value_declaration(source_prop) != Self::value_declaration(target_prop) {
                 if REPORT {

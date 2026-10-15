@@ -763,7 +763,7 @@ static void NodeHTTPServer__writeHead(
             });
         } else {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            headersObject->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+            headersObject->methodTable()->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, void());
 
             for (unsigned i = 0; i < propertyNames.size(); ++i) {

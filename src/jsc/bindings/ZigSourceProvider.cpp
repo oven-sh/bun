@@ -26,7 +26,6 @@ JS_EXPORT_PRIVATE uint64_t imageStamp();
 #endif
 #include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/PrivateName.h>
-#include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <zstd.h>
@@ -441,6 +440,15 @@ extern "C" bool Bun__BytecodeLinkEncoder__finish(JSC::BytecodeLinkEncoder* encod
     *outputByteCodeSize = result.payload->span().size();
     *cachedBytecodePtr = result.payload.leakRef();
     return true;
+}
+
+extern "C" void Bun__BytecodeLinkEncoder__takeBuildErrors(JSC::BytecodeLinkEncoder* encoder, void* ctx, void (*add)(void* ctx, const uint8_t* message, size_t messageLength, const uint8_t* path, size_t pathLength, uint32_t line, uint32_t column))
+{
+    for (auto& error : encoder->takeBuildErrors()) {
+        auto message = error.message.utf8();
+        auto path = error.path.utf8();
+        add(ctx, byteCast<uint8_t>(message.data()), message.length(), byteCast<uint8_t>(path.data()), path.length(), error.position.line, error.position.column);
+    }
 }
 
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
@@ -1034,7 +1042,6 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
         s_auditHelpers = new UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>();
     s_auditHelpers->set(globalObject, JSC::Strong<JSC::JSObject>(vm, asObject(check)));
     globalObject->setAuditFunction(vm, JSC::JSFunction::create(vm, globalObject, 2, "check"_s, jsAOTAuditCheck, JSC::ImplementationVisibility::Private));
-    globalObject->setAuditTag(vm, JSC::Symbol::create(vm, auditTag().uid()));
 }
 
 extern "C" void Bun__AOTAudit__writeRefusedChange(const uint8_t* kind, size_t lengthOfKind, const BunString* message, const BunString* functionName, const BunString* sourceURL, int32_t line, int32_t column);

@@ -299,7 +299,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// What stands in for the exports of a module that has no object for them. Nobody looks at it.
     fn exports_without_object(&mut self, fx: &mut Fx) -> V {
-        self.emit(fx, Op::Bool(true))
+        self.emit(fx, if fx.is_typed { Op::NewObject } else { Op::Bool(true) })
     }
 
     /// `m` of `m.name` is evaluated for what that does: `require(..)` evaluates the module, a `let` or a `const` may be in its dead zone, and a `var` may
@@ -483,7 +483,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     _ => None,
                 }
             }
-            ExprKind::Binary { op, left, right } if self.is_commonjs(file) => {
+            ExprKind::Binary { op, left, right } => {
                 let (module, main) = if named(self, left, b"module") { (left, right) } else { (right, left) };
                 let ExprKind::Dot { obj: require, name, chain: bun_sema::hir::Chain::No, .. } = hir[main].kind else { return None };
                 if self.c.atoms().bytes(name) != b"main" || !named(self, require, b"require") || !is_free(self, require) || !is_free(self, module) {
@@ -504,7 +504,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         use bun_sema::hir::BinOp;
         let file = fx.file;
         let is_equality = matches!(op, BinOp::EqEqEq | BinOp::EqEq);
-        if !(is_equality || matches!(op, BinOp::NotEqEq | BinOp::NotEq)) || self.shared.constants.own_paths.is_none() || !self.is_commonjs(file) || self.is_builtin_file(file) {
+        if !(is_equality || matches!(op, BinOp::NotEqEq | BinOp::NotEq)) || self.shared.constants.own_paths.is_none() || self.is_builtin_file(file) {
             return None;
         }
         let hir = self.hir(file);
@@ -556,6 +556,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let evaluate = self.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::EvaluationByNumber(entry));
         self.out.funcs[evaluate.idx()].params = vec![crate::id::TyId::NONE; 4];
         self.out.funcs[evaluate.idx()].length = 4;
+        self.out.funcs[evaluate.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
         let table = self.emit(fx, Op::NewObject);
         let key = self.out.strs.intern(b"");
         let key = self.emit(fx, Op::Str(key));
@@ -733,7 +734,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.jump(none);
                 fx.b.switch_to(skips);
                 if self.is_commonjs(file) {
-                    let not_mine = self.emit(fx, Op::Null);
+                    let is_the_hosts = self.is_seen_through_the_host(file);
+                    let not_mine = self.emit(fx, if is_the_hosts { Op::Int(1) } else { Op::Null });
                     self.terminate_with_return(fx, not_mine);
                 } else {
                     let flag = self.global_of_module(file, "evaluated");
@@ -1419,10 +1421,43 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(self.emit_throwing(fx, Op::CallMethod { obj: require, name: resolve, args: [specifier, options].into_iter().collect() }))
     }
 
+    fn variable_of_what_the_host_loads(&mut self, keeper: FileId, key: crate::id::StrId) -> GlobalId {
+        if let Some(&(_, global)) = self.external_modules.iter().find(|&&(known, _)| known == key) {
+            return global;
+        }
+        let global = self.add_global(key, keeper, Ty::NONE, GlobalKey::ExternalModule(self.out.strs.get(key).into()));
+        self.external_modules.push((key, global));
+        self.out.globals[global.idx()].initialization = ir::Initialization::Undefined;
+        global
+    }
+
     pub(crate) fn emit_value_of_asset(&mut self, fx: &mut Fx, file: FileId, specifier: Atom, text: &[u8]) -> V {
-        let text = self.out.strs.intern(text);
-        let text = self.emit(fx, Op::Str(text));
+        let interned = self.out.strs.intern(text);
+        let text = self.emit(fx, Op::Str(interned));
         let Some(kind) = self.asset_the_host_loads(file, specifier) else { return text };
+        if matches!(kind, super::imports::HostLoads::Manifest) {
+            let global = self.variable_of_what_the_host_loads(file, interned);
+            return self.lazily(fx, global, |this, fx| this.operation(fx, "ParseJSON", &[text]));
+        }
+        if let super::imports::HostLoads::OfType(said) = kind {
+            let asked_for = self.as_the_host_finds_it(file, specifier);
+            let key = [self.c.atoms().bytes(asked_for), b" with type ", self.c.atoms().bytes(said)].concat();
+            let key = self.out.strs.intern(&key);
+            let global = self.variable_of_what_the_host_loads(file, key);
+            return self.lazily(fx, global, |this, fx| {
+                let require = this.operation(fx, "GetRequireFunction", &[]);
+                let receiver = this.emit(fx, Op::Undefined);
+                let asked_for = this.str(asked_for);
+                let asked_for = this.emit(fx, Op::Str(asked_for));
+                let options = this.emit(fx, Op::NewObject);
+                let name = this.out.strs.intern(b"type");
+                let name = this.emit(fx, Op::Str(name));
+                let said = this.str(said);
+                let said = this.emit(fx, Op::Str(said));
+                this.operation(fx, "DefineField", &[options, name, said]);
+                this.emit_throwing(fx, Op::Call { callee: require, this: receiver, args: [asked_for, options].into_iter().collect() })
+            });
+        }
         let require = self.operation(fx, "GetRequireFunction", &[]);
         let this = self.emit(fx, Op::Undefined);
         if matches!(kind, super::imports::HostLoads::Addon) {
@@ -1491,6 +1526,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             let id = self.emit(fx, Op::Int(id as i64));
             return Some(self.operation(fx, "RequireBuiltinModule", &[id]));
+        }
+        if matches!(self.asset_the_host_loads(fx.file, specifier), Some(super::imports::HostLoads::Manifest)) {
+            return Some(self.unsupported(fx, hir[c.callee].pos, "a `require` of a page: write `import page from` for it"));
         }
         // A file that is loaded as a string, or for its path.
         if let Some(text) = self.text_imported_as(fx.file, specifier) {

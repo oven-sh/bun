@@ -1,25 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-
-const lowered = "lowered-builtin:Object.prototype.hasOwnProperty";
-
-function lowers(name)
-{
-    const remarks = typeof aotRemarks === "function" ? aotRemarks(name) : null;
-    if (remarks && !remarks.includes(lowered))
-        throw new Error(name + " does not answer inline");
-}
-
-function doesNotLower(name)
-{
-    const remarks = typeof aotRemarks === "function" ? aotRemarks(name) : null;
-    if (remarks && remarks.includes(lowered))
-        throw new Error(name + " answers inline");
 }
 
 function test()
@@ -158,15 +140,6 @@ function test()
     check(ownKeysByAlias(dictionary).length, ownKeysByPath(dictionary).length, "a dictionary");
     check(ownKeysByAlias(dictionary).includes("key7key"), false, "a dictionary");
     check(ownKeysByAlias(dictionary).startsWith("key0key1key2"), true, "a dictionary");
-
-    lowers("ownKeysByAlias");
-    lowers("ownKeysByPath");
-    lowers("ownKeysWhileDeleting");
-    lowers("ownKeysWhileAdding");
-    doesNotLower("keysOwnedByAnother");
-    doesNotLower("changedKeys");
-    doesNotLower("outerKeysOwnedByInner");
-    doesNotLower("withoutKey");
 }
 test();
 console.log("passed");

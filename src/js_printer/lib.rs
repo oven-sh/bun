@@ -480,7 +480,6 @@ pub mod analyze_transpiled_module {
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
         exported_names: HashMap<StringID, ()>,
-        pub bindings: Vec<(StringID, u32)>,
         pub finalized: bool,
     }
 
@@ -501,7 +500,6 @@ pub mod analyze_transpiled_module {
                     ..Flags::default()
                 },
                 exported_names: HashMap::default(),
-                bindings: Vec::new(),
                 finalized: false,
             }
         }
@@ -1343,7 +1341,6 @@ pub struct Options<'a> {
     pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_ref: Ref,
     pub commonjs_module_ref: Ref,
-    pub has_lazy_namespaces: bool,
 
     pub minify_whitespace: bool,
     pub minify_identifiers: bool,
@@ -1445,7 +1442,6 @@ impl<'a> Default for Options<'a> {
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_ref: Ref::NONE,
             commonjs_module_ref: Ref::NONE,
-            has_lazy_namespaces: false,
             minify_whitespace: false,
             minify_identifiers: false,
             minify_syntax: false,
@@ -2479,29 +2475,6 @@ pub(crate) mod __gated_printer {
             self.print_identifier(name);
         }
 
-        fn is_lazy_namespace(&self, ref_: Ref) -> bool {
-            self.options.has_lazy_namespaces
-                && self
-                    .symbols()
-                    .get_const(self.symbols().follow(ref_))
-                    .is_some_and(|symbol| symbol.flags.contains(js_ast::symbol::SymbolFlags::IS_LAZY_NAMESPACE))
-        }
-
-        fn print_namespace_symbol(&mut self, ref_: Ref, forbid_call: bool) {
-            if !self.is_lazy_namespace(ref_) {
-                self.print_symbol(ref_);
-                return;
-            }
-            if forbid_call {
-                self.print(b"(");
-            }
-            self.print_symbol(ref_);
-            self.print(b"()");
-            if forbid_call {
-                self.print(b")");
-            }
-        }
-
         pub(crate) fn print_clause_alias(&mut self, alias: &[u8]) {
             if !strings::contains_non_bmp_code_point_or_is_invalid_identifier(alias) {
                 self.print_space_before_identifier();
@@ -2851,7 +2824,7 @@ pub(crate) mod __gated_printer {
                                 self.print_symbol(self.options.to_esm_ref);
                                 self.print(b"(");
                             }
-                            self.print_namespace_symbol(meta.exports_ref, false);
+                            self.print_symbol(meta.exports_ref);
                             if wrap_with_to_esm {
                                 self.print_to_esm_suffix();
                             }
@@ -2933,14 +2906,14 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.to_commonjs_ref);
                             self.print(b"(");
                         }
-                        self.print_namespace_symbol(meta.exports_ref, false);
+                        self.print_symbol(meta.exports_ref);
                         if wrap_with_to_cjs {
                             self.print(b")");
                         }
                     }
                 } else {
                     if !meta.exports_ref.is_empty() {
-                        self.print_namespace_symbol(meta.exports_ref, false);
+                        self.print_symbol(meta.exports_ref);
                     }
                 }
 
@@ -4343,14 +4316,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
-                    if self.is_lazy_namespace(e.ref_) {
-                        self.print_namespace_symbol(
-                            e.ref_,
-                            level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
-                        );
-                    } else {
-                        self.print_identifier(name);
-                    }
+                    self.print_identifier(name);
 
                     if wrap {
                         self.print(b")");
@@ -4432,10 +4398,7 @@ pub(crate) mod __gated_printer {
 
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
-                            self.print_namespace_symbol(
-                                namespace.namespace_ref,
-                                level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
-                            );
+                            self.print_symbol(namespace.namespace_ref);
                             let alias = namespace.alias.slice();
                             if lexer::is_identifier(alias) {
                                 self.print(b".");
@@ -4457,10 +4420,7 @@ pub(crate) mod __gated_printer {
                     if !did_print {
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
-                        self.print_namespace_symbol(
-                            e.ref_,
-                            level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
-                        );
+                        self.print_symbol(e.ref_);
                     }
                 }
                 ExprData::EAwait(e) => {
@@ -5097,9 +5057,7 @@ pub(crate) mod __gated_printer {
                         if let Some(val) = &item.value {
                             match &val.data {
                                 ExprData::EIdentifier(e) => {
-                                    if key_str.slice8() == self.name_for_symbol(e.ref_)
-                                        && !self.is_lazy_namespace(e.ref_)
-                                    {
+                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
                                         }
@@ -5116,7 +5074,6 @@ pub(crate) mod __gated_printer {
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
-                                            && !self.is_lazy_namespace(e.ref_)
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
@@ -5139,12 +5096,11 @@ pub(crate) mod __gated_printer {
                         if let Some(val) = &item.value {
                             match &val.data {
                                 ExprData::EIdentifier(e) => {
-                                    if (item.flags.contains(js_ast::flags::Property::WasShorthand)
+                                    if item.flags.contains(js_ast::flags::Property::WasShorthand)
                                         || strings::utf16_eql_string(
                                             key_str.slice16(),
                                             self.name_for_symbol(e.ref_),
-                                        ))
-                                        && !self.is_lazy_namespace(e.ref_)
+                                        )
                                     {
                                         if let Some(initial) = &item.initializer {
                                             self.print_initializer(*initial);
@@ -5160,7 +5116,6 @@ pub(crate) mod __gated_printer {
                                                 key_str.slice16(),
                                                 self.name_for_symbol(e.ref_),
                                             )
-                                            && !self.is_lazy_namespace(e.ref_)
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);

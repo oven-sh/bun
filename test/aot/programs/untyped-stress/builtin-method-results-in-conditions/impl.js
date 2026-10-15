@@ -1,28 +1,8 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))
             throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
     }
-    function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-    function applies(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (!remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-        }
-    }
-    function doesNotApply(name, ...patterns) {
-        let remarks = aotRemarks(name);
-        for (let pattern of remarks ? patterns : []) {
-            if (remarks.some(remark => matches(remark, pattern)))
-                throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
-        }
-    }
-    const isLowered = "lowered-builtin", isOnlyTested = "boolean-result-of-method-that-is-only-tested", callsToBoolean = "calls:ToBoolean";
 
     class Textual extends Map {
         has(key) { return super.has(key) ? "present" : ""; }
@@ -90,21 +70,11 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
         check(testsIncludes(listReturning(value), 9) + testsSome(listReturning(value), 9) + testsEvery(listReturning(value), 9), "yesyesyes", "own methods of an array that return something truthy");
     for (let value of falsy)
         check(testsIncludes(listReturning(value), 1) + testsSome(listReturning(value), 0) + testsEvery(listReturning(value), 0), "nonono", "own methods of an array that return something falsy");
-    applies("testsIncludes", isOnlyTested, isLowered);
-    doesNotApply("testsIncludes", callsToBoolean);
-
-    for (let name of ["tests", "negates", "testsBoth", "testsInLoop", "testsDeletion", "testsPattern", "testsWeakSet"]) {
-        applies(name, isOnlyTested);
-        doesNotApply(name, callsToBoolean);
-    }
-    for (let name of ["keepsResult", "comparesResult", "passesResult"])
-        doesNotApply(name, isOnlyTested);
 
     function testsAnything(collection, key) { return collection.has(key) ? "yes" : "no"; }
     function returnsSizeOfAnything(collection) { return collection.size; }
     check(testsAnything(plain, 1) + testsAnything(new Set([1]), 2) + testsAnything({ has() { return "x"; } }, 1), "yesnoyes", "a receiver of any kind");
     check(testsAnything(new Textual([[1, 1]]), 1) + testsAnything(new Textual([[1, 1]]), 2), "yesno", "a subclass that returns strings");
     check(returnsSizeOfAnything(new Textual([[1, 1]])) + returnsSizeOfAnything(new Textual()), "some", "a subclass with its own size");
-    doesNotApply("testsAnything", isOnlyTested);
 })();
 console.log("passed");

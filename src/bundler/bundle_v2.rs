@@ -1569,6 +1569,9 @@ pub mod bv2_impl {
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 module_count: usize,
             ) -> Option<crate::bytecode_order::LinkedPayload>;
+            safe fn __bun_jsc_bytecode_link_encoder_take_build_errors(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            ) -> Vec<crate::bytecode_order::AotBuildError>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1781,6 +1784,9 @@ pub mod bv2_impl {
             }
             pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
                 __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
+            }
+            pub(crate) fn take_build_errors(&mut self) -> Vec<crate::bytecode_order::AotBuildError> {
+                __bun_jsc_bytecode_link_encoder_take_build_errors(self.encoder)
             }
         }
 
@@ -2570,6 +2576,10 @@ pub mod bv2_impl {
                 return Ok(Vec::new());
             };
             let (sources, loaders) = (self.graph.input_files.items_source(), self.graph.input_files.items_loader());
+            let named_imports = self.graph.ast.items_named_imports();
+            let has_decorator = |index: usize| {
+                named_imports[index].values().iter().any(|import| import.alias.is_some_and(|alias| matches!(alias.slice(), b"__legacyDecorateClassTS" | b"__decoratorStart")))
+            };
             let (unmerged, said_nowhere) = (self.transpiler.options.jsx.clone(), crate::options::jsx::Pragma::default());
             let resolver = &mut self.transpiler.resolver;
             let mut by_directory: bun_collections::StringHashMap<Settings> = Default::default();
@@ -2600,11 +2610,14 @@ pub mod bv2_impl {
                 if !source.path.is_file() || !(loader.is_typescript() || is_jsx && loader.is_jsx()) {
                     continue;
                 }
+                if self.graph.input_files.items_flags()[index].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST) {
+                    continue;
+                }
                 let found = settings_around(source, true);
                 let classic = crate::options::jsx::Runtime::Classic;
                 // The factories count for the classic transform, the source of the import for the automatic one.
                 let counts = [found.1 == classic, found.1 == classic, found.1 != classic];
-                if let Some(at) = (0..3).find(|&at| loader.is_typescript() && found.2[at] != expected.2[at]) {
+                if let Some(at) = (0..3).find(|&at| loader.is_typescript() && found.2[at] != expected.2[at] && (at == 0 || has_decorator(index))) {
                     refused.push((index, ["useDefineForClassFields", "experimentalDecorators", "emitDecoratorMetadata"][at]));
                 } else if is_jsx && (found.1 != expected.1 || (0..3).any(|at| counts[at] && found.0[at] != expected.0[at])) {
                     lowered_otherwise.push((index, found.0, found.1 == classic));
@@ -2631,6 +2644,17 @@ pub mod bv2_impl {
                 (self.transpiler.options.type_check, self.transpiler.options.analyze.filter(|_| self.linker.options.aot));
             if type_check.is_none() && analyze.is_none() {
                 return Ok(());
+            }
+            let is_left_to_the_host: Vec<bool> =
+                self.graph.input_files.items_flags().iter().map(|flags| flags.contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)).collect();
+            if is_left_to_the_host.contains(&true) {
+                for records in self.graph.ast.items_import_records_mut().iter_mut() {
+                    for record in records.as_mut_slice().iter_mut() {
+                        if is_left_to_the_host.get(record.source_index.get() as usize).copied().unwrap_or(false) {
+                            record.source_index = Index::INVALID;
+                        }
+                    }
+                }
             }
             if analyze.is_some() {
                 for (source, records) in self.graph.input_files.items_source().iter().zip(self.graph.ast.items_import_records()) {
@@ -2821,6 +2845,7 @@ pub mod bv2_impl {
                 .filter(|((source, loader), flags)| {
                     (loader.is_javascript_like() || **loader == Loader::Json || json_texts[source.index.get() as usize].is_some())
                         && path_of(source).is_some()
+                        && !flags.contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)
                         // What is compiled is what runs.
                         && !(analyze.is_none()
                             && flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
@@ -2915,10 +2940,17 @@ pub mod bv2_impl {
                 .filter(|(source, loader)| **loader == Loader::Text && source.path.is_file() && json_texts[source.index.get() as usize].is_none())
                 .map(|(source, _)| (source.path.text, source.contents()));
             let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
-            let mut assets = (all_sources.iter().zip(unique_keys))
+            let assets = (all_sources.iter().zip(unique_keys))
                 .zip(loaders)
                 .filter(|((source, key), loader)| !key.is_empty() && **loader != Loader::Text && json_texts[source.index.get() as usize].is_none())
                 .filter_map(|((source, key), _)| Some((path_of(source)?, &key[..])));
+            let manifests: Vec<(&[u8], Vec<u8>)> = (self.graph.html_imports.server_source_indices.slice().iter().enumerate())
+                .map(|(index, &source)| {
+                    let key = crate::chunk::UniqueKey { prefix: self.unique_key, kind: crate::chunk::QueryKind::HtmlImport, index: index as u32 };
+                    (all_sources[source as usize].path.text, format!("{key}").into_bytes())
+                })
+                .collect();
+            let mut assets = assets.chain(manifests.iter().map(|(path, key)| (*path, &key[..])));
             let flags = self.transpiler.options.bundler_feature_flags.as_deref();
             let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
             let checked = options::TypeChecked {
@@ -5607,7 +5639,11 @@ pub mod bv2_impl {
             }
             if self.transpiler.options.preserve_source_paths {
                 let mut paths: Vec<u8> = Vec::new();
-                for source in self.graph.input_files.items_source().iter().filter(|source| source.path.is_file()) {
+                let flags = self.graph.input_files.items_flags();
+                let is_compiled = |source: &&bun_ast::Source| {
+                    source.path.is_file() && !flags[source.index.get() as usize].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)
+                };
+                for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
                     paths.extend_from_slice(source.path.text);
                     paths.push(b'\n');
                 }
@@ -8766,6 +8802,12 @@ pub mod bv2_impl {
                                     std::ptr::from_mut(this),
                                 )
                                 .expect("oom");
+                        } else if this.linker.options.aot
+                            && this.transpiler.options.preserve_source_paths
+                            && !this.graph.entry_points.iter().any(|entry_point| entry_point.get() == err.source_index.get())
+                        {
+                            this.graph.input_files.items_flags_mut()[err.source_index.get() as usize] |=
+                                crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST;
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log

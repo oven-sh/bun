@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function describe(object) {
     return Reflect.ownKeys(object).map(key => {
@@ -46,16 +24,6 @@ function spreadFirstOnly(o) { return { ...o }; }
 function noSpread(o) { return { a: o.a }; }
 for (const f of [spreadLast, spreadTwo, spreadBetween, spreadOver, restOf, restOfTwo, restWithComputedName, spreadFirstOnly, noSpread])
     noInline(f);
-
-applies(spreadLast, "copies-data-properties");
-applies(spreadTwo, "copies-data-properties");
-applies(spreadBetween, "copies-data-properties");
-applies(spreadOver, "copies-data-properties");
-applies(restOf, "copies-data-properties");
-applies(restOfTwo, "copies-data-properties");
-doesNotApply(restWithComputedName, "copies-data-properties");
-doesNotApply(spreadFirstOnly, "copies-data-properties");
-doesNotApply(noSpread, "copies-data-properties");
 
 repeat(i => {
     check(describe(spreadLast({ a: 1, b: 2 }, i)), "z=" + i + ",a=1,b=2", "a spread after a property");

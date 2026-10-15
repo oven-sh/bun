@@ -1,26 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(name, ...patterns) {
-    let remarks = aotRemarks(name);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
-    }
-}
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-
 var firstGlobal = 3, secondGlobal = 50;
 let firstLexical = 4, secondLexical = 60;
 
@@ -46,8 +27,6 @@ let firstLexical = 4, secondLexical = 60;
         check(countThirdAndValue({ other: 1, third: 50, value: 3 }, 10), 1, "only the property of the inlined function matches");
         check(countThirdAndValue({ other: 1, third: 3, value: 4 }, 10), 11, "both properties match");
     }
-    if (usesDataStubs)
-        applies("countThirdAndValue", "split-loop", "inlined-call:countValue");
 
     function countSecondGlobal(n) {
         let s = 0;
@@ -71,8 +50,6 @@ let firstLexical = 4, secondLexical = 60;
     firstGlobal = 70;
     for (let k = 0; k < 4; k++)
         check(countBothGlobals(10), 1, "only the global variable of the inlined function matches");
-    if (usesDataStubs)
-        applies("countBothGlobals", "split-loop", "inlined-call:countSecondGlobal");
 
     function countSecondLexical(n) {
         let s = 0;

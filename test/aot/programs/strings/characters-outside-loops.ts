@@ -1,6 +1,6 @@
 // `s[i]`, `charAt`, `at` and `charCodeAt` inside and outside loops, on every internal representation of a string and with every kind of index.
 // CALLS- startsWithSlash StringIsText|StringHasAt|(^|[ f])TypedString(;|$)
-// CALLS- endsWithNewline StringIsText|StringHasAt|(^|[ f])TypedString(;|$)
+// CALLS+ endsWithNewline tests for equality with [0-9 ]*\b10\b
 // CALLS- byIndex Flatten
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {

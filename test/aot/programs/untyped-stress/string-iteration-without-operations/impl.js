@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -23,31 +22,13 @@ function firstTwo(iterable) {
     return String(first) + " " + String(second);
 }
 
-const operation = "operationAOTIteratorNextTryFast";
-const countsOperations = typeof aotOperationCount === "function" && isAOTCompiled(described) && (aotRemarks("described") || []).includes("calls:IteratorNext") && aotOperationCount(operation) !== null;
-function operationsDuring(f) {
-    if (!countsOperations) {
-        f();
-        return -1;
-    }
-    const before = aotOperationCount(operation);
-    f();
-    return aotOperationCount(operation) - before;
+for (let round = 0; round < 100; round++) {
+    check(described("abc"), "1:61;1:62;1:63;", "ASCII");
+    check(described("éÿ\u0000"), "1:e9;1:ff;1:0;", "Latin-1");
+    check(described(""), "", "the empty string");
 }
-function checkOperations(actual, atLeast, atMost, what) {
-    if (actual >= 0 && (actual < atLeast || actual > atMost))
-        throw new Error(what + ": " + actual + " calls of the operation, not " + atLeast + " to " + atMost);
-}
-
-checkOperations(operationsDuring(() => {
-    for (let round = 0; round < 100; round++) {
-        check(described("abc"), "1:61;1:62;1:63;", "ASCII");
-        check(described("éÿ\u0000"), "1:e9;1:ff;1:0;", "Latin-1");
-        check(described(""), "", "the empty string");
-    }
-}), 0, 6, "strings of 8-bit characters");
-checkOperations(operationsDuring(() => check(described("aĀb"), "1:61;1:100;1:62;", "a character past Latin-1")), 1, 1, "a character past Latin-1");
-checkOperations(operationsDuring(() => check(described("a\u{1f600}b"), "1:61;2:d83d:de00;1:62;", "a surrogate pair")), 1, 1, "a surrogate pair");
+check(described("aĀb"), "1:61;1:100;1:62;", "a character past Latin-1");
+check(described("a\u{1f600}b"), "1:61;2:d83d:de00;1:62;", "a surrogate pair");
 check(described("\ud83d"), "1:d83d;", "a lone lead surrogate");
 check(described("\ude00\ud83d"), "1:de00;1:d83d;", "surrogates in the wrong order");
 check(described("\ud83dx"), "1:d83d;1:78;", "a lead surrogate before something else");
@@ -56,8 +37,8 @@ check(described("\u{1f600}\u{1f601}"), "2:d83d:de00;2:d83d:de01;", "two pairs");
 {
     let text = "left";
     const rope = text + String(Math.max(1, 2)) + "right-hand side that is long enough";
-    checkOperations(operationsDuring(() => check(described(rope).length, rope.length * 5, "a rope")), 0, 1, "a rope is flattened once at most");
-    checkOperations(operationsDuring(() => check(described(rope).length, rope.length * 5, "a rope that was flattened")), 0, 0, "a rope that was flattened");
+    check(described(rope).length, rope.length * 5, "a rope");
+    check(described(rope).length, rope.length * 5, "a rope that was flattened");
     const part = "a long string of which a part is taken".substring(7, 13);
     check(described(part), "1:73;1:74;1:72;1:69;1:6e;1:67;", "a substring");
 }

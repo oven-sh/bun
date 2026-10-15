@@ -1,30 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const inlines = "inlines-likely-callee";
 const keep = [];
 
 let overrides = () => undefined;
@@ -48,8 +25,6 @@ let usesThis = function () { return this === undefined ? "undefined" : typeof th
 function setUsesThis(f) { usesThis = f; }
 function callsUsesThis() { return usesThis(); }
 keep.push(current, currentAgain, callsAdds, callsReads, callsUsesThis);
-for (const f of [current, currentAgain, callsAdds, callsReads])
-    applies(f, inlines);
 
 let twoFunctions = () => 1;
 function chooseSecond() { twoFunctions = () => 2; }
@@ -67,8 +42,6 @@ function callsLarge(a) { return large(a); }
 const never = () => 3;
 function callsNever() { return never(); }
 keep.push(callsTwoFunctions, callsLarge, callsNever, callsReadsLast);
-for (const f of [callsTwoFunctions, callsLarge, callsNever, callsReadsLast])
-    doesNotApply(f, inlines);
 
 function early() { return late(); }
 let message = "none";

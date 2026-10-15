@@ -232,6 +232,19 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         );
         Global::exit(1);
     }
+    if ctx.debug.hot_reload != bun_options_types::context::HotReload::None {
+        pretty_errorln!(
+            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: a program that is compiled ahead of time is built before it runs and is not built again when a file changes. Run without one of the two.",
+            if ctx.debug.hot_reload == bun_options_types::context::HotReload::Hot { "--hot" } else { "--watch" }
+        );
+        Global::exit(1);
+    }
+    if for_tests && ctx.test_options.repeat_count > 1 {
+        pretty_errorln!(
+            "<r><red>error<r>: <b>--aot<r> does not support <b>--rerun-each<r> (or \"rerunEach\" in bunfig.toml): a program that is compiled ahead of time is loaded once, into one global object. Run without one of the two."
+        );
+        Global::exit(1);
+    }
     if for_tests && ctx.test_options.coverage.enabled {
         pretty_errorln!(
             "<r><yellow>warn<r><d>:<r> <b>--coverage<r> is ignored with <b>--aot<r>: code that is compiled ahead of time is not counted. Run without <b>--aot<r> to measure coverage."
@@ -254,6 +267,7 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         b"--compile-autoload-package-json",
         b"--target=bun",
         b"--sourcemap=inline",
+        b"--entry-naming=[dir]/[name]-[hash].[ext]",
     ]
     .map(<[u8]>::to_vec)
     .to_vec();
@@ -360,11 +374,31 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
 
     args.extend(entry_points.iter().map(|path| path.to_vec()));
+    fn directory_of_tsconfig_around(path: &[u8]) -> &[u8] {
+        let mut directory = path;
+        while let Some(at) = directory.iter().rposition(|&byte| byte == b'/') {
+            directory = &directory[..at];
+            if [&b"/tsconfig.json"[..], b"/jsconfig.json"].iter().any(|name| bun_sys::exists(&[directory, *name].concat())) {
+                return directory;
+            }
+        }
+        b""
+    }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let cwd = bun_core::getcwd(&mut cwd_buf).map(|cwd| cwd.as_bytes().to_vec()).unwrap_or_default();
     for preload in &ctx.preloads {
         let path: &[u8] = preload.strip_prefix(b"file://".as_slice()).unwrap_or(&**preload);
-        if !path.starts_with(b"node:") && !path.starts_with(b"bun:") {
-            args.push(path.to_vec());
+        if path.starts_with(b"node:") || path.starts_with(b"bun:") {
+            continue;
         }
+        if (path.starts_with(b".") || path.starts_with(b"/")) && ctx.args.tsconfig_override.is_none() {
+            let absolute = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(&cwd, &mut path_buf[..], &[path]);
+            if entry_points.first().is_some_and(|first| directory_of_tsconfig_around(first) != directory_of_tsconfig_around(absolute)) {
+                continue;
+            }
+        }
+        args.push(path.to_vec());
     }
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
     let errno = bun_core::exec_self(&args, None);

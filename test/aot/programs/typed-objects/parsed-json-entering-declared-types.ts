@@ -45,7 +45,7 @@ h2 1 1
 h3 1
 h4 1
 h5 1
-h6 TypeError
+h6 2
 h7 0
 h8 TypeError
 h9 TypeError
@@ -123,7 +123,7 @@ attempt("h4", () => { const holder: Holder = { p: own }; holder.p = JSON.parse(t
 // So does a store by code that does not know the object: the doors coerce where the field's type is written down.
 function store(target: any, value: unknown): void { target.p = value }
 attempt("h5", () => { const holder: Holder = { p: own }; store(holder, JSON.parse(text)); return holder.p.x })
-// This does not: a parameter that has its type from its default only.
+// So does a parameter that has its type from its default only.
 function viaDefault(o = { a: 1 }): number { return o.a }
 attempt("h6", () => (viaDefault as any)(JSON.parse('{"a":2}')))
 // What a function does to its parameter it does to the copy.

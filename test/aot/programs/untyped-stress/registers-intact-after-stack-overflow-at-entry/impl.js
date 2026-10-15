@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function recurse(n) { return recurse(n + 1) + 1; }
 function manyParameters(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p) { return manyParameters(a) + 1; }
 let object = { get overflow() { return recurse(0); }, get overflowInArityCheck() { return manyParameters(0); } };

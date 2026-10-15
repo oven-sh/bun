@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function shouldBe(actual, expected, what)
 {
     if (actual !== expected)
@@ -12,7 +10,6 @@ function callsBoundFunction(f, x) { const result = f(x); return result; }
 function callsFunctionOfProgram(f, x) { const result = f(x); return result; }
 function doubles(x) { return x * 2; }
 
-const isCounting = typeof aotOperationCount === "function" && aotOperationCount("operationAOTCacheHostCallee") !== null && isAOTCompiled(callsHostFunction) && (aotRemarks("callsHostFunction") || []).includes("cached-call");
 const bound = Math.max.bind(null, 5);
 
 function runs(count)
@@ -26,13 +23,4 @@ function runs(count)
 }
 
 runs(100);
-if (isCounting) {
-    const noted = aotOperationCount("guest:host-callee");
-    const arrived = aotOperationCount("operationAOTCacheHostCallee");
-    const filled = aotOperationCount("operationAOTCacheCallee");
-    runs(200);
-    shouldBe(aotOperationCount("guest:host-callee") - noted, 600, "each call of what is no code of the program is noted");
-    shouldBe(aotOperationCount("operationAOTCacheHostCallee") - arrived, 600, "no cache is filled for it, so that each call arrives");
-    shouldBe(aotOperationCount("operationAOTCacheCallee") - filled, 0, "a cache for a function of the program is filled all the same");
-}
 console.log("passed");

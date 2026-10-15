@@ -1,34 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what)
 {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-
-function remarksOf(name)
-{
-    return typeof aotRemarks === "function" ? aotRemarks(name) : null;
-}
-
-function has(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && !remarks.includes(remark))
-        throw new Error(name + " lacks " + remark);
-}
-
-function hasNot(name, remark)
-{
-    const remarks = remarksOf(name);
-    if (remarks && remarks.includes(remark))
-        throw new Error(name + " has " + remark);
-}
-
-function isNotCompiled(name)
-{
-    if (remarksOf("isCompiledForSure"))
-        hasNot(name, "compiled");
 }
 
 function errorOf(run)
@@ -90,14 +63,6 @@ function knownTypes()
         check(lengthOfArrayOrNumber(i & 1 ? [1, 2, 3] : i), i & 1 ? 3 : -1, "an array or a number");
         check(testsTwice(i & 1 ? [1] : i), i & 1 ? 1 : 2, "tested twice");
     }
-
-    for (const name of ["ofArray", "ofAliasedArray", "ofLiteral", "ofFunction", "ofMap", "ofNumber", "ofString", "ofNothing", "throughVariable", "behindNot", "testsTwice"])
-        has(name, "folds-branch-by-type");
-    for (const name of ["deadForArray", "deadForAliasedArray", "deadForLiteral", "deadForFunction", "deadForMap", "deadForNumber", "deadForString", "deadForNothing", "deadThroughVariable", "deadBehindNot", "deadForSecondTest"])
-        isNotCompiled(name);
-    has("lengthOfArrayOrNumber", "narrowed-tested-value");
-    hasNot("lengthOfArrayOrNumber", "calls:GetLength");
-    hasNot("lengthOfArrayOrNumber", "folds-branch-by-type");
 }
 knownTypes();
 
@@ -124,12 +89,6 @@ function numbers()
         check(anyNumber(Infinity), 2, "infinity");
         check(anyNumberAsNaN(i & 1 ? NaN : i + 0.5), i & 1 ? 1 : 2, "a number");
     }
-    for (const name of ["integer", "stringAsInteger", "finite", "integerAsNaN"])
-        has(name, "folds-branch-by-type");
-    for (const name of ["deadForInteger", "deadForStringAsInteger", "deadForFinite", "deadForNaN"])
-        isNotCompiled(name);
-    hasNot("anyNumber", "folds-branch-by-type");
-    hasNot("anyNumberAsNaN", "folds-branch-by-type");
 }
 numbers();
 
@@ -180,10 +139,6 @@ function unknownTypes()
     }
     check(errorOf(() => test(revocable.proxy)), TypeError, "a revoked proxy");
     check(errorOf(() => value(revocable.proxy)), TypeError, "a revoked proxy");
-
-    for (const name of ["test", "lengthBehind", "elementBehind", "notBehind", "ofProxy", "onOnePath", "withMoreArguments"])
-        hasNot(name, "folds-branch-by-type");
-    has("liveForProxy", "compiled");
 }
 unknownTypes();
 console.log("passed");

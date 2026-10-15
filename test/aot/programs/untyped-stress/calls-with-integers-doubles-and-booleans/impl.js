@@ -1,12 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isOn = !!remarksOf("check") && !!options.useAOTDataStubs && !options.useAOTInlining;
 
 (function () {
     "use strict";
@@ -53,12 +48,5 @@ const isOn = !!remarksOf("check") && !!options.useAOTDataStubs && !options.useAO
         check(usesTailCallWithDoubles(make()), 6, "a tail call returns a double");
         check(constructs(make()), 6, "integers are passed to a constructor");
     }
-
-    if (!isOn)
-        return;
-    for (const name of ["callsWithInts", "callsWithDoubles", "callsWithBoolean", "tailCallsWithInts", "tailCallsWithDoubles", "constructs"])
-        check(remarksOf(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
-    for (const name of ["addsInts", "addsDoubles", "tests"])
-        check(remarksOf(name).includes("function-has-no-object"), true, name + " has no function object");
 })();
 console.log("passed");

@@ -1,30 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-const merges = "scalar-replaced-objects-merged-by-phi";
 let kept = [];
 function keeps(o) { kept.push(o); return o; }
 noInline(keeps);
@@ -58,8 +35,6 @@ check(nests(true, 3), 3, "nested literals");
 check(nests(false, 3), -6, "nested literals");
 check(evaluatesInOrder(true), "1,2:21", "order of evaluation");
 check(evaluatesInOrder(false), "3,4:43", "order of evaluation");
-for (let f of [picksOfTwo, picksOfThree, readsOne, readsAbsent, testsForNull, destructures, nests, evaluatesInOrder])
-    applies(f, merges);
 
 function otherNames(c) { const o = c ? { x: 1, y: 2 } : { x: 1, z: 2 }; return o.x; }
 function otherOrder(c) { const o = c ? { x: 1, y: 2 } : { y: 2, x: 1 }; return o.x + Object.keys(c ? { x: 1, y: 2 } : { y: 2, x: 1 }).join(); }
@@ -88,6 +63,4 @@ check(isEnumerated(true), "x", "enumerated");
 check(readsInherited(true), "function", "an inherited property");
 check(readsByValue(false, "x"), 2, "read by value");
 check(hasGetter(false), 2, "a getter");
-for (let f of [otherNames, otherOrder, oneIsGiven, oneIsShared, isReturned, isPassed, isWritten, isCompared, isCaptured, isEnumerated, readsInherited, readsByValue, hasGetter])
-    doesNotApply(f, merges);
 console.log("passed");

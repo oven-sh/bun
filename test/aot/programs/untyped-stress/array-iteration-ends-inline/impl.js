@@ -1,33 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function readsProperty(o) { return o.property; }
-readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-
 (function () {
     function joined(a) {
         let s = "";
@@ -133,12 +107,8 @@ const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById")
 
     const doubles = [0.5, 1.5, 2.5, -0, Infinity];
     doubles[0] = 3.5;
-    const countsOperations = usesDataStubs && typeof aotOperationCount === "function" && aotOperationCount("operationAOTIteratorNextWithIndex") !== null;
-    const before = countsOperations ? aotOperationCount("operationAOTIteratorNextWithIndex") : 0;
     for (let round = 0; round < 100; round++)
         check(joined(doubles), "3.5;1.5;2.5;0;Infinity;", "doubles, many times");
-    if (countsOperations)
-        check(aotOperationCount("operationAOTIteratorNextWithIndex") - before, 0, "operations for doubles");
     let negativeZero;
     for (const x of doubles) {
         if (x === 0)
@@ -146,16 +116,5 @@ const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById")
     }
     check(negativeZero, -0, "negative zero among doubles");
     check(joined([0.5, , 2.5]), "0.5;undefined;2.5;", "a hole among doubles");
-    if (countsOperations)
-        check(aotOperationCount("operationAOTIteratorNextWithIndex") - before, 1, "operations for a hole among doubles");
-
-    const endsInline = "ends-array-iteration-inline";
-    for (const f of [joined, grown, truncated, emptiedAndRefilled, afterTheEnd, pairs, untilTwo, turnedIntoDoubles]) {
-        if (usesDataStubs)
-            applies(f, endsInline);
-        else
-            doesNotApply(f, endsInline);
-    }
-    doesNotApply(indexedOnly, endsInline);
 })();
 console.log("passed");

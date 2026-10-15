@@ -1,14 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function takesNothingFromRegisters(name) {
-    let all = typeof aotRemarks === "function" ? aotRemarks(name) : null;
-    for (let remark of all || []) {
-        if (remark.startsWith("reads-returned-object-from-registers") || remark.startsWith("materializes-returned-object"))
-            throw new Error(name + " has " + remark);
-    }
 }
 (function () {
     "use strict";
@@ -63,7 +55,6 @@ function takesNothingFromRegisters(name) {
     for (const [name, caller] of Object.entries(callers)) {
         for (let i = 0; i < 300; i++)
             check(caller(i), true, name + " in round " + i);
-        takesNothingFromRegisters(name);
     }
 })();
 console.log("passed");

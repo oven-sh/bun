@@ -1,28 +1,6 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
-}
-function remarksOf(f) {
-    let remarks = aotRemarks(f.name);
-    if (!remarks && isAOTCompiled(f))
-        throw new Error("no remarks for " + f.name);
-    return remarks;
-}
-function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
-function applies(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (!remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " does not apply to " + f.name + ": " + remarks.join(" "));
-    }
-}
-function doesNotApply(f, ...patterns) {
-    let remarks = remarksOf(f);
-    for (let pattern of remarks ? patterns : []) {
-        if (remarks.some(remark => matches(remark, pattern)))
-            throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
-    }
 }
 function throwsTypeError(f, what) {
     try {
@@ -61,13 +39,6 @@ function andOfInt32s(limit) {
 const bitFunctions = [andWithConstant, constantAnd, orWithConstant, xorWithConstant, shiftLeftByConstant, shiftRightByConstant, shiftConstant, testsFlag, testsTwoFlags, andOfUnknowns, andWithBigInt, andWithString, andOfInt32s];
 for (const f of bitFunctions)
     noInline(f);
-
-for (const f of [andWithConstant, constantAnd, orWithConstant, xorWithConstant, shiftLeftByConstant, shiftRightByConstant, shiftConstant, testsFlag, testsTwoFlags])
-    applies(f, "inline-bit-operation");
-for (const f of [andOfUnknowns, andWithBigInt, andWithString, andOfInt32s])
-    doesNotApply(f, "inline-bit-operation");
-doesNotApply(testsFlag, "calls:ToBoolean");
-doesNotApply(testsTwoFlags, "calls:ToBoolean");
 
 repeat(i => {
     check(andWithConstant({ flags: i }), i & 12, "an int32 and a constant");
@@ -150,13 +121,6 @@ function isUndefined(o) { return o.kind === undefined; }
 const comparisons = [isFive, fiveIs, isNotFive, isOneOf, branchesOnFive, isZero, isSame, isLooselyFive, isHalf, isText, isUndefined];
 for (const f of comparisons)
     noInline(f);
-
-for (const f of [isFive, fiveIs, isNotFive, isOneOf, branchesOnFive, isZero]) {
-    applies(f, "inline-comparison-with-int32");
-    doesNotApply(f, "calls:StrictEqual");
-}
-for (const f of [isSame, isLooselyFive, isHalf, isText, isUndefined])
-    doesNotApply(f, "inline-comparison-with-int32");
 
 repeat(i => {
     check(isFive({ kind: i }), i === 5, "an int32");

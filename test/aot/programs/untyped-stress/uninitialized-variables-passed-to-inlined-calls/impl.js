@@ -1,14 +1,7 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
-function has(name, remark) {
-    let remarks = aotRemarks(name);
-    return remarks && remarks.length ? remarks.some(other => other === remark || other.startsWith(remark + ":")) : undefined;
-}
-function says(name, remark) { check(has(name, remark) !== false, true, name + " has " + remark); }
-function doesNotSay(name, remark) { check(has(name, remark) !== true, true, name + " has no " + remark); }
 
 (function () {
 function first() { return 2; }
@@ -52,17 +45,6 @@ passesLetAlwaysUndefined();
 passesVarAlwaysUndefined();
 check(keptOfLet, 0, "what is stored for a variable that is always undefined");
 check(keptOfVar, 0, "what is stored for a variable that is always undefined and never empty");
-
-if (has("passesLet", "inlined-call:keepsOfLet")) {
-    says("passesVar", "inlined-call:keepsOfVar");
-    says("passesLetUntested", "inlined-call:keepsUntested");
-    says("passesVar", "narrowed-tested-value");
-    says("passesLet", "narrowed-tested-value");
-    doesNotSay("passesLetUntested", "narrowed-tested-value");
-} else if (has("passesLet", "direct-call:keepsOfLet")) {
-    doesNotSay("passesLet", "narrowed-tested-value");
-    doesNotSay("passesVar", "narrowed-tested-value");
-}
 })();
 
 (function () {
@@ -104,14 +86,5 @@ for (let i = 0; i < 4; i++) {
 check(results.join(), "1111111,1111110,2222222,3333333", "what inlined callees return behind tests in two steps");
 check(impossible, 0, "results that are nothing behind both tests");
 check(nulls, 1, "null behind the test for undefined alone");
-let inlines = typeof jscOptions === "function" && !!jscOptions().useAOTInlining;
-for (let [name, callee] of [["passesInTwoSteps", "inTwoSteps"], ["passesAsLowered", "asLowered"], ["passesThroughTemporary", "throughTemporary"], ["passesAsLoweredChain", "asLoweredChain"], ["passesVarInTwoSteps", "ofVarInTwoSteps"], ["passesVarAsLowered", "ofVarAsLowered"]]) {
-    if (inlines)
-        says(name, "inlined-call:" + callee);
-    says(name, "folds-branch-by-type");
-}
-if (inlines)
-    says("passesBehindOneStep", "inlined-call:behindOneStep");
-doesNotSay("passesBehindOneStep", "folds-branch-by-type");
 })();
 console.log("passed");

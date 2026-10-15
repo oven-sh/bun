@@ -136,6 +136,11 @@ unsafe extern "C" {
         placed_hot_functions: *mut u32,
         functions_without_name: *mut u32,
     ) -> bool;
+    fn Bun__BytecodeLinkEncoder__takeBuildErrors(
+        this: *mut BytecodeLinkEncoder,
+        ctx: *mut core::ffi::c_void,
+        add: extern "C" fn(*mut core::ffi::c_void, *const u8, usize, *const u8, usize, u32, u32),
+    );
     fn Bun__BytecodeLinkEncoder__aotImage(size: *mut usize) -> *const u8;
     safe fn Bun__BytecodeLinkEncoder__freeAOTImage();
 }
@@ -533,6 +538,40 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
         functions_without_name,
         has_aot_image: aot_image_size != 0,
     })
+}
+
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_bytecode_link_encoder_take_build_errors(
+    encoder: NonNull<BytecodeLinkEncoder>,
+) -> Vec<bun_bundler::bytecode_order::AotBuildError> {
+    extern "C" fn add(
+        ctx: *mut core::ffi::c_void,
+        message: *const u8,
+        message_length: usize,
+        path: *const u8,
+        path_length: usize,
+        line: u32,
+        column: u32,
+    ) {
+        let copy = |bytes: *const u8, length: usize| {
+            if length == 0 {
+                return Vec::new();
+            }
+            unsafe { core::slice::from_raw_parts(bytes, length) }.to_vec()
+        };
+        let error = bun_bundler::bytecode_order::AotBuildError {
+            message: copy(message, message_length),
+            path: copy(path, path_length),
+            line,
+            column,
+        };
+        unsafe { (*ctx.cast::<Vec<bun_bundler::bytecode_order::AotBuildError>>()).push(error) };
+    }
+    let mut errors: Vec<bun_bundler::bytecode_order::AotBuildError> = Vec::new();
+    unsafe {
+        Bun__BytecodeLinkEncoder__takeBuildErrors(encoder.as_ptr(), (&raw mut errors).cast(), add)
+    };
+    errors
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.

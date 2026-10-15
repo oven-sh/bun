@@ -1,4 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
 (function () {
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
@@ -230,46 +229,5 @@ function link3(x) { if (x > 1e9) x = 0; if (x < -1e9) x = 1; if (x === 771) x = 
 function link2(x) { if (x > 1e9) x = 0; if (x < -1e9) x = 1; if (x === 771) x = 2; if (x === 772) x = 3; if (x === 773) x = 4; if (x === 774) x = 5; if (x === 775) x = 6; if (x === 776) x = 7; return x === -5 ? link3(0) : link3(x + 1); }
 function link1(x) { if (x > 1e9) x = 0; if (x < -1e9) x = 1; if (x === 771) x = 2; if (x === 772) x = 3; if (x === 773) x = 4; if (x === 774) x = 5; if (x === 775) x = 6; if (x === 776) x = 7; return x === -5 ? link2(0) : link2(x + 1); }
 check(link1(0) + link1(-5), 39, "a chain of twenty functions");
-
-if (aotRemarks("callsClamp")) {
-    const remark = "relies-on-stack-check-of-caller";
-    let has = (name, remark) => aotRemarks(name).some(other => other === remark || other.startsWith(remark + ":"));
-    let applies = (...names) => {
-        for (let name of names) {
-            if (!has(name, remark))
-                throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
-        }
-    };
-    let doesNotApply = (...names) => {
-        for (let name of names) {
-            if (has(name, remark))
-                throw new Error(remark + " applies to " + name);
-        }
-    };
-    let someCheck = (...names) => {
-        if (names.every(name => has(name, remark)))
-            throw new Error("none of " + names.join(", ") + " checks the stack");
-    };
-    for (let name of ["callsClamp", "isEven", "first", "link1", "link20"]) {
-        if (!has(name, "direct-call"))
-            throw new Error(name + " makes no direct call: " + aotRemarks(name).join(" "));
-    }
-    applies("clamp", "callsClamp");
-    doesNotApply("countsDown", "small", "catchesDeepInside");
-    someCheck("isEven", "isOdd");
-    someCheck("first", "second", "third");
-    doesNotApply("escapes", "generates", "waits", "Constructed", "hasLargeFrame", "count");
-    if (has("takesInSmall", "inlined-call:small"))
-        doesNotApply("takesInSmall");
-    let links = [];
-    for (let i = 1; i <= 20; i++)
-        links.push(has("link" + i, remark));
-    check(links.filter(relies => relies).length >= 16, true, "most functions of the long chain rely on a caller");
-    check(links.includes(false), true, "one function of the long chain checks the stack");
-    let longest = 0, current = 0;
-    for (let relies of links)
-        longest = Math.max(longest, current = relies ? current + 1 : 0);
-    check(longest <= 16, true, "the number of frames in a row without a check");
-}
 })();
 console.log("passed");

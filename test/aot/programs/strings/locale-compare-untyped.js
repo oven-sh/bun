@@ -33,8 +33,11 @@ function flattened(s) {
 export function compared(a, b) {
   return a.localeCompare(`${b}`);
 }
+function byLocale(a, b) {
+  return `${a}`.localeCompare(`${b}`);
+}
 export function sorted(list) {
-  return list.slice().sort((a, b) => `${a}`.localeCompare(`${b}`));
+  return list.slice().sort(byLocale);
 }
 export function comparedIn(a, b, locale) {
   return a.localeCompare(b, locale);

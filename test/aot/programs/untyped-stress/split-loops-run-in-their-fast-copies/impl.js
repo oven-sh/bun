@@ -1,5 +1,3 @@
-const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -12,12 +10,6 @@ function thrown(f) {
     }
     return "nothing";
 }
-const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
-const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isCompiled = !!remarksOf(check);
-const splitsLoops = isCompiled && !!options.useAOTLoopSplitting && !!options.useAOTDataStubs;
-const isCounting = isCompiled && !!options.useAOTOperationCounters && !!options.useAOTDataStubs;
-const accessesOutsideFastCopies = () => isCounting ? (aotOperationCount("operationAOTCountReadByName") || 0) + (aotOperationCount("operationAOTCountStoreByName") || 0) : 0;
 
 function Fiber(tag) {
     this.tag = tag;
@@ -150,36 +142,10 @@ const warmUp = () => {
 };
 warmUp();
 
-const during = f => {
-    const before = accessesOutsideFastCopies();
-    f();
-    return accessesOutsideFastCopies() - before;
-};
-const isSplit = f => isCompiled && remarksOf(f).includes("split-loop");
-const hasTwin = f => isCompiled && remarksOf(f).includes("guards-over-whole-function");
 const rounds = 50;
-for (const [f, operand, result, accessesARound] of [[walks, root, numberOfNodes, 8 * numberOfNodes], [sumsSiblings, row, 16, 12], [sumsLinks, links, 9, 9]]) {
-    const outside = during(() => {
-        for (let i = 0; i < rounds; ++i)
-            check(f(operand), result, f.name);
-    });
-    if (!isCounting)
-        continue;
-    if (isSplit(f)) {
-        if (outside > 4 * rounds)
-            throw new Error(f.name + " does not run in the fast copy of its loop: " + outside + " reads and stores of " + rounds + " rounds were made outside it");
-    } else if (outside < rounds * accessesARound)
-        throw new Error(f.name + " is not split, yet only " + outside + " reads and stores of " + rounds + " rounds were counted");
-}
-if (isCounting) {
-    const outside = during(() => {
-        for (let i = 0; i < rounds; ++i) {
-            walksAndCalls(row, i);
-            readsWithoutLoop(row);
-        }
-    });
-    if (outside < rounds * (4 * 4 + 5))
-        throw new Error("reads and stores outside split loops are not counted: " + outside);
+for (const [f, operand, result] of [[walks, root, numberOfNodes], [sumsSiblings, row, 16], [sumsLinks, links, 9]]) {
+    for (let i = 0; i < rounds; ++i)
+        check(f(operand), result, f.name);
 }
 
 {
@@ -212,18 +178,4 @@ if (isCounting) {
     warmUp();
 }
 
-if (isCompiled) {
-    for (const f of [walks, sumsSiblings, walksAndCalls, sumsLinks, readsWithoutLoop])
-        check(hasTwin(f), false, f.name + " has guards over the whole function");
-    for (const f of [walks, sumsSiblings, sumsLinks])
-        check(isSplit(f), splitsLoops, "the loop of " + f.name + " is split");
-    for (const f of [walksAndCalls, sumsLinksAndCalls, readsWithoutLoop])
-        check(isSplit(f), false, f.name + " has a loop to split");
-    check(remarksOf(sumsLinks).includes("no-guards-over-whole-function:has-loop-without-calls"), !!options.useAOTDataStubs, "sumsLinks is refused guards for its loop");
-    check(hasTwin(sumsLinksAndCalls), splitsLoops, "sumsLinksAndCalls has guards over the whole function");
-    for (const f of [sumsLinks, sumsLinksAndCalls]) {
-        for (const name of ["weight", "extent", "next"])
-            check(remarksOf(f).some(remark => remark.startsWith("guessed-family:") && remark.endsWith(":" + name)), true, "links have a family that gives " + name + " in " + f.name);
-    }
-}
 console.log("passed");

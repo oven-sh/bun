@@ -1190,6 +1190,8 @@ describe.concurrent("what onResolve answers without a namespace", () => {
           build.onResolve({ filter: /\\.img$/ }, ({ path }) => ({ path: answers[path] ?? path }));
           build.onResolve({ filter: /\\.importer$/ }, ({ importer }) => ({ path: basename(importer), namespace: "served" }));
           build.onResolve({ filter: /\\/claimed%E9\\.mjs$/ }, () => ({ path: import.meta.dir + "/src/public/a.mjs" }));
+          build.onResolve({ filter: /\\/invalid-answer%E9\\.mjs$/ }, () => ({ path: 123 }));
+          build.onResolve({ filter: /\\/absent-answer%E9\\.mjs$/ }, () => ({ path: import.meta.dir + "/src/does-not-exist.mjs" }));
           build.module("a-module", () => ({ exports: { default: "a module" }, loader: "object" }));
           build.onLoad({ filter: /.*/, namespace: "served" }, ({ path }) => ({
             contents: "export default " + JSON.stringify(path),
@@ -1320,7 +1322,7 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     },
   );
 
-  // Such a URL has no path to look for. A plugin is still asked about it, before the error of the conversion.
+  // Such a URL has no path to look for. A plugin is still asked about it, and its answer is used.
   it.skipIf(isWindows)("is used for a file URL whose path does not percent-decode to UTF-8", async () => {
     const source = `
       const url = "file:///claimed%E9.mjs";
@@ -1330,6 +1332,28 @@ describe.concurrent("what onResolve answers without a namespace", () => {
     `;
     expect(await run("entry.mjs", source)).toEqual({
       stdout: "import() a.mjs\nrequire() a.mjs\nBun.resolveSync() true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // What the plugin reports, and the miss of the path that it answers, stay the errors of import() too.
+  it.skipIf(isWindows)("keeps its error for a file URL whose path does not percent-decode to UTF-8", async () => {
+    const source = `
+      for (const url of ["file:///invalid-answer%E9.mjs", "file:///absent-answer%E9.mjs"]) {
+        const errors = [];
+        try { require(url); } catch (error) { errors.push(error); }
+        await import(url).catch(error => errors.push(error));
+        for (const error of errors)
+          console.log(error.name + ": " + error.message.split("\\n")[0].split(" imported from ")[0].replace(import.meta.dir, "<src>"));
+      }
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout:
+        'Error: Expected "path" to be a string in onResolve plugin\n' +
+        'Error: Expected "path" to be a string in onResolve plugin\n' +
+        "ResolveMessage: Cannot find module '<src>/does-not-exist.mjs'\n" +
+        "ResolveMessage: Cannot find module '<src>/does-not-exist.mjs'\n",
       stderr: "",
       exitCode: 0,
     });

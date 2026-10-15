@@ -288,12 +288,14 @@ it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an
       const href = new URL("50%deposit.js", import.meta.url).href;
       const loads = {
         "import()": () => import(href),
+        "static import, in a module with a query": () => import("./static.mjs?v=2"),
         "require()": async () => require(href),
         "require.resolve()": async () => require.resolve(href),
         "Bun.resolveSync()": async () => Bun.resolveSync(href, import.meta.dir),
         "Bun.resolve()": () => Bun.resolve(href, import.meta.dir),
       };
-      const placeholders = text => text?.replaceAll(href, "<href>").replaceAll(import.meta.url, "<importer>");
+      const names = { "<href>": href, "<importer>": import.meta.url, "<static>": new URL("./static.mjs", import.meta.url).href };
+      const placeholders = text => Object.entries(names).reduce((text, [name, url]) => text?.replaceAll(url, name), text);
       for (const [name, load] of Object.entries(loads)) {
         const error = await load().then(() => undefined, error => error);
         const message = error?.message.split("\\n")[0].split(" imported from ")[0];
@@ -318,8 +320,9 @@ it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an
 
   expect(await run("dynamic.mjs")).toEqual({
     stdout:
-      // As node: import() rejects with decodeURIComponent()'s error, and the URL and the importer are on it.
+      // As node: import() rejects with decodeURIComponent()'s error, and the href and the URL of the importer are on it.
       "import() URIError URI malformed <href> <importer>\n" +
+      "static import, in a module with a query URIError URI malformed <href> <static>?v=2\n" +
       "require() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
       "require.resolve() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
       "Bun.resolveSync() ResolveMessage Cannot find module '<href>' undefined undefined\n" +

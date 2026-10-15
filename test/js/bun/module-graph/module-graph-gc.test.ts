@@ -25,13 +25,6 @@ const dir = String(
     "host-that-only-disposes.mjs": `
       let collected = 0;
       const registry = new FinalizationRegistry(() => { collected++; });
-      const turn = () => new Promise(resolve => setTimeout(resolve, 1));
-      // JavaScriptCore weighs the report by the share of the heap its last full collection freed.
-      for (let i = 0; i < 10; i++) {
-        Array.from({ length: 10_000 }, (_, n) => ({ n }));
-        await turn();
-      }
-      Bun.gc(true);
       const graphs = [];
       for (let i = 0; i < 5; i++) {
         const graph = new Bun.ModuleGraph();
@@ -39,7 +32,7 @@ const dir = String(
         graphs.push(graph);
       }
       for (const graph of graphs) graph.dispose();
-      for (let turns = 0; turns < 1000 && !collected; turns++) await turn();
+      for (let turns = 0; turns < 1000 && !collected; turns++) await new Promise(resolve => setTimeout(resolve, 1));
       console.log(JSON.stringify({ collected: collected > 0 }));
       process.exit(0);
     `,

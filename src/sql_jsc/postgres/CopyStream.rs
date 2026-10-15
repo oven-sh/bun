@@ -43,12 +43,13 @@ fn copy_fail_message(message: &[u8]) -> &[u8] {
 /// Whether the first keyword is COPY. Whitespace and comments are the server's: `--` ends with the
 /// line, `/*` nests.
 fn starts_with_copy(text: &BunString) -> bool {
+    const EMPTY_STATEMENT: u16 = b';' as u16;
     let length = text.length();
     let at = |i: usize| if i < length { text.char_at(i) } else { 0 };
     let is = |i: usize, c: u8| at(i) == u16::from(c);
     let mut i = 0;
     loop {
-        if matches!(at(i), 0x09..=0x0d | 0x20) {
+        if matches!(at(i), 0x09..=0x0d | 0x20 | EMPTY_STATEMENT) {
             i += 1;
         } else if is(i, b'-') && is(i + 1, b'-') {
             while i < length && !is(i, b'\n') && !is(i, b'\r') {

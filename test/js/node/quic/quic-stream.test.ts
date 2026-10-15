@@ -564,9 +564,13 @@ describe("receive backpressure", () => {
   }
 
   // How much of `payload` the stream still delivers, and whether it is the same bytes.
-  async function delivered(stream: any, payload: Buffer) {
+  // `afterFirstBatch` runs once, when the reader has its first batch.
+  async function delivered(stream: any, payload: Buffer, afterFirstBatch?: () => void) {
     const chunks: Uint8Array[] = [];
-    for await (const batch of stream) chunks.push(...batch);
+    for await (const batch of stream) {
+      if (chunks.length === 0) afterFirstBatch?.();
+      chunks.push(...batch);
+    }
     const got = Buffer.concat(chunks);
     return { length: got.length, same: got.equals(payload) };
   }
@@ -648,6 +652,14 @@ describe("receive backpressure", () => {
       await pair.roundTrip();
       pair.receiver[method]();
       expect(await delivered(pair.receiver, body)).toEqual({ length: BODY, same: true });
+    });
+
+    test("is read in full when stopSending() comes after the first batch", async () => {
+      await using pair = await open(serverReadsBidi, body);
+      await pair.sender.closed;
+      await pair.roundTrip();
+      const read = delivered(pair.receiver, body, () => pair.receiver.stopSending());
+      expect(await read).toEqual({ length: BODY, same: true });
     });
 
     test("is read in full after close() of its own session", async () => {

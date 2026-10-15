@@ -6747,9 +6747,7 @@ pub(crate) mod __gated_printer {
 
         /// `X.name` where the linker bound the access straight to an export
         /// (`LinkerGraph::import_member_bindings`): the import identifier to
-        /// print in its place. `X` is an import, a local that holds a
-        /// `require()` / `import()` namespace, or a bound read off such a
-        /// local (`ns.a.b`). `name_loc` is where the source has `name`.
+        /// print in its place.
         fn import_member_binding(
             &self,
             target: Expr,
@@ -6768,9 +6766,7 @@ pub(crate) mod __gated_printer {
             Some(Expr::init(E::ImportIdentifier::new(binding, false), loc))
         }
 
-        /// `read` is `ns.name`, a marked read off a local that holds a
-        /// `require()` / `import()` namespace, and the linker bound it: the
-        /// import item to print in its place, and where the source has `name`.
+        /// The binding and the name location of `read`, a bound read off a namespace local.
         fn namespace_local_read_binding(&self, read: Expr) -> Option<(Ref, bun_ast::Loc)> {
             let member = |target: Expr, name: &[u8]| -> Option<Ref> {
                 let ExprData::EIdentifier(id) = &target.data else {
@@ -6811,8 +6807,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Some read off the `require()` / `import()` local `ref_` prints as
-        /// the export that the linker bound it to.
+        /// Some read off the namespace local `ref_` prints as the export it is bound to.
         fn has_import_member_bindings(&self, ref_: Ref) -> bool {
             self.options.has_dynamic_import_items
                 && self
@@ -6821,9 +6816,7 @@ pub(crate) mod __gated_printer {
                     .is_some_and(|bindings| bindings.contains(&ref_))
         }
 
-        /// `is_import_property_use`: the flag of the `target.name` that is
-        /// printed. The parser counted a read with the flag as a read of the
-        /// member, so the linker may have dropped the use of the enum.
+        /// `is_import_property_use` is the flag of the `target.name` that is printed.
         pub(crate) fn try_to_get_imported_enum_value(
             &self,
             target: Expr,

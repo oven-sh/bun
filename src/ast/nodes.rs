@@ -1040,12 +1040,7 @@ pub struct Part {
     /// don't have this flag enabled must be included.
     pub can_be_removed_if_unused: bool,
 
-    /// The only side effects of this part are reads off a local that holds a
-    /// `require()` / `import()` namespace (`E::Dot::is_import_property_use`).
-    /// The linker can remove the part like one with `can_be_removed_if_unused`
-    /// if it binds each of them to an export: the import items whose entry in
-    /// `symbol_uses` has `symbol::Use::runs_namespace_read`. A read it does
-    /// not bind can run a getter. Never set with `can_be_removed_if_unused`.
+    /// Removable if unused once the linker binds each use with `symbol::Use::runs_namespace_read`.
     pub removable_if_namespace_reads_bind: bool,
 
     /// This is used for generated parts that we don't want to be present if they

@@ -365,8 +365,8 @@ impl Kind {
 /// A part's uses of one symbol: an estimated count, plus whether any of them
 /// was added without its scope being recorded in `Ast::scope_uses` (by the
 /// linker or a transform), in which case the renamer must assume the symbol
-/// may be printed in any scope of the part, plus `runs_namespace_read`.
-/// Packed into one word because every part holds one per referenced symbol.
+/// may be printed in any scope of the part. Packed into one word because
+/// every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
 pub struct Use(u32);
 
@@ -395,9 +395,7 @@ impl Use {
         self.0 & Self::UNSCOPED != 0
     }
 
-    /// The symbol is the import item of `ns.name`, a read off a local that
-    /// holds a `require()` / `import()` namespace, and such a read runs when
-    /// the part runs. See `Part::removable_if_namespace_reads_bind`.
+    /// A read of this import item, off a `require()` / `import()` local, runs with the part.
     #[inline]
     pub const fn runs_namespace_read(self) -> bool {
         self.0 & Self::RUNS_NAMESPACE_READ != 0

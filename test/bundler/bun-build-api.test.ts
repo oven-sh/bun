@@ -1961,10 +1961,13 @@ test.skipIf(!isASAN)("Bun.build / Bun.Transpiler option error path does not leak
   const script = `
     const entry = ${JSON.stringify(join(String(dir), "e.js"))};
     const bad = { X: '{"a":' };
+    // Only the define diagnostic counts. Any other error propagates and
+    // fails the exit code check.
+    const isDefineError = e => (e.errors?.[0] ?? e).message === "Unexpected end of file";
     let rejected = 0;
     for (let i = 0; i < ${iters}; i++) {
-      try { await Bun.build({ entrypoints: [entry], define: bad }); } catch { rejected++; }
-      try { new Bun.Transpiler({ define: bad }); } catch { rejected++; }
+      try { await Bun.build({ entrypoints: [entry], define: bad }); } catch (e) { if (!isDefineError(e)) throw e; rejected++; }
+      try { new Bun.Transpiler({ define: bad }); } catch (e) { if (!isDefineError(e)) throw e; rejected++; }
     }
     console.log("rejected", rejected);
   `;

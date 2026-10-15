@@ -20,12 +20,12 @@ use bun_alloc::ArenaVecExt as _;
 use crate::values as css_values;
 use css_values::angle::Angle;
 use css_values::length::{LengthPercentage, LengthValue};
-use css_values::number::{CSSNumber, CSSNumberFns};
+use css_values::number::{CSSNumber, CSSNumberFns, NonNegative};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
 use bun_collections::VecExt;
 
-use crate::generics::{CssEql, DeepClone};
+use crate::generics::{CssEql, DeepClone, Parse as _};
 use css::CssResult;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
@@ -143,7 +143,7 @@ impl AbsoluteFontWeight {
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum FontSize {
     /// An explicit size.
-    Length(LengthPercentage),
+    Length(NonNegative<LengthPercentage>),
     /// An absolute font size keyword.
     Absolute(AbsoluteFontSize),
     /// A relative font size keyword.
@@ -156,7 +156,7 @@ impl FontSize {
 
     pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            FontSize::Length(l) => match l {
+            FontSize::Length(NonNegative(l)) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
                     Feature::FontSizeRem.is_compatible(browsers)
                 }
@@ -220,7 +220,7 @@ pub enum FontStretch {
     /// A font stretch keyword.
     Keyword(FontStretchKeyword),
     /// A percentage.
-    Percentage(Percentage),
+    Percentage(NonNegative<Percentage>),
 }
 
 impl FontStretch {
@@ -229,7 +229,7 @@ impl FontStretch {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
-        Percentage::parse(input).map(FontStretch::Percentage)
+        NonNegative::<Percentage>::parse(input).map(FontStretch::Percentage)
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
@@ -239,14 +239,14 @@ impl FontStretch {
         }
 
         match self {
-            FontStretch::Percentage(val) => val.to_css(dest),
+            FontStretch::Percentage(val) => val.0.to_css(dest),
             FontStretch::Keyword(kw) => kw.to_css(dest),
         }
     }
 
     fn into_percentage(self) -> Percentage {
         match self {
-            FontStretch::Percentage(val) => val,
+            FontStretch::Percentage(val) => val.0,
             FontStretch::Keyword(kw) => kw.into_percentage(),
         }
     }
@@ -628,9 +628,9 @@ pub enum LineHeight {
     /// The UA sets the line height based on the font.
     Normal,
     /// A multiple of the element's font size.
-    Number(CSSNumber),
+    Number(NonNegative<CSSNumber>),
     /// An explicit height.
-    Length(LengthPercentage),
+    Length(NonNegative<LengthPercentage>),
 }
 
 impl LineHeight {
@@ -642,23 +642,23 @@ impl LineHeight {
         {
             return Ok(LineHeight::Normal);
         }
-        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+        if let Ok(n) = input.try_parse(NonNegative::<CSSNumber>::parse) {
             return Ok(LineHeight::Number(n));
         }
-        LengthPercentage::parse(input).map(LineHeight::Length)
+        NonNegative::<LengthPercentage>::parse(input).map(LineHeight::Length)
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             LineHeight::Normal => dest.write_str("normal"),
-            LineHeight::Number(n) => CSSNumberFns::to_css(*n, dest),
-            LineHeight::Length(l) => l.to_css(dest),
+            LineHeight::Number(n) => CSSNumberFns::to_css(n.0, dest),
+            LineHeight::Length(l) => l.0.to_css(dest),
         }
     }
 
     pub(crate) fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            LineHeight::Length(l) => l.is_compatible(browsers),
+            LineHeight::Length(l) => l.0.is_compatible(browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
         }
     }

@@ -2226,9 +2226,26 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-function rstNextTick(id: number, rstCode: number) {
-  const session = this as Http2Session;
-  session[bunHTTP2Native]?.rstStream(id, rstCode);
+// close() and destroy() reset a stream through submitRstStream and rstStreamNT only.
+//
+// submitRstStream runs inside the call, or at 'ready' for a stream that had no id. At this point
+// node submits RST_STREAM to nghttp2, and nghttp2 treats the stream as closing from then on: it
+// ignores the frames that arrive for the stream and sends no more of its DATA. Here native
+// writes the frame one event loop turn later (rstStreamNT), so setStreamClosing puts the native
+// stream in that state now.
+function submitRstStream(session: Http2Session, stream: Http2Stream, code: number) {
+  session[bunHTTP2Native]?.setStreamClosing(stream.id, stream.destroyed);
+  setImmediate(rstStreamNT, session, stream, code);
+}
+// Like node's submitRstStream, this does nothing for a stream that native does not have. The id
+// is read here: a pending stream gets it after close() ran, and a request that failed before it
+// reached native never gets one ('ready' is emitted for it all the same).
+function rstStreamNT(session: Http2Session, stream: Http2Stream, code: number) {
+  const id = stream.id;
+  if (id) session[bunHTTP2Native]?.rstStream(id, code);
+  // Not node: when RST_STREAM dropped a write, node's stream waits for a 'finish' that cannot
+  // come and is never destroyed. This one emits 'close' and frees its concurrency slot.
+  scheduleDestroyIfNotDestroyed(stream);
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
@@ -2243,14 +2260,6 @@ function streamOnResume(this: Http2Stream) {
   const session = this[bunHTTP2Session];
   const id = this.id;
   if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
-}
-// A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
-// HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
-function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  const id = this.id;
-  // A request that request() refused gets 'ready' and no id. The peer never saw it.
-  if (typeof id !== "number") return;
-  setImmediate(rstNextTick.bind(session, id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2589,21 +2598,18 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
       this.rstCode = code;
       markStreamClosed(this);
-      if (this.pending) {
-        // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
-        // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
-        this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+      // node's closeStream: the stream resets now, unless user code ended the writable side
+      // before close() and it has not finished. Then the body and END_STREAM leave first.
+      if (!ending || this.writableFinished || code !== NGHTTP2_NO_ERROR) {
+        if (this.pending) {
+          // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
+          // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
+          this.once("ready", submitRstStream.bind(null, session, this, code));
+        } else {
+          submitRstStream(session, this, code);
+        }
       } else {
-        this.once("finish", rstNextTick.bind(session, this.#id, code));
-      }
-      // node destroys the stream once both halves have finished; without this a stream closed
-      // while idle never emits 'close'.
-      if (this.writableFinished) {
-        scheduleDestroyIfNotDestroyed(this);
-      } else {
-        this.once("finish", scheduleDestroyIfNotDestroyed.bind(null, this));
+        this.once("finish", rstStreamNT.bind(null, session, this, code));
       }
     }
   }
@@ -2687,7 +2693,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      submitRstStream(session, this, rstCode);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error

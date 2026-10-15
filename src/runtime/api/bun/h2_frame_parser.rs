@@ -1298,6 +1298,13 @@ impl StreamResumableIterator {
             index: 0,
         }
     }
+    pub(crate) fn one(parser: &H2FrameParser, id: u32) -> Self {
+        Self {
+            parser: bun_ptr::ParentRef::new(parser),
+            ids: vec![id],
+            index: 0,
+        }
+    }
     pub(crate) fn next(&mut self) -> Option<*mut Stream> {
         // R-2: `streams` is `JsCell`-backed (UnsafeCell), so the shared backref
         // read here coexists soundly with the loop body's own `&self` accesses.
@@ -1317,6 +1324,17 @@ pub(crate) enum FlushState {
     NoAction,
     Flushed,
     Backpressure,
+}
+
+/// What a stream still sends between the moment RST_STREAM is submitted for it and the frame.
+#[derive(Clone, Copy)]
+enum BeforeReset {
+    /// Its DATA that is queued and sendable at that moment: node sends it in front of the
+    /// frame (Http2Session::SendPendingData in Http2Stream::SubmitRstStream). The stream's
+    /// send window keeps room for that DATA and for no more.
+    QueuedData,
+    /// Nothing.
+    Nothing,
 }
 
 #[repr(u8)]
@@ -1350,6 +1368,11 @@ pub(crate) struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
+    // close() or destroy() submitted RST_STREAM for the stream (set_closing). This is
+    // nghttp2's NGHTTP2_STREAM_CLOSING: a header block and END_STREAM that arrive for the
+    // stream are ignored (JS drops its DATA), its receive window is not replenished, and it
+    // sends only the DATA that was queued and sendable when the frame was submitted.
+    closing: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1428,6 +1451,14 @@ impl PendingQueue {
     pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// Payload bytes that wait in the queue.
+    pub(crate) fn queued_bytes(&self) -> u64 {
+        self.data[self.front..]
+            .iter()
+            .map(|frame| frame.slice().len() as u64)
+            .sum()
+    }
 }
 
 // PendingQueue::deinit handled by Drop on Vec<PendingFrame>
@@ -1493,6 +1524,11 @@ impl Stream {
                 let Some(frame) = self.data_frame_queue.dequeue() else {
                     return FlushState::NoAction;
                 };
+                if self.closing && !frame.end_stream {
+                    // set_closing took END_STREAM back from this frame: nothing leaves.
+                    owned_frame = Some(frame);
+                    break 'brk true;
+                }
                 let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
                     flags: if frame.end_stream && !self.wait_for_trailers {
@@ -1851,6 +1887,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
+            closing: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -2143,6 +2180,38 @@ impl H2FrameParser {
             JSValue::js_number(old_state as u8 as f64),
         );
         let _ = self.write(&buffer);
+    }
+
+    /// RST_STREAM is submitted for `stream`: it is closing from now on.
+    fn set_closing(&self, stream: &mut Stream, before_reset: BeforeReset) {
+        let mut room = 0;
+        match before_reset {
+            BeforeReset::QueuedData => {
+                room = stream
+                    .data_frame_queue
+                    .queued_bytes()
+                    .min(
+                        stream
+                            .remote_window_size
+                            .saturating_sub(stream.remote_used_window_size),
+                    )
+                    .min(
+                        self.remote_window_size
+                            .get()
+                            .saturating_sub(self.remote_used_window_size.get()),
+                    );
+            }
+            BeforeReset::Nothing => {
+                // A queued frame with no DATA needs no room. It is there for END_STREAM only.
+                if let Some(last) = stream.data_frame_queue.peek_last() {
+                    if last.len == 0 {
+                        last.end_stream = false;
+                    }
+                }
+            }
+        }
+        stream.remote_window_size = stream.remote_used_window_size + room;
+        stream.closing = true;
     }
 
     pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
@@ -2696,7 +2765,11 @@ impl H2FrameParser {
     }
 
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
-    fn flush_stream_queue(&self) -> usize {
+    ///
+    /// `only` is the stream that rst_stream is about to reset. Its queue alone is flushed, and
+    /// socket backpressure does not stop that: the socket buffers the DATA like the
+    /// RST_STREAM that follows it.
+    fn flush_stream_queue(&self, only: Option<u32>) -> usize {
         bun_output::scoped_log!(
             H2FrameParser,
             "flushStreamQueue {}",
@@ -2707,7 +2780,10 @@ impl H2FrameParser {
 
         // try to send as much as we can until we reach backpressure or until we can't flush anymore
         while self.outbound_queue_size.get() > 0 && something_was_flushed {
-            let mut it = StreamResumableIterator::init(self);
+            let mut it = match only {
+                Some(id) => StreamResumableIterator::one(self, id),
+                None => StreamResumableIterator::init(self),
+            };
             something_was_flushed = false;
             while let Some(stream) = it.next() {
                 // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the
@@ -2718,7 +2794,16 @@ impl H2FrameParser {
                 match result {
                     FlushState::Flushed => something_was_flushed = true,
                     FlushState::NoAction => continue, // we can continue
-                    FlushState::Backpressure => return written, // backpressure we need to return
+                    FlushState::Backpressure => {
+                        // backpressure we need to return. With `only`, just when it is the
+                        // connection window that has no room left.
+                        if only.is_none()
+                            || self.remote_window_size.get() == self.remote_used_window_size.get()
+                        {
+                            return written;
+                        }
+                        something_was_flushed = true;
+                    }
                 }
             }
         }
@@ -2806,12 +2891,12 @@ impl H2FrameParser {
                     }
                 }
 
-                return self.flush_stream_queue();
+                return self.flush_stream_queue(None);
             }
         };
         // if no backpressure flush data queue
         if !self.has_backpressure() {
-            written += self.flush_stream_queue();
+            written += self.flush_stream_queue(None);
         }
         written
     }
@@ -3881,7 +3966,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
             let stream = unsafe { &mut **item };
-            if (settings.initial_window_size as u64) > stream.remote_window_size {
+            if !stream.closing && (settings.initial_window_size as u64) > stream.remote_window_size
+            {
                 stream.remote_window_size = settings.initial_window_size as u64;
                 window_grew = true;
             }
@@ -3974,7 +4060,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 .set(self.remote_window_size.get() + increment as u64);
         } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).remote_window_size += increment as u64 };
+            let stream = unsafe { &mut *stream };
+            if !stream.closing {
+                stream.remote_window_size += increment as u64;
+            }
         }
         let _ = self.flush();
     }
@@ -4022,7 +4111,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn is_stream_reading(&self, stream_id: u32) -> bool {
         match self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            Some(stream) => unsafe { !(*stream).reading_paused },
+            Some(stream) => unsafe { !(*stream).reading_paused && !(*stream).closing },
             None => true,
         }
     }
@@ -4108,10 +4197,17 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
-        // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).end_after_headers = end_stream };
+            let stream = unsafe { &mut *stream };
+            if stream.closing {
+                // nghttp2 ignores a header block for a stream that is closing.
+                self.hdr_block.with_mut(|b| b.clear());
+                self.hdr_meta.with_mut(|m| m.clear());
+                return;
+            }
+            // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
+            stream.end_after_headers = end_stream;
         }
         // Materialize the accumulated block in a single native pass: the raw array, the
         // node-shaped headers object, and the sensitive list (a zero-field block yields an
@@ -4172,6 +4268,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // mirroring the legacy handle_data/headers END_STREAM logic.
         let mut effective = state;
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            if unsafe { (*stream).closing } {
+                // nghttp2 ignores the frame that carried END_STREAM for a stream that is
+                // closing. The RST_STREAM closes it: end_stream() dispatches that to JS.
+                return;
+            }
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let legacy_state = unsafe { (*stream).state };
             if state == 6
@@ -5121,7 +5223,7 @@ impl H2FrameParser {
             // engine dispatch (the engine cell may already be borrowed).
             //
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
-            // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
+            // deferred JS close path (rstStreamNT after _destroy) once a cleanly-completed
             // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
             // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
             if error_code != ErrorCode::NO_ERROR.0 {
@@ -5140,6 +5242,19 @@ impl H2FrameParser {
             return Ok(JSValue::TRUE);
         };
 
+        let has_queue = {
+            // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
+            let stream = unsafe { &mut *stream };
+            let has_queue = !stream.data_frame_queue.is_empty();
+            if has_queue && !stream.closing {
+                // set_stream_closing held the frame back, or JS did not call it.
+                this.set_closing(stream, BeforeReset::QueuedData);
+            }
+            has_queue
+        };
+        if has_queue {
+            let _ = this.flush_stream_queue(Some(stream_id));
+        }
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
         this.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));
 
@@ -5211,6 +5326,12 @@ impl H2FrameParser {
 
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
+            if stream.closing {
+                // RST_STREAM is due: the stream sends the DATA it had queued, and no frame
+                // for END_STREAM alone.
+                self.dispatch_write_callback(callback);
+                return (0, false);
+            }
             // empty payload we still need to send a frame
             let data_header = FrameHeader {
                 type_: FrameType::HTTP_FRAME_DATA as u8,
@@ -5501,8 +5622,9 @@ impl H2FrameParser {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-        unsafe { (*stream).reading_paused = !reading };
-        if reading {
+        let stream = unsafe { &mut *stream };
+        stream.reading_paused = !reading;
+        if reading && !stream.closing {
             // Resumed: send the deferred WINDOW_UPDATE now. try_borrow: a resume issued from
             // inside a dispatch (the engine borrow is held by rewrite_read) is covered by the
             // batch-end replenish instead.
@@ -5512,6 +5634,52 @@ impl H2FrameParser {
                 }
             }
             let _ = this.flush();
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// setStreamClosing(streamId, destroyed): close() or destroy() submits RST_STREAM.
+    ///
+    /// node hands the frame to nghttp2 inside the call. Here rst_stream() writes the frame one
+    /// event loop turn later, so this marks the stream now. It writes no frame and runs no JS.
+    ///
+    /// node holds the frame back while it cannot send the stream's queued DATA first
+    /// (Http2Stream::SubmitRstStream and Http2Stream::Destroy in node's node_http2.cc). The
+    /// stream then stays as it is until rst_stream(), and so it does here:
+    /// - The session is reading and the stream has DATA queued.
+    /// - A socket write is in progress. destroy() does not wait for it: its RST_STREAM
+    ///   leaves next, and what the stream has queued is dropped.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_stream_closing(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [stream_arg, destroyed_arg] = callframe.arguments_as_array::<2>();
+        if !stream_arg.is_number() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let Some(stream) = this.streams.get().get(&stream_arg.to_u32()).copied() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+        let stream = unsafe { &mut *stream };
+        let writing = this.has_backpressure();
+        // rewrite_read holds the engine borrow for the whole read.
+        let held_back = if this.engine.try_borrow_mut().is_err() {
+            stream.data_frame_queue.queued_bytes() > 0
+        } else {
+            writing && !destroyed_arg.to_boolean()
+        };
+        if !held_back {
+            this.set_closing(
+                stream,
+                if writing {
+                    BeforeReset::Nothing
+                } else {
+                    BeforeReset::QueuedData
+                },
+            );
         }
         Ok(JSValue::UNDEFINED)
     }

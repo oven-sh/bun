@@ -172,10 +172,7 @@ extern "C" fn Bun__fetchBuiltinModule(
 /// a `comptime_string_map!`).
 #[inline]
 pub fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
-    // Keep the raw-table scan in agreement with `Alias::get`'s flag gate so
-    // `require.resolve.paths` / `Module._resolveLookupPaths` (which reach
-    // here via `ModuleLoader__isBuiltin`) don't report a gated-off specifier
-    // as a builtin that `require` would then fail to load.
+    // The flag gate of `Alias::get`, so that `process.getBuiltinModule` loads no specifier that is gated off.
     if bun_resolve_builtins::stream_iter_alias_gated(name) {
         return None;
     }
@@ -217,8 +214,7 @@ pub fn preload_skips_resolver(name: &[u8]) -> bool {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    is_builtin(unsafe { bun_core::ffi::slice(data, len) })
 }
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias

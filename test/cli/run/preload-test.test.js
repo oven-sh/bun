@@ -265,8 +265,12 @@ plugin({
         ...packages("path"),
         "main.js": `console.log("main ran");`,
       });
-      const { stdout, requests } = await run(String(dir), ["--preload", "file://path"]);
-      expect({ stdout, requests }).toEqual({ stdout: "main ran\n", requests: [] });
+      expect(await run(String(dir), ["--preload", "file://path"])).toEqual({
+        stdout: "main ran\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
     });
 
     const worker = preload => `

@@ -132,6 +132,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           recursiveSync: readAllSync(fs.opendirSync(root, { recursive: true, bufferSize: 2 })),
           recursiveForAwait: recursiveForAwait.sort(),
           missing: (() => { try { fs.opendirSync(missing); } catch (e: any) { return [e.code, e.syscall, e.path]; } })(),
+          // The lookup of the embedded directory comes before the validation of bufferSize, as the open does on disk.
+          missingBeforeBufferSize: errcode(() => fs.opendirSync(missing, { bufferSize: 0 })),
           fileCode: errcode(() => fs.opendirSync(cfg)),
         };
 
@@ -236,6 +238,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           recursiveSync: expectedRecursive,
           recursiveForAwait: expectedRecursive,
           missing: ["ENOENT", "opendir", r.missing],
+          missingBeforeBufferSize: "ENOENT",
           fileCode: "ENOTDIR",
         },
         glob: {

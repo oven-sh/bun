@@ -315,7 +315,7 @@ type ClientDefaults =
   | "perMessageDeflate"
   | "protocolVersion"
   | "skipUTF8Validation";
-type ResolvedClientOptions = ClientOptions & Required<Pick<ClientOptions, ClientDefaults>>;
+type ResolvedClientOptions = ClientOptions & Required<Pick<ClientOptions, ClientDefaults>> & { __proto__: null };
 
 // The request of `http.request()`, for what the native client cannot dial.
 interface HttpClientRequest extends NodeClientRequest {
@@ -2129,6 +2129,14 @@ function handshakeOnTimeout(websocket: WebSocket): void {
   abortHandshake(websocket, websocket._req!, "Opening handshake has timed out");
 }
 
+// `object[key]`, be it the object's own or of its class.
+function notFromObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
+  for (let holder: object | null = object; holder !== null; holder = Object.getPrototypeOf(holder)) {
+    if (holder === Object.prototype) return undefined;
+    if (Object.hasOwn(holder, key)) return object[key];
+  }
+}
+
 function extractAgentOptions(agent: Agent): {
   connectOpts: AgentConnectOptions | undefined;
   proxy: ProxyOption | null;
@@ -2139,13 +2147,13 @@ function extractAgentOptions(agent: Agent): {
   let proxy: ProxyOption | null = null;
 
   // Only an HTTP proxy is something the native client can go through. The `proxy` of a SOCKS agent is no URL.
-  const agentProxy = connectOpts?.proxy || agent?.proxy;
+  const agentProxy =
+    (connectOpts && notFromObjectPrototype(connectOpts, "proxy")) || notFromObjectPrototype(agent, "proxy");
   const proxyUrl = (agentProxy as URL)?.href || agentProxy;
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
-    if (agent?.proxyHeaders) {
-      const proxyHeaders: HttpHeaders = $isCallable(agent.proxyHeaders)
-        ? agent.proxyHeaders.$call(agent)
-        : agent.proxyHeaders;
+    const headers = notFromObjectPrototype(agent, "proxyHeaders");
+    if (headers) {
+      const proxyHeaders: HttpHeaders = $isCallable(headers) ? headers.$call(agent) : headers;
       proxy = { url: proxyUrl, headers: proxyHeaders };
     } else {
       proxy = proxyUrl;
@@ -2460,6 +2468,8 @@ function initAsClient(
   options: ClientOptions | undefined,
 ): void {
   const opts: ResolvedClientOptions = {
+    // `tls`, `proxy` and `agent` have no default here. Nobody sets them through Object.prototype.
+    __proto__: null,
     allowSynchronousEvents: true,
     autoPong: true,
     closeTimeout: CLOSE_TIMEOUT,
@@ -2661,6 +2671,24 @@ function initAsClient(
     opts.defaultPort = opts.defaultPort || defaultPort;
     opts.timeout = handshakeTimeout;
 
+    if ($isObject(opts.tls)) {
+      // It stands in for all that the other options say about TLS, as it does for the native client below.
+      const { serverName, ...tls }: Dictionary<unknown> = { __proto__: null as never, ...opts.tls };
+      const connect = opts as unknown as Dictionary<unknown>;
+      const { nodeClientTlsKeys } = require("internal/tls");
+
+      // Deleted, not undefined: to tls.connect() a key that is there replaces its default.
+      for (let i = 0; i < nodeClientTlsKeys.length; i++) delete connect[nodeClientTlsKeys[i]];
+      delete connect.ALPNProtocols;
+      delete connect.secureProtocol;
+      delete connect.tls;
+
+      if (serverName !== undefined) connect.servername = serverName;
+      for (const key of Object.keys(tls)) {
+        if (tls[key] !== undefined) connect[key] = tls[key];
+      }
+    }
+
     const request = isSecure ? require("node:https").request : lazyHttp().request;
     const req: HttpClientRequest = (websocket._req = request(opts));
 
@@ -2718,9 +2746,11 @@ function initAsClient(
   const req = (websocket._req = new ClientRequest(websocket, url, nativeOptions, state));
 
   const headers = req[kHeaders];
-  for (const name in opts.headers) {
-    const value = opts.headers[name];
-    if (value !== undefined) headers[name.toLowerCase()] = [name, value];
+  if (opts.headers) {
+    for (const name of Object.keys(opts.headers)) {
+      const value = opts.headers[name];
+      if (value !== undefined) headers[name.toLowerCase()] = [name, value];
+    }
   }
   if (headers.host === undefined) {
     const host = isIpcUrl ? "localhost" : parsedUrl.hostname;

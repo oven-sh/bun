@@ -463,6 +463,7 @@ function tlsHandshakeError(verifyError) {
 
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,
   processPfxOptions,

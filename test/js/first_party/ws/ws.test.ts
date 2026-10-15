@@ -1920,6 +1920,78 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { checkServerIdentity: accept })).toBe("refused");
     });
 
+    // Some options are only for `http.request()`, which knows no `tls` option.
+    it("the `tls` option counts whichever way the client dials", async () => {
+      using server = await serve(agent1);
+      const refuse = () => new Error("not the pinned certificate");
+      const ways: Record<string, object> = {
+        native: {},
+        finishRequest: { finishRequest: (req: { end(): void }) => req.end() },
+        family: { family: 4 },
+        localAddress: { localAddress: "127.0.0.1" },
+        lookup: { lookup: (_host: string, _options: object, done: Function) => done(null, [{ address: "127.0.0.1", family: 4 }]) }, // prettier-ignore
+      };
+      const results = await Promise.all(
+        Object.entries(ways).map(async ([way, only]) => {
+          // It replaces the options beside it, which trust everybody.
+          const options = { ...only, rejectUnauthorized: false };
+          const outcomes = await Promise.all([
+            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1" } }),
+            dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", checkServerIdentity: refuse } }),
+            dial(server.url, { ...options, tls: { ca: ca1 } }),
+            dial(server.url, { ...options, tls: {} }),
+          ]);
+          return [way, outcomes];
+        }),
+      );
+      const expected = [anonymous, "refused", "refused", "refused"];
+      expect(results).toEqual(Object.keys(ways).map(way => [way, expected]));
+    });
+
+    it("no option is read from Object.prototype", async () => {
+      using server = await serve();
+      const plain = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+      plain.on("connection", (ws, req) => ws.send(`x-polluted: ${req.headers["x-polluted"]}`));
+      await once(plain, "listening");
+      try {
+        await using child = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const WebSocket = require("ws");
+            const dial = (url, ...options) => new Promise(resolve => {
+              const ws = new WebSocket(url, ...options);
+              ws.on("message", data => { resolve(String(data)); ws.terminate(); });
+              ws.on("error", error => resolve("refused " + error.code));
+            });
+            const { TEST_URL, TEST_PLAIN_URL } = process.env;
+            const agents = [new (require("node:https").Agent)(), new (require("node:http").Agent)()];
+            Object.prototype.tls = { rejectUnauthorized: false };
+            Object.prototype.proxy = "http://127.0.0.1:9";
+            Object.prototype["x-polluted"] = "yes";
+            for (const options of [[], [{}], [{ agent: agents[0] }]]) console.log(await dial(TEST_URL, ...options));
+            for (const options of [[], [{}], [{ agent: agents[1] }], [{ headers: { a: "b" } }]]) console.log(await dial(TEST_PLAIN_URL, ...options));
+            `,
+          ],
+          env: {
+            ...bunEnv,
+            TEST_URL: server.url,
+            TEST_PLAIN_URL: `ws://127.0.0.1:${(plain.address() as AddressInfo).port}`,
+          },
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+        const refused = "refused DEPTH_ZERO_SELF_SIGNED_CERT";
+        const direct = "x-polluted: undefined";
+        expect(stdout.trim().split("\n")).toEqual([refused, refused, refused, direct, direct, direct, direct]);
+        expect(exitCode).toBe(0);
+      } finally {
+        plain.close();
+      }
+    });
+
     it("crl", async () => {
       // ca2 signs agent3. ca2-crl.pem revokes agent4 only.
       using server = await serve({ key: read("agent3-key.pem"), cert: read("agent3-cert.pem") });

@@ -201,10 +201,8 @@ fn map_floyd_steinberg(
             let px: usize = y as usize * w as usize + usize::try_from(x).expect("int cast");
             let off: usize = usize::try_from(x).expect("int cast") * 4;
 
-            // Wanted colour = source + accumulated error, in sixteenths and
-            // clamped to what a pixel can be: the part past 0 or 255 is not
-            // something a neighbour can make up for, and carrying it spills
-            // into flat areas further on. The candidate is the nearest level.
+            // Wanted colour = source + accumulated error, in sixteenths, kept
+            // inside 0..255. The candidate is the nearest whole level.
             let mut wanted: [i32; 4] = [0; 4];
             let mut cand: [i32; 4] = [0; 4];
             for c in 0..4usize {
@@ -229,8 +227,7 @@ fn map_floyd_steinberg(
             for c in 0..4usize {
                 let err: i32 = wanted[c] - 16 * i32::from(palette[idx as usize * 4 + c]);
                 // Three shares round toward zero and the one below takes the
-                // rest, so the four add up to `err`. With four floored
-                // shares an error of −1 pushed −4 and +1 pushed nothing.
+                // rest: the four add up to `err`.
                 let ahead = err * 7 / 16;
                 let below_behind = err * 3 / 16;
                 let below_ahead = err / 16;

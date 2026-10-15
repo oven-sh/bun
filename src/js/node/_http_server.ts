@@ -3550,7 +3550,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
     // The head still counts as sent (Node's _implicitHeader() runs before _writeRaw() sees the dead socket),
     // except when the chunk of a destroyed response was dropped above and no writeHead() came before.
-    // headersSent and _header move together.
+    // Both flags are set here, as on the normal end() path below, so headersSent and the _header gates
+    // of OutgoingMessage (setHeader, removeHeader) agree.
     if (!droppedChunk || headerState !== NodeHTTPHeaderState.none) {
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
       this._header = " ";

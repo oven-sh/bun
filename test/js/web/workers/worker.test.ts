@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -259,6 +259,22 @@ describe("web worker", () => {
     // ensure they didn't change for the main thread
     expect(process.argv).toEqual(original_argv);
     expect(process.execArgv).toEqual(original_execArgv);
+  });
+
+  // https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+  test.skipIf(isWindows).each(["work?er", "worker?"])("the file of a worker can be in the folder %s", async folder => {
+    using dir = tempDir("worker-question-mark", {
+      [`${folder}/worker.mjs`]: `
+        import { name } from "./dep.mjs";
+        onmessage = () => postMessage({ name, dir: import.meta.dir.split("/").pop(), file: import.meta.file });
+      `,
+      [`${folder}/dep.mjs`]: `export const name = "dep.mjs";`,
+    });
+    const file = path.join(String(dir), folder, "worker.mjs");
+    const expected = { name: "dep.mjs", dir: folder, file: "worker.mjs" };
+
+    expect(await waitForWorkerResult(new Worker(file), "hello")).toEqual(expected);
+    expect(await waitForWorkerResult(new Worker(Bun.pathToFileURL(file)), "hello")).toEqual(expected);
   });
 
   test("sending 50 messages should just work", done => {

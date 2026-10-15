@@ -92,6 +92,19 @@ impl Tree {
         deps[dep_id as usize].name.slice(buf)
     }
 
+    /// The tree of a member that the root's `node_modules` has no link to: see `hoist_dependency`.
+    pub(crate) fn is_unlinked_member(
+        &self,
+        trees: &[Tree],
+        hoisted_dependencies: &[DependencyID],
+        deps: &[Dependency],
+    ) -> bool {
+        (deps.get(self.dependency_id as usize)).is_some_and(|dep| dep.behavior.is_workspace())
+            && !(trees[self.parent as usize].dependencies)
+                .get(hoisted_dependencies)
+                .contains(&self.dependency_id)
+    }
+
     pub(crate) fn to_external(self) -> External {
         let mut out: External = [0u8; EXTERNAL_SIZE];
         out[0..4].copy_from_slice(&self.id.to_ne_bytes());
@@ -129,6 +142,10 @@ impl Tree {
 enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
+    /// Another group of the same package holds the place in `id` for another package.
+    Contested {
+        id: Id,
+    },
     Resolve(PackageID),
     ResolveReplace {
         id: Id,
@@ -264,6 +281,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 
         let (relative_path, depth) = relative_path_and_depth::<PATH_STYLE>(
             trees,
+            self.hoisted_dependencies,
             self.dependencies,
             self.string_bytes,
             current_tree_id,
@@ -285,6 +303,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 /// Returns relative path and the depth of the tree
 pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     trees: &[Tree],
+    hoisted_dependencies: &[DependencyID],
     dependencies: &[Dependency],
     string_buf: &[u8],
     tree_id: Id,
@@ -297,7 +316,11 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
     let mut parent_id = tree.id;
     let mut path_written: usize = match PATH_STYLE {
-        IteratorPathStyle::NodeModules => b"node_modules".len(),
+        IteratorPathStyle::NodeModules => {
+            // The last path in this buffer may have been one of an unlinked member.
+            path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+            b"node_modules".len()
+        }
         IteratorPathStyle::PkgPath => 0,
     };
 
@@ -343,7 +366,20 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // SAFETY: the parent walk above wrote `depth_buf[1..=depth]` and
             // `1 <= depth_buf_len <= depth`.
             let id = unsafe { depth_buf[depth_buf_len].assume_init() };
-            let name = trees[id as usize].folder_name(dependencies, buf);
+            let mut name = trees[id as usize].folder_name(dependencies, buf);
+            // Below the root, so the first: its own folder on disk, `./<name>` in bun.lock.
+            if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
+                if PATH_STYLE == IteratorPathStyle::PkgPath {
+                    path_buf[..2].copy_from_slice(b"./");
+                    path_written = 2;
+                } else {
+                    let member = &dependencies[trees[id as usize].dependency_id as usize];
+                    name = bun_core::strings::without_trailing_slash(
+                        member.version.workspace().slice(buf),
+                    );
+                    path_written = 0;
+                }
+            }
             if !crate::dependency::is_safe_install_folder_name(name) {
                 Output::err_generic(
                     "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
@@ -387,10 +423,9 @@ pub enum BuilderMethod {
     /// changes. For saving to disk.
     Resolvable,
 
-    /// This will filter out disabled dependencies, resulting in more aggresive
-    /// hoisting compared to `.resolvable`. We skip dependencies based on 'os', 'cpu',
-    /// 'libc' (optional only), and omitted dependency types (`--omit=dev/peer/optional`).
-    /// Dependencies of a disabled package are not included in the output.
+    /// For installing. Every dependency takes its place, so places do not depend on the run; then
+    /// `keep_linked_rows` drops what the run leaves out: by 'os', 'cpu', 'libc' (optional only),
+    /// `--omit=dev/peer/optional`, `--filter`. What only a dropped package needs is dropped too.
     Filter,
 }
 
@@ -413,8 +448,10 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
     pub(crate) pending_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// A peer got bound after its dependent was placed; see `Lockfile::resolve`.
+    /// A peer got bound, or moved, after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_peer: bool,
+    /// The packages whose rows this pass has walked; it walks them once per place of the package.
+    pub(crate) walked: DynamicBitSet,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
@@ -429,6 +466,11 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// The folder `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
+    /// Install-tree places that two groups of one package want for different packages. The first
+    /// group the run links fills it, so no other package shares what is there.
+    pub(crate) contested: bun_collections::HashMap<(Id, PackageNameHash), ()>,
+    /// Install-tree rows this run links, each with the edge the installer reads. `None`: all.
+    pub(crate) kept: Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>>,
     pub(crate) linked: reachable::Linked,
 }
 
@@ -574,7 +616,11 @@ bun_collections::multi_array_columns! {
 pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
+    pub left_out: LeftOut,
 }
+
+/// The places of an install tree whose rows `clean` dropped: a folder there is no stranger.
+pub(crate) type LeftOut = bun_collections::HashMap<(Id, PackageNameHash), ()>;
 
 /// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
 fn repeating_period(
@@ -691,6 +737,138 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         bun_core::Global::crash();
     }
 
+    /// Whether this run leaves out the edge `dep_id` of `pkg_id`, a package that no tarball ships.
+    fn leaves_out(
+        &mut self,
+        manager: &PackageManager,
+        dep_id: DependencyID,
+        pkg_id: PackageID,
+    ) -> bool {
+        let lockfile_ref = self.lockfile;
+        let lockfile: &Lockfile = lockfile_ref.get();
+        let dependencies: &[Dependency] = self.dependencies;
+        let dep = &dependencies[dep_id as usize];
+        let target = self.resolutions[dep_id as usize];
+        if target == invalid_package_id {
+            return true;
+        }
+        // What a tarball ships: see `shipped_rows`.
+        if dep.behavior.is_bundled() {
+            return false;
+        }
+        // As in `build_store`: the list replaces the filter for the root's own rows.
+        let filtered = match self.packages_to_install.filter(|_| pkg_id == 0) {
+            Some(packages_to_install) => !packages_to_install.contains(&target),
+            None => is_filtered_dependency_or_workspace(
+                dep_id,
+                pkg_id,
+                self.workspace_filters,
+                self.install_root_dependencies,
+                manager,
+                lockfile,
+                &*self.resolutions,
+                &mut self.linked,
+            ),
+        };
+        filtered
+            || pruned_workspaces::skips_link_to_pruned_workspace(
+                manager, lockfile, pkg_id, dep, target,
+            )
+    }
+
+    /// Fills `kept`: the rows this run's importers reach, each name looked up as node does.
+    /// A pass of its own: an edge the run follows can lead to a row that one it leaves out placed.
+    pub(crate) fn keep_linked_rows(&mut self) {
+        use bun_collections::HashMap;
+
+        let Some(manager) = self.manager else {
+            return;
+        };
+        let dependencies: &[Dependency] = self.dependencies;
+        let trees: Vec<Tree> = self.list.items_tree().to_vec();
+        let mut kept: HashMap<(Id, DependencyID), DependencyID> = HashMap::default();
+
+        // The `node_modules` of what an edge places in `parent`. Not by name: an unlinked member and
+        // the losing group of a contested place have one too.
+        let mut own_folder: HashMap<(Id, DependencyID), Id> = HashMap::default();
+        for tree in trees.iter().skip(1) {
+            own_folder.insert((tree.parent, tree.dependency_id), tree.id);
+        }
+
+        // The tree to look up from, the package, whether a tarball ships it.
+        let mut todo: Vec<(Id, PackageID, bool)> = Vec::new();
+        if !trees.is_empty() {
+            todo.push((0, 0, false));
+        }
+        while let Some((from, pkg_id, shipped)) = todo.pop() {
+            let list = self.resolution_lists[pkg_id as usize];
+            'dep: for dep_id in list.begin()..list.end() {
+                let dep = &dependencies[dep_id as usize];
+                let target = self.resolutions[dep_id as usize];
+                if target == invalid_package_id
+                    || (!shipped && self.leaves_out(manager, dep_id, pkg_id))
+                {
+                    continue;
+                }
+
+                if pkg_id == 0
+                    && dep.behavior.is_workspace()
+                    && self.placed.get(&(0, dep.name_hash)) != Some(&dep_id)
+                {
+                    let own = own_folder.get(&(0, dep_id)).copied().unwrap_or(0);
+                    todo.push((own, target, false));
+                    continue;
+                }
+
+                let mut tree_id = from;
+                let row = loop {
+                    // Two kinds of row come after an edge found its package further up: another
+                    // group's own copy, and, as in `hoist_dependency`, what a tarball ships.
+                    if let Some(&row) = self.placed.get(&(tree_id, dep.name_hash))
+                        && (self.resolutions[row as usize] == target
+                            || !list.contains(row)
+                            || self.contested.contains_key(&(tree_id, dep.name_hash)))
+                        && (shipped
+                            || dep.behavior.is_bundled()
+                            || (dep.behavior.is_peer()
+                                && dependencies[row as usize].behavior.is_bundled())
+                            || !self.shipped_rows.contains_key(&(tree_id, row)))
+                    {
+                        break row;
+                    }
+                    tree_id = trees[tree_id as usize].parent;
+                    if tree_id == INVALID_ID {
+                        continue 'dep;
+                    }
+                };
+
+                if let Some(edge) = kept.get_mut(&(tree_id, row)) {
+                    if dep_id == row {
+                        *edge = row;
+                    }
+                    continue;
+                }
+                // A contested place goes to the group that placed the row, unless the run leaves it out.
+                let takes_over = self.resolutions[row as usize] != target && list.contains(row);
+                if takes_over && (shipped || !self.leaves_out(manager, row, pkg_id)) {
+                    continue;
+                }
+                let filler = if takes_over { dep_id } else { row };
+                // An edge this run follows: whether it is optional decides what a failure means.
+                let follows = takes_over || self.resolutions[row as usize] == target;
+                kept.insert((tree_id, row), if follows { dep_id } else { row });
+                let filler_pkg_id = self.resolutions[filler as usize];
+                if filler_pkg_id != invalid_package_id {
+                    let own = own_folder.get(&(tree_id, filler)).copied();
+                    let shipped = self.shipped_rows.contains_key(&(tree_id, row));
+                    todo.push((own.unwrap_or(tree_id), filler_pkg_id, shipped));
+                }
+            }
+        }
+
+        self.kept = Some(kept);
+    }
+
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
@@ -704,9 +882,16 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
 
         let mut dep_ids: DependencyIDList = Vec::with_capacity(total as usize);
+        let mut left_out = LeftOut::default();
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
+            // `is_unlinked_member` looks for the owner's row in the parent's list.
+            if let Some(kept) = &self.kept
+                && let Some(&edge) = kept.get(&(tree.parent, tree.dependency_id))
+            {
+                tree.dependency_id = edge;
+            }
             let child = core::mem::take(child);
             let off: u32 = dep_ids.len() as u32;
             for &dep_id in child.iter() {
@@ -715,13 +900,18 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                     // peers that never resolved
                     continue;
                 }
-                if !self.shipped_rows.is_empty()
-                    && self.shipped_rows.contains_key(&(tree.id, dep_id))
-                {
+                let shipped = !self.shipped_rows.is_empty()
+                    && self.shipped_rows.contains_key(&(tree.id, dep_id));
+                let edge = match &self.kept {
+                    None => Some(dep_id),
+                    Some(kept) => kept.get(&(tree.id, dep_id)).copied(),
+                };
+                let (false, Some(edge)) = (shipped, edge) else {
+                    left_out.insert((tree.id, self.dependencies[dep_id as usize].name_hash), ());
                     continue;
-                }
+                };
 
-                dep_ids.push(dep_id);
+                dep_ids.push(edge);
             }
             let len: u32 = dep_ids.len() as u32 - off;
 
@@ -731,7 +921,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         slice.deinit_owned();
 
-        Ok(CleanResult { trees, dep_ids })
+        Ok(CleanResult {
+            trees,
+            dep_ids,
+            left_out,
+        })
     }
 }
 
@@ -821,7 +1015,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     if parent_pkg_id != 0 {
-        return false;
+        return lockfile.is_member_outside(parent_pkg_id);
     }
 
     if !dep.behavior.is_workspace() {
@@ -856,6 +1050,13 @@ impl Tree {
             return Ok(());
         }
 
+        // The install tree has no folder there. The saved tree does not depend on the disk.
+        if METHOD == BuilderMethod::Filter
+            && builder.lockfile.get().is_member_outside(parent_pkg_id)
+        {
+            return Ok(());
+        }
+
         if let Some(period) = repeating_period(&builder.list, self.id, dependency_id) {
             builder.crash_on_endless_nesting(self.id, dependency_id, period);
         }
@@ -885,6 +1086,8 @@ impl Tree {
         };
         let shipped = builder.shipped_rows.contains_key(&(self.id, dependency_id));
         builder.in_shipped_folder = shipped;
+        let first_walk = !builder.walked.is_set(parent_pkg_id as usize);
+        builder.walked.set(parent_pkg_id as usize);
 
         // Copied out, so that neither keeps `builder` borrowed.
         let lockfile_ref = builder.lockfile;
@@ -917,37 +1120,13 @@ impl Tree {
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
 
-            // filter out disabled dependencies. Not what a tarball ships: see `shipped_rows`.
-            if METHOD == BuilderMethod::Filter && !shipped && !dependency.behavior.is_bundled() {
-                let manager = builder.manager.expect("manager set when METHOD == Filter");
-                // As in `build_store`: the list replaces the filter for the root's own rows.
-                let filtered = match builder.packages_to_install.filter(|_| parent_pkg_id == 0) {
-                    Some(packages_to_install) => !packages_to_install.contains(&pkg_id),
-                    None => is_filtered_dependency_or_workspace(
-                        dep_id,
-                        parent_pkg_id,
-                        builder.workspace_filters,
-                        builder.install_root_dependencies,
-                        manager,
-                        lockfile,
-                        &*builder.resolutions,
-                        &mut builder.linked,
-                    ),
-                };
-
-                // unresolved packages already had their chance to resolve.
-                if filtered
-                    || pkg_id == invalid_package_id
-                    || pruned_workspaces::skips_link_to_pruned_workspace(
-                        manager,
-                        lockfile,
-                        parent_pkg_id,
-                        dependency,
-                        pkg_id,
-                    )
-                {
-                    continue;
-                }
+            // unresolved packages already had their chance to resolve. Not what a tarball ships.
+            if METHOD == BuilderMethod::Filter
+                && !shipped
+                && !dependency.behavior.is_bundled()
+                && pkg_id == invalid_package_id
+            {
+                continue;
             }
 
             let hoist = |hoist_root_id: Id, builder: &mut Builder<'_, METHOD>| {
@@ -1006,27 +1185,82 @@ impl Tree {
                     break 'hoisted hoist(next_id, &mut *builder);
                 }
 
+                // A later group lists the name for another package: the place they contest is here.
+                if (dependency.behavior.is_dev() || dependency.behavior.is_optional())
+                    && builder.sort_buf[sort_idx + 1..].iter().any(|&later| {
+                        let rival = &dependencies[later as usize];
+                        rival.name_hash == dependency.name_hash
+                            && !rival.behavior.is_peer()
+                            && !rival.behavior.is_bundled()
+                            && builder.resolutions[later as usize] != pkg_id
+                            && builder.resolutions[later as usize] != invalid_package_id
+                    })
+                {
+                    break 'hoisted hoist(next_id, &mut *builder);
+                }
+
                 hoist(hoist_root_id, &mut *builder)
             };
 
             match hoisted {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
 
+                HoistDependencyResult::Contested { id } => {
+                    let again = (builder.contested)
+                        .insert((id, dependency.name_hash), ())
+                        .is_some();
+                    let mut tree_id = id;
+                    if METHOD == BuilderMethod::Resolvable {
+                        // bun.lock has one key below the place; a third group's package is not saved.
+                        if again {
+                            continue;
+                        }
+                        // Saved one level below the place: `k/k`, and `k/k/..` for its tree.
+                        tree_id = builder.list.len() as Id;
+                        builder.list.append(BuilderEntry {
+                            tree: Tree {
+                                parent: id,
+                                id: tree_id,
+                                dependency_id: dep_id,
+                                dependencies: DependencyIDSlice::new(0, 1),
+                            },
+                            dependencies: vec![dep_id],
+                        })?;
+                        builder
+                            .placed
+                            .insert((tree_id, dependency.name_hash), dep_id);
+                    }
+                    // Install tree: no row, but a tree, so what it needs has places when it is linked.
+                    if builder.resolution_lists[pkg_id as usize].len > 0 {
+                        builder.queue.write_item(FillItem {
+                            tree_id,
+                            dependency_id: dep_id,
+                            hoist_root_id,
+                        })?;
+                    }
+                }
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
-                    builder.resolutions[dep_id as usize] = res_id;
-                    debug_assert!(!builder.pending_peers.contains_key(&dependency.name_hash));
-                    builder.bind_pending_peers(dependency.name_hash, res_id);
+                    // Only this walk found the copy: `pending_peers` wait on a row in another tree.
+                    // As in `Rebind`. Bound later, an optional peer gets a copy at its first place.
+                    if first_walk || !dependency.behavior.is_optional_peer() {
+                        builder.resolutions[dep_id as usize] = res_id;
+                        // Bound, it can get a copy of its own next to a peer of that package.
+                        builder.late_bound_peer = true;
+                    }
                 }
                 HoistDependencyResult::ResolveReplace {
                     id,
                     dep_id: replaced,
                 } => {
                     debug_assert!(pkg_id != invalid_package_id);
-                    builder.late_bound_peer = true;
-                    builder.resolutions[replaced as usize] = pkg_id;
-                    builder.bind_pending_peers(dependency.name_hash, pkg_id);
+                    // A member only loses the link: its tree is queued, and holds what cannot hoist.
+                    if !dependencies[replaced as usize].behavior.is_workspace() {
+                        builder.late_bound_peer = true;
+                        builder.resolutions[replaced as usize] = pkg_id;
+                        builder.bind_pending_peers(dependency.name_hash, pkg_id);
+                    }
                     for placed_dep_id in &mut builder.list.items_dependencies_mut()[id as usize] {
                         if *placed_dep_id == replaced {
                             *placed_dep_id = dep_id;
@@ -1051,7 +1285,11 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    builder.resolutions[dep_id as usize] = res_id;
+                    // One row for all places of its package: the first decides, alike in each pass.
+                    if first_walk {
+                        builder.resolutions[dep_id as usize] = res_id;
+                        builder.late_bound_peer = true;
+                    }
                 }
                 HoistDependencyResult::ResolveLater => {
                     // an unresolved peer that deduplicated with another one. save it to resolve it
@@ -1164,6 +1402,13 @@ impl Tree {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
 
+            if !builder.contested.is_empty()
+                && !input_dep_range.contains(dep_id)
+                && (builder.contested).contains_key(&(this.id, dependency.name_hash))
+            {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
+
             // The copy a tarball ships stays in this folder, resolved or not.
             if res_id == invalid_package_id && dep.behavior.is_bundled() {
                 return HoistDependencyResult::DependencyLoop; // 3
@@ -1198,7 +1443,25 @@ impl Tree {
             }
 
             if input_dep_range.contains(dep_id) {
+                // The root's own dependency takes the folder from the member of that name.
+                if dep.behavior.is_workspace() {
+                    return HoistDependencyResult::ResolveReplace {
+                        id: this.id,
+                        dep_id,
+                    };
+                }
                 // same package lists this name in another dependency group
+                let own = builder.resolution_lists[res_id as usize];
+                if METHOD == BuilderMethod::Filter
+                    // Saved below the place, unless the package there has that key for its own row.
+                    || (AS_DEFINED
+                        && (dep.behavior.is_dev() || dep.behavior.is_optional())
+                        && !dependency.behavior.is_peer()
+                        && !(own.begin()..own.end())
+                            .any(|row| deps[row as usize].name_hash == dependency.name_hash))
+                {
+                    return HoistDependencyResult::Contested { id: this.id };
+                }
                 return HoistDependencyResult::Hoisted; // 1
             }
 
@@ -1429,16 +1692,27 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     // The `node_modules` folder of the package placed in `parent` under a name, if it has one.
     let mut own_folder: HashMap<(Id, PackageNameHash), Id> = HashMap::default();
     for tree in &trees[1..] {
+        if tree.is_unlinked_member(trees, hoisted, dependencies) {
+            continue;
+        }
         let name_hash = dependencies[tree.dependency_id as usize].name_hash;
         own_folder.insert((tree.parent, name_hash), tree.id);
     }
 
+    // What each folder holds under a name.
+    let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::default();
+    for tree in trees {
+        for &dep_id in tree.dependencies.get(hoisted) {
+            placed
+                .entry((tree.id, dependencies[dep_id as usize].name_hash))
+                .or_insert_with(|| resolutions[dep_id as usize]);
+        }
+    }
+
     let resolve_from = |mut tree_id: Id, name_hash: PackageNameHash| -> Option<PackageID> {
         while let Some(tree) = trees.get(tree_id as usize) {
-            for &dep_id in tree.dependencies.get(hoisted) {
-                if dependencies[dep_id as usize].name_hash == name_hash {
-                    return Some(resolutions[dep_id as usize]);
-                }
+            if let Some(&pkg_id) = placed.get(&(tree_id, name_hash)) {
+                return Some(pkg_id);
             }
             tree_id = tree.parent;
         }

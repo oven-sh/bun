@@ -209,6 +209,7 @@ pub(crate) fn link_global_bins(
         rel_buf: link_rel_buf.as_mut_slice(),
         err: None,
         skipped_due_to_missing_bin: false,
+        keeps_target: false,
     };
     if unlink {
         bin_linker.unlink(true);

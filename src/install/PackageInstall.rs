@@ -65,6 +65,9 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
+    /// Hoisted linker, over a `node_modules` that was there: what to remove once bun.lock is saved.
+    pub(crate) hiding_copies: Option<crate::prune::HidingCopies>,
+
     pub(crate) offline_misses: OfflineMisses,
 }
 
@@ -465,11 +468,14 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` has the names and inodes of the folder `src` as it is now.
-fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
+/// Whether `dest` has the names and inodes of `src`, which is `rel` in the folder, as it is now.
+fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
-    // Each name followed by its inode number, 0 for a directory.
-    fn list(dir: &Dir) -> Option<Vec<Box<[u8]>>> {
+    // Each name followed by its inode number, 0 for a directory. `folder`: `dir` is not the copy.
+    fn list(
+        dir: &Dir,
+        mut folder: Option<(&mut FolderRoot<'_>, &mut Vec<u8>)>,
+    ) -> Option<Vec<Box<[u8]>>> {
         let mut entries: Vec<Box<[u8]>> = Vec::new();
         let mut iter = sys::iterate_dir(dir.fd());
         while let Some(entry) = iter.next().ok()? {
@@ -484,6 +490,29 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 EntryKind::Directory if name == b"node_modules" => continue,
                 EntryKind::Directory => 0,
                 EntryKind::Unknown => return None,
+                // What `lay_folder_links` makes of a link of the folder is what the copy has.
+                EntryKind::SymLink if name != b"node_modules" => {
+                    let link = match &mut folder {
+                        Some((root, rel)) => {
+                            let root = root.get()?;
+                            let dir_len = rel.len();
+                            rel.extend_from_slice(name);
+                            let link = FolderLink::of(root, rel.as_slice(), dir_len, dir);
+                            rel.truncate(dir_len);
+                            link
+                        }
+                        None => FolderLink::Link(read_link(dir, name)?),
+                    };
+                    match link {
+                        FolderLink::Link(text) => {
+                            let link = [name, &b"/"[..], &text[..], &[0xff; INO_LEN][..]].concat();
+                            entries.push(link.into_boxed_slice());
+                            continue;
+                        }
+                        FolderLink::File(_, target) => target.st_ino,
+                        FolderLink::LeftOut(_) => continue,
+                    }
+                }
                 // The backends skip these.
                 _ => continue,
             };
@@ -493,7 +522,9 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         Some(entries)
     }
 
-    let (Some(src_entries), Some(dest_entries)) = (list(src), list(dest)) else {
+    let (Some(src_entries), Some(dest_entries)) =
+        (list(src, Some((&mut *root, &mut *rel))), list(dest, None))
+    else {
         return false;
     };
     src_entries == dest_entries
@@ -507,7 +538,14 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
                 src.open_at_with(name, flags),
                 dest.open_at_with(name, flags),
             ) {
-                (Ok(src), Ok(dest)) => is_hardlinked_copy(&src, &dest),
+                (Ok(src), Ok(dest)) => {
+                    let dir_len = rel.len();
+                    rel.extend_from_slice(name);
+                    rel.push(b'/');
+                    let same = is_hardlinked_copy(root, rel, &src, &dest);
+                    rel.truncate(dir_len);
+                    same
+                }
                 _ => false,
             }
         })
@@ -520,7 +558,197 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
     // Inode numbers only compare on one device. The same directory is a link to the folder.
     dest_stat.st_dev == src_stat.st_dev
         && dest_stat.st_ino != src_stat.st_ino
-        && is_hardlinked_copy(src, dest)
+        && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
+}
+
+/// The real path of a `file:` folder, looked up for its first link: most folders have none.
+struct FolderRoot<'a>(&'a Dir, Option<Box<[u8]>>);
+
+impl FolderRoot<'_> {
+    fn get(&mut self) -> Option<&[u8]> {
+        if self.1.is_none() {
+            let mut fd_path = path::path_buffer_pool::get();
+            let mut real = path::path_buffer_pool::get();
+            let fd_path = sys::get_fd_path_z(self.0.fd(), &mut fd_path).ok()?;
+            self.1 = Some(sys::realpath(fd_path, &mut real).ok()?.into());
+        }
+        self.1.as_deref()
+    }
+}
+
+/// The backends skip links. Only for `dest`, the copy of a `folder` (from the cwd) the user named.
+/// Returns a warning for each link that is left out, in the order of their paths.
+pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
+    let mut left_out: Vec<Box<[u8]>> = Vec::new();
+    if let Ok(src) = Dir::open(folder) {
+        let root = &mut FolderRoot(&src, None);
+        lay_links_below(root, &mut Vec::new(), &src, dest, &mut left_out);
+    }
+    crate::prune::sort_names(&mut left_out);
+    for link in &mut left_out {
+        *link = [&b"the link "[..], folder, &b"/"[..], &link[..]]
+            .concat()
+            .into_boxed_slice();
+    }
+    left_out
+}
+
+/// `rel`: the path of `src` in the folder, empty or with a trailing slash.
+fn lay_links_below(
+    root: &mut FolderRoot<'_>,
+    rel: &mut Vec<u8>,
+    src: &Dir,
+    dest: &Dir,
+    left_out: &mut Vec<Box<[u8]>>,
+) {
+    let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+    let dir_len = rel.len();
+    let mut iter = sys::iterate_dir(src.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == b"node_modules" {
+            continue;
+        }
+        rel.truncate(dir_len);
+        rel.extend_from_slice(name);
+        match crate::prune::entry_kind(src, name, entry.kind) {
+            EntryKind::Directory => {
+                if let (Ok(src), Ok(dest)) = (
+                    src.open_at_with(name, flags),
+                    dest.open_at_with(name, flags),
+                ) {
+                    rel.push(b'/');
+                    lay_links_below(root, rel, &src, &dest, left_out);
+                }
+            }
+            EntryKind::SymLink => {
+                if let Some(root) = root.get()
+                    && let Err(why) = lay_link(root, rel.as_slice(), dir_len, src, dest)
+                {
+                    let text = [rel.as_slice(), &b" is not installed: "[..], why.as_bytes()];
+                    left_out.push(text.concat().into_boxed_slice());
+                }
+            }
+            _ => {}
+        }
+    }
+    rel.truncate(dir_len);
+}
+
+/// What follows the directory `root` in `real`. Both are real paths.
+fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
+    real.strip_prefix(strings::without_trailing_slash(root))
+        .filter(|rest| rest.first().is_none_or(|&c| c == path::SEP))
+}
+
+fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
+    let mut text = path::path_buffer_pool::get();
+    let len = sys::readlinkat(dir, &bun_core::ZBox::from_bytes(name), &mut text[..]).ok()?;
+    (len < text.len()).then(|| Box::from(&text[..len]))
+}
+
+/// What the copy of a folder gets for a link: no way out of itself, nor a file from elsewhere.
+enum FolderLink {
+    /// A link of this text.
+    Link(Box<[u8]>),
+    /// The file at this real path.
+    File(bun_core::ZBox, sys::Stat),
+    LeftOut(&'static str),
+}
+
+impl FolderLink {
+    /// Of the link `rel` in the folder `root`. It is `rel[dir_len..]` in `src`.
+    fn of(root: &[u8], rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
+        use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+        const NOWHERE: FolderLink = FolderLink::LeftOut("it leads nowhere");
+
+        let mut link_buf = path::path_buffer_pool::get();
+        let mut real_buf = path::path_buffer_pool::get();
+        let Some(link) =
+            join_abs_string_buf_z_checked::<platform::Auto>(root, &mut link_buf[..], &[rel])
+        else {
+            return NOWHERE;
+        };
+        let Ok(real) = sys::realpath(link, &mut real_buf) else {
+            return NOWHERE;
+        };
+        let real_z = bun_core::ZBox::from_bytes(real);
+        let Ok(target) = sys::stat(&real_z) else {
+            return NOWHERE;
+        };
+        // The backends leave `node_modules` out of the copy.
+        let in_folder = path_below(root, real)
+            .is_some_and(|rest| !strings::split(rest, b"/").any(|part| part == b"node_modules"));
+
+        // Both checks: with `self -> .`, the text of `sub/x -> ../self/..` stays in, it leads out.
+        if cfg!(not(windows))
+            && in_folder
+            && let Some(text) = read_link(src, &rel[dir_len..])
+            && !path::is_absolute(&text)
+            && !crate::bin::bin_target_escapes_package_dir(&[&rel[..dir_len], &text[..]].concat())
+        {
+            return FolderLink::Link(text);
+        }
+        if sys::kind_from_mode(target.st_mode as sys::Mode) != EntryKind::File {
+            return FolderLink::LeftOut(if cfg!(windows) {
+                "it leads to a directory"
+            } else {
+                "a link to a directory has to be relative and stay in the folder"
+            });
+        }
+        let project = bun_fs::FileSystem::instance().top_level_dir();
+        if !in_folder && path_below(project, real).is_none() {
+            return FolderLink::LeftOut("it leads out of the project");
+        }
+        FolderLink::File(real_z, target)
+    }
+}
+
+fn lay_link(
+    root: &[u8],
+    rel: &[u8],
+    dir_len: usize,
+    src: &Dir,
+    dest: &Dir,
+) -> Result<(), &'static str> {
+    let name = &bun_core::ZBox::from_bytes(&rel[dir_len..]);
+    let _ = dest.delete_tree(name.as_bytes());
+    match FolderLink::of(root, rel, dir_len, src) {
+        FolderLink::Link(text) => sys::symlinkat(&bun_core::ZBox::from_bytes(&text), dest, name)
+            .map_err(|_| "it could not be created"),
+        FolderLink::File(real, target) => {
+            #[cfg(not(windows))]
+            {
+                if sys::linkat(Fd::cwd(), &real, dest, name).is_ok() {
+                    return Ok(());
+                }
+            }
+            #[cfg(windows)]
+            {
+                use path::resolve_path::{join_abs_string_buf_z_checked, platform};
+                let mut dir_buf = path::path_buffer_pool::get();
+                let mut to_buf = path::path_buffer_pool::get();
+                if let Ok(dir) = dest.get_fd_path(&mut dir_buf)
+                    && let Some(to) = join_abs_string_buf_z_checked::<platform::Auto>(
+                        dir,
+                        &mut to_buf[..],
+                        &[name.as_bytes()],
+                    )
+                    && sys::sys_uv::link(&real, to).is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            sys::File::open(&real, sys::O::RDONLY | sys::O::CLOEXEC, 0)
+                .and_then(|from| {
+                    let to = dest.create_file_z(name, Default::default())?;
+                    let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
+                    sys::copy_file(from.handle(), to.handle())
+                })
+                .map_err(|_| "it could not be copied")
+        }
+        FolderLink::LeftOut(why) => Err(why),
+    }
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
@@ -1049,7 +1277,6 @@ impl<'a> PackageInstall<'a> {
         resolution_tag: resolution::Tag,
     ) -> Option<bun_ast::Source> {
         let mut total: usize = 0;
-        let mut read: usize;
         mutable.reset();
         mutable.expand_to_capacity();
 
@@ -1065,27 +1292,18 @@ impl<'a> PackageInstall<'a> {
             .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        read = package_json_file.read(&mut mutable.list[total..]).ok()?;
-        let mut remain = &mut mutable.list[total.min(read)..];
-        if read > 0 && remain.len() < 1024 {
-            mutable.grow_by(4096).ok()?;
-            mutable.expand_to_capacity();
-        }
-
-        while read > 0 {
-            total += read;
-
-            mutable.expand_to_capacity();
-            // Reshaped for borrowck — recompute remain after grow.
-            remain = &mut mutable.list[total..];
-
-            if remain.len() < 1024 {
+        // Less than was asked for is the end of the file. Were it not, the cut JSON would not verify.
+        loop {
+            if mutable.list.len() - total < 1024 {
                 mutable.grow_by(4096).ok()?;
+                mutable.expand_to_capacity();
             }
-            mutable.expand_to_capacity();
-            remain = &mut mutable.list[total..];
-
-            read = package_json_file.read(remain).ok()?;
+            let remain = &mut mutable.list[total..];
+            let read = package_json_file.read(remain).ok()?;
+            total += read;
+            if read < remain.len() {
+                break;
+            }
         }
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid

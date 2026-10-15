@@ -34,6 +34,8 @@ impl PosixSignalHandle {
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread, the ring's single consumer.
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
+        // Before the ring is read: a signal that lands in between counts as queued for one more turn.
+        bun_install::auto_installer::on_signals_taken();
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
@@ -78,6 +80,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
                 unsafe { (*(*vm).event_loop()).wakeup() };
+                // The loop may be held up by an import that waits for the registry.
+                if number == libc::SIGINT || number == libc::SIGTERM {
+                    bun_install::auto_installer::on_signal_queued();
+                }
             }
         }
     }

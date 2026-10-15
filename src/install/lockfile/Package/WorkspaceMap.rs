@@ -36,6 +36,8 @@ pub struct Entry {
     /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
+    /// What the walk of a pattern saw on the way to the folder. `None`: nothing listed it.
+    pub(crate) is_behind_link: Option<bool>,
 }
 
 impl WorkspaceMap {
@@ -256,6 +258,7 @@ fn process_workspace_name(
             }
             break 'brk None;
         },
+        is_behind_link: None,
     };
     bun_output::scoped_log!(
         Lockfile,
@@ -561,6 +564,9 @@ impl WorkspaceMap {
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
+                    // An absolute pattern is opened at its first wildcard.
+                    let is_behind_link =
+                        (!path::is_absolute(user_pattern)).then(|| iter.followed_link());
 
                     let entry_dir: &[u8] =
                         resolve_path::dirname::<path::platform::Auto>(matched_path);
@@ -631,7 +637,10 @@ impl WorkspaceMap {
                     workspace_names.insert(
                         string_builder.as_deref_mut(),
                         workspace_path,
-                        workspace_entry,
+                        Entry {
+                            is_behind_link,
+                            ..workspace_entry
+                        },
                     )?;
                 }
             }

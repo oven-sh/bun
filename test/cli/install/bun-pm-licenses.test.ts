@@ -109,7 +109,7 @@ const monorepoFiles: Files = {
 // Only a devDependency, so `--prod` has nothing to list.
 const devOnlyFiles: Files = { "package.json": pkg({ devDependencies: { "no-deps": "1.0.0" } }) };
 
-// pnpm#8589: the lockfile's resolvable tree hoists the dev subtree's a-dep@1.0.9, but `--production` installs a-dep@1.0.10 there.
+// pnpm#8589: the lockfile's tree hoists the dev subtree's a-dep@1.0.9. Older versions of bun installed a-dep@1.0.10 there with `--production`.
 const outHoistedFiles: Files = {
   "package.json": pkg({
     dependencies: { "uses-a-dep-10": "1.0.0" },
@@ -142,6 +142,9 @@ async function setupProductionInstall(files: Files) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
   await install(packageDir, "hoisted", "--lockfile-only");
   await install(packageDir, "hoisted", "--production");
+  // What those versions laid.
+  renameSync(nm(packageDir, "uses-a-dep-10", "node_modules", "a-dep"), nm(packageDir, "a-dep"));
+  rmSync(nm(packageDir, "uses-a-dep-10", "node_modules"), { recursive: true });
   return packageDir;
 }
 

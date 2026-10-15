@@ -1,6 +1,20 @@
 import { spawn } from "bun";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { access, chmod, lstat, mkdir, readdir, readlink, realpath, rm, stat, symlink, writeFile } from "fs/promises";
+import {
+  access,
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -1059,32 +1073,22 @@ it.skipIf(isWindows)(
   60000,
 );
 
-it.skipIf(isWindows)(
-  "rejects a GitHub tarball whose root directory name contains a path separator",
-  async () => {
+// The cache folder and the bun.lock entry of a `github:` package are named after the root
+// directory of its tarball: the first component of the first entry's path, whatever that
+// entry is. A tarball with a Content-Length and a chunked one go through different readers.
+describe.concurrent.skipIf(isWindows)("the root directory of a GitHub tarball", () => {
+  const readers = ["buffered", "streaming"] as const;
+
+  async function install(reader: (typeof readers)[number], root: string, first: string[] = []) {
     const tarball = createTarball([
-      { name: "pkg.root/extra/", type: "dir" },
+      ...first.map(name => ({ name, type: "dir" as const })),
       {
-        name: "pkg.root/package.json",
+        name: `${root}/package.json`,
         type: "file",
         content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
       },
-      { name: "pkg.root/index.js", type: "file", content: "module.exports = 1;" },
+      { name: `${root}/index.js`, type: "file", content: "module.exports = 1;" },
     ]);
-
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
-          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
-        }
-        if (url.pathname.includes("/repos/")) {
-          return Response.json({ default_branch: "main" });
-        }
-        return new Response("Not Found", { status: 404 });
-      },
-    });
 
     using dir = tempDir("github-tarball-root-name-test", {
       "package.json": JSON.stringify({
@@ -1095,9 +1099,36 @@ it.skipIf(isWindows)(
       ".tmp/.keep": "",
     });
     const installDir = String(dir);
+    const tmp = join(installDir, ".tmp");
+    let exited = false;
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (!url.pathname.includes("/tarball/")) return new Response("Not Found", { status: 404 });
+        if (reader === "buffered") return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(tarball.subarray(0, 60));
+              await controller.flush();
+              // A body is streamed only if it arrives in more than one piece. The first
+              // drain creates the extraction directory, so the rest waits until that exists.
+              while (!exited && (await readdir(tmp)).length === 1) await Bun.sleep(1);
+              controller.write(tarball.subarray(60));
+              await controller.flush();
+              controller.close();
+            },
+          }),
+          { headers: { "Content-Type": "application/gzip" } },
+        );
+      },
+    });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: installDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -1105,19 +1136,60 @@ it.skipIf(isWindows)(
         ...env,
         GITHUB_API_URL: `http://localhost:${server.port}`,
         BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
-        BUN_TMPDIR: join(installDir, ".tmp"),
+        BUN_TMPDIR: tmp,
+        BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
       },
     });
+    void proc.exited.then(() => (exited = true));
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      error: stderr.match(/^error: .*$/m)?.[0],
+      streamed: stderr.includes("Streamed "),
+      installed: stdout.includes("1 package installed"),
+      lock: (
+        await Bun.file(join(installDir, "bun.lock"))
+          .text()
+          .catch(() => "")
+      ).match(/"test-package": \[.*\]/)?.[0],
+      tmp: await readdir(tmp),
+      exitCode,
+    };
+  }
 
-    expect(stderr).toContain('tarball root directory "pkg.root/extra" is not a valid folder name');
-    expect(stdout).not.toContain("1 package installed");
-    // The refusal comes after the extraction.
-    expect(await readdir(join(installDir, ".tmp"))).toEqual([".keep"]);
-    expect(exitCode).not.toBe(0);
-  },
-  60000,
-);
+  it.each(
+    readers.flatMap(reader =>
+      [
+        ["the root directory", ["pkg.root/"]],
+        ["a directory below the root", ["pkg.root/extra/"]],
+        ["a file", []],
+      ].map(([what, first]) => [what, reader, first] as [string, typeof reader, string[]]),
+    ),
+  )("is named by the first entry when that is %s (%s)", async (_, reader, first) => {
+    expect(await install(reader, "pkg.root", first)).toEqual({
+      error: undefined,
+      streamed: reader === "streaming",
+      installed: true,
+      lock: expect.stringContaining(', "pkg.root", "sha512-'),
+      tmp: [".keep"],
+      exitCode: 0,
+    });
+  });
+
+  it.each(readers.flatMap(reader => ["..", ".", "a\\b", "@x", "a b", "-x"].map(root => [root, reader] as const)))(
+    "is refused when its name is %p (%s)",
+    async (root, reader) => {
+      expect(await install(reader, root)).toEqual({
+        error: `error: Refusing to install "test-package": tarball root directory "${root}" is not a valid folder name`,
+        streamed: false,
+        installed: false,
+        lock: undefined,
+        // The refusal comes after the extraction.
+        tmp: [".keep"],
+        exitCode: 1,
+      });
+    },
+  );
+});
 
 // A second, separate mechanism: the directories the linker makes below
 // `node_modules` are input, because `node_modules` comes from whoever checked
@@ -1173,8 +1245,7 @@ async function runBun(cwd: string, args: string[], cache = join(cwd, ".bun-cache
 // The hoisted linker names a package destination as a multi-component path
 // (`mkdirat(nm_fd, "@x/cron.d")`), so a symlink at `@x` redirected every write,
 // and the rename-aside that clears an existing destination deleted through it
-// too. The same hole existed at `.bin`, at a workspace member's `node_modules`
-// and at the destination itself.
+// too. The same hole existed at `.bin` and at the destination itself.
 describe.concurrent("links below node_modules with the hoisted linker", () => {
   const bun = (cwd: string, ...args: string[]) => runBun(cwd, [...args, "--linker", "hoisted"]);
   const install = (cwd: string) => bun(cwd, "install", "--ignore-scripts");
@@ -1278,19 +1349,70 @@ describe.concurrent("links below node_modules with the hoisted linker", () => {
     return repo;
   }
 
-  it.skipIf(isWindows)("does not install through a workspace member's node_modules", async () => {
+  // People link every `node_modules` of a monorepo to a volume or a cache disk, not only the root's.
+  it.skipIf(isWindows)("still installs through a link at a workspace member's node_modules", async () => {
     using root = tempDir("nm-member", {});
-    const victim = await plantVictim(String(root));
+    const volume = join(String(root), "volume");
+    await mkdir(volume);
     const repo = await workspaceWithNestedDep(String(root));
-    await symlink("../../../victim", join(repo, "packages", "evil", "node_modules"));
+    const nodeModules = join(repo, "packages", "evil", "node_modules");
+    await symlink("../../../volume", nodeModules);
+
+    const { stderr, exitCode } = await install(repo);
+
+    expect(stderr).not.toContain("error:");
+    expect((await lstat(nodeModules)).isSymbolicLink()).toBe(true);
+    expect(await Bun.file(join(volume, "lodash", "index.js")).text()).toBe("module.exports = 3");
+    expect(exitCode).toBe(0);
+  });
+
+  // `lodash` is found installed through the link before `zod` is written.
+  it.skipIf(isWindows)("keeps what is behind a workspace member's link when one package changes", async () => {
+    using root = tempDir("nm-member-change", {});
+    const repo = await workspaceWithNestedDep(String(root));
+    for (const major of [1, 2, 3]) {
+      await writeTarball(join(repo, `z${major}.tgz`), "zod", `${major}.0.0`, `module.exports = ${major}`);
+    }
+    const writeMember = (name: string, lodash: string, zod: string) =>
+      writeFile(
+        join(repo, "packages", name, "package.json"),
+        JSON.stringify({
+          name,
+          version: "1.0.0",
+          dependencies: { lodash: `file:../../${lodash}.tgz`, zod: `file:../../${zod}.tgz` },
+        }),
+      );
+    await Promise.all([writeMember("app", "l4", "z1"), writeMember("evil", "l3", "z2")]);
+    expect((await install(repo)).exitCode).toBe(0);
+    const volume = join(String(root), "volume");
+    const nodeModules = join(repo, "packages", "evil", "node_modules");
+    await rename(nodeModules, volume);
+    await symlink(volume, nodeModules);
+    await writeMember("evil", "l3", "z3");
 
     const { exitCode } = await install(repo);
 
-    await expectVictimUntouched(victim);
-    expect((await lstat(join(repo, "packages", "evil", "node_modules"))).isSymbolicLink()).toBe(false);
-    expect(await Bun.file(join(repo, "packages", "evil", "node_modules", "lodash", "index.js")).text()).toBe(
-      "module.exports = 3",
-    );
+    expect((await readdir(nodeModules)).sort()).toEqual(["lodash", "zod"]);
+    expect((await lstat(nodeModules)).isSymbolicLink()).toBe(true);
+    expect(await Bun.file(join(volume, "lodash", "index.js")).text()).toBe("module.exports = 3");
+    expect(await Bun.file(join(volume, "zod", "index.js")).text()).toBe("module.exports = 3");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("keeps a workspace member's link when it replaces the isolated linker's tree", async () => {
+    using root = tempDir("nm-member-switch", {});
+    const repo = await workspaceWithNestedDep(String(root));
+    expect((await runBun(repo, ["install", "--ignore-scripts", "--linker", "isolated"])).exitCode).toBe(0);
+    const volume = join(String(root), "volume");
+    const nodeModules = join(repo, "packages", "evil", "node_modules");
+    await rm(nodeModules, { recursive: true, force: true });
+    await mkdir(volume);
+    await symlink(volume, nodeModules);
+
+    const { exitCode } = await install(repo);
+
+    expect((await lstat(nodeModules)).isSymbolicLink()).toBe(true);
+    expect(await Bun.file(join(volume, "lodash", "index.js")).text()).toBe("module.exports = 3");
     expect(exitCode).toBe(0);
   });
 
@@ -1539,6 +1661,34 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     await expectInstalled(repo, result);
   });
 
+  // The victim has every file an installed package is known by. Linking a bin sets the mode of its file.
+  it.skipIf(isWindows).each([
+    ["node_modules", ["@x", "dep"]],
+    ["node_modules/@scope", ["dep"]],
+    ["node_modules/@scope/<package>", []],
+  ])("installs the package again when a store entry's %s is a link", async (_, below) => {
+    using root = tempDir("nm-in-place", {});
+    const repo = await project(String(root));
+    await expectInstalled(repo, await install(repo));
+    const dep = join(await entryOf(repo, "@x+dep@.+"), "node_modules", "@x", "dep");
+    const link = resolve(dep, ...below.map(() => ".."));
+    const victim = join(String(root), "victim");
+    await cp(dep, join(victim, ...below), { recursive: true });
+    const bin = join(victim, ...below, "index.js");
+    await writeFile(bin, KEEP);
+    await chmod(bin, 0o600);
+    await rm(link, { recursive: true });
+    await symlink(victim, link);
+
+    const result = await install(repo);
+
+    expect((await stat(bin)).mode & 0o777).toBe(0o600);
+    expect(await Bun.file(bin).text()).toBe(KEEP);
+    expect((await lstat(link)).isDirectory()).toBe(true);
+    expect(await Bun.file(join(dep, "index.js")).text()).toContain("console.log('hi')");
+    await expectInstalled(repo, result);
+  });
+
   // With `hoist = false` the fallback directory an earlier install left is deleted first:
   // `<what the link leads to>/node_modules`. A repository can commit both the bunfig and the link.
   it.each([true, false])("does not write or delete through node_modules/.bun (hoist = %p)", async hoist => {
@@ -1725,9 +1875,9 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Nothing looks at a package's own directory on a run that finds the package in place: that would
-  // be a system call for each package. The link stays, and nothing is made or deleted behind it.
-  it("does not write or delete through the directory of a package that counts as installed", async () => {
+  // The victim has the files a package in place is known by. The package is laid again, except on
+  // Windows, where seeing the link would take a system call for each package: there the link stays.
+  it("does not write or delete through a link at a package's own directory", async () => {
     using root = tempDir("nm-leaf", {});
     const victim = await plantVictim(String(root));
     const manifest = JSON.stringify({ name: "@x/dep", version: "1.0.0" });
@@ -1743,7 +1893,8 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
 
     const result = await install(repo);
 
-    expect(result.stdout).toContain("(no changes)");
+    expect(result.stdout).toContain(isWindows ? "(no changes)" : "1 package installed");
+    expect((await lstat(link)).isSymbolicLink()).toBe(isWindows);
     expect((await readdir(victim)).sort()).toEqual([".bun-tag", "keep.txt", "package.json"]);
     expect(await Bun.file(join(victim, "package.json")).text()).toBe(manifest);
     await expectInstalled(repo, result);

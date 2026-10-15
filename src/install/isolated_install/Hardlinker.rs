@@ -12,7 +12,8 @@ use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
 // Length-checked: the walker opens each directory from its parent, so entry paths are unbounded.
 type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
+// `ANY`: the walker joins with the native separator, and on POSIX a `\` is part of a file's name.
+type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::ANY }, { CheckLength::CHECK }>;
 
 pub(crate) struct Hardlinker {
     pub(crate) src: OsAbsPath,
@@ -33,7 +34,7 @@ impl Hardlinker {
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
             src: src.into_checked(),
-            dest: dest.into_checked(),
+            dest: dest.into_sep::<{ PathSeparators::ANY }>().into_checked(),
             walker: {
                 let mut w = bun_sys::walker_skippable::walk(
                     folder_dir,

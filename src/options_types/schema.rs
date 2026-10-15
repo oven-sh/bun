@@ -307,6 +307,32 @@ pub mod api {
         pub offline: Option<bool>,
     }
 
+    impl BunInstall {
+        /// A path as a config file in `dir` has it, or as it was typed in `dir`. With no `dir` a relative one stays as it is.
+        /// `~` and `~/<rest>` are the user's home, as in npm. `~user` is not expanded.
+        pub fn resolve_path(dir: &[u8], path: &[u8]) -> Box<[u8]> {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+
+            let home = bun_core::env_var::HOME.get_not_empty();
+            if let ([b'~', rest @ ..], Some(home)) = (path, home)
+                && rest
+                    .first()
+                    .is_none_or(|&c| bun_core::path_sep::is_sep_any(c))
+            {
+                return [home, rest].concat().into();
+            }
+            // An empty path is an unset one.
+            if path.is_empty() || bun_paths::is_absolute(path) || !bun_paths::is_absolute(dir) {
+                return path.into();
+            }
+            let mut buf = bun_paths::path_buffer_pool::get();
+            // One that does not fit cannot be opened under either name.
+            join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
+                .unwrap_or(path)
+                .into()
+        }
+    }
+
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum SourceMapMode {

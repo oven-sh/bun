@@ -298,7 +298,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let dependency_list: &'static [u8] = manager.options.update.prop;
     let mut any_changes = false;
 
-    let mut not_in_workspace_root: Option<PatchCommitResult> = None;
+    let mut not_in_workspace_root: Option<&PatchCommitResult> = None;
     match subcommand {
         Subcommand::Remove => {
             any_changes =
@@ -342,17 +342,12 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
         _ => {
-            if let Some(stuff) = patch_commit {
+            if let Some(stuff) = &patch_commit {
                 // Inside a workspace package the root package.json is edited below.
                 if stuff.not_in_workspace_root {
                     not_in_workspace_root = Some(stuff);
                 } else {
-                    PackageJSONEditor::edit_patched_dependencies(
-                        manager,
-                        &mut current_package_json_root,
-                        &stuff.patch_key,
-                        &stuff.patchfile_path,
-                    )?;
+                    stuff.edit_package_json(manager, &mut current_package_json_root)?;
                     any_changes = true;
                 }
             }
@@ -421,15 +416,10 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json_ptr: *mut MapEntry =
             package_json_entry_or_crash(manager, root_package_json_path);
 
-        if let Some(stuff) = &not_in_workspace_root {
+        if let Some(stuff) = not_in_workspace_root {
             let root_target = WorkspaceTarget::root();
             let mut root_package_json_root = fetch_entry_root(manager, &root_target);
-            PackageJSONEditor::edit_patched_dependencies(
-                manager,
-                &mut root_package_json_root,
-                &stuff.patch_key,
-                &stuff.patchfile_path,
-            )?;
+            stuff.edit_package_json(manager, &mut root_package_json_root)?;
             store_entry(manager, &root_target, root_package_json_root);
             super::package_json_write_back::record(manager, root_target, false);
         }
@@ -468,6 +458,9 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::exit(1);
     }
     super::package_json_write_back::flush(manager)?;
+    if let Some(stuff) = &patch_commit {
+        stuff.delete_removed_patch(manager);
+    }
 
     if subcommand == Subcommand::Remove
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
@@ -541,13 +534,16 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         let _ = node_modules.delete_tree(request.name);
     }
 
-    crate::prune::prune_bins(&node_modules);
+    crate::prune::prune_bins(&node_modules, None);
     if manager.options.global {
         let mut global_node_modules =
             strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
-        crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
+        let bin_path = manager.options.bin_path.as_bytes();
+        crate::prune::prune_global_bins(bin_path, &global_node_modules, None);
+        // What left may have taken a bin name from a package that stays.
+        crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }
 }
 

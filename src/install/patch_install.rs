@@ -3,7 +3,7 @@ use crate::lockfile::package::PackageColumns as _;
 use bstr::BStr;
 use std::io::Write as _;
 
-use bun_ast::{Loc, Log};
+use bun_ast::{Loc, Log, Range, Source};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -76,6 +76,8 @@ pub struct CalcPatchHash {
     pub(crate) state: Option<EnqueueAfterState>,
 
     pub(crate) result: Option<u64>,
+    /// There is no file at `patchfile_path`.
+    pub(crate) not_found: bool,
 
     pub(crate) logger: Log,
 }
@@ -109,6 +111,110 @@ pub struct InstallContext {
     pub(crate) dependency_id: DependencyID,
     pub(crate) tree_id: crate::lockfile::tree::Id,
     pub(crate) path: Vec<u8>,
+}
+
+/// A path in `patchedDependencies` starts at the project, unless it is absolute.
+fn resolve_patchfile_path<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    project_dir: &[u8],
+    patchfile_path: &[u8],
+) -> &'a ZStr {
+    let base: &[u8] = if path::is_absolute(patchfile_path) {
+        b""
+    } else {
+        project_dir
+    };
+    path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
+        buf,
+        spill,
+        &[base, patchfile_path],
+    )
+}
+
+/// `None` after an error. `log` copies what it shows of `source`, so it may outlive it.
+pub(crate) fn parse_patch_source<'a>(
+    source: &'a Source,
+    log: &mut Log,
+) -> Option<bun_patch::PatchFile<'a>> {
+    let at = |offset: usize| Range {
+        loc: Loc {
+            start: i32::try_from(offset).unwrap_or(i32::MAX),
+        },
+        len: 0,
+    };
+    let patchfile = match bun_patch::parse_patch_file(&source.contents) {
+        Ok(patchfile) => patchfile,
+        Err(e) => {
+            log.add_range_error_fmt(
+                Some(source),
+                at(e.offset),
+                format_args!("failed to parse patchfile: {}", <&'static str>::from(e.err)),
+            );
+            return None;
+        }
+    };
+    for section in &patchfile.skipped {
+        let subject = match section.path {
+            Some(path) if section.is_binary => format!("the content of {}", BStr::new(path)),
+            Some(path) => format!("the section for {}", BStr::new(path)),
+            None => "text that is not a patch".to_owned(),
+        };
+        log.add_range_warning_fmt_with_notes(
+            Some(source),
+            at(section.offset),
+            Box::new([bun_ast::range_data(
+                None,
+                Range::NONE,
+                "make the patch again with bun patch, or delete these lines",
+            )]),
+            format_args!(
+                "{} was left out: {}",
+                subject,
+                if section.is_binary {
+                    "the file is binary, and the patch does not have it"
+                } else {
+                    "it has no change that bun can apply"
+                },
+            ),
+        );
+    }
+    Some(patchfile)
+}
+
+/// `bun patch` and its `--commit` go on without the patch: they are how the file is made again.
+#[cold]
+fn skip_missing_patch_or_crash(
+    manager: &mut PackageManager,
+    patch: &CalcPatchHash,
+    log_level: LogLevel,
+) {
+    let file = BStr::new(&patch.patchfile_path);
+    if !matches!(manager.options.patch_features, PatchFeatures::Nothing) {
+        let patched = &mut manager.lockfile.patched_dependencies;
+        if patched.ordered_remove(&patch.name_and_version_hash) {
+            manager.log_mut().add_warning_fmt(
+                None,
+                Loc::EMPTY,
+                format_args!("Couldn't find patch file: '{file}'. Going on without it"),
+            );
+        }
+        return;
+    }
+    if log_level != LogLevel::Silent {
+        bun_core::pretty_errorln!("<r><red>error<r>: Couldn't find patch file: '{}'", file);
+        let keys = crate::update_transitive::patched_dependency_keys(manager);
+        if let Some(key) = keys.iter().find(|key| {
+            bun_semver::string::Builder::string_hash(key) == patch.name_and_version_hash
+        }) {
+            bun_core::pretty_errorln!(
+                "\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>\n\nTo install the package without a patch, remove \"{}\" from \"patchedDependencies\" in package.json",
+                BStr::new(key),
+                BStr::new(key),
+            );
+        }
+    }
+    Global::crash();
 }
 
 impl PatchTask {
@@ -182,10 +288,10 @@ impl PatchTask {
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
-            let _ = apply
-                .logger
-                .print(std::ptr::from_mut(Output::error_writer()));
         }
+        let _ = apply
+            .logger
+            .print(std::ptr::from_mut(Output::error_writer()));
     }
 
     fn run_from_main_thread_calc_hash(
@@ -198,32 +304,38 @@ impl PatchTask {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
-        let Some(hash) = calc_hash.result else {
-            if log_level != LogLevel::Silent {
-                if calc_hash.logger.has_errors() {
-                    let _ = calc_hash
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
+        match calc_hash.result {
+            Some(hash) => {
+                let gop = bun_core::handle_oom(
+                    manager
+                        .lockfile
+                        .patched_dependencies
+                        .get_or_put(calc_hash.name_and_version_hash),
+                );
+                if gop.found_existing {
+                    gop.value_ptr.set_patchfile_hash(Some(hash));
                 } else {
-                    Output::err_generic(
-                        "Failed to calculate hash for patch <b>{}<r>",
-                        format_args!("{}", BStr::new(&calc_hash.patchfile_path)),
-                    );
+                    panic!("No entry for patched dependency, this is a bug in Bun.");
                 }
             }
-            Global::crash();
-        };
-
-        let gop = bun_core::handle_oom(
-            manager
-                .lockfile
-                .patched_dependencies
-                .get_or_put(calc_hash.name_and_version_hash),
-        );
-        if gop.found_existing {
-            gop.value_ptr.set_patchfile_hash(Some(hash));
-        } else {
-            panic!("No entry for patched dependency, this is a bug in Bun.");
+            None if calc_hash.not_found => {
+                skip_missing_patch_or_crash(manager, calc_hash, log_level);
+            }
+            None => {
+                if log_level != LogLevel::Silent {
+                    if calc_hash.logger.has_errors() {
+                        let _ = calc_hash
+                            .logger
+                            .print(std::ptr::from_mut(Output::error_writer()));
+                    } else {
+                        Output::err_generic(
+                            "Failed to calculate hash for patch <b>{}<r>",
+                            format_args!("{}", BStr::new(&calc_hash.patchfile_path)),
+                        );
+                    }
+                }
+                Global::crash();
+            }
         }
 
         if let Some(state) = &calc_hash.state {
@@ -299,7 +411,7 @@ impl PatchTask {
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
                         pkg_meta_id,
-                        hash,
+                        out_patchfile_hash.unwrap(),
                         name_and_version_hash,
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
@@ -331,10 +443,11 @@ impl PatchTask {
         let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
         let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
+        let absolute_patchfile_path = resolve_patchfile_path(
             &mut absolute_patchfile_path_buf.0,
             &mut absolute_patchfile_path_spill,
-            &[dir, patchfile_path],
+            dir,
+            patchfile_path,
         );
         // TODO: can the patch file be anything other than utf-8?
 
@@ -346,15 +459,9 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-        let patchfile = match bun_patch::parse_patch_file(&patchfile_txt) {
-            Ok(p) => p,
-            Err(e) => {
-                log.add_error_fmt_opts(
-                    format_args!("failed to parse patchfile: {}", <&'static str>::from(e)),
-                    Default::default(),
-                );
-                return Ok(());
-            }
+        let source = Source::init_path_string_owned(&patchfile_path[..], patchfile_txt);
+        let Some(patchfile) = parse_patch_source(&source, log) else {
+            return Ok(());
         };
 
         // 2. Create temp dir to do all the modifications
@@ -505,34 +612,17 @@ impl PatchTask {
         let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
         let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
+        let absolute_patchfile_path = resolve_patchfile_path(
             &mut absolute_patchfile_path_buf.0,
             &mut absolute_patchfile_path_spill,
-            &[dir, patchfile_path],
+            dir,
+            patchfile_path,
         );
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
-                    // Not `self.manager()` — `&mut self.callback` is live.
-                    // BACKREF — read-only lockfile access on the worker thread.
-                    let manager = self.manager.get();
-                    bun_ast::add_error_pretty!(
-                        log,
-                        None,
-                        Loc::EMPTY,
-                        "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
-                        BStr::new(&calc_hash.patchfile_path),
-                        BStr::new(
-                            manager
-                                .lockfile
-                                .patched_dependencies
-                                .get(&calc_hash.name_and_version_hash)
-                                .unwrap()
-                                .path
-                                .slice(&manager.lockfile.buffers.string_bytes)
-                        ),
-                    );
+                    calc_hash.not_found = true;
                     return None;
                 }
                 log.add_error_fmt(
@@ -628,6 +718,7 @@ impl PatchTask {
                 patchfile_path,
                 name_and_version_hash,
                 result: None,
+                not_found: false,
                 logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
@@ -722,5 +813,5 @@ impl PatchTask {
 use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
-use crate::package_manager::Options::LogLevel;
+use crate::package_manager::Options::{LogLevel, PatchFeatures};
 use crate::package_manager_task::Id as TaskId;

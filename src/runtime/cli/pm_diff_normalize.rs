@@ -114,6 +114,8 @@ pub(crate) fn normalize_minified_pair(
     let source_n = bun_ast::Source::init_path_string(path, new);
     let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
     let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
+    pin_exports(&mut ast_o);
+    pin_exports(&mut ast_n);
     let profiles = [
         super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
         super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
@@ -127,6 +129,9 @@ pub(crate) fn normalize_minified_pair(
         )
         .with_profiles(profiles);
         namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
+        if namer.too_deep {
+            return None;
+        }
     }
     let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
     let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
@@ -142,24 +147,35 @@ pub(crate) fn normalize_key_pair(
     old: &[u8],
     new: &[u8],
 ) -> Option<(Normalized, Normalized)> {
+    key_pair(path, old, new, Options::KEY).map(|(o, n, _)| (o, n))
+}
+
+/// With the keys, sorted: every name in them that is as written in the file (a global's, an export's).
+fn key_pair(
+    path: &[u8],
+    old: &[u8],
+    new: &[u8],
+    options: Options,
+) -> Option<(Normalized, Normalized, Vec<Vec<u8>>)> {
     let Some(Kind::Js(loader)) = kind_for(path) else {
         return None;
     };
     if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
         return None;
     }
-    let options = Options::KEY;
     let _store = StoreScope::enter();
     let (arena_o, arena_n) = (Arena::new(), Arena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
     let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
     let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
+    pin_exports(&mut ast_o);
+    pin_exports(&mut ast_n);
     let profiles = [
         super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
         super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
     ];
-    {
+    let as_written = {
         let mut namer = Namer::new(
             &arena_o,
             &arena_n,
@@ -168,10 +184,91 @@ pub(crate) fn normalize_key_pair(
         )
         .for_key(profiles);
         namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
-    }
+        if namer.too_deep {
+            return None;
+        }
+        namer.taken
+    };
     let o = print_js(&arena_o, ast_o, &source_o, options)?;
     let n = print_js(&arena_n, ast_n, &source_n, options)?;
-    Some((o, n))
+    Some((o, n, as_written))
+}
+
+/// Two JS files with one comparison key are one program, whatever their layout and the names of their locals.
+///
+/// `shown` is `old` with some lines as a later version has them. The lines of it in `removed` (0-based, ascending)
+/// are `old`'s own, and may name a local that `shown` declares under its later name: there the name is free in
+/// `shown`, prints as written, and is let through.
+pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
+    same_key(path, old, shown, removed, Options::KEY)
+}
+
+fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Options) -> bool {
+    let Some((old, shown, as_written)) = key_pair(path, old, shown, options) else {
+        return false;
+    };
+    let (a, b) = (old.text.as_slice(), shown.text.as_slice());
+    let in_name = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
+    let name_end =
+        |text: &[u8], at: usize| at + text[at..].iter().take_while(|c| in_name(**c)).count();
+    let (mut i, mut j) = (0, 0);
+    // Where `j` is in `b`.
+    let (mut line, mut line_start) = (0u32, 0);
+    loop {
+        let same_from = j;
+        while i < a.len() && j < b.len() && a[i] == b[j] {
+            if b[j] == b'\n' {
+                line += 1;
+                line_start = j + 1;
+            }
+            i += 1;
+            j += 1;
+        }
+        if i == a.len() && j == b.len() {
+            return true;
+        }
+        // The two part inside a word: back to where it starts.
+        while j > same_from && in_name(b[j - 1]) {
+            i -= 1;
+            j -= 1;
+        }
+        let (a_end, b_end) = (name_end(a, i), name_end(b, j));
+        let at = (line, (j - line_start) as u32);
+        let first = shown.map.partition_point(|m| (m.gen_line, m.gen_col) < at);
+        let mut from = shown.map[first..]
+            .iter()
+            .take_while(|m| (m.gen_line, m.gen_col) == at)
+            .peekable();
+        let let_through = a_end > i
+            && b_end > j
+            && as_written.binary_search_by(|name| name.as_slice().cmp(&b[j..b_end])).is_ok()
+            // The map counts columns in UTF-16 units.
+            && b[line_start..j].is_ascii()
+            && from.peek().is_some()
+            && from.all(|m| removed.binary_search(&m.orig_line).is_ok());
+        if !let_through {
+            return false;
+        }
+        (i, j) = (a_end, b_end);
+    }
+}
+
+/// Whether `shown`, a re-print under `options` put on screen in place of the file `raw`, is the same file to the
+/// parser: printed once more under them, the two are one text.
+pub(crate) fn stands_for(path: &[u8], raw: &[u8], shown: &[u8], options: Options) -> bool {
+    if let Some(Kind::Js(_)) = kind_for(path) {
+        return same_key(path, raw, shown, &[], options);
+    }
+    let print = |bytes: &[u8]| normalize(path, bytes, options);
+    matches!((print(raw), print(shown)), (Some(a), Some(b)) if a.text == b.text)
+}
+
+/// The name a module exports something under is its interface, not a local's name: it is never changed.
+fn pin_exports(ast: &mut bun_ast::Ast<'_>) {
+    for export in ast.named_exports.values() {
+        let symbol = Namer::root(ast.symbols.as_slice(), export.ref_.inner_index() as usize);
+        ast.symbols.as_mut_slice()[symbol].set_must_not_be_renamed(true);
+    }
 }
 
 /// Most of the file's bytes sit on very long lines (a banner comment or a trailing source-map line aside).
@@ -217,6 +314,12 @@ fn parse_js<'a>(
     opts.features.no_macros = true;
     opts.features.trim_unused_imports = false;
     opts.features.minify_syntax = options.minify_syntax;
+    // A call marked `@__PURE__` runs like any other unless a bundler drops it.
+    opts.ignore_dce_annotations = true;
+    opts.keep_use_strict = true;
+    // What the runtime takes.
+    opts.features.top_level_await = true;
+    opts.features.standard_decorators = !loader.is_typescript();
     opts.transform_only = true;
     opts.suppress_warnings_about_weird_code = true;
     let define: &'a bun_js_parser::Define = arena.alloc(bun_js_parser::Define::default());
@@ -226,6 +329,38 @@ fn parse_js<'a>(
         return None;
     };
     (log.errors == 0).then_some(ast)
+}
+
+/// A source map counts lines as JavaScript does: a lone `\r`, U+2028 and U+2029 end one too. Everything here cuts at
+/// `\n`. For each of the map's lines of `text`: the `\n` line it starts on, and after how many bytes of that line.
+/// `None`: the two counts are one.
+fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
+    use bun_core::strings;
+    if !strings::contains_char(text, b'\r') && !strings::contains(text, b"\xe2\x80") {
+        return None;
+    }
+    let mut starts = vec![(0, 0)];
+    let (mut line, mut line_start) = (0u32, 0);
+    let mut i = 0;
+    while i < text.len() {
+        let ends_a_line = match text[i] {
+            b'\n' => 1,
+            b'\r' if text.get(i + 1) == Some(&b'\n') => 2,
+            b'\r' => 1,
+            0xe2 if matches!(text.get(i + 1..i + 3), Some(b"\x80\xa8" | b"\x80\xa9")) => 3,
+            _ => 0,
+        };
+        i += ends_a_line.max(1);
+        if ends_a_line == 0 {
+            continue;
+        }
+        if text[i - 1] == b'\n' {
+            line += 1;
+            line_start = i;
+        }
+        starts.push((line, (i - line_start) as u32));
+    }
+    Some(starts)
 }
 
 fn print_js<'a>(
@@ -272,11 +407,22 @@ fn print_js<'a>(
         print_opts,
     )
     .ok()?;
-    let text = printer.ctx.get_written().to_vec();
+    let mut text = printer.ctx.get_written().to_vec();
 
     let mut map = Vec::new();
     if let Some(chunk) = collector.0 {
-        let printed_lines = bun_core::strings::count_char(&text, b'\n') + 1;
+        let (printed, original) = (newline_lines(&text), newline_lines(source.contents()));
+        let place = |lines: &Option<Vec<(u32, u32)>>, line: i32, col: i32| {
+            let (line, col) = (line as u32, col.max(0) as u32);
+            match lines.as_ref().and_then(|lines| lines.get(line as usize)) {
+                Some(&(line, start)) => (line, start + col),
+                None => (line, col),
+            }
+        };
+        let printed_lines = printed.as_ref().map_or_else(
+            || bun_core::strings::count_char(&text, b'\n') + 1,
+            Vec::len,
+        );
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),
             None,
@@ -287,19 +433,40 @@ fn print_js<'a>(
                 sort: true,
             },
         ) {
-            let (generated, original) = (parsed.mappings.generated(), parsed.mappings.original());
-            map.reserve(generated.len());
-            for (g, o) in generated.iter().zip(original) {
+            let (from, to) = (parsed.mappings.original(), parsed.mappings.generated());
+            map.reserve(to.len());
+            for (g, o) in to.iter().zip(from) {
                 if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
+                    let (gen_line, gen_col) =
+                        place(&printed, g.lines.zero_based(), g.columns.zero_based());
+                    let (orig_line, orig_col) =
+                        place(&original, o.lines.zero_based(), o.columns.zero_based());
                     map.push(MapPoint {
-                        gen_line: g.lines.zero_based() as u32,
-                        gen_col: g.columns.zero_based().max(0) as u32,
-                        orig_line: o.lines.zero_based() as u32,
-                        orig_col: o.columns.zero_based().max(0) as u32,
+                        gen_line,
+                        gen_col,
+                        orig_line,
+                        orig_col,
                     });
                 }
             }
         }
+    }
+    // The printer leaves the hashbang to its caller. It says what runs the file, so it is the print's first line.
+    let hashbang = ast.hashbang.slice();
+    if !hashbang.is_empty() {
+        text = [hashbang, b"\n".as_slice(), text.as_slice()].concat();
+        for point in &mut map {
+            point.gen_line += 1;
+        }
+        map.insert(
+            0,
+            MapPoint {
+                gen_line: 0,
+                gen_col: 0,
+                orig_line: 0,
+                orig_col: 0,
+            },
+        );
     }
     Some(Normalized {
         text,
@@ -318,8 +485,10 @@ struct Namer<'s> {
     arenas: [&'s Arena; 2],
     symbols: [&'s mut [bun_ast::Symbol]; 2],
     renamed: [Vec<bool>; 2],
-    /// Short names some global already answers to (`$`, `_`, `ga`); never handed out.
+    /// Every name that stays as written (a global's, a long local's), sorted; never handed out.
     taken: Vec<Vec<u8>>,
+    /// Some scope was left with its own names, which the names handed out around it were not checked against.
+    too_deep: bool,
     scratch: Vec<u8>,
     /// Subtree member counts, computed once per scope.
     weights: WeightMemo,
@@ -359,14 +528,17 @@ impl<'s> Namer<'s> {
         let mut taken = Vec::new();
         for sym in old.iter().chain(new.iter()) {
             if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
-                && sym.original_name.len() <= 3
+                || sym.original_name.len() > 2
             {
                 taken.push(sym.original_name.slice().to_vec());
             }
         }
+        taken.sort_unstable();
+        taken.dedup();
         Namer {
             arenas: [arena_o, arena_n],
             weights: Default::default(),
+            too_deep: false,
             all_names: false,
             profiles: [Vec::new(), Vec::new()],
             renamed: [vec![false; old.len()], vec![false; new.len()]],
@@ -466,7 +638,7 @@ impl<'s> Namer<'s> {
         }
         // Keep suffixing until the name is free: `a` taken → `a_`, and `a_` may be taken too.
         while matches!(out.as_slice(), b"do" | b"if" | b"in" | b"of")
-            || self.taken.iter().any(|t| t == out)
+            || self.taken.binary_search(out).is_ok()
         {
             out.push(b'_');
         }
@@ -483,8 +655,9 @@ impl<'s> Namer<'s> {
         depth: usize,
         level: usize,
     ) {
-        // One frame per nesting level; past this the input is pathological and its names can stay as they are.
+        // One frame per nesting level; past this the input is pathological and is compared under its own names.
         if level > 256 {
+            self.too_deep = true;
             return;
         }
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));

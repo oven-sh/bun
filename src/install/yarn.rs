@@ -7,7 +7,7 @@ use crate::lockfile_real::package::{
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
 use crate::migration::{sbuf, string_hash};
-use crate::repository::Repository;
+use crate::repository::{Repository, github_tarball_tag};
 use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use crate::{Error, Features, GetJsonResult};
@@ -24,7 +24,7 @@ use bun_semver::{self as Semver, SlicedString, String as SemverString};
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// `dedupe_name()`, `\n`, version -> index in `entries`.
+    /// `dedupe_name()`, `\n`, version, `\n`, `link` -> index in `entries`.
     entry_by_name_version: StringHashMap<usize>,
 }
 
@@ -43,6 +43,8 @@ pub struct Entry<'a> {
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
     pub(crate) file: Option<&'a [u8]>,
+    /// The directory of a `link:` spec. yarn writes it relative to yarn.lock, also for a workspace.
+    pub(crate) link: Option<Cow<'a, [u8]>>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
     pub(crate) git_repo_name: Option<Box<[u8]>>,
@@ -70,7 +72,8 @@ impl<'a> Entry<'a> {
     /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
     pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
         let alias_end = strings::index_of(spec, b"@npm:")?;
-        let (name, _) = Self::parse_npm_alias(&spec[alias_end + 1..]);
+        let range = dependency::without_npm_protocol(&spec[alias_end + 1..]);
+        let (name, _) = Self::parse_npm_alias(range.strip_prefix(b"npm:")?);
         (!name.is_empty()).then_some(name)
     }
 
@@ -147,6 +150,24 @@ impl<'a> Entry<'a> {
     /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
     pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
         strings::split_once_char(resolved, b'#').map_or(resolved, |(url, _)| url)
+    }
+
+    /// The `integrity` line; without one, the sha1 that ends a tarball's `resolved`.
+    fn tarball_integrity(&self) -> Integrity {
+        let integrity = self
+            .integrity
+            .map_or_else(Integrity::default, Integrity::parse);
+        // A git entry's `#` is followed by a commit.
+        if integrity.tag.is_supported() || self.commit.is_some() {
+            return integrity;
+        }
+        let resolved = self.resolved.as_deref().unwrap_or(b"");
+        match strings::split_once_char(resolved, b'#') {
+            Some((_, sha1)) if sha1.len() == 40 => {
+                Integrity::parse_sha_sum(sha1).unwrap_or(integrity)
+            }
+            _ => integrity,
+        }
     }
 
     pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
@@ -265,9 +286,19 @@ impl<'a> YarnLock<'a> {
                     ..Default::default()
                 };
 
-                for spec in &current_specs {
-                    if let Some(at_index) = strings::index_of(spec, b"@file:") {
-                        new_entry.file = Some(Entry::file_path_from_spec(&spec[at_index + 1..]));
+                for &spec in &current_specs {
+                    let name = Entry::get_name_from_spec(spec);
+                    let range = spec.get(name.len() + 1..).unwrap_or(b"");
+                    if let Some(path) = range.strip_prefix(b"link:") {
+                        new_entry.link = Some(dependency::link_path_for_lockfile(path));
+                        break;
+                    }
+                    // To yarn a bare path is a `file:` one.
+                    if range.starts_with(b"file:")
+                        || range.starts_with(b"./")
+                        || range.starts_with(b"../")
+                    {
+                        new_entry.file = Some(Entry::file_path_from_spec(range));
                         break;
                     }
                 }
@@ -354,7 +385,16 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        let key = [new_entry.dedupe_name(), b"\n", new_entry.version].concat();
+        // Every `link:` entry has version 0.0.0.
+        let link = new_entry.link.as_deref().unwrap_or(b"");
+        let key = [
+            new_entry.dedupe_name(),
+            b"\n",
+            new_entry.version,
+            b"\n",
+            link,
+        ]
+        .concat();
         let index = *self
             .entry_by_name_version
             .get_or_put_value(&key, self.entries.len())?;
@@ -444,10 +484,17 @@ fn bind_importer_dependency(
         )
         .or_else(newest);
     }
+    // yarn keys a path by where it is from yarn.lock: the parsed value, not a workspace's literal.
+    let (protocol, range) = match dep.version.tag {
+        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
+        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
+        _ => (b"".as_slice(), &dep.version.literal),
+    };
     spec.clear();
     spec.extend_from_slice(dep.name.slice(string_bytes));
     spec.push(b'@');
-    spec.extend_from_slice(dep.version.literal.slice(string_bytes));
+    spec.extend_from_slice(protocol);
+    spec.extend_from_slice(range.slice(string_bytes));
     spec_to_package_id.get(spec.as_slice()).copied()
 }
 
@@ -457,6 +504,7 @@ fn bind_importer_dependencies(
     importer_count: usize,
     spec_to_package_id: &StringHashMap<PackageID>,
     workspace_id_by_path: &StringHashMap<PackageID>,
+    frozen: bool,
 ) -> Vec<Dependency> {
     debug_assert_eq!(
         this.buffers.dependencies.len(),
@@ -482,7 +530,9 @@ fn bind_importer_dependencies(
                 workspace_id_by_path,
                 &mut spec,
             );
-            let Some(resolution) = bound else {
+            // yarn.lock never lists a project's own peers, so a frozen install goes without this one.
+            let unbound = (frozen && dep.behavior.is_peer()).then_some(install::INVALID_PACKAGE_ID);
+            let Some(resolution) = bound.or(unbound) else {
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
                 unlocked.push(dep);
                 continue;
@@ -545,7 +595,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
     let importer_count = this.packages.len();
 
-    // An entry whose resolution cannot be built stays invalid: an unresolved edge.
+    // An entry whose resolution cannot be built stays invalid: its specs count as having no entry.
     let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
     let silent = manager.options.log_level.is_silent();
 
@@ -580,6 +630,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         sbuf!(this).append(file)?,
                     ));
                 }
+            } else if let Some(link) = entry.link.as_deref() {
+                break 'blk Resolution::init(ResolutionValue::Symlink(sbuf!(this).append(link)?));
             } else if let Some(commit) = entry.commit {
                 let Some(resolved) = entry.resolved.as_deref() else {
                     break 'blk Resolution::default();
@@ -600,16 +652,21 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     commit
                 };
                 let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
-                let repository = Repository {
+                let mut repository = Repository {
                     owner: sbuf!(this).append(owner_str)?,
                     repo: sbuf!(this).append(repo_str)?,
                     committish: sbuf!(this).append(committish)?,
                     resolved: SemverString::default(),
                     package_name: sbuf!(this).append(package_name)?,
                 };
+                // The cache folder, and a git checkout, go by `resolved`.
                 let value = if is_github {
+                    if let Some(tag) = github_tarball_tag(owner_str, repo_str, commit) {
+                        repository.resolved = sbuf!(this).append(&tag)?;
+                    }
                     ResolutionValue::Github
                 } else {
+                    repository.resolved = repository.committish;
                     ResolutionValue::Git
                 };
                 break 'blk Resolution::init(value(repository));
@@ -695,9 +752,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 os: entry.os.combine(),
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
-                integrity: entry
-                    .integrity
-                    .map_or_else(Integrity::default, Integrity::parse),
+                integrity: entry.tarball_integrity(),
                 ..Default::default()
             },
             bin: Bin::init(),
@@ -707,9 +762,18 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
+    for (entry, &package_id) in yarn_lock.entries.iter().zip(&yarn_entry_to_package_id) {
+        if package_id == install::INVALID_PACKAGE_ID {
+            continue;
+        }
         for spec in entry.specs.iter() {
-            spec_to_package_id.put(spec, yarn_entry_to_package_id[yarn_idx])?;
+            spec_to_package_id.put(spec, package_id)?;
+        }
+        // yarn keeps the `./` of package.json; `bind_importer_dependency` asks in one spelling.
+        if let Some(file) = entry.file {
+            spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
+        } else if let Some(link) = entry.link.as_deref() {
+            spec_to_package_id.put(&[entry.name, b"@link:", link].concat(), package_id)?;
         }
     }
 
@@ -718,6 +782,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         importer_count,
         &spec_to_package_id,
         &workspace_id_by_path,
+        manager.options.enable.frozen_lockfile(),
     );
 
     let mut key: Vec<u8> = Vec::new();

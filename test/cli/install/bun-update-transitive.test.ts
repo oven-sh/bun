@@ -1208,6 +1208,17 @@ test.concurrent("every install warns about a patchedDependencies key that matche
   expect(removed.exitCode).toBe(0);
 });
 
+test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } }),
+    "patches/no-deps.patch": NO_DEPS_PATCH,
+  });
+  const stderr = await install(dir);
+  expect(warningLines(stderr)).toEqual(["warn: patchedDependencies keys need a version: no-deps@1.0.0"]);
+  expect(stderr).toMatch(/package\.json:\d+:\d+/);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+});
+
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.
 async function overriddenThenEdited(overrides?: Json) {
   const dependencies = { "one-range-dep": "1.0.0" };

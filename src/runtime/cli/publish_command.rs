@@ -26,7 +26,7 @@ use bun_ast::expr::Data as ExprData;
 use bun_core::OSPathChar;
 use bun_install::Access;
 use bun_install::LogLevel;
-use bun_install::dependency;
+use bun_install::dependency::{self, TagExt as _};
 
 use crate::Command;
 use crate::cli::cli_dupe;
@@ -88,6 +88,18 @@ type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
+
+/// A thread blocked on stdin cannot be stopped, so with `-r` the next login reuses one that still waits.
+struct WebLogin {
+    /// What ENTER opens, until this login is over.
+    auth_url: Option<&'static [u8]>,
+    waits_for_enter: bool,
+}
+
+static WEB_LOGIN: bun_core::Mutex<WebLogin> = bun_core::Mutex::new(WebLogin {
+    auth_url: None,
+    waits_for_enter: false,
+});
 
 /// What `bun publish` sends. The scripts are `None` for a tarball publish, which runs none.
 pub(crate) struct Context {
@@ -228,7 +240,7 @@ impl Context {
         manager
             .options
             .apply_publish_config(&json, &bump, &package_name)?;
-        PublishCommand::refuse_publish_config_provenance(&json);
+        PublishCommand::refuse_provenance(manager, &json);
 
         if manager.options.publish_config.access == Some(Access::Restricted) && !is_scoped {
             return Err(PackError::RestrictedUnscopedPackage);
@@ -240,6 +252,7 @@ impl Context {
         let package_version: Box<[u8]> = pack::published_version(package_version)
             .ok_or(PackError::InvalidPackageVersion)?
             .into();
+        PublishCommand::refuse_tag(manager, &package_version);
 
         let mut shasum: SHA1Digest = [0u8; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();
@@ -309,20 +322,41 @@ impl Context {
 }
 
 impl PublishCommand {
-    /// Publishing without the provenance statement `asked_by` asks for would look like success.
-    fn refuse_provenance(asked_by: &str) -> ! {
-        Output::err_generic(
-            "{} is not supported yet: bun publish cannot generate provenance statements",
-            (asked_by,),
-        );
-        Global::crash();
+    /// Publishing without the provenance statement that was asked for would look like success.
+    pub(crate) fn refuse_provenance(manager: &PackageManager, package_json: &Expr) {
+        let options = &manager.options;
+        if let Some(asked_by) = options.provenance_asked_by(package_json, manager.env_mut()) {
+            Output::err_generic(
+                "{} is not supported yet: bun publish cannot generate provenance statements",
+                (asked_by,),
+            );
+            Global::crash();
+        }
     }
 
-    pub(crate) fn refuse_publish_config_provenance(package_json: &Expr) {
-        let provenance = (package_json.get(b"publishConfig"))
-            .and_then(|publish_config| publish_config.get(b"provenance"));
-        if provenance.is_some_and(|value| value.as_bool() != Some(false)) {
-            Self::refuse_provenance("\"provenance\" in the publishConfig of package.json");
+    /// What `npm publish` refuses too, after `--tag` and `publishConfig.tag` are applied.
+    pub(crate) fn refuse_tag(manager: &PackageManager, package_version: &[u8]) {
+        let tag = manager.options.publish_config.tag;
+        if dependency::Tag::infer(tag) == dependency::Tag::Npm {
+            Output::err_generic(
+                "invalid tag \"{}\": a tag cannot be a version or a version range",
+                (bstr::BStr::new(tag),),
+            );
+            Global::crash();
+        }
+
+        let version = bun_semver::SlicedString::init(package_version, package_version);
+        if tag.is_empty()
+            && bun_semver::Version::parse_exact(version).is_some_and(|it| it.tag.has_pre())
+        {
+            Output::err_generic(
+                "a prerelease needs a tag: {} would become \"latest\", the version that `bun add` installs",
+                (bstr::BStr::new(package_version),),
+            );
+            bun_core::note!(
+                "pass a tag, for example <b>bun publish --tag next<r>, or <b>--tag latest<r> to publish it as \"latest\" anyway"
+            );
+            Global::crash();
         }
     }
 
@@ -332,10 +366,6 @@ impl PublishCommand {
             Global::package_json_version_with_sha,
         );
         Output::flush();
-
-        if (bun_core::argv().iter()).any(|arg| arg.starts_with(b"--provenance")) {
-            Self::refuse_provenance("--provenance");
-        }
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
@@ -352,16 +382,6 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-
-        const PROVENANCE_KEYS: [&[u8]; 2] = [b"NPM_CONFIG_PROVENANCE", b"npm_config_provenance"];
-        if PROVENANCE_KEYS.iter().any(|key| {
-            (manager.env_mut().get(key)).is_some_and(|value| !value.is_empty() && value != b"false")
-        }) {
-            Self::refuse_provenance("NPM_CONFIG_PROVENANCE");
-        }
-        if manager.options.publish_config.provenance {
-            Self::refuse_provenance("\"provenance\" in .npmrc");
-        }
 
         if cli.positionals.len() > 1 {
             if Self::is_workspace_publish(manager) {
@@ -543,22 +563,19 @@ impl PublishCommand {
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
 
-        let use_system_shell = ctx.debug.use_system_shell;
         let scripts: [(&[u8], &Option<Box<[u8]>>); 2] = [
             (b"publish", &context.publish_script),
             (b"postpublish", &context.postpublish_script),
         ];
         for (name, script) in scripts {
             let Some(script) = script else { continue };
-            if let Err(e) = Run::run_package_script_foreground(
+            if let Err(e) = Run::run_lifecycle_script_foreground(
                 ctx,
                 script,
                 name,
                 abs_workspace_path,
                 script_env,
-                &[],
                 manager.options.log_level == LogLevel::Silent,
-                use_system_shell,
             ) {
                 if matches!(e, crate::Error::MissingShell) {
                     Output::err_generic(
@@ -801,7 +818,7 @@ impl PublishCommand {
         Ok(true)
     }
 
-    fn press_enter_to_open_in_browser(auth_url: &[u8]) {
+    fn press_enter_to_open_in_browser() {
         // This prevents backspace from deleting the entire line
         #[cfg(windows)]
         let _stdin_mode =
@@ -810,17 +827,24 @@ impl PublishCommand {
                 ..Default::default()
             });
 
+        // `Output::buffered_stdin()` belongs to the main thread.
+        let mut input = [0u8; 1024];
         loop {
-            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
-            // loop is the only accessor while it runs (single-threaded CLI path).
-            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
-                Ok(b'\n') => break,
+            match bun_sys::read(Fd::stdin(), &mut input) {
+                Ok(0) | Err(_) => return,
+                Ok(len) if strings::contains_char(&input[..len], b'\n') => break,
                 Ok(_) => continue,
-                Err(_) => return,
             }
         }
 
-        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url]);
+        let auth_url = {
+            let mut login = WEB_LOGIN.lock();
+            login.waits_for_enter = false;
+            login.auth_url.take()
+        };
+        if let Some(auth_url) = auth_url {
+            let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url]);
+        }
     }
 
     fn get_otp(
@@ -893,17 +917,21 @@ impl PublishCommand {
             Output::flush();
 
             // on another thread because pressing enter is not required
-            if auth_url_is_web
-                && std::thread::Builder::new()
-                    .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
-                    .is_err()
-            {
-                Output::err(
-                    "ThreadSpawn",
-                    "failed to spawn thread for opening auth url",
-                    (),
-                );
-                Global::crash();
+            if auth_url_is_web {
+                let mut login = WEB_LOGIN.lock();
+                login.auth_url = Some(auth_url_str);
+                if !std::mem::replace(&mut login.waits_for_enter, true)
+                    && std::thread::Builder::new()
+                        .spawn(Self::press_enter_to_open_in_browser)
+                        .is_err()
+                {
+                    Output::err(
+                        "ThreadSpawn",
+                        "failed to spawn thread for opening auth url",
+                        (),
+                    );
+                    Global::crash();
+                }
             }
 
             let auth_headers = Self::construct_publish_headers(manager, registry, None, None)?;
@@ -932,6 +960,8 @@ impl PublishCommand {
                         std::thread::sleep(std::time::Duration::from_millis(milliseconds));
                     }
                     200 => {
+                        WEB_LOGIN.lock().auth_url = None;
+
                         let done_bump = bun_alloc::Arena::new();
                         let otp_done_source =
                             bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());

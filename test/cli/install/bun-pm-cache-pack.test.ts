@@ -503,6 +503,11 @@ const windowsOnly = [
   ...["a<b", "a>b", 'a"b', "a|b", "a?b", "a*b", "a\x01b", "a\x1fb", "a\x7fb"],
 ];
 
+const dryRuns = [
+  { title: "--dry-run", flags: ["--dry-run"], config: {} },
+  { title: "dryRun = true in bunfig.toml", flags: [], config: { dryRun: true } },
+];
+
 describe("bun pm cache unpack", () => {
   describe("refuses, and leaves the cache as it was:", () => {
     const rows = isWindows ? [...hostile, ...windowsOnly.flatMap(path => badPath(path))] : hostile;
@@ -575,6 +580,25 @@ describe("bun pm cache unpack", () => {
     expect(out).toContain("Unpacked 2 packages (2 new, 0 already cached, ");
     expect(entryNames(box.cache)).toEqual(["@scope/b@1.0.0@@@1", "a@1.0.0@@@1"]);
     expect(code).toBe(0);
+  });
+
+  test.concurrent.each(dryRuns)("$title checks the pack and leaves the cache as it was", async ({ flags, config }) => {
+    using box = sandbox({ cache: populatedCache, project: { "bunfig.toml": toml({ install: config }) } });
+    writeFileSync(box.at("sound.pack"), sound);
+    writeFileSync(box.at("cut.pack"), sound.subarray(0, sound.length - 1));
+    const before = snapshot(box.cache, true);
+
+    let r = await bun(box, ["pm", "cache", "unpack", box.at("sound.pack"), ...flags]);
+    expect(r.err).toBe("");
+    expect(r.out).toContain("Would unpack 2 packages (2 new, 0 already cached, ");
+    expect(r.code).toBe(0);
+
+    r = await bun(box, ["pm", "cache", "unpack", box.at("cut.pack"), ...flags]);
+    expect(r.err).toContain("error: bun pm cache unpack failed: ");
+    expect(r.code).toBe(1);
+
+    expect(snapshot(box.cache, true)).toEqual(before);
+    expect(readdirSync(box.tmp)).toEqual([]);
   });
 
   test.concurrent("refuses a pack that is cut at, before or after any record boundary", async () => {
@@ -1060,6 +1084,28 @@ describe("bun pm cache pack", () => {
       expect(r.code).toBe(0);
     },
   );
+
+  test.concurrent.each(dryRuns)("$title reads the cache and writes nothing", async ({ flags, config }) => {
+    using box = sandbox();
+    await installedProject(box);
+    writeFileSync(
+      join(box.project, "bunfig.toml"),
+      toml({ install: { registry: registry.registryUrl(), linker: "hoisted", ...config } }),
+    );
+    writeFileSync(join(box.project, "old.pack"), "stays");
+    const before = [snapshot(box.project, true), snapshot(box.cache, true)];
+
+    for (const destination of ["old.pack", join("new", "cache.pack")]) {
+      const r = await bun(box, ["pm", "cache", "pack", destination, ...flags]);
+      expect(r.err).toBe("");
+      expect(r.out).toContain(`Would pack ${installedCount} packages (`);
+      expect(r.out).toContain(` into ${destination} `);
+      expect(r.code).toBe(0);
+    }
+
+    expect([snapshot(box.project, true), snapshot(box.cache, true)]).toEqual(before);
+    expect(readdirSync(box.tmp)).toEqual([]);
+  });
 
   test.concurrent("checks its arguments", async () => {
     using box = sandbox();

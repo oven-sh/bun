@@ -30,12 +30,13 @@ describe("minimum-release-age", () => {
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
 
   // Helper to create a minimal valid tarball
-  const createTarball = (name: string, version: string) => {
+  const createTarball = (name: string, version: string, fields: object = {}) => {
     const packageJson = JSON.stringify({
       name,
       version,
       description: "test package",
       main: "index.js",
+      ...fields,
     });
 
     // Create a simple tar structure (simplified for testing)
@@ -2483,6 +2484,60 @@ describe("minimum-release-age", () => {
       expect(stdout).not.toContain("3.0.0");
       // Should show note about minimum release age
       expect(stdout.toLowerCase()).toContain("minimum release age");
+    });
+
+    // registry.npmjs.org has `hasInstallScript` only in the abbreviated document. The full one,
+    // which has the publish times, has the `scripts` of each version instead.
+    test.concurrent.each([
+      ["hoisted", "postinstall"],
+      ["isolated", "postinstall"],
+      ["hoisted", "preinstall"],
+      ["hoisted", "install"],
+    ])("reports a blocked script (%s linker, %s)", async (linker, script) => {
+      const name = "with-install-script";
+      const scripts = { test: "exit 1", [script]: "exit 1" };
+      // 0.9.0 has scripts too, but none that an install runs.
+      const published = { "0.9.0": { test: "exit 1" }, "1.0.0": scripts };
+      using registry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          const { pathname, origin } = new URL(req.url);
+          const abbreviated = req.headers.get("accept")!.includes("application/vnd.npm.install-v1+json");
+          const versions: Record<string, object> = {};
+          for (const [version, scripts] of Object.entries(published)) {
+            const tarball = `/${name}/-/${name}-${version}.tgz`;
+            if (pathname === tarball) return new Response(createTarball(name, version, { scripts }));
+            versions[version] = {
+              name,
+              version,
+              dist: { tarball: origin + tarball },
+              ...(!abbreviated ? { scripts } : version === "1.0.0" ? { hasInstallScript: true } : {}),
+            };
+          }
+          const time = { "0.9.0": daysAgo(40), "1.0.0": daysAgo(30) };
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions, ...(abbreviated ? {} : { time }) });
+        },
+      });
+      using dir = tempDir("blocked-script", {
+        "package.json": JSON.stringify({ dependencies: { [name]: "1.0.0", quiet: `npm:${name}@0.9.0` } }),
+        ".npmrc": `registry=${registry.url}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--linker", linker, "--save-text-lockfile", "--minimum-release-age", "60"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("Blocked 1 postinstall");
+      const lockfile = (await Bun.file(join(String(dir), "bun.lock")).text()).split("\n");
+      expect(lockfile.find(line => line.includes(`"${name}@1.0.0"`))).toContain(`"hasInstallScript": true`);
+      expect(lockfile.find(line => line.includes(`"${name}@0.9.0"`))).not.toContain("hasInstallScript");
+      expect(exitCode).toBe(0);
     });
   });
 

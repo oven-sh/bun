@@ -163,6 +163,8 @@ pub(crate) enum Counts {
     Everything,
     /// `[lint]` and `[fmt]`: the file is above the working directory.
     OnlyForTheTool,
+    /// What `[install]` has for the package manager.
+    OnlyInstall,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -379,6 +381,14 @@ impl<'a> Parser<'a, '_> {
 
         if self.counts == Counts::OnlyForTheTool {
             return self.read_for_tool(&json);
+        }
+
+        if self.counts == Counts::OnlyInstall {
+            if let Some(install_obj) = json.get_object(b"install") {
+                self.ctx.install = Some(Box::default());
+                self.parse_install(&install_obj)?;
+            }
+            return Ok(());
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -1223,6 +1233,32 @@ impl Bunfig {
         };
         parser.parse(cmd)
     }
+
+    /// Whether the file sets `[install.security] scanner`. Applies none of its settings.
+    pub(crate) fn has_security_scanner(source: &bun_ast::Source) -> crate::Result<bool> {
+        // Not reset afterwards: the caller may be in the middle of a module.
+        bun_ast::initialize_store();
+        let bump = Bump::borrowing_default();
+        let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
+        let security = file.get(b"install").and_then(|it| it.get(b"security"));
+        Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
+    }
+
+    /// What the file's `[install]` has for the package manager. Applies none of its settings.
+    pub(crate) fn parse_install_section(
+        source: &bun_ast::Source,
+    ) -> crate::Result<Option<Box<api::BunInstall>>> {
+        // Not reset afterwards: the caller may be in the middle of a module.
+        bun_ast::initialize_store();
+        let mut log = bun_ast::Log::init();
+        let mut ctx = ContextData {
+            log: &raw mut log,
+            ..Default::default()
+        };
+        let cmd = CommandTag::InstallCommand;
+        Self::parse(cmd, source, true, &mut ctx, None, Counts::OnlyInstall)?;
+        Ok(ctx.install)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1285,6 +1321,12 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
+    /// A relative path in `[install]` starts at the file.
+    fn install_path(&self, path: &[u8]) -> Box<[u8]> {
+        let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
+        api::BunInstall::resolve_path(dir, path)
+    }
+
     fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
@@ -1312,7 +1354,7 @@ impl<'a> Parser<'a, '_> {
 
         if let Some(cafile) = cafile {
             install.cafile = match cafile.as_string(self.bump) {
-                Some(s) => Some(s.into()),
+                Some(s) => Some(self.install_path(s)),
                 None => {
                     self.add_error(cafile.loc, b"Invalid cafile. Expected a string.")?;
                     return Ok(());
@@ -1467,14 +1509,14 @@ impl<'a> Parser<'a, '_> {
             .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_dir = Some(v.into());
+            install.global_dir = Some(self.install_path(v));
         }
         if let Some(v) = install_obj
             .get(b"globalBinDir")
             .filter(|_| !self.is_project_file)
             .and_then(|e| e.as_string(self.bump))
         {
-            install.global_bin_dir = Some(v.into());
+            install.global_bin_dir = Some(self.install_path(v));
         }
 
         if let Some(cache) = install_obj.get(b"cache") {
@@ -1487,7 +1529,7 @@ impl<'a> Parser<'a, '_> {
                     break 'load;
                 }
                 if let Some(value) = cache.as_string(self.bump) {
-                    install.cache_directory = Some(value.into());
+                    install.cache_directory = Some(self.install_path(value));
                     break 'load;
                 }
                 if let ExprData::EObject(_) = cache.data {
@@ -1498,7 +1540,7 @@ impl<'a> Parser<'a, '_> {
                         install.disable_manifest_cache = Some(v);
                     }
                     if let Some(v) = cache.get(b"dir").and_then(|e| e.as_string(self.bump)) {
-                        install.cache_directory = Some(v.into());
+                        install.cache_directory = Some(self.install_path(v));
                     }
                 }
             }
@@ -1515,7 +1557,15 @@ impl<'a> Parser<'a, '_> {
             if let ExprData::EObject(_) = security_obj.data {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = scanner.as_string(self.bump).map(Into::into);
+                    install.security_scanner = scanner.as_string(self.bump).map(|name| {
+                        // The scanner's process starts in the project, next to the project's own file.
+                        if self.is_project_file || bun_paths::is_package_path(name) {
+                            return name.into();
+                        }
+                        let mut path = self.install_path(name);
+                        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+                        path
+                    });
                 }
             } else {
                 self.add_error(

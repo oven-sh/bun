@@ -779,10 +779,10 @@ describe("`bun audit`", () => {
     const NOT_ADVISORIES = (registry: string) =>
       `error: ${registry} returned an audit response that is not a list of advisories`;
 
-    async function auditAgainst(responseBody: string, args: string[] = []) {
+    async function auditAgainst(responseBody: string, args: string[] = [], status = 200) {
       await using registry = Bun.serve({
         port: 0,
-        fetch: () => new Response(responseBody, { headers: { "content-type": "application/json" } }),
+        fetch: () => new Response(responseBody || null, { status, headers: { "content-type": "application/json" } }),
       });
       using dir = tempDir("bun-test-audit-registry-response", projectDependingOnMs);
 
@@ -857,11 +857,26 @@ describe("`bun audit`", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("an empty body is a clean audit", async () => {
-      const { stdout, stderr, exitCode } = await auditAgainst("");
+    test.concurrent("{} is a clean audit", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst("{}");
       expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+
+    // No answer says nothing about the packages. `npm audit` fails on it too.
+    test.concurrent.each([
+      ["", 200],
+      [" \n", 200],
+      ["", 204],
+      ["", 304],
+    ] as const)("an empty body (%j, status %d) is a failed audit, not a clean one", async (responseBody, status) => {
+      for (const args of [[], ["--json"], ["fix"]]) {
+        const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, args, status);
+        expect(stdout.replace(/^bun audit .*\n\n/, "")).toBe("");
+        expect(stderr).toBe(`error: ${registry} returned an empty audit response`);
+        expect(exitCode).toBe(1);
+      }
     });
 
     test.concurrent("--audit-level filtering out every advisory prints a clean audit, not nothing", async () => {
@@ -1545,7 +1560,8 @@ describe("`bun audit` report", () => {
     ['{"error":"audit is not supported by this registry"}', "not a list of advisories"],
     ['{"@types/is-number":["high"]}', "not a list of advisories"],
     ["{ not json", "non-JSON response"],
-  ])("a scoped registry that answers 200 with %s is skipped, the rest is still audited", async (bulkBody, reason) => {
+    ["", "empty response"],
+  ])("a scoped registry that answers 200 with %j is skipped, the rest is still audited", async (bulkBody, reason) => {
     await using scoped = startRegistry({}, { bulkBody });
     await using server = startRegistry({ "a-dep": [adv("<1.0.2")] });
     using dir = await setup(
@@ -2960,9 +2976,97 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("blocked by a dependent's range:");
     expect(stdout).toContain("mismatched-peer-deps-lvl1@1.0.0 depends on no-deps@<=1.0.1");
     expect(stdout).not.toContain("package.json depends on");
-    expect(stdout).toContain("1 vulnerability remaining");
-    expect(exitCode).toBe(1);
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
     expect(await lock(dir)).toContain('"no-deps@1.1.0"');
+  });
+
+  test.concurrent("a pin is rewritten past the exact peer range of a plugin, and the next audit agrees", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "mismatched-peer-deps-lvl2": "1.0.0", "no-deps": "1.0.0" },
+    });
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.0 -> 1.0.1
+          package.json: 1.0.0 -> 1.0.1
+
+      blocked by a dependent's range:
+        ^ no-deps 1.0.0 -> 1.0.1
+          mismatched-peer-deps-lvl2@1.0.0 depends on no-deps@1.0.0 (peer)
+
+      Fixed 1 vulnerability in 1 package (checked 2)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(await lock(dir)).not.toContain('"no-deps@1.0.0"');
+    expectClean(await audit(dir), 2);
+  });
+
+  test.concurrent("a peer does not move while the project's own range holds the copy it uses", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "~1.0.0" } });
+    const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"no-deps@1.0.1"');
+
+    const blocked = await auditFix(dir);
+    expect(normalizeBunSnapshot(blocked.stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      blocked by a dependent's range:
+        ^ no-deps 1.0.1 -> 1.1.0
+          package.json depends on no-deps@~1.0.0
+          bun audit fix --latest
+
+      Fixed 0 of 1 vulnerability (checked 2)
+      1 vulnerability remaining"
+    `);
+    expect(blocked.exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+    expect(stdout).toContain("fixing:\n  ^ no-deps 1.0.1 -> 1.1.0\n    package.json: ~1.0.0 -> ~1.1.0\n");
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(stderr).not.toContain("incorrect peer dependency");
+    expect(exitCode).toBe(0);
+    expectClean(await audit(dir), 2);
+  });
+
+  // The install warns about the peer, so runBunInstall cannot be used.
+  test.concurrent("--dry-run counts a peer range that was already violated as the real run does", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
+    const rootPkgJson = (noDeps: string) =>
+      JSON.stringify({ name: "foo", dependencies: { "mismatched-peer-deps-lvl2": "1.0.0", "no-deps": noDeps } });
+    using dir = tempDir("audit-fix-", { "package.json": rootPkgJson("1.0.1") });
+    await writeBunfig(dir, server);
+    await expectInstall(dir);
+    await write(join(dir, "package.json"), rootPkgJson("^1.0.0"));
+    await expectInstall(dir);
+    expect(await lock(dir)).toContain('"no-deps@1.0.1"');
+
+    const dryRun = await auditFix(dir, "--dry-run");
+    expect(normalizeBunSnapshot(dryRun.stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.1 -> 1.1.0
+
+      blocked by a dependent's range:
+        ^ no-deps 1.0.1 -> 1.1.0
+          mismatched-peer-deps-lvl2@1.0.0 depends on no-deps@1.0.0 (peer)
+
+      Would fix 1 vulnerability in 1 package (checked 2)"
+    `);
+    expect(dryRun.exitCode).toBe(0);
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+    expectClean(await audit(dir), 2);
   });
 
   test.concurrent("a depth-3 blocker names the immediate dependent", async () => {
@@ -4594,6 +4698,39 @@ describe("`bun audit fix --latest`", () => {
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
+
+  // peer-deps-fixed wants no-deps@^1.0.0 as a peer, peer-deps takes any version.
+  test.concurrent.each(["hoisted", "isolated"])(
+    "the project's copy moves past the peer range of a plugin, and the counts are the next audit's (%s)",
+    async linker => {
+      await using server = noDeps1x();
+      using dir = tempDir("audit-fix-", {
+        "package.json": JSON.stringify({
+          name: "foo",
+          dependencies: { "peer-deps-fixed": "1.0.0", "peer-deps": "1.0.0", "no-deps": "^1.0.0" },
+        }),
+      });
+      await writeBunfig(dir, server, undefined, { linker });
+      await expectInstall(dir);
+      expect(await lock(dir)).toContain('"no-deps@1.1.0"');
+      const plan =
+        FIX_HEADER +
+        "fixing:\n  ^ no-deps 1.1.0 -> 2.0.0\n    package.json: ^1.0.0 -> ^2.0.0\n\n" +
+        "blocked by a dependent's range:\n  ^ no-deps 1.1.0 -> 2.0.0\n" +
+        "    peer-deps-fixed@1.0.0 depends on no-deps@^1.0.0 (peer)\n\n";
+
+      const dryRun = await auditFix(dir, "--latest", "--dry-run");
+      expect(normalizeBunSnapshot(dryRun.stdout)).toBe(plan + "Would fix 1 vulnerability in 1 package (checked 3)");
+      expect(dryRun.exitCode).toBe(0);
+
+      const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+      expect(normalizeBunSnapshot(stdout)).toBe(plan + "Fixed 1 vulnerability in 1 package (checked 3)");
+      expect(stderr).toContain('incorrect peer dependency "no-deps@2.0.0"');
+      expect(exitCode).toBe(0);
+      expect(await lock(dir)).not.toContain('"no-deps@1.1.0"');
+      expectClean(await audit(dir), 3);
+    },
+  );
 
   test.concurrent("a ~ range keeps its ~", async () => {
     await using server = noDeps1x();

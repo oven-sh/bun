@@ -16,7 +16,9 @@ use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
-use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
+use crate::package_manager_real::{
+    PackageUpdateInfo, WorkspacePackageJSONCache, enqueue_dependency_with_main,
+};
 use crate::update_scope::UpdateScope;
 use crate::{
     DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
@@ -128,6 +130,14 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
+                    // Another group of the owner lists the name and keeps the old package.
+                    || (dep_slices[owner].get(deps).iter())
+                        .zip(res_slices[owner].get(resolutions))
+                        .any(|(other, &kept)| {
+                            other.name_hash == dep.name_hash
+                                && !other.behavior.is_peer()
+                                && kept == old
+                        })
                 {
                     continue;
                 }
@@ -691,6 +701,75 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
+/// The root package.json and its `patchedDependencies`.
+fn root_patched_dependencies<'a>(
+    cache: &'a mut WorkspacePackageJSONCache,
+    log: &mut bun_ast::Log,
+) -> Option<(&'a bun_ast::Source, bun_ast::Expr)> {
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let opts = GetJsonOptions {
+        init_reset_store: false,
+        ..Default::default()
+    };
+    let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
+        return None;
+    };
+    let patched = entry.root.get_object(b"patchedDependencies")?;
+    Some((&entry.source, patched))
+}
+
+/// The `patchedDependencies` keys of the root package.json: the lockfile has only their hashes.
+pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
+    let log = manager.log_mut();
+    let Some((_, patched)) =
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log)
+    else {
+        return Vec::new();
+    };
+    let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
+    patched.for_each_property(|key, _, _| keys.push(Box::from(key)));
+    keys
+}
+
+/// A key without a version names no package, so its patch is never applied.
+#[cold]
+fn warn_patch_key_without_version(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    key_loc: bun_ast::Loc,
+    name: &[u8],
+    lockfile: &Lockfile,
+) {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let installed: &[PackageID] = lockfile
+        .package_index
+        .get(&Semver::string::Builder::string_hash(name))
+        .map_or(&[], PackageIndexEntry::as_slice);
+    let mut keys: Vec<u8> = Vec::new();
+    for &id in installed {
+        let resolution = &lockfile.packages.items_resolution()[id as usize];
+        let separator = if keys.is_empty() { "" } else { ", " };
+        let _ = write!(
+            keys,
+            "{separator}{}@{}",
+            BStr::new(name),
+            resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
+        );
+    }
+    if keys.is_empty() {
+        let _ = write!(keys, "{}@<version>", BStr::new(name));
+    }
+    log.add_range_warning_fmt(
+        Some(source),
+        source.range_of_string(key_loc),
+        format_args!(
+            "patchedDependencies keys need a version: {}",
+            BStr::new(&keys)
+        ),
+    );
+}
+
 /// After the clean: one warning per `patchedDependencies` key that names no installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
@@ -698,33 +777,22 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     {
         return;
     }
-    let keys: Vec<Box<[u8]>> = {
-        let log = manager.log_mut();
-        // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-        let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
-        let opts = GetJsonOptions {
-            init_reset_store: false,
-            ..Default::default()
-        };
-        let GetJsonResult::Entry(entry) = manager
-            .workspace_package_json_cache
-            .get_with_path(log, path, opts)
-        else {
-            return;
-        };
-        let Some(patched) = entry.root.get_object(b"patchedDependencies") else {
-            return;
-        };
-        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
-        patched.for_each_property(|key, _, _| keys.push(Box::from(key)));
-        keys
+    let log = manager.log_mut();
+    let Some((source, patched)) =
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log)
+    else {
+        return;
     };
+    let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());
+    patched.for_each_property(|key, loc, _| keys.push((Box::from(key), loc)));
 
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
-    for key in keys {
-        let Some(at) = strings::last_index_of_char(&key, b'@').filter(|&at| at > 0) else {
+    for (key, key_loc) in keys {
+        // The first one after a scope's: a URL in place of the version can hold more.
+        let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
+            warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
             continue;
         };
         let Some(patch) = lockfile

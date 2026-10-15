@@ -20,6 +20,7 @@ use crate::bin::{self, Bin};
 use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
+use crate::package_manager::directories;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
     VersionSlice, initialize_mini_store as initialize_store,
@@ -738,11 +739,14 @@ pub mod registry {
             manifest_expiry(&response.headers),
             is_extended_manifest,
         )? {
-            if package_manager.options.enable.manifest_cache() {
+            // A cache that cannot be written does not keep the manifest from being used.
+            if package_manager.options.enable.manifest_cache()
+                && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
+            {
                 package_manifest::Serializer::save_async(
                     &package,
                     scope,
-                    package_manager.get_temporary_directory().handle.fd,
+                    temp_dir.handle.fd,
                     package_manager.get_cache_directory(),
                 );
             }
@@ -907,7 +911,7 @@ pub struct PackageVersion {
     /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc`.
     pub(crate) libc: Libc,
 
-    /// `hasInstallScript` field in registry API.
+    /// `hasInstallScript` field in registry API; from `scripts` where the document has those instead.
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
@@ -1689,6 +1693,17 @@ impl FindResult<'_> {
             .slice(&manifest.string_buf)
             .to_vec()
     }
+
+    pub fn is_newer_than(
+        &self,
+        manifest: &PackageManifest,
+        current: Semver::Version,
+        current_buf: &[u8],
+    ) -> bool {
+        self.version
+            .order(current, &manifest.string_buf, current_buf)
+            .is_gt()
+    }
 }
 
 /// pnpm's grammar: `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
@@ -1933,6 +1948,7 @@ pub enum FindVersionError {
     AllVersionsTooRecent,
 }
 
+#[derive(Clone, Copy)]
 pub enum FindVersionResult<'a> {
     Found(FindResult<'a>),
     FoundWithFilter {
@@ -2265,6 +2281,25 @@ impl PackageManifest {
         }
 
         deprecated
+    }
+
+    /// The highest version in `group` that `accept` takes.
+    pub(crate) fn find_highest_version(
+        &self,
+        group: &Semver::query::Group,
+        group_buf: &[u8],
+        accept: impl Fn(Semver::Version) -> bool,
+    ) -> Option<FindResult<'_>> {
+        for list in [self.pkg.releases, self.pkg.prereleases] {
+            let versions = list.keys.get(&self.versions);
+            let packages = list.values.get(&self.package_versions);
+            for (&version, package) in versions.iter().zip(packages).rev() {
+                if group.satisfies(version, group_buf, &self.string_buf) && accept(version) {
+                    return Some(FindResult { version, package });
+                }
+            }
+        }
+        None
     }
 }
 
@@ -2754,6 +2789,16 @@ impl PackageManifest {
                     version_obj.and_then(|o| o.get(b"hasInstallScript"))
                 {
                     package_version.has_install_script = *val;
+                } else if let Some(scripts) = version_obj
+                    .and_then(|o| o.get(b"scripts"))
+                    .and_then(|scripts| scripts.as_object())
+                {
+                    // The full document has `scripts` instead; this is how the registry and npm derive the field.
+                    package_version.has_install_script =
+                        [&b"preinstall"[..], b"install", b"postinstall"]
+                            .iter()
+                            .filter_map(|name| scripts.get(name)?.as_str())
+                            .any(|script| !script.is_empty());
                 }
 
                 if let Some(message) = deprecation_message(version_obj) {

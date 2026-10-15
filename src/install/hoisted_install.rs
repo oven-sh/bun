@@ -193,7 +193,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    {
+    let left_out = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -212,9 +212,9 @@ pub(crate) fn install_hoisted_packages(
                 install_root_dependencies,
                 workspace_filters,
                 packages_to_install,
-            )?;
+            )?
         }
-    }
+    };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
     // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
@@ -251,7 +251,7 @@ pub(crate) fn install_hoisted_packages(
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
     let old_modules = if replacing_isolated_node_modules {
-        crate::isolated_install::move_node_modules_aside(&this.lockfile, this.options.global)
+        crate::isolated_install::move_node_modules_aside(&this.lockfile, this.options.global, true)
     } else {
         None
     };
@@ -313,6 +313,9 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
+        // A partial install and `--filter` leave alone the folders of what they do not link.
+        hiding_copies: (packages_to_install.is_none() && workspace_filters.is_empty())
+            .then(|| crate::prune::HidingCopies::init(this, left_out)),
         ..Default::default()
     };
 
@@ -468,6 +471,13 @@ pub(crate) fn install_hoisted_packages(
             let mut remaining: &[DependencyID] = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
+            if !installer.skip_verify_installed_version_number
+                && !installer.trees[node_modules.tree_id as usize].inside_replaced_folder
+                && let Some(copies) = &mut installer.summary.hiding_copies
+            {
+                let path = node_modules.relative_path.as_bytes();
+                copies.check_tree(&lockfile_ref, node_modules.tree_id, path);
+            }
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes
@@ -570,6 +580,7 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        installer.prune_bins();
 
         if log_level.show_progress() {
             // See `activate()` note above — reuse the stored `NonNull`'s

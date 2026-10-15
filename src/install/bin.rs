@@ -406,6 +406,27 @@ impl Bin {
         Ok(())
     }
 
+    /// Whether the linker names a link `name` for the package in `folder`. Never for `directories.bin`.
+    fn links_name(
+        &self,
+        folder: &[u8],
+        name: &[u8],
+        string_buf: &[u8],
+        extern_string_buf: &[ExternalString],
+    ) -> bool {
+        // A volume that ignores case keeps the spelling of the first link.
+        match self.tag {
+            Tag::None | Tag::Dir => false,
+            Tag::File => Dependency::unscoped_package_name(folder).eq_ignore_ascii_case(name),
+            Tag::NamedFile => normalized_bin_name(self.named_file()[0].slice(string_buf))
+                .eq_ignore_ascii_case(name),
+            Tag::Map => (self.map().begin()..self.map().end()).step_by(2).any(|i| {
+                normalized_bin_name(extern_string_buf[i as usize].slice(string_buf))
+                    .eq_ignore_ascii_case(name)
+            }),
+        }
+    }
+
     pub(crate) fn init() -> Bin {
         Bin::new(Tag::None, Value::init_none())
     }
@@ -762,13 +783,6 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 /// point a bin link at (and chmod) an arbitrary file on disk (the bug class
 /// npm fixed as CVE-2019-16775).
 pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
-    if path::is_absolute(target) {
-        return true;
-    }
-    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
-    if strings::contains_char(target, 0) {
-        return true;
-    }
     // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
     // (no separator after the colon) and their `C:..` component is not a bare
     // `..`, so they would slip past the depth walk below while still resolving
@@ -780,6 +794,18 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
         .next()
         .is_some_and(|first| strings::contains_char(first, b':'))
     {
+        return true;
+    }
+    path_climbs_out(target)
+}
+
+/// An absolute path, or a relative one that leads above the directory it starts in.
+pub(crate) fn path_climbs_out(target: &[u8]) -> bool {
+    if path::is_absolute(target) {
+        return true;
+    }
+    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
+    if strings::contains_char(target, 0) {
         return true;
     }
     let mut depth: isize = 0;
@@ -843,6 +869,8 @@ pub struct Linker<'a> {
 
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
+    /// Only link: the file keeps its mode and its first line (`Lockfile::is_member_outside`).
+    pub keeps_target: bool,
 }
 
 #[cfg(not(windows))]
@@ -911,17 +939,29 @@ impl<'a> Linker<'a> {
     #[cfg(not(windows))]
     pub(crate) fn link_leads_into(abs_dest: &ZStr, link: &[u8], abs_dir: &[u8]) -> bool {
         let mut resolved_buf = path::path_buffer_pool::get();
-        resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+        Self::link_target_in(
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
+            link,
+            abs_dir,
             resolved_buf.as_mut_slice(),
-            &[link],
         )
-        .is_some_and(|resolved| {
-            matches!(
-                resolve_path::is_parent_or_equal(abs_dir, resolved),
-                resolve_path::ParentEqual::Parent
-            )
-        })
+        .is_some()
+    }
+
+    /// The path from `abs_dir` to what `link`, a path from `abs_from`, leads to inside it. Lexical.
+    pub(crate) fn link_target_in<'b>(
+        abs_from: &'b [u8],
+        link: &[u8],
+        abs_dir: &[u8],
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        let resolved =
+            resolve_path::join_abs_string_buf_checked::<PlatformAuto>(abs_from, buf, &[link])?;
+        matches!(
+            resolve_path::is_parent_or_equal(abs_dir, resolved),
+            resolve_path::ParentEqual::Parent
+        )
+        .then(|| &resolved[strings::without_trailing_slash(abs_dir).len() + 1..])
     }
 
     fn link_bin_or_create_shim(
@@ -995,7 +1035,7 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        {
+        if !self.keeps_target {
             let mode = exec_mode();
             if (target_stat.st_mode as Mode) & 0o777 != mode {
                 let _ = sys::lchmod(abs_target, mode);
@@ -1819,5 +1859,98 @@ impl<'a> Linker<'a> {
                 }
             }
         }
+    }
+}
+
+/// Whether the bin link `name` is left from another version of one of `placed`, the packages of a
+/// `node_modules` by folder: `target` (from there, with `/`) is in one, and none has that bin.
+pub(crate) fn is_left_over(
+    lockfile: &Lockfile,
+    placed: &[(&[u8], crate::PackageID)],
+    name: &[u8],
+    target: &[u8],
+) -> bool {
+    let bins = lockfile.packages.items_bin();
+    let Some(&(_, owner)) = placed.iter().find(|(folder, _)| {
+        (target.strip_prefix(*folder)).is_some_and(|rest| rest.first() == Some(&b'/'))
+    }) else {
+        return false;
+    };
+    // The names of `directories.bin` are the files of the folder.
+    bins[owner as usize].tag != Tag::Dir
+        && !placed.iter().any(|&(folder, package_id)| {
+            bins[package_id as usize].links_name(
+                folder,
+                name,
+                lockfile.buffers.string_bytes.as_slice(),
+                lockfile.buffers.extern_strings.as_slice(),
+            )
+        })
+}
+
+/// The installers link what the command names or installs. This links the bins of the other global packages, under free names only.
+pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
+    let pkgs = lockfile.packages.slice();
+    let (Some(dependencies), Some(resolutions), Ok(bin_dir)) = (
+        pkgs.items_dependencies().first(),
+        pkgs.items_resolutions().first(),
+        sys::Dir::open(global_bin_path.as_bytes()),
+    ) else {
+        return;
+    };
+
+    // The linker skips a seen destination, so what is in the folder stays as it is.
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    let bin_path = strings::without_trailing_slash(global_bin_path.as_bytes());
+    let mut iter = sys::iterate_dir(bin_dir.fd());
+    while let Some(entry) = iter.next().unwrap_or(None) {
+        let name = entry.name.slice_u8();
+        #[cfg(windows)]
+        let name = (name.strip_suffix(b".bunx"))
+            .or_else(|| name.strip_suffix(b".exe"))
+            .unwrap_or(name);
+        let _ = seen.put(&[bin_path, &[SEP][..], name].concat(), ());
+    }
+
+    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
+    let node_modules = || -> AbsPath {
+        let mut dir = AbsPath::init_top_level_dir();
+        let _ = dir.append(b"node_modules");
+        dir
+    };
+    let (target_node_modules_path, mut node_modules_path) = (node_modules(), node_modules());
+    let mut abs_target_buf = path::path_buffer_pool::get();
+    let mut abs_dest_buf = path::path_buffer_pool::get();
+    let mut rel_buf = path::path_buffer_pool::get();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+
+    let dependencies = dependencies.get(lockfile.buffers.dependencies.as_slice());
+    let resolutions = resolutions.get(lockfile.buffers.resolutions.as_slice());
+    for (dependency, &package_id) in dependencies.iter().zip(resolutions) {
+        let Some(&bin) = pkgs.items_bin().get(package_id as usize) else {
+            continue;
+        };
+        if bin.tag == Tag::None {
+            continue;
+        }
+        let package_name = strings::StringOrTinyString::init(dependency.name.slice(string_buf));
+        Linker {
+            bin,
+            target_node_modules_path: &raw const target_node_modules_path,
+            target_package_name: package_name,
+            seen: Some(&mut seen),
+            node_modules_path: &mut node_modules_path,
+            package_name,
+            global_bin_path,
+            string_buf,
+            extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
+            abs_target_buf: abs_target_buf.as_mut_slice(),
+            abs_dest_buf: abs_dest_buf.as_mut_slice(),
+            rel_buf: rel_buf.as_mut_slice(),
+            err: None,
+            skipped_due_to_missing_bin: false,
+            keeps_target: false,
+        }
+        .link(true);
     }
 }

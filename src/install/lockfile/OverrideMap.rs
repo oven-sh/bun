@@ -160,7 +160,8 @@ impl Field {
 struct Ambiguous;
 
 /// Scoped rules must not redirect every edge of the target name, so their `npm:` values are never registered as known aliases.
-struct NoAliases;
+/// Nor are the rows `clean` copies: the project's were registered when its package.json files were parsed.
+pub(crate) struct NoAliases;
 
 impl NpmAliasRegistry for NoAliases {
     #[inline]

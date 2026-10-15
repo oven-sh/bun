@@ -39,6 +39,7 @@ pub(crate) fn parse_package_segment(segment: &[u8]) -> Result<PackageSelector<'_
     }
     let range = range.unwrap_or(b"");
     // `npm:^1` is the range `^1`. `npm:other` and `npm:other@^1` are aliases and keep the prefix.
+    // Wider than `dependency::without_npm_protocol` (`npm:1`, `npm:x`): a key selects versions, it fetches nothing.
     let range = match range.strip_prefix(b"npm:") {
         Some(rest) if rest.is_empty() || VersionTag::infer(rest) == VersionTag::Npm => rest,
         _ => range,

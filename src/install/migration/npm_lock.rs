@@ -788,6 +788,14 @@ impl<'a> Migrator<'a> {
                         }
                         None => self.build_or_get(t, through_link, version_tag)?,
                     },
+                    // `bun install` resolves it like a dependency added later; a frozen one does not.
+                    None if is_local
+                        && behavior.is_peer()
+                        && !behavior.is_optional_peer()
+                        && !self.manager.options.enable.frozen_lockfile() =>
+                    {
+                        continue;
+                    }
                     None if behavior.is_peer() || behavior.contains(Behavior::OPTIONAL) => {
                         INVALID_PACKAGE_ID
                     }

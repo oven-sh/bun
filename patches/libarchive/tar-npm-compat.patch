@@ -1,0 +1,245 @@
+--- a/libarchive/archive_read_support_format_tar.c
++++ b/libarchive/archive_read_support_format_tar.c
+@@ -173,6 +173,16 @@
+ 	int32_t			 header_seen;
+ 	int			 header_eof_fatal;
+ 	int			 header_err;
++
++	/*
++	 * BUN PATCH: `npm` is the reader option of that name: read a
++	 * package the way npm's own tar reader does. `null_blocks` counts
++	 * the zero blocks in a row where a header is due; two of them end
++	 * the archive, which `past_end` remembers.
++	 */
++	int			 npm;
++	int			 null_blocks;
++	int			 past_end;
+ };
+
+ /* Track which size fields were present in the headers */
+@@ -485,6 +495,10 @@
+ 	} else if (strcmp(key, "read_concatenated_archives") == 0) {
+ 		tar->read_concatenated_archives = (val != NULL && val[0] != 0);
+ 		return (ARCHIVE_OK);
++	} else if (strcmp(key, "npm") == 0) {
++		/* BUN PATCH */
++		tar->npm = (val != NULL && val[0] != 0);
++		return (ARCHIVE_OK);
+ 	}
+
+ 	/* Note: The "warn" return is just to inform the options
+@@ -662,7 +676,9 @@
+ 		}
+ 	}
+
+-	if (r == ARCHIVE_OK && archive_entry_filetype(entry) == AE_IFREG) {
++	/* BUN PATCH: npm does not do this for type '7'. */
++	if (r == ARCHIVE_OK && archive_entry_filetype(entry) == AE_IFREG &&
++	    !(tar->npm && tar->filetype == '7')) {
+ 		/*
+ 		 * "Regular" entry with trailing '/' is really
+ 		 * directory: This is needed for certain old tar
+@@ -684,6 +700,19 @@
+ 			}
+ 		}
+ 	}
++
++	/*
++	 * BUN PATCH: npm takes types '0', NUL and '7' for files and skips
++	 * an entry whose pax path has a NUL in it. Anything else that got
++	 * the file type of a regular file loses it.
++	 */
++	if (tar->npm && archive_entry_filetype(entry) == AE_IFREG &&
++	    ((tar->filetype != '0' && tar->filetype != '\0' &&
++	      tar->filetype != '7') ||
++	     (archive_strlen(&tar->entry_pathname) > 0 &&
++	      memchr(tar->entry_pathname.s, '\0',
++		  archive_strlen(&tar->entry_pathname)) != NULL)))
++		archive_entry_set_filetype(entry, 0);
+ 	return (r);
+ }
+
+@@ -830,6 +859,7 @@
+ 	ssize_t bytes;
+ 	int err, err2;
+ 	int eof_fatal; /* EOF is okay at some points... */
++	char typeflag;
+ 	const char *h;
+ 	const struct archive_entry_header_ustar *header;
+ 	const struct archive_entry_header_gnutar *gnuheader;
+@@ -895,8 +925,13 @@
+ 				TAR_HEADER_RETURN(ARCHIVE_FATAL);
+ 			}
+
+-			/* Read 512-byte header record */
+-			h = __archive_read_ahead(a, 512, &bytes);
++			/*
++			 * Read 512-byte header record
++			 * BUN PATCH: or whatever there is behind the end
++			 * of the archive.
++			 */
++			h = __archive_read_ahead(a, tar->past_end ? 1 : 512,
++			    &bytes);
+ 			if (h == NULL && bytes == ARCHIVE_RETRY) {
+ 				/*
+ 				 * BUN PATCH: non-blocking source ran
+@@ -909,7 +944,8 @@
+ 				goto bun_retry;
+ 			}
+ 			if (bytes == 0) { /* EOF at a block boundary. */
+-				if (eof_fatal) {
++				/* BUN PATCH: npm drops such a sequence. */
++				if (eof_fatal && !tar->npm) {
+ 					/* We've read a special header already;
+ 					 * if there's no regular header, then this is
+ 					 * a premature EOF. */
+@@ -927,6 +963,10 @@
+ 				    " detected while reading next header");
+ 				TAR_HEADER_RETURN(ARCHIVE_FATAL);
+ 			}
++			if (tar->past_end) {
++				*unconsumed += bytes;
++				continue;
++			}
+ 			*unconsumed += 512;
+
+ 			if (h[0] == 0 && archive_block_is_null(h)) {
+@@ -937,19 +977,32 @@
+ 					continue;
+ 				}
+
+-				/* Try to consume a second all-null record, as well. */
+-				/* If we can't, that's okay. */
+-				tar_flush_unconsumed(a, unconsumed);
+-				h = __archive_read_ahead(a, 512, NULL);
+-				if (h != NULL && h[0] == 0 && archive_block_is_null(h))
+-						__archive_read_consume(a, 512);
+-
+-				archive_clear_error(&a->archive);
+-				TAR_HEADER_RETURN(ARCHIVE_EOF);
++				/*
++				 * BUN PATCH: two in a row end the archive.
++				 * Upstream returns here; read on instead, to
++				 * the end of the input, so that the filters
++				 * get to check all of it. Nothing behind the
++				 * end is an entry.
++				 */
++				if (++tar->null_blocks == 2)
++					tar->past_end = 1;
++				continue;
+ 			}
++			tar->null_blocks = 0;
+
+-			/* This is NOT a null block, so it must be a valid header. */
+-			if (!checksum(a, h)) {
++			/*
++			 * This is NOT a null block, so it must be a valid header.
++			 * BUN PATCH: for npm it is not one if a link has no
++			 * target, or if anything but a link or a pax header
++			 * has one.
++			 */
++			header = (const struct archive_entry_header_ustar *)h;
++			typeflag = header->typeflag[0];
++			if (!checksum(a, h) || (tar->npm &&
++			    ((typeflag == '1' || typeflag == '2') ?
++			    header->linkname[0] == '\0' :
++			    header->linkname[0] != '\0' &&
++			    typeflag != 'g' && typeflag != 'x'))) {
+ 				if (tar_flush_unconsumed(a, unconsumed) != ARCHIVE_OK) {
+ 					TAR_HEADER_RETURN(ARCHIVE_FATAL);
+ 				}
+@@ -998,7 +1051,12 @@
+ 		 * the next attempt re-reads this exact block from the
+ 		 * filter's buffer.
+ 		 */
+-		switch (header->typeflag[0]) {
++		/* BUN PATCH: for npm 'N' names the next entry, as 'L' does. */
++		typeflag = header->typeflag[0];
++		if (tar->npm && typeflag == 'N')
++			typeflag = 'L';
++
++		switch (typeflag) {
+ 		case 'A': case 'g': case 'K': case 'L':
+ 		case 'V': case 'X': case 'x': {
+ 			int64_t ext_size = tar_atol(header->size,
+@@ -1042,7 +1100,7 @@
+ 			break;
+ 		}
+
+-		switch(header->typeflag[0]) {
++		switch(typeflag) {
+ 		case 'A': /* Solaris tar ACL */
+ 			if (seen_headers & seen_A_header) {
+ 				archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
+@@ -1127,7 +1185,10 @@
+ 				a->archive.archive_format = ARCHIVE_FORMAT_TAR_GNUTAR;
+ 				a->archive.archive_format_name = "GNU tar format";
+ 				err2 = header_gnutar(a, tar, entry, h, unconsumed);
+-			} else if (memcmp(header->magic, "ustar", 5) == 0) {
++			} else if (memcmp(header->magic, "ustar", 5) == 0 &&
++			    /* BUN PATCH: npm wants the version too. */
++			    (!tar->npm || memcmp(gnuheader->magic,
++				"ustar\00000", 8) == 0)) {
+ 				if (a->archive.archive_format != ARCHIVE_FORMAT_TAR_PAX_INTERCHANGE) {
+ 					a->archive.archive_format = ARCHIVE_FORMAT_TAR_USTAR;
+ 					a->archive.archive_format_name = "POSIX ustar format";
+@@ -1588,6 +1649,7 @@
+ 	const char *existing_linkpath;
+ 	const wchar_t *existing_wcs_linkpath;
+ 	mode_t header_mode;
++	int64_t stored_size;
+ 	int     err = ARCHIVE_OK;
+
+ 	header = (const struct archive_entry_header_ustar *)h;
+@@ -1674,6 +1736,7 @@
+
+ 	/* Handle the tar type flag appropriately. */
+ 	tar->filetype = header->typeflag[0];
++	stored_size = tar->entry_bytes_remaining;
+
+ 	/*
+ 	 * TODO: If the linkpath came from Pax extension header, then
+@@ -1841,6 +1904,9 @@
+ 		archive_entry_set_filetype(entry, AE_IFREG);
+ 		break;
+ 	}
++	/* BUN PATCH: for npm only a directory has no body. */
++	if (tar->npm && tar->filetype != '5')
++		tar->entry_bytes_remaining = stored_size;
+ 	return (err);
+ }
+
+@@ -2619,6 +2685,15 @@
+ 	const char *p;
+ 	int err = ARCHIVE_OK;
+
++	/*
++	 * BUN PATCH: npm reads none of the vendor keys that matter here.
++	 * They all start with a capital letter.
++	 */
++	if (tar->npm && key[0] >= 'A' && key[0] <= 'Z') {
++		__archive_read_consume(a, value_length);
++		return (ARCHIVE_OK);
++	}
++
+ 	switch (key[0]) {
+ 	case 'G':
+ 		/* GNU.* extensions */
+@@ -3353,14 +3428,15 @@
+ 			archive_entry_set_ctime(entry, t, 0);
+ 	}
+
+-	if (header->realsize[0] != 0) {
++	/* BUN PATCH: npm reads neither this field nor the next. */
++	if (!tar->npm && header->realsize[0] != 0) {
+ 		/* Treat as a synonym for the pax GNU.sparse.realsize attr */
+ 		tar->GNU_sparse_realsize
+ 		    = tar_atol(header->realsize, sizeof(header->realsize));
+ 		tar->size_fields |= TAR_SIZE_GNU_SPARSE_REALSIZE;
+ 	}
+
+-	if (header->sparse[0].offset[0] != 0) {
++	if (!tar->npm && header->sparse[0].offset[0] != 0) {
+ 		if (gnu_sparse_old_read(a, tar, header, unconsumed)
+ 		    != ARCHIVE_OK)
+ 			return (ARCHIVE_FATAL);

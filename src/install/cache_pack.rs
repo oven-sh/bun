@@ -335,7 +335,8 @@ impl Drop for TempOutput {
 }
 
 struct Writer<'a> {
-    file: &'a File,
+    /// `None`: a dry run, which reads and checks everything and keeps nothing.
+    file: Option<&'a File>,
     buf: Box<[u8]>,
     len: usize,
     /// Bytes already in `file`. Writes name their offset: `patch_u64` must not move a position.
@@ -344,7 +345,7 @@ struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
-    fn new(file: &'a File) -> Self {
+    fn new(file: Option<&'a File>) -> Self {
         Self {
             file,
             buf: vec![0u8; IO_BUFFER_LEN].into_boxed_slice(),
@@ -359,8 +360,9 @@ impl<'a> Writer<'a> {
     }
 
     fn flush(&mut self) -> sys::Maybe<()> {
-        self.file
-            .pwrite_all(&self.buf[..self.len], self.flushed as i64)?;
+        if let Some(file) = self.file {
+            file.pwrite_all(&self.buf[..self.len], self.flushed as i64)?;
+        }
         self.flushed += self.len as u64;
         self.len = 0;
         Ok(())
@@ -414,7 +416,8 @@ impl<'a> Writer<'a> {
             return Ok(());
         }
         self.flush()?;
-        self.file.pwrite_all(&bytes, at as i64)
+        self.file
+            .map_or(Ok(()), |file| file.pwrite_all(&bytes, at as i64))
     }
 }
 
@@ -515,10 +518,14 @@ fn pack_entry(
 pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, Error> {
     let entries = lockfile_entries(pm);
     let cache_dir = pm.get_cache_directory();
-    let output = TempOutput::create(destination)?;
+    let output = if pm.options.dry_run {
+        None
+    } else {
+        Some(TempOutput::create(destination)?)
+    };
     let mut summary = PackSummary::default();
-    if let Some(file) = &output.file {
-        let mut w = Writer::new(file);
+    {
+        let mut w = Writer::new(output.as_ref().and_then(|output| output.file.as_ref()));
         w.write(MAGIC)?;
         for entry in &entries {
             if entry_tag(entry.name.as_bytes()).is_none() {
@@ -536,7 +543,9 @@ pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, 
         w.header(KIND_END, b"", 0, 0)?;
         w.flush()?;
     }
-    output.commit(destination)?;
+    if let Some(output) = output {
+        output.commit(destination)?;
+    }
     Ok(summary)
 }
 
@@ -941,6 +950,12 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
         }
     }
 
+    // The whole pack is verified, and nothing has reached the cache. `staging` removes itself.
+    if pm.options.dry_run {
+        summary.created = staged.len() as u32;
+        return Ok(summary);
+    }
+
     let mut cache_dir_path_buf = bun_paths::path_buffer_pool::get();
     let cache_dir_path: &[u8] = sys::get_fd_path(cache_dir, &mut cache_dir_path_buf)?;
 
@@ -1001,12 +1016,14 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     };
 
     let quiet = pm.options.log_level == LogLevel::Silent;
+    let dry_run = pm.options.dry_run;
     let timer = bun_core::time::Timer::start();
     let result = if is_pack {
         pack(pm, abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
-                    "<green>Packed<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
+                    "<green>{}<r> {} package{} ({} file{}, {}) into <b>{}<r> <d>[{}]<r>",
+                    if dry_run { "Would pack" } else { "Packed" },
                     summary.packages,
                     plural(summary.packages.into()),
                     summary.files,
@@ -1028,7 +1045,8 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
         unpack(pm, abs_file).map(|summary| {
             if !quiet {
                 bun_core::prettyln!(
-                    "<green>Unpacked<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",
+                    "<green>{}<r> {} package{} ({} new, {} already cached, {}) <d>[{}]<r>",
+                    if dry_run { "Would unpack" } else { "Unpacked" },
                     summary.packages,
                     plural(summary.packages.into()),
                     summary.created,

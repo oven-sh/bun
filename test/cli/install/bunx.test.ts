@@ -110,6 +110,7 @@ function fixtureServer(handler: (pathname: string) => Uint8Array<ArrayBuffer> | 
       requests.push(pathname);
       const body = handler(pathname);
       if (body === undefined) return new Response(`no fixture for ${pathname}`, { status: 404 });
+      if (body instanceof Response) return body;
       return body instanceof Uint8Array ? new Response(body) : Response.json(body);
     },
   });
@@ -133,8 +134,11 @@ async function localRegistry(...packages: FixturePackage[]) {
     { name: string; versions: Record<string, object>; time: Record<string, string>; "dist-tags": { latest: string } }
   >();
   const tarballs = new Map<string, Uint8Array<ArrayBuffer>>();
-  const registry = fixtureServer(
-    pathname => tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1))),
+  const down = new Map<string, number>();
+  const registry = fixtureServer(pathname =>
+    down.has(pathname)
+      ? new Response(null, { status: down.get(pathname) })
+      : (tarballs.get(pathname) ?? manifests.get(decodeURIComponent(pathname.slice(1)))),
   );
   for (const { name, version, bin, dependencies, scripts, daysOld = 3650, files } of packages) {
     const tarballPath = `/${name}/-/${name.slice(name.lastIndexOf("/") + 1)}-${version}.tgz`;
@@ -150,6 +154,8 @@ async function localRegistry(...packages: FixturePackage[]) {
     manifests.set(name, manifest);
   }
   return Object.assign(registry, {
+    /** Request path -> the status it is answered with instead. */
+    down,
     /** Moves the `latest` tag of `name`. */
     tagLatest(name: string, version: string) {
       manifests.get(name)!["dist-tags"].latest = version;
@@ -1912,17 +1918,17 @@ describe("a cached tree", () => {
   });
 
   // With it, a tool that runs `bunx add` gets `bun add`, and its own `bun install` finds no workspace root.
-  it.concurrent("the tool does not inherit the marker of the install bunx spawns", async () => {
+  it.concurrent("the tool does not inherit the markers of the install bunx spawns", async () => {
     using registry = await localRegistry(
       fixturePackage(
         "env-probe",
         "1.0.0",
         "env-probe",
-        `#!/usr/bin/env node\nconsole.log(String(process.env.BUN_INTERNAL_BUNX_INSTALL));\n`,
+        `#!/usr/bin/env node\nconsole.log(Object.keys(process.env).filter(key => key.startsWith("BUN_INTERNAL_BUNX_")));\n`,
       ),
     );
     using box = sandbox(registry);
-    expect(await box.run(["env-probe"])).toMatchObject({ stdout: "undefined\n", exitCode: 0 });
+    expect(await box.run(["env-probe"])).toMatchObject({ stdout: "[]\n", exitCode: 0 });
   });
 
   const outcomes = (results: { stdout: string; exitCode: number }[]) =>
@@ -2024,6 +2030,93 @@ describe("a cached tree", () => {
         exitCode: 1,
       });
     });
+
+    const usesItsTree = expect.stringContaining(
+      "warn: Could not reach the registry. Using the installation of tool that bunx has.",
+    );
+
+    // These say nothing about the package. There is a tree to run, so bunx does not wait for a second attempt.
+    it.concurrent.each([500, 502, 503, 504, 429, 408])(
+      "a day-old tree is used when the registry answers %d, after one attempt",
+      async status => {
+        using registry = await localRegistry(...toolWithDep());
+        using box = sandbox(registry);
+        expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+        age(box.tree("tool@latest"));
+        const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+        registry.down.set("/tool", status);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: ran,
+          stderr: usesItsTree,
+          exitCode: 0,
+          requests: ["/tool"],
+        });
+        expect(markers()).toEqual([true, true]);
+        expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+      },
+    );
+
+    it.concurrent("without a tree to run, a 503 is retried", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      registry.down.set("/tool", 503);
+      expect(await box.run(["tool"])).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("/tool - 503"),
+        exitCode: 1,
+        requests: Array(6).fill("/tool"),
+      });
+    });
+
+    it.concurrent("an explicit dist-tag fails on a 503, and the tree stays as good as it was", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+
+      registry.down.set("/tool", 503);
+      expect(await box.run(["tool@latest"])).toMatchObject({
+        stdout: "",
+        exitCode: 1,
+        requests: Array(6).fill("/tool"),
+      });
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, stderr: "", exitCode: 0, requests: [] });
+    });
+
+    it.concurrent.each(["/tool/-/tool-2.0.0.tgz", "/dep", "/dep/-/dep-2.0.0.tgz"])(
+      "a day-old tree is used when a newer version cannot be downloaded: 503 for %s",
+      async path => {
+        const pair = (version: string): FixturePackage[] => [
+          { name: "dep", version, files: { "index.js": `module.exports = "dep ${version}";\n` } },
+          {
+            name: "tool",
+            version,
+            bin: { tool: "cli.js" },
+            dependencies: { dep: version },
+            files: { "cli.js": `#!/usr/bin/env node\nconsole.log("tool ${version} with " + require("dep"));\n` },
+          },
+        ];
+        using registry = await localRegistry(...pair("1.0.0"), ...pair("2.0.0"));
+        using box = sandbox(registry);
+        registry.tagLatest("tool", "1.0.0");
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 1.0.0 with dep 1.0.0\n", exitCode: 0 });
+        age(box.tree("tool@latest"));
+        const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+        registry.tagLatest("tool", "2.0.0");
+        registry.down.set(path, 503);
+        expect(await box.run(["tool"])).toMatchObject({
+          stdout: "tool 1.0.0 with dep 1.0.0\n",
+          stderr: usesItsTree,
+          exitCode: 0,
+        });
+        expect(markers()).toEqual([true, true]);
+
+        registry.down.clear();
+        age(box.tree("tool@latest"));
+        expect(await box.run(["tool"])).toMatchObject({ stdout: "tool 2.0.0 with dep 2.0.0\n", exitCode: 0 });
+      },
+    );
   });
 
   // The linker skips an entry of `bin` whose value is not the path of a file in the package.

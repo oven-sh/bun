@@ -338,6 +338,9 @@ impl PackageManager {
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
+        if cwd.len() + "/node_modules/.bin".len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
         let this_transpiler = self.configure_env_for_scripts(ctx)?;
 
         let env_loader = this_transpiler.env_mut();
@@ -522,7 +525,12 @@ fn add_package_to_set(
         let rows = lockfile.packages.items_dependencies()[current as usize];
         for dep_id in rows.begin()..rows.end() {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
+            // Only what later installs run too, from the names this one records.
             if dep_package_id != invalid_package_id
+                && lockfile.can_trust_by_name(
+                    lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
+                    &lockfile.packages.items_resolution()[dep_package_id as usize],
+                )
                 && !handle_oom(set.get_or_put(dep_package_id)).found_existing
             {
                 stack.push(dep_package_id);

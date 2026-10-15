@@ -1034,6 +1034,33 @@ describe("dangling symlinks in node_modules", () => {
   });
 });
 
+it("require.resolve with paths finds what was created after a failed lookup", () => {
+  // One folder per case: finding one would refresh the listing for the others.
+  using dir = tempDir("resolver-paths-created-later", { "file/.keep": "", "link/.keep": "", "pkg/.keep": "" });
+  const root = String(dir);
+  const lookup = (id: string, from: string) => {
+    try {
+      return require.resolve(id, { paths: [join(root, "missing"), join(root, from)] });
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+  const all = () => [lookup("./plain", "file"), lookup("./link", "link"), lookup("late-pkg", "pkg")];
+
+  symlinkSync("later.js", join(root, "link", "link.js"));
+  expect(all()).toEqual(["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
+
+  writeFileSync(join(root, "file", "plain.js"), "");
+  writeFileSync(join(root, "link", "later.js"), "");
+  mkdirSync(join(root, "pkg", "node_modules", "late-pkg"), { recursive: true });
+  writeFileSync(join(root, "pkg", "node_modules", "late-pkg", "index.js"), "");
+  expect(all()).toEqual([
+    join(root, "file", "plain.js"),
+    join(root, "link", "later.js"),
+    join(root, "pkg", "node_modules", "late-pkg", "index.js"),
+  ]);
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after

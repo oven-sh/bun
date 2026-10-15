@@ -2175,6 +2175,123 @@ describe.concurrent("bundledDependencies", () => {
     expect(stdout).toBe("bundled-file-dep\n");
     expect(exitCode).toBe(0);
   });
+
+  // bun placed these folders for host@1.0.0, which bundles nothing. The tarball of host@2.0.0 ships them.
+  test.each([
+    ["its only dependency", {}],
+    ["one of its dependencies", { "no-deps": "1.0.0" }],
+  ])("an upgrade to a version that bundles %s keeps what the tarball ships", async (_, more) => {
+    const { packageDir, packageJson, env } = await setupTest();
+    const shipped = ["one-dep", "one-dep/node_modules/no-deps"];
+    const host = { name: "host", dependencies: { "one-dep": "1.0.0", ...more } };
+    await Promise.all([
+      Bun.Archive.write(
+        join(packageDir, "host-1.0.0.tgz"),
+        { "package/package.json": JSON.stringify({ ...host, version: "1.0.0" }) },
+        { compress: "gzip" },
+      ),
+      Bun.Archive.write(
+        join(packageDir, "host-2.0.0.tgz"),
+        {
+          "package/package.json": JSON.stringify({ ...host, version: "2.0.0", bundleDependencies: ["one-dep"] }),
+          [`package/node_modules/${shipped[0]}/package.json`]: `{ "name": "one-dep", "version": "1.0.0-shipped" }`,
+          [`package/node_modules/${shipped[1]}/package.json`]: `{ "name": "no-deps", "version": "1.0.1-shipped" }`,
+        },
+        { compress: "gzip" },
+      ),
+    ]);
+    // The root has other packages under both names, so the host's own are nested below it.
+    const installHost = async (version: string) => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-upgrade",
+          dependencies: { host: `file:host-${version}.tgz`, "one-dep": "npm:no-deps@2.0.0", "no-deps": "2.0.0" },
+        }),
+      );
+      await install(packageDir, env, []);
+      return Promise.all(
+        shipped.map(path =>
+          file(join(packageDir, "node_modules", "host", "node_modules", path, "package.json"))
+            .json()
+            .then(
+              json => json.version,
+              () => "missing",
+            ),
+        ),
+      );
+    };
+    expect(await installHost("1.0.0")).toEqual(["1.0.0", "1.0.1"]);
+    expect(await installHost("2.0.0")).toEqual(["1.0.0-shipped", "1.0.1-shipped"]);
+  });
+
+  // Each command puts host@2.0.0, which ships "inner", where host@1.0.0 and the "inner" bun gave it were.
+  test.each([
+    [["add", "host@2.0.0"], { host: "1.0.0" }, {}],
+    [["update", "--latest"], { host: "^1.0.0" }, {}],
+    [["add", "host@2.0.0"], {}, { host: "1.0.0" }],
+    [["remove", "host"], { host: "1.0.0" }, { host: "2.0.0" }],
+  ])("bun %j with %j in the root and %j in a member keeps what the tarball ships", async (command, root, member) => {
+    const published = [
+      { name: "inner", version: "1.0.0" },
+      { name: "inner", version: "2.0.0" },
+      { name: "host", version: "1.0.0", dependencies: { inner: "^1.0.0" } },
+      { name: "host", version: "2.0.0", dependencies: { inner: "^1.0.0" }, bundleDependencies: ["inner"] },
+    ];
+    const tarballs = new Map<string, Uint8Array>();
+    for (const json of published) {
+      const files: Record<string, string> = { "package/package.json": JSON.stringify(json) };
+      if (json.bundleDependencies) files["package/node_modules/inner/package.json"] = JSON.stringify(published[0]);
+      tarballs.set(`/${json.name}-${json.version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+    }
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return new Response(tarball);
+        const versions = published.filter(json => `/${json.name}` === pathname);
+        return Response.json({
+          name: pathname.slice(1),
+          "dist-tags": { latest: versions.at(-1)!.version },
+          versions: Object.fromEntries(
+            versions.map(json => [
+              json.version,
+              { ...json, dist: { tarball: `${origin}/${json.name}-${json.version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+    const { packageDir, packageJson, env } = await setupTest();
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`),
+      // The root's own "inner" keeps the one of the host nested below the host.
+      write(
+        packageJson,
+        JSON.stringify({ name: "root", workspaces: ["m"], dependencies: { inner: "2.0.0", ...root } }),
+      ),
+      write(join(packageDir, "m", "package.json"), JSON.stringify({ name: "m", dependencies: member })),
+    ]);
+    const run = async (...args: string[]) => {
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: packageDir, env, stdout: "ignore", stderr: "pipe" });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return Promise.all(
+        ["host", "host/node_modules/inner"].map(path =>
+          file(join(packageDir, "node_modules", path, "package.json"))
+            .json()
+            .then(
+              json => json.version,
+              () => "missing",
+            ),
+        ),
+      );
+    };
+    expect(await run("install")).toEqual(["1.0.0", "1.0.0"]);
+    expect(await run(...command)).toEqual(["2.0.0", "1.0.0"]);
+  });
 });
 
 // A fresh resolve starts to download tarballs before the install phase runs.
@@ -3807,6 +3924,105 @@ describe.concurrent("binaries", () => {
     expect(join(binDir, "map-bin-2")).toBeValidBin(join("..", "dep-with-map-bins", "map-bin-2"));
   });
 
+  test.each(["hoisted", "isolated"])(
+    "bins that the newly installed version of a package lacks are unlinked (%s)",
+    async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      // map-bin 1.0.2 has two bins, map-bin 1.0.1 has neither the bins nor their file.
+      for (const [version, bins] of [
+        ["1.0.2", ["map-bin", "map_bin", "what-bin"]],
+        ["1.0.1", ["what-bin"]],
+      ] as const) {
+        await write(
+          packageJson,
+          JSON.stringify({ name: "foo", dependencies: { "map-bin": version, "what-bin": "1.0.0" } }),
+        );
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toHaveBins([...bins]);
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+    },
+  );
+
+  // Version 2 drops the bin `tool-legacy` and keeps the file of it.
+  const toolVersions = [
+    ["1.0.0", { tool: "a.js", "tool-legacy": "a.js" }],
+    ["2.0.0", { tool: "b.js" }],
+  ] as const;
+  const writeToolTarballs = (dir: string) =>
+    Promise.all(
+      toolVersions.map(([version, bin]) =>
+        Bun.Archive.write(
+          join(dir, `tool-${version}.tgz`),
+          {
+            "package/package.json": JSON.stringify({ name: "tool", version, bin }),
+            "package/a.js": "#!/usr/bin/env node\n",
+            "package/b.js": "#!/usr/bin/env node\n",
+          },
+          { compress: "gzip" },
+        ),
+      ),
+    );
+
+  test.each([
+    ["hoisted", "with", ""],
+    ["hoisted", "without", ""],
+    ["hoisted", "with", "--force"],
+    ["isolated", "with", ""],
+    ["isolated", "without", ""],
+    ["isolated", "with", "--force"],
+  ])(
+    "a bin that the newly installed version no longer declares is unlinked (%s, %s the lockfile of the old version) %s",
+    async (linker, lockfile, flag) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await writeToolTarballs(packageDir);
+      const binsOf = async (...importer: string[]) => {
+        const binDir = join(packageDir, ...importer, "node_modules", ".bin");
+        return existsSync(binDir) ? await readdirSorted(binDir) : [];
+      };
+
+      for (const [version, bin] of toolVersions) {
+        await Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              workspaces: ["app"],
+              dependencies: { tool: `file:./tool-${version}.tgz`, "what-bin": "1.0.0" },
+            }),
+          ),
+          write(
+            join(packageDir, "app", "package.json"),
+            JSON.stringify({ name: "app", dependencies: { tool: `file:../tool-${version}.tgz` } }),
+          ),
+          lockfile === "without" && rm(join(packageDir, "bun.lockb"), { force: true }),
+        ]);
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker, ...(flag ? [flag] : [])],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(await binsOf()).toHaveBins([...Object.keys(bin), "what-bin"]);
+        // Another path to the tarball is another package, so the hoisted linker gives the member a copy too.
+        expect(await binsOf("app")).toHaveBins(Object.keys(bin));
+        expect(join(packageDir, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "tool", bin.tool));
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+    },
+  );
+
   describe("existing destinations in the global bin dir", () => {
     // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
     // of the `.exe` + `.bunx` shim pair on Windows.
@@ -3874,6 +4090,43 @@ describe.concurrent("binaries", () => {
       // The refused bin does not take the package's other bin down.
       expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
       expect(exitCode).toBe(1);
+    });
+
+    test("a package with a refused bin is saved, so `bun remove -g` takes its other bin out", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      const globalDir = join(packageDir, "global-install-dir", "install", "global");
+      await write(join(binDir, binEntry("map-bin-1")), "not a bin of dep-with-map-bins");
+
+      let result = await runGlobal(packageDir, env, "add", "dep-with-map-bins");
+      expect(result.err).toContain("error: Failed to link dep-with-map-bins: EEXIST");
+      expect(join(binDir, "map-bin-2")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-2"));
+      expect(await file(join(globalDir, "package.json")).json()).toEqual({
+        dependencies: { "dep-with-map-bins": "^1.0.0" },
+      });
+      expect(result.exitCode).toBe(1);
+
+      result = await runGlobal(packageDir, env, "remove", "dep-with-map-bins");
+      expect(result.err).not.toContain("error:");
+      expect(await readdirSorted(binDir)).toEqual([binEntry("map-bin-1")]);
+      expect(await file(join(binDir, binEntry("map-bin-1"))).text()).toBe("not a bin of dep-with-map-bins");
+      expect(await exists(join(globalDir, "node_modules", "dep-with-map-bins"))).toBeFalse();
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("a bin that the newly installed version no longer declares is unlinked", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([writeToolTarballs(packageDir), write(join(binDir, "not-a-bin.txt"), "stays")]);
+
+      for (const [version, bin] of toolVersions) {
+        const { err, exitCode } = await runGlobal(packageDir, env, "add", join(packageDir, `tool-${version}.tgz`));
+        expect(err).not.toContain("error:");
+        expect((await readdirSorted(binDir)).filter(name => name !== "not-a-bin.txt")).toHaveBins(Object.keys(bin));
+        expect(join(binDir, "tool")).toBeValidBin(linkTarget("tool", bin.tool));
+        expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
+      }
+      expect(await file(join(binDir, "not-a-bin.txt")).text()).toBe("stays");
     });
 
     test("the package's own bin from an earlier install is replaced", async () => {
@@ -12657,6 +12910,162 @@ describe.concurrent("outdated", () => {
       "|----------------------------------------------------------|",
     ]);
     expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockfile);
+  });
+
+  // The cells of every row of the table.
+  const outdatedRows = async (env: any, cwd: string, ...args: string[]) =>
+    (await outdatedTable(env, cwd, ...args))
+      .filter(line => line.startsWith("| ") && !line.startsWith("| Package "))
+      .map(line =>
+        line
+          .split("|")
+          .slice(1, -1)
+          .map(cell => cell.trim()),
+      );
+
+  test("lists a dependency that is ahead of `latest` when `bun update` would move it", async () => {
+    const packages: Record<string, { versions: string[]; tags: Record<string, string> }> = {
+      // Nothing newer in its range.
+      "ahead": { versions: ["1.9.0", "2.0.0", "2.1.0"], tags: { latest: "1.9.0" } },
+      "beta": { versions: ["1.0.0", "2.0.0-beta.1", "2.0.0-beta.5"], tags: { latest: "1.0.0" } },
+      // `latest` stays on the LTS major.
+      "lts": { versions: ["1.9.0", "2.0.0", "2.1.0"], tags: { latest: "1.9.0" } },
+      "plain": { versions: ["1.0.0", "1.1.0"], tags: { latest: "1.1.0" } },
+      // 1.2.0 was `latest` when it was installed. A range follows `latest` while it allows it.
+      "rolled-back": { versions: ["1.0.0", "1.1.0", "1.2.0"], tags: { latest: "1.1.0" } },
+      "tag": {
+        versions: ["1.0.0", "2.0.0-canary.1", "2.0.0-canary.5"],
+        tags: { latest: "1.0.0", canary: "2.0.0-canary.5" },
+      },
+      // Named after a commit, so semver puts the newer build below the older one.
+      "tag-hash": {
+        versions: ["1.0.0", "2.0.0-canary-fff-1", "2.0.0-canary-aaa-2"],
+        tags: { latest: "1.0.0", canary: "2.0.0-canary-aaa-2" },
+      },
+    };
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        const name = decodeURIComponent(pathname.slice(1));
+        const { versions, tags } = packages[name];
+        return Response.json({
+          name,
+          "dist-tags": tags,
+          versions: Object.fromEntries(
+            versions.map(version => [version, { name, version, dist: { tarball: `${origin}/${version}.tgz` } }]),
+          ),
+        });
+      },
+    });
+    const manifests = (dependencies: Record<string, string>) => ({
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { lts: dependencies.lts } },
+        dependencies,
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        dependencies: { ahead: dependencies.ahead, lts: "catalog:" },
+      }),
+    });
+    using dir = tempDir("outdated-ahead-of-latest", {
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+      ...manifests({
+        "ahead": "2.1.0",
+        "beta": "2.0.0-beta.1",
+        "lts": "2.0.0",
+        "plain": "1.0.0",
+        "rolled-back": "1.2.0",
+        "tag": "2.0.0-canary.1",
+        "tag-hash": "2.0.0-canary-fff-1",
+      }),
+    });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+    // The registry has no tarballs. `bun outdated` reads the lockfile, the package.json files and the manifests.
+    await runBunInstall(env, String(dir), { packages: ["--lockfile-only"] });
+    const declared = manifests({
+      "ahead": "^2.0.0",
+      "beta": "^2.0.0-beta.1",
+      "lts": "^2.0.0",
+      "plain": "^1.0.0",
+      "rolled-back": "^1.0.0",
+      "tag": "canary",
+      "tag-hash": "canary",
+    });
+    await Promise.all(Object.entries(declared).map(([path, text]) => write(join(String(dir), path), text)));
+
+    const root = [
+      ["beta", "2.0.0-beta.1", "2.0.0-beta.5", "1.0.0"],
+      ["lts", "2.0.0", "2.1.0", "1.9.0"],
+      ["plain", "1.0.0", "1.1.0", "1.1.0"],
+      ["rolled-back", "1.2.0", "1.1.0", "1.1.0"],
+      ["tag", "2.0.0-canary.1", "2.0.0-canary.5", "1.0.0"],
+      ["tag-hash", "2.0.0-canary-fff-1", "2.0.0-canary-aaa-2", "1.0.0"],
+    ];
+    const catalog = ["lts", "2.0.0", "2.1.0", "1.9.0", "catalog (a)"];
+
+    await using update = spawn({
+      cmd: [bunExe(), "update", "--dry-run", "--lockfile-only"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, NO_COLOR: "1" },
+    });
+    const [moves, , exitCode] = await Promise.all([update.stdout.text(), update.stderr.text(), update.exited]);
+    expect(moves.split("\n").filter(line => line.startsWith("^ "))).toEqual(
+      root.map(([name, current, update]) => `^ ${name} ${current} -> ${update}`),
+    );
+    expect(exitCode).toBe(0);
+
+    expect({
+      root: await outdatedRows(env, String(dir)),
+      recursive: await outdatedRows(env, String(dir), "--recursive"),
+      filtered: await outdatedRows(env, String(dir), "--filter", "a"),
+    }).toEqual({
+      root,
+      recursive: [...root.map(row => [...row, "root"]), catalog],
+      filtered: [catalog],
+    });
+
+    // An older `latest` is not highlighted as an upgrade.
+    expect(await runBunOutdated({ ...env, FORCE_COLOR: "1" }, String(dir), "lts")).toContain("\x1b[2m1.9.0\x1b[0m");
+  });
+
+  test("lists an optional peer dependency once", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    // A library installs its optional peer for its own tests.
+    const library = (name: string) => ({
+      peerDependencies: { [name]: "1.0.0" },
+      peerDependenciesMeta: { [name]: { optional: true } },
+      devDependencies: { [name]: "1.0.0" },
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          ...library("no-deps"),
+          optionalDependencies: { "a-dep": "1.0.1" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", ...library("dep-with-tags") }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    expect({
+      root: await outdatedPackages(env, packageDir),
+      recursive: await outdatedPackages(env, packageDir, "--recursive"),
+      filtered: await outdatedPackages(env, packageDir, "--filter", "pkg1"),
+    }).toEqual({
+      root: ["no-deps (dev)", "no-deps (peer)", "a-dep (optional)"],
+      recursive: ["no-deps (dev)", "dep-with-tags (dev)", "no-deps (peer)", "dep-with-tags (peer)", "a-dep (optional)"],
+      filtered: ["dep-with-tags (dev)", "dep-with-tags (peer)"],
+    });
   });
 
   async function outdatedResult(env: any, cwd: string, ...args: string[]) {

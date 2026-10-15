@@ -326,7 +326,10 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            if result.status == libdeflate::Status::Success {
+                            // libdeflate stops at the end of the first gzip member.
+                            if result.status == libdeflate::Status::Success
+                                && result.read == tgz_bytes.len()
+                            {
                                 decompressed_in_memory = true;
                             }
                         }

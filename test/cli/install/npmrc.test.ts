@@ -183,14 +183,14 @@ registry = http://localhost:${registry.port}/
     // bunEnv spreads process.env, and CI runners commonly export XDG_CONFIG_HOME or
     // (via actions/setup-node) NPM_CONFIG_USERCONFIG, so both are removed here and each
     // case passes back exactly the variables it is testing.
-    async function publish(dir: string, envOverride: Record<string, string>, ...args: string[]) {
+    async function bun(dir: string, envOverride: Record<string, string>, ...cmd: string[]) {
       const spawnEnv: typeof env = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
       delete spawnEnv.NPM_CONFIG_USERCONFIG;
       delete spawnEnv.npm_config_userconfig;
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "publish", ...args],
+        cmd: [bunExe(), ...cmd],
         cwd: join(dir, "pkg"),
         env: { ...spawnEnv, ...envOverride },
         stdout: "pipe",
@@ -199,6 +199,8 @@ registry = http://localhost:${registry.port}/
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
+    const publish = (dir: string, envOverride: Record<string, string>, ...args: string[]) =>
+      bun(dir, envOverride, "publish", ...args);
 
     // `publish --dry-run` never contacts the registry, but it still requires a token
     // for it and prints which registry it picked up, so it shows which .npmrc was read.
@@ -286,6 +288,36 @@ registry = http://localhost:${registry.port}/
       expect(result.stderr).toContain("missing authentication");
       expect(result.exitCode).toBe(1);
     });
+
+    // Dotfiles often point it at $XDG_CONFIG_HOME/npm/npmrc, which need not be there.
+    it.concurrent("bun install says nothing when $NPM_CONFIG_USERCONFIG does not exist", async () => {
+      using dir = tempDir("npmrc-userconfig-missing-install", { ...pkg, "home/.keep": "" });
+      const missing = join(String(dir), "elsewhere", "missing.npmrc");
+      const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: missing }, "install");
+      expect(result.stderr).not.toContain("warn:");
+      expect(result.stderr).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it.skipIf(isWindows)("bun install stops when $NPM_CONFIG_USERCONFIG is there and cannot be read", async () => {
+      using dir = tempDir("npmrc-userconfig-directory", { ...pkg, "home/.keep": "", "elsewhere/ci.npmrc/.keep": "" });
+      const directory = join(String(dir), "elsewhere", "ci.npmrc");
+      const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: directory }, "install");
+      expect(result.stderr).toContain(`The registry and auth settings in ${directory} are not applied.\n`);
+      expect(result.stderr).toEndWith(
+        `error: This file cannot be read, and bun does not install packages without its settings\n    at ${directory}\n`,
+      );
+      expect(result.exitCode).toBe(1);
+    });
+
+    it.concurrent.each(["NPM_CONFIG_USERCONFIG", "npm_config_userconfig"])(
+      "a leading ~/ in $%s is the home directory",
+      async name => {
+        using dir = tempDir("npmrc-userconfig-home", { ...pkg, "home/.npmrc": npmrc(1), "home/ci.npmrc": npmrc(2) });
+        const result = await publishDryRun(String(dir), { [name]: "~/ci.npmrc" });
+        expect(result).toEqual(usesRegistry(2));
+      },
+    );
 
     it.concurrent("resolves a relative $NPM_CONFIG_USERCONFIG against the directory bun was started in", async () => {
       using dir = tempDir("npmrc-userconfig-relative", {
@@ -2570,7 +2602,7 @@ describe(".npmrc diagnostics", () => {
 
   it("names the file and line of an unknown option", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n\n//example.com/:_authtoken=SECRETTOKEN\n`);
-    expect(stderr).toMatch(/_authtoken is not a known .npmrc option[^\n]*\n\s+at .npmrc:3:/);
+    expect(stderr).toMatch(/_authtoken is not a known .npmrc option[^\n]*\n\s+at \S+[\\/]\.npmrc:3:/);
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
@@ -5210,7 +5242,12 @@ describe.concurrent("`ca` and `cafile` are one setting: a layer that sets either
 // and restore the modes of directories above the test's own.
 describe.skipIf(isWindows)("unreadable config files", () => {
   /** Runs bun in `<dir>/project` with `<dir>/home` as the home directory, as a user that file modes apply to. */
-  async function run(cmd: string[], prepare: (dir: string, lock: (path: string) => void) => void, xdg = false) {
+  async function run(
+    cmd: string[],
+    prepare: (dir: string, lock: (path: string) => void) => void,
+    xdg = false,
+    registry?: string,
+  ) {
     using dir = tempDir("npmrc-unreadable", {
       // No dependencies, so no network.
       "project/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
@@ -5236,6 +5273,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
           HOME: join(String(dir), "home"),
           XDG_CONFIG_HOME: xdg ? join(String(dir), "xdg") : undefined,
           BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+          BUN_CONFIG_REGISTRY: registry,
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -5250,23 +5288,88 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   }
 
   const files: [name: string, path: string, message: string][] = [
-    ["./.npmrc", "project/.npmrc", "The registry and auth settings in .npmrc are not applied."],
+    ["./.npmrc", "project/.npmrc", "project/.npmrc are not applied."],
     ["~/.npmrc", "home/.npmrc", "home/.npmrc are not applied."],
     ["./bunfig.toml", "project/bunfig.toml", "project/bunfig.toml are not applied."],
     ["~/.bunfig.toml", "home/.bunfig.toml", "home/.bunfig.toml are not applied."],
     ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml are not applied."],
   ];
 
+  /** The end of the stderr of a command that installs. */
+  const refusal = (path: string) =>
+    "error: This file cannot be read, and bun does not install packages without its settings\n" +
+    `    at <dir>/${path}\n`;
+  const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
+
   test.each(files)("%s is a directory", async (_, path, message) => {
     const { stderr, exitCode } = await run(["install"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
     expect(stderr).toContain("warn: EISDIR");
     expect(stderr).toContain(message);
+    expect(withoutDir(stderr)).toEndWith(refusal(path));
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(files)("--silent leaves the error about %s", async (_, path) => {
+    const silent = await run(["install", "--silent"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
+    expect({ ...silent, stderr: withoutDir(silent.stderr) }).toEqual({
+      stdout: "",
+      stderr: refusal(path),
+      exitCode: 1,
+    });
+  });
+
+  const unreadableBunfig = (dir: string) => mkdirSync(join(dir, "project/bunfig.toml"));
+
+  test.each([
+    "add no-deps",
+    "update",
+    "patch no-deps",
+    "ci",
+    "pm fetch",
+    "install --dry-run",
+    "install --lockfile-only",
+    "install --frozen-lockfile",
+  ])("bun %s stops before it asks the registry", async cmd => {
+    let requests = 0;
+    using registry = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response("", { status: 404 });
+      },
+    });
+    const { stderr, exitCode } = await run(cmd.split(" "), unreadableBunfig, false, registry.url.href);
+    expect(withoutDir(stderr)).toEndWith(refusal("project/bunfig.toml"));
+    expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+  });
+
+  test.each(["pm bin", "pm cache"])("bun %s installs nothing, so it only warns", async cmd => {
+    const { stderr, exitCode } = await run(cmd.split(" "), unreadableBunfig);
+    expect(stderr).toContain("project/bunfig.toml are not applied.");
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
 
-  test.each(files)("--silent says nothing about %s", async (_, path) => {
-    const silent = await run(["install", "--silent"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
-    expect(silent).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  function runnable(dir: string) {
+    writeFileSync(join(dir, "project/a.js"), "console.log('ran')");
+    writeFileSync(join(dir, "project/package.json"), JSON.stringify({ scripts: { s: "echo ran" } }));
+    mkdirSync(join(dir, "project/bunfig.toml"));
+  }
+
+  // Running a file looks for a bunfig.toml at up to three stages.
+  test.each(["a.js", "run a.js", "-e console.log('ran')"])("bun %s warns about ./bunfig.toml once", async cmd => {
+    const { stdout, stderr, exitCode } = await run(cmd.split(" "), runnable);
+    expect(stderr.split("\n")).toEqual([
+      expect.stringContaining("warn: EISDIR"),
+      expect.stringContaining("bunfig.toml are not applied."),
+      "",
+    ]);
+    expect(stdout).toBe("ran\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["--silent a.js", "run --silent a.js", "run --silent s"])("bun %s does not warn", async cmd => {
+    expect(await run(cmd.split(" "), runnable)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
   });
 
   test.each(files)("%s has mode 000", async (_, path, message) => {
@@ -5280,7 +5383,8 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     );
     expect(stderr).toContain("warn: EACCES");
     expect(stderr).toContain(message);
-    expect(exitCode).toBe(0);
+    expect(withoutDir(stderr)).toEndWith(refusal(path));
+    expect(exitCode).toBe(1);
   });
 
   // `sudo -u nobody bun ...` with the HOME of the caller, `USER nobody` in a container with HOME=/root: EACCES comes from
@@ -5323,13 +5427,13 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--silent hides the warning about a .npmrc", async () => {
+  test("--silent hides the warning about a .npmrc, not the error", async () => {
     const { stderr, exitCode } = await run(["install", "--silent"], (dir, lock) => {
       writeFileSync(join(dir, "project/.npmrc"), "");
       lock("project/.npmrc");
     });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect(withoutDir(stderr)).toBe(refusal("project/.npmrc"));
+    expect(exitCode).toBe(1);
   });
 
   test("nothing is said when no config file exists", async () => {

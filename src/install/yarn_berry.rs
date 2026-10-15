@@ -1952,7 +1952,7 @@ fn append_manifest_dependencies(
     Ok(())
 }
 
-/// `patch:` -> the range it patches, `portal:p` -> `file:p`, `link:dir` -> `link:./dir`. As a dependency called `name` writes it.
+/// `patch:` -> the range it patches, `portal:p` -> `file:p`, `link:dir` -> `link:./dir`, `npm:next` -> `next`. As a dependency called `name` writes it.
 fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
     // the patched range may itself be a patch, or yarn-only (`patch:` of a `portal:` package)
     let mut patched: Option<Vec<u8>> = None;
@@ -1977,6 +1977,10 @@ fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
         .filter(|path| strings::is_npm_package_name(path))
         .map(|path| [b"link:./".as_slice(), path].concat())
         .or(patched)
+        .or_else(|| {
+            let plain = strip_npm_protocol(spec);
+            (plain.len() != spec.len()).then(|| plain.to_vec())
+        })
 }
 
 /// package.json is written before bun.lock is saved: the migration can meet its own spelling.
@@ -2149,7 +2153,7 @@ fn edit_package_json(
         }
     }
     if any {
-        changed.push("rewrote patch:/portal:/link: ranges");
+        changed.push("rewrote patch:/portal:/link:/npm: ranges");
     }
 
     if !patched.is_empty() {

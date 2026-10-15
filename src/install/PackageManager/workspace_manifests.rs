@@ -8,7 +8,7 @@ use bun_semver as Semver;
 use crate::dependency::{Behavior, Tag as DependencyTag, Version as DependencyVersion};
 use crate::lockfile::package::{PackageColumns as _, folder_relative_to_top_level_dir};
 use crate::lockfile::{self, DependencySlice, Lockfile, Package};
-use crate::npm::{FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
+use crate::npm::{FindResult, FindVersionResult, MinimumReleaseAgeExcludes, PackageManifest};
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, ResolutionTag,
     invalid_package_id,
@@ -318,6 +318,18 @@ impl DeclaredDependencies {
             exclusions,
         )
     }
+}
+
+/// `bun update` would move it (a tag that moved back moves it down), or `latest` is newer.
+pub fn is_outdated(
+    current: Semver::Version,
+    current_buf: &[u8],
+    update: Option<FindResult<'_>>,
+    latest: FindResult<'_>,
+    manifest: &PackageManifest,
+) -> bool {
+    update.is_some_and(|update| !update.version.eql(current))
+        || latest.is_newer_than(manifest, current, current_buf)
 }
 
 /// Falls back to a row of the same name when `dep` moved to another group since the last install.

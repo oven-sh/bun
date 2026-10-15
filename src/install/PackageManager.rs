@@ -141,8 +141,10 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
   <b><green>bun pm<r> <blue>ls<r>                   list the tree of installed dependencies
+  <d>├<r> <cyan>names ...<r>                 list every installed package with one of these names
   <d>├<r> <cyan>--all<r>                     list the entire tree of installed dependencies
   <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>├<r> <cyan>--prod<r>                    omit devDependencies
   <d>└<r> <cyan>-g<r>                        list the tree of <b>globally<r> installed dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
   <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>         show what changed between two versions of a package (or vs a folder/tarball)
@@ -295,6 +297,16 @@ pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
 
+/// What a held message is about; see `PackageManager::log_held`.
+#[derive(Clone, Copy)]
+pub(crate) enum HeldAbout {
+    /// A row of a package.
+    Row(DependencyID),
+    /// The rows that wait for the task.
+    Task(Task::Id),
+    Package(PackageID),
+}
+
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
 // https://github.com/npm/cli/issues/7072
@@ -354,6 +366,8 @@ pub struct PackageManager {
 
     /// Of the `name` in the root package.json, which `workspace_paths` (the members) does not hold.
     pub(crate) workspace_root_name_hash: PackageNameHash,
+    /// Its `version`, as written. The lockfile keeps none for the root.
+    pub(crate) workspace_root_version: Box<[u8]>,
 
     pub(crate) thread_pool: ThreadPool,
     pub(crate) task_batch: thread_pool::Batch,
@@ -367,6 +381,8 @@ pub struct PackageManager {
     pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
     /// Git tasks whose `git_runner::GitSubprocess` is alive.
     pub(crate) running_git_tasks: AtomicU32,
+    /// Set by the first git task.
+    pub(crate) git_env: bun_ptr::JsCell<Option<crate::repository::GitEnv>>,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -411,7 +427,12 @@ pub struct PackageManager {
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
-    // name hash from alias package name -> the alias's `npm:` specifier text
+    // (name hash, row, its package), sorted by name; see enqueue::index_peer_askers.
+    pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
+    // Filled with it: the names the root resolves to a folder, a tarball or a repository.
+    pub(crate) local_in_root: Vec<PackageNameHash>,
+
+    // name hash from alias package name -> the alias's `npm:` specifier text. Only what the project declares.
     pub(crate) known_npm_aliases: NpmAliasMap,
 
     pub(crate) event_loop: AnyEventLoop,
@@ -455,6 +476,9 @@ pub struct PackageManager {
 
     // Newly resolved deprecated versions no package.json of the project names: one summary line.
     pub(crate) deprecated_transitive: u32,
+
+    // Some while `bun install` resolves: messages about packages that dedupe may still drop, until log_held.
+    pub(crate) held_messages: Option<Vec<(HeldAbout, Vec<bun_ast::Msg>)>>,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -563,9 +587,9 @@ impl Subcommand {
         matches!(self, Self::Audit | Self::Pm | Self::Info)
     }
 
-    // TODO: make all subcommands find root and chdir
-    pub(crate) fn should_chdir_to_root(self) -> bool {
-        !matches!(self, Self::Link)
+    /// A bare `bun link` registers the folder it runs in; `bun link <package>` installs, like `bun add`.
+    pub(crate) fn should_chdir_to_root(self, has_package_args: bool) -> bool {
+        !matches!(self, Self::Link) || has_package_args
     }
 
     /// `init` opens package.json read-write for these so a read-only file fails before any work.
@@ -870,6 +894,7 @@ impl PackageManager {
     pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
         &mut self,
     ) -> lockfile::LoadResult<'_> {
+        self.clear_cached_items_depending_on_lockfile_buffer();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
@@ -953,6 +978,13 @@ impl PackageManager {
 
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
+    }
+
+    /// Auto-install blocks the JS thread on its requests: five minutes of silence are too long there.
+    pub(crate) fn idle_timeout_seconds(&self) -> Option<core::ffi::c_uint> {
+        (self.options.runtime_auto_install
+            && self.env().get(b"BUN_CONFIG_HTTP_IDLE_TIMEOUT").is_none())
+        .then_some(30)
     }
 
     /// A blocking request, with the proxy and the certificate check the environment asks for.
@@ -1493,6 +1525,7 @@ fn allocate_package_manager(
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(workspace_root_name_hash, 0);
+        wr!(workspace_root_version, Box::default());
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());
@@ -1501,6 +1534,7 @@ fn allocate_package_manager(
         wr!(git_commits, GitCommitMap::default());
         wr!(git_tasks, VecDeque::new());
         wr!(running_git_tasks, AtomicU32::new(0));
+        wr!(git_env, bun_ptr::JsCell::new(None));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -1527,6 +1561,8 @@ fn allocate_package_manager(
             peer_dependencies,
             LinearFifo::<DependencyID, DynamicBuffer<DependencyID>>::init()
         );
+        wr!(peer_askers, None);
+        wr!(local_in_root, Vec::new());
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
         wr!(any_failed_to_install, false);
@@ -1537,6 +1573,7 @@ fn allocate_package_manager(
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(deprecated_transitive, 0);
+        wr!(held_messages, None);
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
@@ -1702,12 +1739,14 @@ fn push_package_json(path: &mut Vec<u8>) {
 }
 
 /// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
+/// `unreadable`, if empty, gets the path of a file that is there and could not be read.
 fn load_npmrc_files(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
     start_dir: &[u8],
     project_npmrc: Option<&ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
+    unreadable: &mut Option<Box<[u8]>>,
 ) -> Api::BunInstall {
     let mut buf = bun_paths::path_buffer_pool::get();
     let parts = [b"./.npmrc" as &[u8]];
@@ -1721,7 +1760,8 @@ fn load_npmrc_files(
     // npm ignores XDG_CONFIG_HOME: `$XDG_CONFIG_HOME/.npmrc` counts only when that file exists.
     let mut global_len: usize = 0;
     if let Some(userconfig) = userconfig {
-        global_len = join(start_dir, &mut buf, &[userconfig]).map_or(0, ZStr::len);
+        let userconfig = Api::BunInstall::resolve_path(start_dir, userconfig);
+        global_len = join(start_dir, &mut buf, &[&userconfig[..]]).map_or(0, ZStr::len);
     } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
         global_len =
             (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p))).map_or(0, ZStr::len);
@@ -1735,8 +1775,53 @@ fn load_npmrc_files(
     let user_npmrc = (global_len > 0).then(|| ZStr::from_buf(&buf[..], global_len));
     let paths: Vec<&ZStr> = [user_npmrc, project_npmrc].into_iter().flatten().collect();
     let mut install = Api::BunInstall::default();
-    ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths);
+    if let Some(path) = ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths) {
+        unreadable.get_or_insert_with(|| path.as_bytes().into());
+    }
     install
+}
+
+/// npm's `ignore-scripts` in the environment. It only turns scripts off.
+fn env_ignores_scripts(env: &dot_env::Loader) -> bool {
+    [
+        b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
+        b"npm_config_ignore_scripts",
+    ]
+    .into_iter()
+    .filter_map(|key| env.get(key))
+    .any(|value| !value.is_empty() && ini::npm_config_bool(value))
+}
+
+/// Whether `bun install` in `cwd`, the working directory, skips scripts without `--ignore-scripts`.
+/// For `bun create`, which has no manager. Resets the AST store.
+pub fn config_ignores_scripts(
+    ctx: Command::Context,
+    env: &dot_env::Loader,
+    cwd: &[u8],
+) -> Result<bool, Error> {
+    ::bun_bunfig::arguments::load_config(
+        bun_options_types::command_tag::Tag::InstallCommand,
+        None,
+        ctx,
+    )?;
+    if env_ignores_scripts(env) {
+        return Ok(true);
+    }
+    let no_bunfig = Api::BunInstall::default();
+    let bunfig = ctx.install.as_deref().unwrap_or(&no_bunfig);
+    if let Some(ignore_scripts) = bunfig.ignore_scripts {
+        return Ok(ignore_scripts);
+    }
+    initialize_store();
+    let npmrc = load_npmrc_files(
+        bunfig,
+        env,
+        cwd,
+        Some(bun_core::zstr!(".npmrc")),
+        ini::NpmrcDiagnostics::Discard,
+        &mut None,
+    );
+    Ok(npmrc.ignore_scripts.unwrap_or(false))
 }
 
 /// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
@@ -1784,6 +1869,195 @@ impl<'a> PackageJsonWalk<'a> {
             return Some((dir, opened));
         }
     }
+}
+
+/// The rest of the walk, above the `package.json` of `child_cwd`. The first one with `workspaces`
+/// decides: if they list `child_cwd`, its directory, its open file and the hash of the member's name.
+/// `last_name` gets the `name` of the last `package.json` read.
+fn find_workspace_root<'a>(
+    walk: &mut PackageJsonWalk<'a>,
+    child_cwd: &[u8],
+    log: &mut bun_ast::Log,
+    workspace_names: &mut Package::WorkspaceMap::WorkspaceMap,
+    workspace_package_json_cache: &mut WorkspacePackageJSONCache,
+    mut last_name: Option<&mut Box<[u8]>>,
+) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
+    let found = find_workspace_root_above(
+        walk,
+        child_cwd,
+        log,
+        workspace_names,
+        workspace_package_json_cache,
+        last_name.as_deref_mut(),
+    )?;
+    if found.is_some() {
+        return Ok(found);
+    }
+    // A member can be a link to a folder that is not below the root.
+    let Some(child_cwd) = path_as_typed(child_cwd) else {
+        return Ok(None);
+    };
+    *walk = PackageJsonWalk::new(child_cwd);
+    walk.next_dir = bun_core::dirname(child_cwd);
+    *workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
+    find_workspace_root_above(
+        walk,
+        child_cwd,
+        log,
+        workspace_names,
+        workspace_package_json_cache,
+        last_name,
+    )
+}
+
+/// `dir`, which the process started in or below, as `$PWD` spells it: with the links that the user
+/// went through. `None` if that is the same path, or does not lead to `dir`.
+#[cfg(unix)]
+fn path_as_typed(dir: &[u8]) -> Option<&'static [u8]> {
+    let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
+    let below_dir = strings::without_trailing_slash(start_dir).strip_prefix(dir)?;
+    let pwd = bun_core::env_var::PWD.platform_get()?;
+    let typed = strings::without_trailing_slash(pwd).strip_suffix(below_dir)?;
+    if typed == dir
+        || !(below_dir.is_empty() || below_dir[0] == b'/')
+        || !bun_paths::is_absolute(typed)
+        || strings::split_any(typed, b"/").any(|part| matches!(part, b"." | b".."))
+    {
+        return None;
+    }
+    let there = bun_sys::stat(&ZBox::from_bytes(typed)).ok()?;
+    let here = bun_sys::stat(&ZBox::from_bytes(dir)).ok()?;
+    (there.st_dev == here.st_dev && there.st_ino == here.st_ino).then_some(typed)
+}
+
+#[cfg(not(unix))]
+fn path_as_typed(_: &[u8]) -> Option<&'static [u8]> {
+    None
+}
+
+fn find_workspace_root_above<'a>(
+    walk: &mut PackageJsonWalk<'a>,
+    child_cwd: &[u8],
+    log: &mut bun_ast::Log,
+    workspace_names: &mut Package::WorkspaceMap::WorkspaceMap,
+    workspace_package_json_cache: &mut WorkspacePackageJSONCache,
+    mut last_name: Option<&mut Box<[u8]>>,
+) -> Result<Option<(&'a [u8], bun_sys::File, PackageNameHash)>, Error> {
+    // Finding the workspace root must not depend on its package.json being writable.
+    while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
+        let Ok(json_file) = opened else {
+            continue;
+        };
+        #[cfg(windows)]
+        let mut parent_path_buf = bun_paths::path_buffer_pool::get();
+        let json_stat_size = json_file.get_end_pos()?;
+        let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
+        let json_len = json_file.pread_all(&mut json_buf, 0)?;
+        // As opened: the fd's realpath may be on another drive or outside the project.
+        // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched by the thread that
+        // creates the process's one manager; `&raw mut` + explicit reborrow avoids the 2024
+        // `static_mut_refs` deny.
+        let json_path: &[u8] = unsafe {
+            let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
+            root_buf[..walk.path.len()].copy_from_slice(&walk.path);
+            &root_buf[..walk.path.len()]
+        };
+        let json_source = bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
+        initialize_store();
+        let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log)?;
+        let json = parsed.root;
+        if let Some(last_name) = last_name.as_deref_mut() {
+            if let Some(name) = json.get(b"name").and_then(|e| {
+                if let bun_ast::ExprData::EString(s) = &e.data {
+                    Some(s.data.slice())
+                } else {
+                    None
+                }
+            }) {
+                *last_name = Box::<[u8]>::from(name);
+            }
+        }
+
+        if let Some(prop) = json.as_property(b"workspaces") {
+            let value_loc = crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
+                .unwrap_or(prop.loc);
+            let names = match &prop.expr.data {
+                bun_ast::ExprData::EArrayJSON(arr) => Some(
+                    Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
+                ),
+                bun_ast::ExprData::EObjectJSON(obj) => obj
+                    .get()
+                    .properties()
+                    .iter()
+                    .find(|row| row.key.slice() == b"packages")
+                    .and_then(|row| match &row.value {
+                        bun_ast::E::JsonValue::Array(arr) => {
+                            let packages_loc = crate::bun_json::property_value_loc(
+                                &json_source.contents,
+                                row.key_loc,
+                            )
+                            .unwrap_or(row.key_loc);
+                            Some(Package::WorkspaceMap::NamesArray::Immutable(
+                                arr.get(),
+                                packages_loc,
+                            ))
+                        }
+                        _ => None,
+                    }),
+                _ => None,
+            };
+            let Some(names) = names else {
+                break;
+            };
+            let mut log = bun_ast::Log::init();
+            // An error is about another member; a command that needs it reports it.
+            let _ = workspace_names.process_names_array(
+                workspace_package_json_cache,
+                &mut log,
+                names,
+                &json_source,
+                prop.loc,
+                None,
+                Package::WorkspaceMap::MissingWorkspace::Skip,
+            );
+            drop(log);
+
+            debug_assert_eq!(workspace_names.keys().len(), workspace_names.values().len());
+            for (path_, entry) in workspace_names
+                .keys()
+                .iter()
+                .zip(workspace_names.values().iter())
+            {
+                let child_path: &[u8] = if bun_paths::is_absolute(path_) {
+                    child_cwd
+                } else {
+                    resolve_path::relative_normalized::<platform::Auto, true>(
+                        Package::WorkspaceMap::package_json_dir(&json_source),
+                        child_cwd,
+                    )
+                };
+
+                #[cfg(windows)]
+                let maybe_workspace_path = {
+                    parent_path_buf[..child_path.len()].copy_from_slice(child_path);
+                    resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        &mut parent_path_buf[..child_path.len()],
+                    );
+                    &parent_path_buf[..child_path.len()]
+                };
+                #[cfg(not(windows))]
+                let maybe_workspace_path = child_path;
+
+                if strings::eql_long(maybe_workspace_path, path_, true) {
+                    let name_hash = Semver::string::Builder::string_hash(&entry.name);
+                    return Ok(Some((parent, json_file, name_hash)));
+                }
+            }
+
+            break;
+        }
+    }
+    Ok(None)
 }
 
 /// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
@@ -1848,7 +2122,7 @@ pub fn init(
     const CONFIG_TAG: bun_options_types::command_tag::Tag =
         bun_options_types::command_tag::Tag::InstallCommand;
     if cli.global {
-        // `globalDir` comes from the user's own file or `--config`, which is relative to this cwd.
+        // `globalDir` comes from the user's own file or `--config`.
         if cli.config.is_some() {
             ::bun_bunfig::arguments::load_config(CONFIG_TAG, cli.config, ctx)?;
         } else {
@@ -1864,8 +2138,6 @@ pub fn init(
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
-        // The first call wins: `initial_top_level_dir()` is where `bun add -g ./path` was typed.
-        bun_paths::fs::FileSystem::init(bun_sys::getcwd_alloc()?.as_bytes());
         bun_sys::fchdir(global_dir)?;
     }
 
@@ -2038,140 +2310,32 @@ pub fn init(
         let child_cwd = &original_package_json_path.as_bytes()[..this_cwd.len()];
 
         // Check if this is a workspace; if so, use root package
-        if subcommand.should_chdir_to_root() {
+        if subcommand.should_chdir_to_root(cli.positionals.len() > 1) {
             // Above `bunx`'s tree are the user's cache and home: no workspace of it.
             let is_bunx_install =
                 bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
-            if !created_package_json && !no_project && !is_bunx_install {
-                // Finding the workspace root must not depend on its package.json being writable.
-                while let Some((parent, opened)) = walk.next(bun_sys::O::RDONLY) {
-                    let Ok(json_file) = opened else {
-                        continue;
-                    };
-                    #[cfg(windows)]
-                    let mut parent_path_buf = bun_paths::path_buffer_pool::get();
-                    let json_stat_size = json_file.get_end_pos()?;
-                    let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
-                    let json_len = json_file.pread_all(&mut json_buf, 0)?;
-                    // As opened: the fd's realpath may be on another drive or outside the project.
-                    // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
-                    // thread; `&raw mut` + explicit reborrow avoids the 2024 `static_mut_refs` deny.
-                    let json_path: &[u8] = unsafe {
-                        let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-                        root_buf[..walk.path.len()].copy_from_slice(&walk.path);
-                        &root_buf[..walk.path.len()]
-                    };
-                    let json_source =
-                        bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
-                    initialize_store();
+            if !created_package_json
+                && !no_project
+                && !is_bunx_install
+                && let Some((parent, json_file, name_hash)) = find_workspace_root(
+                    &mut walk,
+                    child_cwd,
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install
                     // entry point runs).
-                    let parsed =
-                        crate::bun_json::ParsedJson::parse_package_json(&json_source, unsafe {
-                            &mut *ctx.log
-                        })?;
-                    let json = parsed.root;
-                    if subcommand == Subcommand::Pm {
-                        if let Some(name) = json.get(b"name").and_then(|e| {
-                            if let bun_ast::ExprData::EString(s) = &e.data {
-                                Some(s.data.slice())
-                            } else {
-                                None
-                            }
-                        }) {
-                            root_package_json_name_at_time_of_init = Box::<[u8]>::from(name);
-                        }
-                    }
-
-                    if let Some(prop) = json.as_property(b"workspaces") {
-                        let value_loc =
-                            crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
-                                .unwrap_or(prop.loc);
-                        let names = match &prop.expr.data {
-                            bun_ast::ExprData::EArrayJSON(arr) => Some(
-                                Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
-                            ),
-                            bun_ast::ExprData::EObjectJSON(obj) => obj
-                                .get()
-                                .properties()
-                                .iter()
-                                .find(|row| row.key.slice() == b"packages")
-                                .and_then(|row| match &row.value {
-                                    bun_ast::E::JsonValue::Array(arr) => {
-                                        let packages_loc = crate::bun_json::property_value_loc(
-                                            &json_source.contents,
-                                            row.key_loc,
-                                        )
-                                        .unwrap_or(row.key_loc);
-                                        Some(Package::WorkspaceMap::NamesArray::Immutable(
-                                            arr.get(),
-                                            packages_loc,
-                                        ))
-                                    }
-                                    _ => None,
-                                }),
-                            _ => None,
-                        };
-                        let Some(names) = names else {
-                            break;
-                        };
-                        let mut log = bun_ast::Log::init();
-                        // An error is about another member; a command that needs it reports it.
-                        let _ = workspace_names.process_names_array(
-                            &mut workspace_package_json_cache,
-                            &mut log,
-                            names,
-                            &json_source,
-                            prop.loc,
-                            None,
-                            Package::WorkspaceMap::MissingWorkspace::Skip,
-                        );
-                        drop(log);
-
-                        debug_assert_eq!(
-                            workspace_names.keys().len(),
-                            workspace_names.values().len()
-                        );
-                        for (path_, entry) in workspace_names
-                            .keys()
-                            .iter()
-                            .zip(workspace_names.values().iter())
-                        {
-                            let child_path: &[u8] = if bun_paths::is_absolute(path_) {
-                                child_cwd
-                            } else {
-                                resolve_path::relative_normalized::<platform::Auto, true>(
-                                    Package::WorkspaceMap::package_json_dir(&json_source),
-                                    child_cwd,
-                                )
-                            };
-
-                            #[cfg(windows)]
-                            let maybe_workspace_path = {
-                                parent_path_buf[..child_path.len()].copy_from_slice(child_path);
-                                resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                                    &mut parent_path_buf[..child_path.len()],
-                                );
-                                &parent_path_buf[..child_path.len()]
-                            };
-                            #[cfg(not(windows))]
-                            let maybe_workspace_path = child_path;
-
-                            if strings::eql_long(maybe_workspace_path, path_, true) {
-                                // Intern via the resolver's DirnameStore so the slice is
-                                // process-lifetime (`set_top_level_dir` requires `'static`).
-                                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
-                                let _ = child_json.close();
-                                workspace_name_hash =
-                                    Some(Semver::string::Builder::string_hash(&entry.name));
-                                break 'root_package_json_file json_file;
-                            }
-                        }
-
-                        break;
-                    }
-                }
+                    unsafe { &mut *ctx.log },
+                    &mut workspace_names,
+                    &mut workspace_package_json_cache,
+                    (subcommand == Subcommand::Pm)
+                        .then_some(&mut root_package_json_name_at_time_of_init),
+                )?
+            {
+                // Intern via the resolver's DirnameStore so the slice is
+                // process-lifetime (`set_top_level_dir` requires `'static`).
+                fs.set_top_level_dir(fs.dirname_store().append(parent)?);
+                let _ = child_json.close();
+                workspace_name_hash = Some(name_hash);
+                break 'root_package_json_file json_file;
             }
         }
 
@@ -2224,14 +2388,8 @@ pub fn init(
     };
 
     env.load_process()?;
-    // npm's `ignore-scripts`, before the project's `.env` files load. It only turns scripts off.
-    let env_ignores_scripts = [
-        b"NPM_CONFIG_IGNORE_SCRIPTS" as &[u8],
-        b"npm_config_ignore_scripts",
-    ]
-    .into_iter()
-    .filter_map(|key| env.get(key))
-    .any(|value| !value.is_empty() && ini::npm_config_bool(value));
+    // Before the project's `.env` files load.
+    let env_ignores_scripts = env_ignores_scripts(env);
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
         // `.data` must only be probed while `entries_mutex` is held.
         let env_probe_keys = {
@@ -2261,13 +2419,18 @@ pub fn init(
             .install
             .take()
             .map_or_else(Api::BunInstall::default, |b| *b);
-        let npmrc_local = ZBox::from_bytes(b".npmrc");
+        let mut npmrc_local = bun_paths::path_buffer_pool::get();
         let mut install = load_npmrc_files(
             &bunfig_install,
             env,
-            &original_cwd_clone,
-            Some(&npmrc_local),
+            bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
+            resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                fs.top_level_dir(),
+                &mut npmrc_local,
+                &[b".npmrc".as_slice()],
+            ),
             ini::NpmrcDiagnostics::Print,
+            &mut ctx.unreadable_config,
         );
 
         overlay_bunfig_install(&mut install, bunfig_install);
@@ -2401,6 +2564,7 @@ pub fn init(
             cli,
             ctx.install.as_deref(),
             None,
+            None,
             subcommand,
         )?;
 
@@ -2453,31 +2617,7 @@ pub fn init(
         }
     }
 
-    let mut abs_ca_file_name: ZBox = ZBox::from_bytes(b"");
-    {
-        let options = &mgr_ref.options;
-        if !options.ca_file_name.is_empty() {
-            // resolve with original cwd
-            if bun_paths::is_absolute(options.ca_file_name) {
-                abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
-            } else {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                let Some(joined) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-                    &original_cwd_clone,
-                    &mut path_buf,
-                    &[options.ca_file_name],
-                ) else {
-                    Output::err(
-                        "HTTPThread",
-                        "could not find CA file: '{s}'",
-                        &[&bstr::BStr::new(options.ca_file_name)],
-                    );
-                    Global::crash();
-                };
-                abs_ca_file_name = ZBox::from_bytes(joined);
-            }
-        }
-    }
+    let abs_ca_file_name = ZBox::from_bytes(mgr_ref.options.ca_file_name);
 
     // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
     // thread reads these asynchronously after `init` returns, so park the
@@ -2550,6 +2690,8 @@ pub(crate) fn init_with_runtime(
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
+    // The directory of the file whose import needs the manager. The first call's counts.
+    importer_dir: &[u8],
 ) -> crate::Result<*mut PackageManager> {
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
     // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
@@ -2559,7 +2701,7 @@ pub(crate) fn init_with_runtime(
     static ONCE: std::sync::Once = std::sync::Once::new();
     static INIT_ERROR: bun_core::Mutex<Option<crate::Error>> = bun_core::Mutex::new(None);
     ONCE.call_once(|| {
-        if let Err(err) = init_with_runtime_once(log, bun_install, cli, env) {
+        if let Err(err) = init_with_runtime_once(log, bun_install, cli, env, importer_dir) {
             *INIT_ERROR.lock() = Some(err);
         }
     });
@@ -2574,6 +2716,7 @@ fn init_with_runtime_once(
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
+    importer_dir: &[u8],
 ) -> crate::Result<()> {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         PackageManager::set_verbose_install(true);
@@ -2592,8 +2735,56 @@ fn init_with_runtime_once(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
-    // bunfig.toml came from the start directory; `process.chdir()` moves `top_level_dir`.
+    // A package in node_modules is part of the project that installed it.
+    let importer_dir = match strings::index_of(importer_dir, bun_paths::NODE_MODULES_NEEDLE) {
+        Some(separator) => &importer_dir[..=separator],
+        None => importer_dir,
+    };
+    let importer_dir = without_trailing_slash_windows_path(importer_dir);
+    // The project, as `init` finds it: the nearest package.json, then the workspace root it is a
+    // member of.
+    let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
+    let mut walk = PackageJsonWalk::new(importer_dir);
+    let mut project = core::iter::from_fn(|| walk.next(bun_sys::O::RDONLY))
+        .find_map(|(dir, opened)| opened.is_ok().then_some(dir));
+    if let Some(member) = project
+        && let Ok(Some((root, _, _))) = find_workspace_root(
+            &mut walk,
+            without_trailing_slash_windows_path(member),
+            &mut bun_ast::Log::init(),
+            &mut Package::WorkspaceMap::WorkspaceMap::init(),
+            &mut workspace_package_json_cache,
+            None,
+        )
+    {
+        project = Some(root);
+    }
+    // Its bunfig.toml, .npmrc and lockfile say where packages come from. None above it is read.
+    let project_dir = project.unwrap_or(importer_dir);
+
+    // `bun_install` came from the start directory; `process.chdir()` moves `top_level_dir`.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
+    let mut unreadable = None;
+    let root_bunfig = if without_trailing_slash_windows_path(start_dir) == project_dir {
+        None
+    } else {
+        ::bun_bunfig::arguments::load_install_section(project_dir).unwrap_or_else(|path| {
+            unreadable = Some(path);
+            None
+        })
+    };
+    // A scanner is shown what `bun install` is about to install, and nothing else.
+    if [bun_install, root_bunfig.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|config| config.security_scanner.is_some())
+        || ::bun_bunfig::arguments::has_security_scanner(start_dir).unwrap_or_else(|path| {
+            unreadable = Some(path);
+            false
+        })
+    {
+        return Err(bun_resolver::Error::SecurityScannerConfigured.into());
+    }
     let mut project_npmrc = bun_paths::path_buffer_pool::get();
     let no_bunfig = Api::BunInstall::default();
     let npmrc = load_npmrc_files(
@@ -2601,12 +2792,22 @@ fn init_with_runtime_once(
         env,
         start_dir,
         resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            start_dir,
+            project_dir,
             &mut project_npmrc,
             &[b".npmrc".as_slice()],
         ),
         ini::NpmrcDiagnostics::Discard,
+        &mut unreadable,
     );
+    // Its settings say where packages come from and what checks them.
+    if let Some(path) = unreadable {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("\"{}\" cannot be read or parsed", bstr::BStr::new(&path)),
+        );
+        return Err(bun_resolver::Error::UnreadableConfig.into());
+    }
 
     let mut original_package_json_path =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
@@ -2620,7 +2821,7 @@ fn init_with_runtime_once(
         root_dir,
         env,
         original_package_json_path,
-        WorkspacePackageJSONCache::default(),
+        workspace_package_json_cache,
         None,
         Subcommand::Install,
         Box::default(),
@@ -2644,6 +2845,7 @@ fn init_with_runtime_once(
         cli,
         bun_install,
         Some(&npmrc),
+        root_bunfig.as_deref(),
         Subcommand::Install,
     )?;
 
@@ -2655,30 +2857,90 @@ fn init_with_runtime_once(
 
     // Gate the disk load on the cached dir listing so the runtime auto-install
     // path doesn't open()/read() a lockfile that isn't there.
-    // `load_from_cwd` mutates `*manager.lockfile` in place and returns a
+    // `load_from_dir` mutates `*manager.lockfile` in place and returns a
     // borrow of it, so `Ok` keeps the loaded value as-is.
-    // `Lockfile::load_from_cwd(manager, …)` is a
+    // `Lockfile::load_from_dir(manager, …)` is a
     // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`
     // passed in does not alias the `&mut Lockfile` receiver.
-    // `root_dir` was moved into `*manager` above (the field is
-    // an unbounded `&mut DirEntry`, so the local reborrow is for `'static` and the
-    // original binding is dead). Read it back through `manager.root_dir`.
-    // `.data` probes must hold `entries_mutex`.
-    let has_lockb = {
-        let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
-        manager.root_dir.has_comptime_query(b"bun.lockb")
-    };
-    if has_lockb {
+    manager.lockfile.init_empty();
+    if let Ok(fs::EntriesOption::Entries(entries)) =
+        FileSystem::instance().read_directory(project_dir, 0, false)
+        && {
+            // `.data` probes must hold `entries_mutex`.
+            let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            entries.has_comptime_query(b"bun.lock") || entries.has_comptime_query(b"bun.lockb")
+        }
+        && let Ok(dir) = bun_sys::Dir::open(project_dir)
+    {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
-        match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
+        match lockfile.load_from_dir::<false>(dir.fd(), Some(&mut *manager), log) {
             lockfile::LoadResult::Ok(_) => {}
             _ => lockfile.init_empty(),
         }
         manager.lockfile = lockfile;
-    } else {
-        manager.lockfile.init_empty();
+        // `root_dir` is where the workspaces' paths start: a lockfile has them from its own
+        // directory, `parse_with_json` from the working directory.
+        if manager.lockfile.packages.len() > 0 {
+            manager.root_dir = &mut **entries;
+            return Ok(());
+        }
     }
-
+    if project.is_some_and(|root| parse_runtime_root(manager, log, root).is_ok()) {
+        return Ok(());
+    }
+    manager.lockfile.init_empty();
+    manager.lockfile.append_package(&lockfile::Package {
+        resolution: crate::resolution::Resolution::init(crate::resolution::TaggedValue::Root),
+        ..Default::default()
+    })?;
     Ok(())
+}
+
+/// Auto-install without a lockfile reads the project's package.json as `bun install` does, for its
+/// overrides, catalogs and workspaces. A dependency is resolved when it is imported.
+fn parse_runtime_root(
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    root_dir: &[u8],
+) -> crate::Result<()> {
+    let mut path = root_dir.to_vec();
+    push_package_json(&mut path);
+    // What it holds points into `source`.
+    let mut parse_log = bun_ast::Log::init();
+    // Cloned because the `workspaces` walk below may grow the cache holding this entry.
+    let (source, json) = {
+        let entry = manager
+            .workspace_package_json_cache
+            .get_with_path(&mut parse_log, &path[..path.len() - 1], Default::default())
+            .unwrap()?;
+        (entry.source.clone(), entry.root)
+    };
+    let mut root = lockfile::Package::default();
+    let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
+    let result = root
+        .parse_with_json(
+            &mut lockfile,
+            manager,
+            &mut parse_log,
+            &source,
+            json,
+            &mut (),
+            bun_install::Features {
+                is_main: true,
+                dev_dependencies: true,
+                optional_dependencies: true,
+                workspaces: true,
+                ..Default::default()
+            },
+        )
+        .and_then(|()| {
+            lockfile.append_package(&root)?;
+            Ok(())
+        });
+    manager.lockfile = lockfile;
+    if parse_log.errors > 0 {
+        parse_log.append_to_with_recycled(log, true);
+    }
+    result
 }

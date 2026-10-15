@@ -3021,6 +3021,733 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
   });
 });
 
+// The install that writes bun.lock leaves such a dependency unresolved. plugin@3.0.0 is in the
+// tree for mid's peer only, and loading bun.lock used to hand it to the optional dependency too.
+describe.each(["hoisted", "isolated"] as const)(
+  "optional dependency no published version satisfies, with another version in the tree (%s linker)",
+  linker => {
+    const manifests: Manifests = {
+      lib: { "2.0.0": {}, "3.0.0": {} },
+      plugin: { "3.0.0": { peerDependencies: { lib: "^2.0.0" } } },
+      mid: { "1.0.0": { peerDependencies: { plugin: "^3.0.0" } } },
+      wrap: { "1.0.0": { dependencies: { mid: "1.0.0" } } },
+      host: {
+        "1.0.0": { dependencies: { wrap: "1.0.0", lib: "^2.0.0" }, optionalDependencies: { plugin: "~1.0.0" } },
+      },
+    };
+
+    const declaredBy = {
+      "a registry package": {
+        "package.json": JSON.stringify({ name: "app", dependencies: { lib: "^3.0.0", host: "1.0.0" } }),
+      },
+      "a workspace": {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"], dependencies: { lib: "^3.0.0" } }),
+        "packages/ws/package.json": JSON.stringify({ name: "ws", ...manifests.host["1.0.0"] }),
+      },
+      "the root package": {
+        "package.json": JSON.stringify({ name: "app", ...manifests.host["1.0.0"] }),
+      },
+    };
+
+    it.concurrent.each(Object.keys(declaredBy) as (keyof typeof declaredBy)[])("declared by %s", async declarer => {
+      using registry = await serveRegistry(manifests);
+      using dir = tempDir("unmet-optional-", {
+        ...declaredBy[declarer],
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
+      const installed = () =>
+        Array.from(
+          new Bun.Glob("**/node_modules/*").scanSync({ cwd: String(dir), onlyFiles: false, dot: true }),
+        ).toSorted();
+
+      await installWithOwnCache(String(dir));
+      const lockfile = await file(lockfilePath).text();
+      const fresh = installed();
+      expect(fresh.filter(path => path.endsWith("plugin"))).not.toBeEmpty();
+
+      const { out } = await installWithOwnCache(String(dir));
+      expect(installed()).toEqual(fresh);
+      expect(out).toContain("(no changes)");
+
+      await installWithOwnCache(String(dir), "--lockfile-only");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    });
+  },
+);
+
+// Handed the root's x@1.2.0 on load, x@2.0.0 nested a copy of it that hid x@2.0.0 from the peer of
+// the y@3.0.0 below, so the two nested inside each other without end and bun.lock was refused.
+it.concurrent(
+  "bun.lock loads back when two packages that peer on each other have an unmet optional dependency",
+  async () => {
+    using registry = await serveRegistry({
+      x: { "1.2.0": {}, "2.0.0": { optionalDependencies: { x: "~1.0.0" }, peerDependencies: { y: "~2.1.0" } } },
+      y: {
+        "1.0.0": {},
+        "1.1.0": { dependencies: { y: "latest" } },
+        "3.0.0": { peerDependencies: { x: "^3.0.0", y: "1.0.0" } },
+      },
+      app: { "1.0.0": { dependencies: { x: "^1.1.0", y1: "npm:y@~1.1.0", x2: "npm:x@latest" } } },
+    });
+    using dir = tempDir("unmet-optional-peer-cycle-", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { y: "~1.0.0", app: "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const lockfile = await file(lockfilePath).text();
+
+    const { out } = await installWithOwnCache(String(dir));
+    expect(out).toContain("(no changes)");
+
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  },
+);
+
+// p2@2.1.0 is in bun.lock for p1 only, and the root's own range refuses it.
+it.concurrent("the isolated linker never links an unmet optional dependency of the root", async () => {
+  using registry = await serveRegistry({
+    p1: { "1.0.0": { dependencies: { p2: "^2.0.0" } } },
+    p2: { "2.1.0": {} },
+  });
+  using dir = tempDir("unmet-optional-root-link-", {
+    "package.json": JSON.stringify({
+      name: "root",
+      dependencies: { p1: "1.0.0" },
+      optionalDependencies: { p2: "^1.0.0" },
+    }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "isolated" } }),
+  });
+  const nodeModules = join(String(dir), "node_modules");
+
+  await installWithOwnCache(String(dir));
+  expect(await readdirSorted(nodeModules)).toEqual([".bun", "p1"]);
+
+  await installWithOwnCache(String(dir));
+  expect(await readdirSorted(nodeModules)).toEqual([".bun", "p1"]);
+
+  await rm(nodeModules, { recursive: true });
+  await installWithOwnCache(String(dir), "--frozen-lockfile");
+  expect(await readdirSorted(nodeModules)).toEqual([".bun", "p1"]);
+});
+
+// Handed the root's plugin@2.0.0 on load, host got a copy of its own, as plugin's peer takes another
+// lib under host than at the root, and the next save printed that copy as "host/plugin".
+it.concurrent.each(["hoisted", "isolated"] as const)(
+  "an unmet optional dependency gets no copy of the version the root depends on (%s linker)",
+  async linker => {
+    using registry = await serveRegistry({
+      lib: { "1.1.0": {}, "3.0.0": {} },
+      plugin: { "2.0.0": { peerDependencies: { lib: "^1.0.0" } } },
+      host: { "1.0.0": { dependencies: { lib: "^1.1.0" }, optionalDependencies: { plugin: "1.0.0" } } },
+      extra: { "1.0.0": {} },
+    });
+    using dir = tempDir("unmet-optional-root-version-", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { host: "1.0.0", lib: "3.0.0", plugin: "2.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+    const installed = () =>
+      Array.from(
+        new Bun.Glob("**/node_modules/*").scanSync({ cwd: String(dir), onlyFiles: false, dot: true }),
+      ).toSorted();
+
+    await installWithOwnCache(String(dir));
+    const lockfile = await file(lockfilePath).text();
+    const fresh = installed();
+    expect(lockfile).not.toContain('"host/plugin"');
+
+    await installWithOwnCache(String(dir));
+    expect(installed()).toEqual(fresh);
+
+    await installWithOwnCache(String(dir), "--lockfile-only");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+
+    await installWithOwnCache(String(dir), "extra@1.0.0");
+    expect(await file(lockfilePath).text()).not.toContain('"host/plugin"');
+  },
+);
+
+// `*` takes the version `latest` points at, though no range is satisfied by a prerelease.
+it.concurrent.each(["hoisted", "isolated"] as const)(
+  "an optional dependency on * keeps the prerelease that latest points at (%s linker)",
+  async linker => {
+    using registry = await serveRegistry({ foo: { "1.0.0-beta.1": {} } });
+    using dir = tempDir("optional-star-prerelease-", {
+      "package.json": JSON.stringify({ name: "root", optionalDependencies: { foo: "*" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const installedVersion = async () =>
+      (await file(join(String(dir), "node_modules/foo/package.json")).json()).version;
+
+    await installWithOwnCache(String(dir));
+    expect(await installedVersion()).toBe("1.0.0-beta.1");
+
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(await installedVersion()).toBe("1.0.0-beta.1");
+  },
+);
+
+// Only the registry answers a range, so the install that writes bun.lock leaves this one unresolved.
+// Loading bun.lock used to hand it the root's package of that name: a second copy of a folder, which
+// never hoists, or (isolated) a link the first install did not make.
+describe.each(["hoisted", "isolated"] as const)(
+  "optional dependency the registry does not have, with a local package of that name at the root (%s linker)",
+  linker => {
+    const local = { "a folder": "file:vendor/local", "a tarball": "file:vendor/local-1.0.0.tgz" };
+    const dependent = JSON.stringify({ name: "dependent", version: "1.0.0", optionalDependencies: { local: "*" } });
+    const declaredBy = {
+      "a folder": {
+        "package.json": { name: "app", dependencies: { dependent: "file:vendor/dependent" } },
+        "vendor/dependent/package.json": dependent,
+      },
+      "a workspace": {
+        "package.json": { name: "app", workspaces: ["packages/*"], dependencies: {} },
+        "packages/dependent/package.json": dependent,
+      },
+    };
+
+    it.concurrent.each([
+      ["a folder", "a folder"],
+      ["a folder", "a workspace"],
+      ["a tarball", "a folder"],
+      ["a tarball", "a workspace"],
+    ] as const)("%s, declared by %s", async (kind, declarer) => {
+      using registry = await serveRegistry({});
+      const localPackageJson = JSON.stringify({ name: "local", version: "1.0.0" });
+      const tarball = new Bun.Archive({ "package/package.json": localPackageJson }, { compress: "gzip" });
+      const { "package.json": root, ...files } = declaredBy[declarer];
+      using dir = tempDir("optional-range-local-package-", {
+        ...files,
+        "package.json": JSON.stringify({ ...root, dependencies: { ...root.dependencies, local: local[kind] } }),
+        "vendor/local/package.json": localPackageJson,
+        "vendor/local-1.0.0.tgz": Buffer.from(await tarball.bytes()),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
+      const installed = () =>
+        Array.from(
+          new Bun.Glob("**/node_modules/*").scanSync({ cwd: String(dir), onlyFiles: false, dot: true }),
+        ).toSorted();
+
+      await installWithOwnCache(String(dir));
+      expect(registry.requests).toEqual(["/local"]);
+      const lockfile = await file(lockfilePath).text();
+      const fresh = installed();
+      expect(fresh.filter(path => path.endsWith("local"))).not.toBeEmpty();
+
+      await installWithOwnCache(String(dir), "--frozen-lockfile");
+      expect(installed()).toEqual(fresh);
+
+      await installWithOwnCache(String(dir), "--lockfile-only");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    });
+  },
+);
+
+// npm lets the root's folder answer the range. The migration keeps that, and a folder never hoists,
+// so bun.lock has a row for the dependent's own copy.
+it.concurrent.each(["hoisted", "isolated"] as const)(
+  "an optional dependency keeps the folder bun.lock prints under its dependent (%s linker)",
+  async linker => {
+    using registry = await serveRegistry({});
+    const dependencies = { local: "file:vendor/local", dependent: "file:vendor/dependent" };
+    const dependent = { version: "1.0.0", optionalDependencies: { local: "*" } };
+    using dir = tempDir("optional-range-own-folder-row-", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies }),
+      "vendor/local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+      "vendor/dependent/package.json": JSON.stringify({ name: "dependent", ...dependent }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "app", version: "1.0.0", dependencies },
+          "node_modules/dependent": { resolved: "vendor/dependent", link: true },
+          "node_modules/local": { resolved: "vendor/local", link: true },
+          "vendor/dependent": dependent,
+          "vendor/local": { version: "1.0.0" },
+        },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const installed = () =>
+      Array.from(
+        new Bun.Glob("**/node_modules/*").scanSync({ cwd: String(dir), onlyFiles: false, dot: true }),
+      ).toSorted();
+
+    await installWithOwnCache(String(dir));
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"dependent/local": ["local@file:vendor/local"');
+    const migrated = installed();
+
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installed()).toEqual(migrated);
+  },
+);
+
+describe.each(["hoisted", "isolated"] as const)("optional dependencies of every kind (%s linker)", linker => {
+  const packageJson = (name: string, version: string) => JSON.stringify({ name, version });
+  const tarball = async (name: string, version: string) =>
+    Buffer.from(
+      await new Bun.Archive({ "package/package.json": packageJson(name, version) }, { compress: "gzip" }).bytes(),
+    );
+  const installedIn = (dir: string) =>
+    Array.from(new Bun.Glob("**/node_modules/*").scanSync({ cwd: dir, onlyFiles: false, dot: true })).toSorted();
+
+  // Each of these has the name of a package that is in bun.lock for someone else:
+  // `<who has the name>-<how the row asks>`. bun.lock lists them as "unresolved". An older one does
+  // not, and reads the same whether or not a tag exists, so a tag takes the registry's package there.
+  it.concurrent.each([
+    ["bun.lock", true],
+    ["an older bun.lock", false],
+  ])("one that does not resolve is not handed the package that has its name by %s", async (_, listed) => {
+    const kinds = [
+      ...(["range", "alias", "catalog", "tarball", "url", "folder", "link", "workspace"] as const),
+      ...(listed ? (["tag"] as const) : []),
+    ];
+    const named = (holder: string) => kinds.map(kind => `${holder}-${kind}`);
+    const each = <T>(names: string[], value: (name: string) => T) =>
+      Object.fromEntries(names.map(name => [name, value(name)]));
+
+    using registry = await serveRegistry({
+      other: { "1.0.0": {} },
+      brings: { "1.0.0": { dependencies: each(named("registry"), () => "^2.0.0") } },
+      ...each(named("registry"), () => ({ "2.0.0": {} })),
+    });
+    const unresolvable = {
+      range: "^1.0.0",
+      alias: "npm:other@^2.0.0",
+      catalog: "catalog:",
+      tarball: "file:./missing.tgz",
+      url: `${registry.url}missing.tgz`,
+      folder: "file:./missing",
+      link: "link:./missing",
+      workspace: "workspace:*",
+      tag: "missing-tag",
+    };
+    const rows = (...holders: string[]) =>
+      Object.fromEntries(holders.flatMap(holder => kinds.map(kind => [`${holder}-${kind}`, unresolvable[kind]])));
+    const holders = ["registry", "folder", "tarball", "member"];
+
+    using dir = tempDir("unresolved-optional-kinds-", {
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: each(
+            holders.map(holder => `${holder}-catalog`),
+            () => "^1.0.0",
+          ),
+        },
+        dependencies: {
+          brings: "1.0.0",
+          ...each(named("folder"), name => `file:./vendor/${name}`),
+          ...each(named("tarball"), name => `file:./vendor/${name}.tgz`),
+        },
+        optionalDependencies: rows("registry", "member"),
+      }),
+      "packages/declarer/package.json": JSON.stringify({ name: "declarer", optionalDependencies: rows(...holders) }),
+      ...Object.fromEntries(named("member").map(name => [`packages/${name}/package.json`, packageJson(name, "2.0.0")])),
+      ...Object.fromEntries(named("folder").map(name => [`vendor/${name}/package.json`, packageJson(name, "2.0.0")])),
+      ...Object.fromEntries(
+        await Promise.all(named("tarball").map(async name => [`vendor/${name}.tgz`, await tarball(name, "2.0.0")])),
+      ),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    const lockfile = await file(lockfilePath).text();
+    const fresh = installedIn(String(dir));
+    expect(fresh).toContain("node_modules/brings");
+    expect(lockfile).toContain('"unresolved": [');
+    if (!listed) {
+      await write(lockfilePath, lockfile.replace(/,\s*"unresolved": \[[^\]]*\]/g, ""));
+    }
+
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installedIn(String(dir))).toEqual(fresh);
+
+    await installWithOwnCache(String(dir), "--lockfile-only");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // `gone` needs no entry: nothing has its name, so no load can hand it anything.
+  it.concurrent("bun.lock lists the ones that do not resolve where they are declared", async () => {
+    using registry = await serveRegistry({
+      host: { "1.0.0": { optionalDependencies: { gone: "^1.0.0", p2: "missing-tag" } } },
+      p1: { "1.0.0": { dependencies: { p2: "^2.0.0" } } },
+      p2: { "2.1.0": {} },
+    });
+    const root = (p2: string) =>
+      JSON.stringify({
+        name: "root",
+        dependencies: { host: "1.0.0", p1: "1.0.0" },
+        optionalDependencies: { gone: "*", p2 },
+      });
+    using dir = tempDir("unresolved-optional-list-", {
+      "package.json": root("missing-tag"),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+    const listedByHost = '"optionalDependencies": { "gone": "^1.0.0", "p2": "missing-tag" }, "unresolved": ["p2"] }';
+
+    await installWithOwnCache(String(dir));
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toContain(
+      `      "optionalDependencies": {
+        "gone": "*",
+        "p2": "missing-tag",
+      },
+      "unresolved": [
+        "p2",
+      ],
+    },`,
+    );
+    expect(lockfile).toContain(listedByHost);
+
+    // Only an optional dependency can be left out.
+    const needsP2 = '{ "dependencies": { "p2": "^2.0.0" } }';
+    expect(lockfile).toContain(needsP2);
+    await write(lockfilePath, lockfile.replace(needsP2, needsP2.replace(" }", ' }, "unresolved": ["p2"]')));
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installedIn(String(dir)).filter(path => path.endsWith("/p2"))).not.toBeEmpty();
+
+    await write(join(String(dir), "package.json"), root("^2.0.0"));
+    await installWithOwnCache(String(dir));
+    expect(installedIn(String(dir))).toContain("node_modules/p2");
+    const [workspaces, packages] = (await file(lockfilePath).text()).split('"packages": {');
+    expect(workspaces).not.toContain('"unresolved"');
+    expect(packages).toContain(listedByHost);
+  });
+
+  it.concurrent("one that resolves is installed again from bun.lock", async () => {
+    using registry = await serveRegistry({ real: { "2.0.0": {} }, tagged: { "2.0.0": {} } });
+    const optionalDependencies = {
+      alias: "npm:real@^2.0.0",
+      cataloged: "catalog:",
+      tagged: "latest",
+      tarball: "file:./vendor/tarball.tgz",
+      url: `${registry.url}real-2.0.0.tgz`,
+      folder: "file:./vendor/folder",
+      link: "link:./vendor/folder",
+      member: "workspace:*",
+      "linked-member": "^2.0.0",
+    };
+    using dir = tempDir("resolved-optional-kinds-", {
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: { packages: ["packages/*"], catalog: { cataloged: "npm:real@^2.0.0" } },
+        optionalDependencies,
+      }),
+      "packages/declarer/package.json": JSON.stringify({ name: "declarer", optionalDependencies }),
+      "packages/declarer/vendor/folder/package.json": packageJson("folder", "2.0.1"),
+      "packages/member/package.json": packageJson("member", "2.0.0"),
+      "packages/linked-member/package.json": packageJson("linked-member", "2.0.0"),
+      "vendor/folder/package.json": packageJson("folder", "2.0.0"),
+      "vendor/tarball.tgz": await tarball("tarball", "2.0.0"),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+
+    await installWithOwnCache(String(dir));
+    const fresh = installedIn(String(dir));
+    for (const name of Object.keys(optionalDependencies)) {
+      expect(fresh).toContain(`node_modules/${name}`);
+    }
+    expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('"unresolved"');
+
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    await rm(join(String(dir), "packages/declarer/node_modules"), { recursive: true, force: true });
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installedIn(String(dir))).toEqual(fresh);
+  });
+
+  // Like npm: the registry has no alpha, and beta@1.0.0 is in both ranges. A tag asks the registry.
+  it.concurrent("a range takes the package that the project's npm: alias put under its name", async () => {
+    using registry = await serveRegistry({
+      beta: { "1.0.0": {} },
+      ranged: { "1.0.0": { optionalDependencies: { alpha: "*" } } },
+      tagged: { "1.0.0": { optionalDependencies: { alpha: "latest" } } },
+    });
+    using dir = tempDir("optional-range-takes-alias-", {
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: ["packages/*"],
+        dependencies: { alpha: "npm:beta@1.0.0", ranged: "1.0.0", tagged: "1.0.0" },
+      }),
+      "packages/member/package.json": JSON.stringify({ name: "member", optionalDependencies: { alpha: "^1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+
+    await installWithOwnCache(String(dir));
+    const fresh = installedIn(String(dir));
+    if (linker === "isolated") {
+      expect(fresh.filter(path => path.endsWith("/alpha"))).toEqual([
+        "node_modules/.bun/node_modules/alpha",
+        "node_modules/.bun/ranged@1.0.0/node_modules/alpha",
+        "node_modules/alpha",
+        "packages/member/node_modules/alpha",
+      ]);
+    }
+
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+    await rm(join(String(dir), "packages/member/node_modules"), { recursive: true, force: true });
+    await installWithOwnCache(String(dir), "--frozen-lockfile");
+    expect(installedIn(String(dir))).toEqual(fresh);
+  });
+
+  // Bound to p2@2.1.0 on load, the root's row kept it in bun.lock after the only package that needs it.
+  it.concurrent.each([
+    ["a range", "^1.0.0", "is removed"],
+    ["a range", "^1.0.0", "is upgraded"],
+    ["a tarball", "file:./missing.tgz", "is removed"],
+    ["a tarball", "file:./missing.tgz", "is upgraded"],
+  ])("one that asks for %s (%s) does not keep the package when what brought it %s", async (_, row, step) => {
+    using registry = await serveRegistry({
+      p1: { "1.0.0": { dependencies: { p2: "^2.0.0" } }, "2.0.0": {} },
+      p2: { "2.1.0": {} },
+    });
+    const root = (dependencies: object) =>
+      JSON.stringify({ name: "root", dependencies, optionalDependencies: { p2: row } });
+    using dir = tempDir("unresolved-optional-outlives-", {
+      "package.json": root({ p1: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await installWithOwnCache(String(dir));
+    expect(await file(lockfilePath).text()).toContain('"p2@2.1.0"');
+
+    await write(join(String(dir), "package.json"), root(step === "is removed" ? {} : { p1: "2.0.0" }));
+    await installWithOwnCache(String(dir));
+    expect(await file(lockfilePath).text()).not.toContain('"p2@2.1.0"');
+    expect(installedIn(String(dir))).not.toContain("node_modules/p2");
+  });
+});
+
+// Nothing binds an optional peer before the tree is built: building it does, to the copy found above
+// the peer's package. The installer and every load of bun.lock build the tree with the peer bound.
+describe("the tree a fresh install saves is the tree built with its optional peers bound", () => {
+  const optionalPeer = (name: string, range: string) => ({
+    peerDependencies: { [name]: range },
+    peerDependenciesMeta: { [name]: { optional: true } },
+  });
+  const installedIn = (cwd: string) =>
+    Array.from(new Bun.Glob("**/node_modules/*").scanSync({ cwd, onlyFiles: false, dot: true })).toSorted();
+
+  // plugin's own peer wants the lib@2.0.0 that host has, and the root's lib@1.1.0 hides it from the
+  // root's plugin. So host's peer, once bound, gets a copy of plugin next to that lib@2.0.0.
+  it.concurrent.each(["hoisted", "isolated"] as const)(
+    "a copy next to the version its own peer wants (%s linker)",
+    async linker => {
+      using registry = await serveRegistry({
+        lib: { "1.1.0": {}, "2.0.0": {} },
+        plugin: { "1.0.0": { peerDependencies: { lib: "^2.0.0" } } },
+        host: { "1.0.0": { dependencies: { lib: "^2.0.0" }, ...optionalPeer("plugin", "*") } },
+      });
+      using dir = tempDir("optional-peer-copy-next-to-peer-", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { host: "1.0.0", lib: "^1.0.0", plugin: "1.0.0" },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+      const cwd = String(dir);
+      const lockfilePath = join(cwd, "bun.lock");
+
+      await installWithOwnCache(cwd);
+      const lockfile = await file(lockfilePath).text();
+      const fresh = installedIn(cwd);
+      expect(lockfile).toContain('"host/plugin": ["plugin@1.0.0"');
+
+      await installWithOwnCache(cwd, "--frozen-lockfile");
+      expect(installedIn(cwd)).toEqual(fresh);
+
+      await installWithOwnCache(cwd, "--lockfile-only");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    },
+  );
+
+  // What the install just wrote and laid out is what the next commands want.
+  async function expectSettled(cwd: string) {
+    const lockfile = await file(join(cwd, "bun.lock")).text();
+    const installed = installedIn(cwd);
+
+    await installWithOwnCache(cwd, "--frozen-lockfile");
+    expect(installedIn(cwd)).toEqual(installed);
+
+    await installWithOwnCache(cwd, "--lockfile-only");
+    expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
+  }
+
+  // dup@2.0.0 has one row for its peer and two places. It is laid out under `unmet` first, where the
+  // nearest peer-target is the root's 2.0.0, and that place binds the row. The dup under met shares
+  // the 1.0.0 next to it, which the range accepts, and leaves the row alone: moving it gave the dup
+  // under `unmet` a copy of 1.0.0 that bun.lock did not list. `unmet` is read first or last.
+  describe.each(["a-unmet", "z-unmet"])("the first place of a package binds its optional peer, under %s", unmet => {
+    const manifests: Manifests = {
+      "peer-target": { "1.0.0": {}, "2.0.0": {} },
+      "dup": { "1.0.0": {}, "2.0.0": optionalPeer("peer-target", "^1.0.0") },
+      "met": {
+        "1.0.0": { dependencies: { "dup": "2.0.0" } },
+        "2.0.0": { dependencies: { "dup": "2.0.0", "peer-target": "1.0.0" } },
+      },
+      [unmet]: { "1.0.0": { dependencies: { "dup": "2.0.0", "peer-target": "2.0.0" } } },
+    };
+    const packageJson = (met: string) =>
+      JSON.stringify({ name: "app", devDependencies: { [unmet]: "1.0.0" }, dependencies: { "dup": "1.0.0", met } });
+    const copy = join("node_modules", unmet, "node_modules", "dup", "node_modules", "peer-target");
+
+    it.concurrent("in a fresh install", async () => {
+      using registry = await serveRegistry(manifests);
+      using dir = tempDir("optional-peer-first-place-", {
+        "package.json": packageJson("2.0.0"),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+      });
+
+      await installWithOwnCache(String(dir));
+      expect(installedIn(String(dir))).not.toContain(copy);
+      await expectSettled(String(dir));
+    });
+
+    it.concurrent("when an upgrade brings the version in range", async () => {
+      using registry = await serveRegistry(manifests);
+      using dir = tempDir("optional-peer-first-place-", {
+        "package.json": packageJson("1.0.0"),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+      });
+
+      await installWithOwnCache(String(dir));
+      await write(join(String(dir), "package.json"), packageJson("2.0.0"));
+      await installWithOwnCache(String(dir));
+      expect(installedIn(String(dir))).not.toContain(copy);
+      await expectSettled(String(dir));
+    });
+  });
+
+  // 0j@1.0.0 is at the root and twice below a@2.5.0, next to k@1.0.0 and below k@1.1.0, and `*` takes
+  // either. Its row is also what puts k at the root. Moved from place to place, it changed the root's
+  // k after a@2.5.0 had taken it for its own `^1.1.0`, and the tree built from bun.lock was never the
+  // tree built from that one. The names decide the order of the walk.
+  it.concurrent("a row that put its package in the tree is not moved by a later place", async () => {
+    using registry = await serveRegistry({
+      "a": {
+        "1.1.0": {},
+        "2.5.0": { dependencies: { "0i": "^1.0.0", "k": "^1.1.0" }, optionalDependencies: { "g": "^1.0.0" } },
+      },
+      "d": { "2.5.0": { dependencies: { "g": "2.5.0", "f": "^1.1.0" } } },
+      "f": { "1.1.0": { dependencies: { "0j": "^1.1.0" } } },
+      "g": { "1.1.0": { dependencies: { "0j": "~1.0.0" } }, "2.5.0": {} },
+      "0i": { "1.1.0": { dependencies: { "k": "~1.0.0", "0j": "1.0.0" } }, "3.0.0": {} },
+      "0j": { "1.0.0": optionalPeer("k", "*"), "1.1.0": { dependencies: { "m": "1.x" } } },
+      "k": { "1.0.0": {}, "1.1.0": {} },
+      "m": { "1.0.0": { dependencies: { "a": "^2.0.0" } }, "2.5.0": {} },
+    });
+    using dir = tempDir("optional-peer-placed-row-", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "m": "*", "a": "^1.0.0", "d": "*" },
+        devDependencies: { "0j": "1.0.0" },
+        optionalDependencies: { "0i": "3.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker: "hoisted" } }),
+    });
+
+    await installWithOwnCache(String(dir));
+    await expectSettled(String(dir));
+  });
+
+  // one is at the root first, where nothing provides host, so its peer stays unbound. The one below al
+  // shares the host next to it. Binding the row there put a host at the root, for nobody, and without
+  // the inner that it bundles: with no "host/inner" bun.lock did not load.
+  it.concurrent.each(["hoisted", "isolated"] as const)(
+    "an optional peer that nothing provides at the first place of its package stays unbound (%s linker)",
+    async linker => {
+      using registry = await serveRegistry({
+        one: { "1.0.0": optionalPeer("host", "*") },
+        three: { "1.0.0": optionalPeer("one", "*") },
+        host: { "1.0.0": { dependencies: { inner: "*" }, bundleDependencies: ["inner"] } },
+        inner: { "1.0.0": { dependencies: { three: "*", host: "*" } } },
+      });
+      using dir = tempDir("optional-peer-bundling-package-", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { one: "*", three: "*", al: "npm:host@*" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+
+      await installWithOwnCache(String(dir));
+      expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('\n    "host": [');
+      expect(installedIn(String(dir))).not.toContain(join("node_modules", "host"));
+      await expectSettled(String(dir));
+    },
+  );
+
+  // plugin is at the root and, for inner, below host, next to the inner that host bundles. That place
+  // bound plugin's peer, which turned the row waiting at the root into an inner nobody had walked:
+  // bun.lock listed "inner" with no leaf for it to find, and did not load. Nobody asked for either.
+  it.concurrent.each(["hoisted", "isolated"] as const)(
+    "bun.lock loads when a bundled package needs a plugin that has an optional peer on it (%s linker)",
+    async linker => {
+      using registry = await serveRegistry({
+        host: { "1.0.0": { dependencies: { inner: "*" }, bundledDependencies: ["inner"] } },
+        inner: { "1.0.0": { dependencies: { plugin: "*", leaf: "*" } } },
+        leaf: { "1.0.0": {} },
+        plugin: { "1.0.0": optionalPeer("inner", "*") },
+      });
+      using dir = tempDir("optional-peer-on-bundled-package-", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { host: "1.0.0", plugin: "1.0.0" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+
+      await installWithOwnCache(String(dir));
+      const lockfile = await file(join(String(dir), "bun.lock")).text();
+      expect(lockfile).not.toContain('\n    "inner": [');
+      expect(lockfile).not.toContain('\n    "leaf": [');
+      expect(await readdirSorted(join(String(dir), "node_modules"))).toEqual(
+        linker === "hoisted" ? ["host", "plugin"] : [".bun", "host", "plugin"],
+      );
+      await expectSettled(String(dir));
+    },
+  );
+
+  // Only nested@1.0.0 is below the copy of shipped that bundler ships. first and second wait at the
+  // root for a shipped that never comes, and binding them to that copy installed one at the root.
+  it.concurrent.each(["hoisted", "isolated"] as const)(
+    "a bundled copy serves the optional peers below it and no other (%s linker)",
+    async linker => {
+      using registry = await serveRegistry({
+        shipped: { "1.0.0": {} },
+        first: { "1.0.0": optionalPeer("shipped", "*") },
+        second: { "1.0.0": optionalPeer("shipped", "*") },
+        nested: { "1.0.0": optionalPeer("shipped", "*"), "2.0.0": {} },
+        bundler: { "1.0.0": { dependencies: { shipped: "*", nested: "1.0.0" }, bundledDependencies: ["shipped"] } },
+      });
+      using dir = tempDir("optional-peer-bundled-copy-", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { bundler: "1.0.0", first: "1.0.0", nested: "2.0.0", second: "1.0.0" },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registry.url, linker } }),
+      });
+      const cwd = String(dir);
+
+      await installWithOwnCache(cwd);
+      const fresh = installedIn(cwd);
+      expect(fresh).not.toContain(join("node_modules", "shipped"));
+
+      const { out } = await installWithOwnCache(cwd);
+      expect(installedIn(cwd)).toEqual(fresh);
+      expect(out).toContain("(no changes)");
+    },
+  );
+});
+
 // A package is printed at more than one path when another version of it holds the slot above
 // one of its dependents (here the root holds one version, a parent holds the other, and the
 // dependents under that parent get the root's version printed again next to them). Its edges
@@ -3173,14 +3900,10 @@ describe("loading bun.lock binds the edges of a package printed at several paths
 
   // Same two printings of dup@1.0.0, but nothing is printed for its optional peer: the printing
   // under a-q walks up to the root's no-deps@1.0.0 (b-old's, out of range), the one under z-p
-  // finds z-p's own 1.1.0, which the range accepts. This is the file a fresh install writes, and
-  // it has to keep loading from the printing that comes last (z-p's). The hoister rebinds an
-  // optional peer to whatever copy a printing dedupes onto, so loading it as the root's copy,
-  // the way the `*` peer in the first test is, builds a tree in which a-q's printing dedupes
-  // onto the root copy and z-p's then rebinds the edge to 1.1.0; the tree the save rebuilds
-  // from that binding nests 1.1.0 under a-q/dup, and --frozen-lockfile reports the difference
-  // as a changed lockfile.
-  it.concurrent("an optional peer printed nowhere keeps loading from the last printing", async () => {
+  // finds z-p's own 1.1.0, which the range accepts. This is the file a fresh install writes. Bound
+  // to 1.1.0, the dup under a-q would have a copy of it printed, so the edge is bound to the root's
+  // 1.0.0: a-q's dup is laid out first and binds it, and z-p's shares z-p's copy without moving it.
+  it.concurrent("an optional peer printed nowhere loads from the printing that shares a refused copy", async () => {
     const dup = pkg("dup@1.0.0", { peerDependencies: { "no-deps": "^1.1.0" }, optionalPeers: ["no-deps"] });
     const { run } = await writeProject(
       { dependencies: { "a-q": "1.0.0", "b-old": "1.0.0", "dup": "2.0.0", "z-p": "1.0.0" } },
@@ -3198,6 +3921,50 @@ describe("loading bun.lock binds the edges of a package printed at several paths
 
     await run(["install", "--frozen-lockfile", "--dry-run"]);
   });
+
+  // Nothing meets dup@1.0.0's peer, and the install that writes the file binds it to the holder's
+  // 1.1.0. The printing under plain takes the root's own 1.0.0 all the same, as a peer takes any
+  // dependency of the root, so it says nothing about the binding. Loading the peer as 1.0.0 nested
+  // a copy of 1.0.0 under the holder's dup, at a path the file does not have.
+  it.concurrent.each(["a-holder", "z-holder"])(
+    "a peer nothing satisfies is read from its printing under %s, not from the root's own dependency",
+    async holder => {
+      using registryServer = await serveRegistry({
+        "dup": { "1.0.0": { peerDependencies: { "peer-target": "^2.0.0" } }, "2.0.0": {} },
+        "peer-target": { "1.0.0": {}, "1.1.0": {}, "2.0.0": {} },
+        "plain": { "1.0.0": { dependencies: { "dup": "1.0.0" } } },
+        [holder]: { "1.0.0": { dependencies: { "dup": "1.0.0", "peer-target": "1.1.0" } } },
+      });
+      using dir = tempDir("bun-lock-several-paths-", {
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryServer.url, linker: "hoisted" } }),
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "dup": "2.0.0", "peer-target": "1.0.0", "plain": "1.0.0", [holder]: "1.0.0" },
+        }),
+      });
+      const cwd = String(dir);
+      const lockfilePath = join(cwd, "bun.lock");
+
+      await installWithOwnCache(cwd);
+      const lockfile = await file(lockfilePath).text();
+      expect(printedPackages(lockfile)).toEqual({
+        "dup": "dup@2.0.0",
+        "peer-target": "peer-target@1.0.0",
+        "plain": "plain@1.0.0",
+        [holder]: `${holder}@1.0.0`,
+        "plain/dup": "dup@1.0.0",
+        [`${holder}/dup`]: "dup@1.0.0",
+        [`${holder}/peer-target`]: "peer-target@1.1.0",
+      });
+
+      const { out } = await installWithOwnCache(cwd);
+      expect(await exists(join(cwd, "node_modules", holder, "node_modules", "dup", "node_modules"))).toBe(false);
+      expect(out).toContain("(no changes)");
+
+      await installWithOwnCache(cwd, "--lockfile-only");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    },
+  );
 });
 
 // A fresh install resolves transitive rows as their parents' manifests come back
@@ -4546,7 +5313,7 @@ describe.concurrent("a file: folder listed in both dependencies and devDependenc
     },
   );
 
-  it("keeps one entry when the two groups point at different folders", async () => {
+  it("keeps the second folder a level below the first when the two groups point at different folders", async () => {
     using dir = tempDir("dup-folder-dep-", {
       "v1/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
       "v2/a/package.json": JSON.stringify({ name: "a", version: "2.0.0" }),
@@ -4560,7 +5327,7 @@ describe.concurrent("a file: folder listed in both dependencies and devDependenc
 
     await install(String(dir));
     const lockfile = await file(lockfilePath).text();
-    expect(packageKeys(lockfile)).toEqual(['    "a": [']);
+    expect(packageKeys(lockfile)).toEqual(['    "a": [', '    "a/a": [']);
 
     const { err } = await install(String(dir), "--frozen-lockfile");
     expect(err).not.toContain("Ignoring lockfile");
@@ -4700,7 +5467,9 @@ describe.each(["hoisted", "isolated"] as const)(
       };
 
       await project.expectInstallToSaveLockfile();
-      expect(await lock()).toContain(`"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" } }`);
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "no-deps": "1.0.0" }${"scripts" in vdirExtra ? `, "hasInstallScript": true` : ""} }]`,
+      );
       return project;
     }
 

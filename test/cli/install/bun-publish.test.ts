@@ -14,6 +14,7 @@ import {
   tempDir,
   tls,
   unprivilegedSpawnOptions,
+  writeBinCommand,
 } from "harness";
 import { delimiter, join } from "path";
 import { TestRegistry } from "registry";
@@ -1931,7 +1932,7 @@ describe.concurrent("package.json version", () => {
     await pack(String(dir), env, "--filename", "pkg.tgz");
 
     for (const args of [[], ["./pkg.tgz"]]) {
-      const { out, err, exitCode } = await publish(env, String(dir), ...args);
+      const { out, err, exitCode } = await publish(env, String(dir), ...args, "--tag", "latest");
       expect(err).toBe("");
       expect(out).toContain(`\n + version-pkg@${published}\n`);
       expect(exitCode).toBe(0);
@@ -2083,6 +2084,47 @@ describe.concurrent("provenance", () => {
     expect(out).toContain(" + provenance-pkg@1.0.0");
     expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 0 });
   });
+
+  type Settings = { args?: string[]; publishConfig?: object; vars?: object; npmrc?: string; fromTarball?: boolean };
+
+  test.each<Settings>([
+    // What npm reads as false.
+    { args: ["--provenance=false"] },
+    { args: ["--no-provenance"] },
+    { publishConfig: { provenance: null } },
+    { publishConfig: { provenance: "false" } },
+    { publishConfig: { provenance: 0 } },
+    { vars: { NPM_CONFIG_PROVENANCE: "0" } },
+    { vars: { NPM_CONFIG_PROVENANCE: "null" } },
+    { npmrc: "provenance=0" },
+    // As in npm, the command line wins over publishConfig, that over the environment, that over .npmrc.
+    { args: ["--no-provenance"], publishConfig: { provenance: true } },
+    { args: ["--no-provenance"], publishConfig: { provenance: true }, fromTarball: true },
+    { args: ["--provenance=false"], vars: { NPM_CONFIG_PROVENANCE: "true" }, npmrc: "provenance=true" },
+    { publishConfig: { provenance: false }, vars: { NPM_CONFIG_PROVENANCE: "true" }, npmrc: "provenance=true" },
+    { vars: { NPM_CONFIG_PROVENANCE: "false" }, npmrc: "provenance=true" },
+  ])("provenance switched off publishes: %j", async ({ args = [], publishConfig, vars, npmrc, fromTarball }) => {
+    const result = await publishProvenancePkg(publishConfig, args, fromTarball, vars, npmrc);
+    expect(result.err).toBe(fromTarball ? "" : "$ echo prepublishOnly\n");
+    expect(result.out).toContain(" + provenance-pkg@1.0.0");
+    expect(result).toMatchObject({ requests: 1, exitCode: 0 });
+  });
+
+  test.each<[Settings, string]>([
+    [{ vars: { NPM_CONFIG_PROVENANCE: "1" } }, "NPM_CONFIG_PROVENANCE"],
+    [{ vars: { NPM_CONFIG_PROVENANCE: "False" } }, "NPM_CONFIG_PROVENANCE"],
+    [{ vars: { NPM_CONFIG_PROVENANCE: "true" }, npmrc: "provenance=false" }, "NPM_CONFIG_PROVENANCE"],
+    [
+      { publishConfig: { provenance: true }, vars: { NPM_CONFIG_PROVENANCE: "false" } },
+      '"provenance" in the publishConfig of package.json',
+    ],
+    [{ args: ["--provenance"], publishConfig: { provenance: false } }, "--provenance"],
+    [{ args: ["--provenance", "--no-provenance"] }, "--provenance"],
+  ])("provenance switched on is refused: %j", async ({ args = [], publishConfig, vars, npmrc }, askedBy) => {
+    const result = await publishProvenancePkg(publishConfig, args, false, vars, npmrc);
+    expect(result.err).toBe(`error: ${askedBy} ${NOT_SUPPORTED}`);
+    expect(result).toMatchObject({ requests: 0, exitCode: 1 });
+  });
 });
 
 // Publishing from a directory used to pack into that directory and delete the file again after
@@ -2189,6 +2231,69 @@ describe.concurrent("tag", () => {
 
     await runBunInstall(env, String(dir));
     expect(await file(join(dir, "node_modules", "publish-pkg-9", "package.json")).json()).toEqual(pkg);
+  });
+
+  function tagPackage(mock: MockRegistry, version: string, fields = {}) {
+    return tempDir("publish-tag", {
+      "package.json": JSON.stringify({ name: "tag-pkg", version, ...fields }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+  }
+
+  // `bun add tag-pkg@1.2.3` asks for the version, so nobody could install by such a tag. `npm publish` refuses them too.
+  test.each(["1.2.3", "v1.2.3", "v1", "1.x", "x", "*", "^1.0.0", ">=2", "1.0.0-rc.1"])(
+    "%j is refused as the tag before a request is sent",
+    async tag => {
+      using mock = mockRegistry();
+      const error = `error: invalid tag "${tag}": a tag cannot be a version or a version range\n`;
+
+      for (const [fields, flags] of [
+        [{}, ["--tag", tag]],
+        [{ publishConfig: { tag } }, []],
+      ] as const) {
+        using dir = tagPackage(mock, "1.0.0", fields);
+        await pack(String(dir), env, "--filename", "pkg.tgz");
+        for (const args of [[], ["./pkg.tgz"]]) {
+          const { err, exitCode } = await publish(env, String(dir), ...args, ...flags);
+          expect(err).toBe(error);
+          expect(exitCode).toBe(1);
+        }
+      }
+      expect(mock.requests).toEqual([]);
+    },
+  );
+
+  test("a prerelease is not published as latest unless --tag latest says so", async () => {
+    using mock = mockRegistry();
+    using dir = tagPackage(mock, "2.0.0-beta.1");
+    await pack(String(dir), env, "--filename", "pkg.tgz");
+
+    for (const args of [[], ["./pkg.tgz"], ["--dry-run"]]) {
+      const { err, exitCode } = await publish(env, String(dir), ...args);
+      expect(err).toBe(
+        'error: a prerelease needs a tag: 2.0.0-beta.1 would become "latest", the version that `bun add` installs\n' +
+          'note: pass a tag, for example bun publish --tag next, or --tag latest to publish it as "latest" anyway\n',
+      );
+      expect(exitCode).toBe(1);
+    }
+    expect(mock.requests).toEqual([]);
+
+    for (const tag of ["beta", "latest"]) {
+      const { err, exitCode } = await publish(env, String(dir), "--tag", tag);
+      expect(err).toBe("");
+      expect(mock.requests.pop()?.manifest["dist-tags"]).toEqual({ [tag]: "2.0.0-beta.1" });
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("publishConfig.tag is the tag of a prerelease", async () => {
+    using mock = mockRegistry();
+    using dir = tagPackage(mock, "2.0.0-beta.1", { publishConfig: { tag: "next" } });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("");
+    expect(mock.requests.map(({ manifest }) => manifest["dist-tags"])).toEqual([{ next: "2.0.0-beta.1" }]);
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -3267,6 +3372,69 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a package without scripts gets the version of a dependency that ran one", async () => {
+    using registry = workspaceRegistry();
+    using dir = workspace(registry.mock, {
+      a: { version: "2.0.0" },
+      plain: { name: "rec-plain", version: "1.0.0", dependencies: { "rec-a": "workspace:^" } },
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--filter", "rec-a", "--filter", "rec-plain");
+    expect(lines(err)).toEqual(["$ echo prepublishOnly rec-a", POSTPUBLISH]);
+    expect(published(out)).toEqual([" + rec-a@2.0.0", " + rec-plain@1.0.0"]);
+    expect(registry.manifests["rec-plain"].versions["1.0.0"].dependencies).toEqual({ "rec-a": "^2.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["workspace:../a", "1.0.0-rc.1"],
+    ["workspace:rec-a@^", "^1.0.0-rc.1"],
+    ["workspace:rec-a@~", "~1.0.0-rc.1"],
+  ])("%s on a prerelease is published as %s, with and without -r", async (spec, range) => {
+    using registry = workspaceRegistry();
+    using dir = workspace(registry.mock, {
+      a: { version: "1.0.0-rc.1" },
+      plain: { name: "rec-plain", version: "1.0.0", dependencies: { "rec-a": spec } },
+    });
+
+    for (const [cwd, ...flags] of [[join(dir, "packages", "plain")], [String(dir), "-r", "--tag", "next"]]) {
+      delete registry.manifests["rec-plain"];
+      const { out, err, exitCode } = await publish(env, cwd, ...flags);
+      expect(err).not.toContain("error:");
+      expect(published(out)).toContain(" + rec-plain@1.0.0");
+      expect(registry.manifests["rec-plain"].versions["1.0.0"].dependencies).toEqual({ "rec-a": range });
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("the scripts of each package run the commands of its own node_modules/.bin", async () => {
+    using registry = workspaceRegistry();
+    const names = ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"];
+    const scripts = Object.fromEntries(names.map(name => [name, "tool"]));
+    using dir = workspace(registry.mock, {
+      a: { scripts },
+      b: { scripts: { ...scripts, prepare: "only-a || echo tool of nobody" } },
+    });
+    for (const name of ["a", "b"]) writeBinCommand(join(dir, "packages", name), "tool", `tool of rec-${name}`);
+    writeBinCommand(join(dir, "packages", "a"), "only-a", "tool of rec-a, in rec-b");
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--filter", "rec-a", "--filter", "rec-b");
+    expect(lines(err).filter(line => !line.includes("only-a"))).toEqual(Array(11).fill("$ tool"));
+    expect(out.match(/^tool of .*$/gm)).toEqual([
+      ...Array(4).fill("tool of rec-a"),
+      "tool of rec-b",
+      "tool of rec-b",
+      "tool of nobody",
+      "tool of rec-b",
+      // after both are packed
+      "tool of rec-a",
+      "tool of rec-a",
+      "tool of rec-b",
+      "tool of rec-b",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a version that is on the registry is skipped before its scripts run", async () => {
     using registry = workspaceRegistry();
     registry.known.push("rec-a@1.0.0", "rec-c@1.0.0", "rec-b@0.9.0");
@@ -3553,6 +3721,55 @@ describe.concurrent("--recursive and --filter", () => {
       dependencies: { "publish-recursive-a": "1.0.0" },
     });
     expect(await exists(join(consumer, "node_modules", "publish-recursive-a", "package.json"))).toBeTrue();
+  });
+
+  // rec-a is logged in without ENTER. The login of rec-c lasts until ENTER, pressed there, has opened a page.
+  test.skipIf(!isLinux).each([
+    ["rec-b is logged in without ENTER too", { authUrl: undefined, enterAt: ["/done/rec-c"] }],
+    [
+      "ENTER at rec-b, whose page bun cannot open",
+      { authUrl: "customapp://b", enterAt: ["/done/rec-b", "/done/rec-c"] },
+    ],
+  ])("ENTER opens the web login page of the package that is being published: %s", async (_, recB) => {
+    using mock = mockRegistry((req, { pathname, otp }, mock) => {
+      const url = `http://localhost:${mock.port}`;
+      if (req.method === "PUT") {
+        if (otp !== null) return new Response("OK");
+        return Response.json(
+          {
+            authUrl: (pathname === "/rec-b" && recB.authUrl) || `${url}/auth${pathname}`,
+            doneUrl: `${url}/done${pathname}`,
+          },
+          { status: 401, headers: { "www-authenticate": "OTP" } },
+        );
+      }
+      if (!pathname.startsWith("/done/")) return new Response("not found", { status: 404 });
+      if (recB.enterAt.includes(pathname) && mock.requests.filter(r => r.pathname === pathname).length === 1) {
+        proc.stdin.write("\n");
+        proc.stdin.flush();
+      }
+      if (pathname === "/done/rec-c" && opened() === "") {
+        return new Response("{}", { status: 202, headers: { "retry-after": "0" } });
+      }
+      return Response.json({ token: "otp" });
+    });
+    using dir = workspace(mock, {}, { "opener/xdg-open": `#!/bin/sh\necho "$1" >> "$OPENED"\n` });
+    chmodSync(join(dir, "opener", "xdg-open"), 0o755);
+    const opened = () => (existsSync(join(dir, "opened")) ? readFileSync(join(dir, "opened"), "utf8") : "");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish", "-r"],
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+      env: { ...env, OPENED: join(dir, "opened"), PATH: [join(dir, "opener"), env.PATH ?? ""].join(delimiter) },
+    });
+    const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(opened()).toBe(`http://localhost:${mock.port}/auth/rec-c\n`);
+    expect(published(out)).toEqual([" + rec-a@1.0.0", " + rec-b@1.0.0", " + rec-c@1.0.0"]);
+    expect(exitCode).toBe(0);
   });
 });
 

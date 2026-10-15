@@ -77,6 +77,15 @@ pub fn install_with_manager(
         }
     }
 
+    // Its settings say where packages come from and what checks them.
+    if let Some(path) = ctx.unreadable_config.as_deref() {
+        manager.log_mut().add_error(
+            Some(&bun_ast::Source::init_path_string(path, b"")),
+            bun_ast::Loc::EMPTY,
+            "This file cannot be read, and bun does not install packages without its settings",
+        );
+    }
+
     // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
         manager
@@ -109,6 +118,7 @@ pub fn install_with_manager(
     // `Lockfile::get_package_id` can tell loaded pins apart from packages
     // appended by manifest fetches in this resolve session.
     manager.lockfile.mark_loaded_packages()?;
+    manager.held_messages = Some(Vec::new());
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = Some(config_version);
@@ -177,7 +187,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
+                let source_copy = root_package_json_source(manager, root_package_json_path, true)?;
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -257,11 +267,11 @@ pub fn install_with_manager(
                 let mut extension_rows: Vec<DependencyID> = Vec::new();
                 if !manager.lockfile.package_extensions.is_empty() {
                     let log = manager.log_mut();
-                    if let Some(rows) = manager
-                        .lockfile
-                        .reconcile_package_extensions(&mut manager.known_npm_aliases, log)?
+                    if let Some((rows, removed)) =
+                        manager.lockfile.reconcile_package_extensions(log)?
                     {
                         manager.summary.package_extensions_changed = true;
+                        manager.summary.removed_extension_rows = removed;
                         extension_rows = rows;
                     }
                 }
@@ -275,6 +285,7 @@ pub fn install_with_manager(
                 for key in lockfile.self_contained_workspaces.keys() {
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
+                manager.lockfile.linked_members = core::mem::take(&mut lockfile.linked_members);
                 // Nor does the lockfile's record of `trustedDependencies` decide.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {
@@ -624,6 +635,7 @@ pub fn install_with_manager(
     if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
         crate::dedupe::collapse_appended(manager);
     }
+    manager.log_held();
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
@@ -670,8 +682,14 @@ pub fn install_with_manager(
         manager.verify_resolutions(log_level);
 
         let mut moved_by_overrides: Vec<PackageID> = Vec::new();
-        if super::package_json_write_back::edit_after_resolve(manager)? && !manager.options.dry_run
-        {
+        let synced = super::package_json_write_back::edit_after_resolve(manager)?;
+        if synced.links {
+            // Drops what the registry resolved for the rows that link a workspace now.
+            manager.lockfile.mark_loaded_packages()?;
+            clean_lockfile(manager, log_level)?;
+            root = *manager.lockfile.packages.get(0);
+        }
+        if synced.overrides && !manager.options.dry_run {
             moved_by_overrides = reresolve_rows_outside_overrides(manager, &mut root, log_level)?;
         }
 
@@ -839,10 +857,19 @@ pub fn install_with_manager(
         get_workspace_filters(manager, original_cwd)?;
     // `workspace_filters` drops at end of scope
 
-    let install_summary: PackageInstallSummary = 'install_summary: {
+    let isolated = NodeLinker::Isolated
+        == crate::lockfile_real::resolve_node_linker(
+            manager.options.node_linker,
+            config_version,
+            !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
+        );
+    let mut removes_collapsed_copies = false;
+    let mut install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
         }
+
+        note_members_outside(manager);
 
         // Every workspace is a root dependency, so without a diff the workspace set is unchanged.
         if had_any_diffs {
@@ -855,12 +882,6 @@ pub fn install_with_manager(
                 || !manager.update_requests.is_empty()
                 || !matches!(load_result, lockfile::LoadResult::Ok { .. }));
 
-        let isolated = NodeLinker::Isolated
-            == crate::lockfile_real::resolve_node_linker(
-                manager.options.node_linker,
-                config_version,
-                !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
-            );
         let mut summary = if isolated {
             install_isolated_packages(
                 manager,
@@ -881,23 +902,18 @@ pub fn install_with_manager(
             )?
         };
         summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
-        if !isolated {
-            if warn_incorrect_peers {
-                let served = lockfile::tree::served_peers(&manager.lockfile);
-                manager.warn_incorrect_peers(&served);
-            }
-            // `bun install --filter` lays out another tree than the one the pass compares with.
-            if summary.fail == 0
-                && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
-                && (had_any_diffs
-                    || matches!(
-                        manager.subcommand,
-                        Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
-                    ))
-            {
-                crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
-            }
+        if !isolated && warn_incorrect_peers {
+            let served = lockfile::tree::served_peers(&manager.lockfile);
+            manager.warn_incorrect_peers(&served);
         }
+        // `bun install --filter` leaves the folders of the other members alone.
+        removes_collapsed_copies = summary.fail == 0
+            && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
+            && (had_any_diffs
+                || matches!(
+                    manager.subcommand,
+                    Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+                ));
         summary
     };
 
@@ -971,6 +987,21 @@ pub fn install_with_manager(
 
     // Before root lifecycle scripts, which exit the process on failure.
     super::package_json_write_back::flush(manager)?;
+
+    // A failed save exits above, with bun.lock and package.json still naming these folders.
+    if removes_collapsed_copies && isolated {
+        crate::prune::unlink_dropped_dependencies(manager);
+    } else if removes_collapsed_copies {
+        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+    }
+    if let Some(copies) = install_summary.hiding_copies.take()
+        && install_summary.fail == 0
+    {
+        copies.remove(manager);
+    }
+    if manager.options.global && manager.options.do_.install_packages() {
+        crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
+    }
 
     if needs_new_lockfile {
         manager.summary.add = manager.lockfile.packages.len() as u32;
@@ -1463,6 +1494,30 @@ fn warn_unsupported_platform(
             ),
         );
     }
+}
+
+/// See `Lockfile::is_member_outside`.
+fn note_members_outside(manager: &PackageManager) {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let pkgs = lockfile.packages.slice();
+    let left_alone: Vec<&[u8]> = (0..pkgs.len())
+        .filter(|&id| {
+            lockfile.is_member_outside(id as PackageID)
+                && (pkgs.items_dependencies()[id].len > 0
+                    || pkgs.items_meta()[id].has_install_script())
+                && !(manager.summary.pruned_workspaces).contains(&pkgs.items_name_hash()[id])
+        })
+        .map(|id| lockfile.str(pkgs.items_resolution()[id].workspace()))
+        .collect();
+    if left_alone.is_empty() || manager.options.log_level.is_silent() {
+        return;
+    }
+    bun_core::note!(
+        "skipped the dependencies and scripts of {} workspace{} outside the project: {}",
+        left_alone.len(),
+        if left_alone.len() == 1 { "" } else { "s" },
+        lockfile::pruned_workspaces::quoted_names(&mut left_alone.iter().copied()),
+    );
 }
 
 pub(crate) fn get_workspace_filters(
@@ -1961,6 +2016,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
 fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
+    has_lockfile: bool,
 ) -> crate::Result<Source> {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
@@ -1968,7 +2024,8 @@ fn root_package_json_source(
         Default::default(),
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => {
-            if entry.source.contents.is_empty() {
+            // `touch package.json && bun install` has no pins to lose.
+            if has_lockfile && entry.source.contents.is_empty() {
                 exit_on_empty_package_json(root_package_json_path.as_bytes());
             }
             return Ok(entry.source.clone());
@@ -2042,7 +2099,11 @@ fn create_new_lockfile_and_enqueue(
         crate::pnpm::migrate_pnpm_workspace_config(manager)?;
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+    let source_copy = root_package_json_source(
+        manager,
+        root_package_json_path,
+        !matches!(load_result, lockfile::LoadResult::NotFound),
+    )?;
 
     let mut resolver: () = ();
     {
@@ -2169,6 +2230,12 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
         wait_for_everything_except_peers(manager)?;
     }
 
+    // An error ends the install, so the peers are not worth another round of requests and retries.
+    if manager.log_mut().has_errors() {
+        return Ok(());
+    }
+    manager.peer_askers = None;
+
     // Resolving a peer dep can create a NEW package whose own peer deps
     // get re-queued to `peer_dependencies` during `drainDependencyList`.
     // When all manifests are cached (synchronous resolution), no I/O tasks
@@ -2191,6 +2258,8 @@ fn clean_lockfile(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<Box<Lockfile>> {
+    // The resolver leaves a registry package's row on a workspace an npm range; a load tags it.
+    (manager.lockfile).tag_workspace_links(manager.options.link_workspace_packages);
     let new_lockfile = {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `lockfile`, `update_requests`, and `*log` are disjoint storage
@@ -2312,19 +2381,6 @@ fn run_security_scanner(
     moved: &[(DependencyID, PackageID)],
     mut seeds: Vec<PackageID>,
 ) {
-    let is_subcommand_to_run_scanner = matches!(
-        manager.subcommand,
-        Subcommand::Add
-            | Subcommand::Update
-            | Subcommand::Install
-            | Subcommand::Remove
-            | Subcommand::Audit
-    );
-
-    if !is_subcommand_to_run_scanner {
-        return;
-    }
-
     seeds.extend(moved_targets_after_clean(
         before_clean,
         &manager.lockfile,
@@ -2335,6 +2391,7 @@ fn run_security_scanner(
         ctx,
         original_cwd,
         &seeds,
+        before_clean.loaded_package_count > 0,
     ) {
         Err(err) => {
             let message = match err {

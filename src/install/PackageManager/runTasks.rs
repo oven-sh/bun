@@ -20,7 +20,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
+    Command, HeldAbout, PackageInstaller, PackageManager, ProgressStrings, Subcommand,
+    TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -309,7 +310,10 @@ impl Drop for FinishPass<'_> {
                     node.set_estimated_total_items(manager.total_tasks as usize);
                 }
             }
-            manager.downloads_node_mut().activate();
+            // The bar draws the node that was activated last: not "Resolving" while there is nothing to fetch.
+            if manager.total_tasks > 0 {
+                manager.downloads_node_mut().activate();
+            }
             manager.progress.maybe_refresh();
         }
     }
@@ -609,6 +613,7 @@ fn run_tasks_erased(
         let task = unsafe { &mut *task_ptr };
         debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
+        let log_mark = manager.log_mut().msgs.len();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -632,7 +637,7 @@ fn run_tasks_erased(
                 // Headers can arrive and the connection still die before the
                 // body does; for a 2xx/3xx that is a failed download too (an
                 // error status keeps its own handling below).
-                let (download_failed, retry) = download_outcome(&task.response);
+                let (download_failed, retry) = download_outcome(&task.response, &manager.options);
                 if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -645,7 +650,9 @@ fn run_tasks_erased(
 
                 // Handle retry-able errors.
                 if retry {
-                    if task.retried < manager.options.max_retry_count {
+                    if task.retried
+                        < manifest_retry_count(manager, task.task_id, name, task.response.fail)
+                    {
                         task.retried += 1;
                         let wait =
                             retry_timer::retry(manager, task_ptr, task.retried, &task.response);
@@ -696,17 +703,17 @@ fn run_tasks_erased(
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
+                        let is_required = manager.is_network_task_required(task.task_id);
                         add_error_or_warning_pretty!(
                             manager.log_mut(),
-                            manager.is_network_task_required(task.task_id),
+                            is_required,
                             "{} downloading package manifest <b>{}<r>",
                             DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(name),
                         );
+                        manager.hold_log_since(log_mark, HeldAbout::Task(task.task_id));
 
-                        if fail_update_requests(manager, task.task_id, name, None) {
-                            REQUEST_GOT_NO_ANSWER.store(true, Ordering::Relaxed);
-                        }
+                        fail_update_requests(manager, task.task_id, name, None, is_required);
                     }
 
                     return_network_task(task_ptr);
@@ -769,7 +776,8 @@ fn run_tasks_erased(
                         }
                     }
 
-                    if manager.is_network_task_required(task.task_id) {
+                    let is_required = manager.is_network_task_required(task.task_id);
+                    if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
@@ -788,7 +796,8 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    fail_update_requests(manager, task.task_id, name, None);
+                    manager.hold_log_since(log_mark, HeldAbout::Task(task.task_id));
+                    fail_update_requests(manager, task.task_id, name, None, is_required && retry);
 
                     return_network_task(task_ptr);
                     continue;
@@ -830,7 +839,9 @@ fn run_tasks_erased(
                             .hash_map
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
 
-                        if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
+                        if manager.options.enable.contains(Enable::MANIFEST_CACHE)
+                            && let Ok(temp_dir) = directories::try_get_temporary_directory(manager)
+                        {
                             // reshaped for borrowck — compute the
                             // `&mut`-taking directory accessors first so the
                             // shared `scope_for_package_name` / `manifests`
@@ -838,7 +849,7 @@ fn run_tasks_erased(
                             // only needs `&PackageManifest`, so reborrow the
                             // freshly-inserted entry immutably alongside the
                             // scope (both `&manager`, no conflict).
-                            let tmp_fd = directories::get_temporary_directory(manager).handle.fd;
+                            let tmp_fd = temp_dir.handle.fd;
                             let cache_fd = directories::get_cache_directory(manager);
                             npm::package_manifest::Serializer::save_async(
                                 manager
@@ -906,7 +917,7 @@ fn run_tasks_erased(
                 // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                let (download_failed, retry) = download_outcome(&task.response);
+                let (download_failed, retry) = download_outcome(&task.response, &manager.options);
                 if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -997,11 +1008,13 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
                         ),
                     );
+                    manager.hold_log_since(log_mark, manager.about_download(extract.dependency_id));
                     fail_update_requests(
                         manager,
                         task.task_id,
                         extract.name.slice(),
                         Some(extract.dependency_id),
+                        is_required,
                     );
 
                     let _ = manager.task_queue.remove(&task.task_id);
@@ -1056,11 +1069,13 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
+                    manager.hold_log_since(log_mark, manager.about_download(extract.dependency_id));
                     fail_update_requests(
                         manager,
                         task.task_id,
                         extract.name.slice(),
                         Some(extract.dependency_id),
+                        is_required && retry,
                     );
 
                     let _ = manager.task_queue.remove(&task.task_id);
@@ -1118,6 +1133,7 @@ fn run_tasks_erased(
             task: task_ptr,
         };
         manager.decrement_pending_tasks();
+        let log_mark = manager.log_mut().msgs.len();
 
         if !task.log.msgs.is_empty() {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
@@ -1160,6 +1176,7 @@ fn run_tasks_erased(
                             err.name(),
                             bstr::BStr::new(name),
                         );
+                        manager.hold_log_since(log_mark, HeldAbout::Task(task.id));
                     }
 
                     continue;
@@ -1268,7 +1285,8 @@ fn run_tasks_erased(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
-                    fail_update_requests(manager, task.id, alias, Some(dependency_id));
+                    manager.hold_log_since(log_mark, manager.about_download(dependency_id));
+                    fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1618,7 +1636,10 @@ fn run_tasks_erased(
 }
 
 /// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
-fn download_outcome(response: &http::HTTPClientResult<'static>) -> (bool, bool) {
+fn download_outcome(
+    response: &http::HTTPClientResult<'static>,
+    options: &Options::Options,
+) -> (bool, bool) {
     let proxy_status = response
         .proxy_connect_response
         .as_ref()
@@ -1636,7 +1657,17 @@ fn download_outcome(response: &http::HTTPClientResult<'static>) -> (bool, bool) 
         response.fail,
         Some(http::Error::Cert(_) | http::Error::ERR_TLS_CERT_ALTNAME_INVALID)
     );
+    // Auto-install blocks the JS thread on the request: it does not sit out the same silence twice.
+    // `connect_errno` is a Winsock code on Windows: WSAETIMEDOUT.
+    const CONNECT_TIMED_OUT: i32 = if cfg!(windows) {
+        10060
+    } else {
+        bun_errno::SystemErrno::ETIMEDOUT as i32
+    };
+    let silence = matches!(response.fail, Some(http::Error::Timeout))
+        || response.connect_errno == CONNECT_TIMED_OUT;
     let retry = !bad_certificate
+        && !(silence && options.runtime_auto_install)
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
     (failed, retry)
 }
@@ -1803,12 +1834,36 @@ fn forget_failed_git_task(
     task_id: Task::Id,
     name: &[u8],
 ) -> TaskCallbackList {
-    fail_update_requests(this, task_id, name, None);
+    fail_update_requests(this, task_id, name, None, false);
     let _ = this.network_dedupe_map.remove(&task_id);
     this.task_queue.remove(&task_id).unwrap_or_default()
 }
 
-/// No attempt to download the manifest of a package named on the command line got an answer.
+/// `bunx` asks only once whether the copy it has is the latest: it runs the copy without an answer.
+fn manifest_retry_count(
+    manager: &PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    fail: Option<http::Error>,
+) -> u16 {
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_HAS_COPY.get() == Some(true)
+        && (manager.update_requests.iter()).any(|request| strings::eql(request.name, name))
+    {
+        return 0;
+    }
+    // Best effort, no dependency waits for it (the bins of a migrated lockfile): offline it gives up at once.
+    if matches!(
+        fail,
+        Some(http::Error::ConnectionRefused | http::Error::DNSResolveFailed)
+    ) && !manager.is_network_task_required(task_id)
+        && !manager.task_queue.contains_key(&task_id)
+    {
+        return 0;
+    }
+    manager.options.max_retry_count
+}
+
+/// A download for a request ran out of attempts, and none got an answer about the package.
 static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -1826,16 +1881,20 @@ pub(crate) fn failed_request_error() -> crate::Error {
 }
 
 /// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
-/// True when it was for one.
+/// `unanswered`: the download is required, and no attempt got an answer about the package.
 fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
     package_name: &[u8],
     tarball_dependency_id: Option<DependencyID>,
-) -> bool {
+    unanswered: bool,
+) {
     if this.subcommand == Subcommand::Remove {
-        return false;
+        return;
     }
+    // Everything in the tree of `bunx` is there for its one request.
+    let for_bunx = unanswered
+        && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
     let lockfile = &*this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -1874,7 +1933,7 @@ fn fail_update_requests(
                     })
                 })
             });
-        if names_its_dependency || strings::eql(request.name, package_name) {
+        if for_bunx || names_its_dependency || strings::eql(request.name, package_name) {
             request.failed = true;
             any_failed = true;
         }
@@ -1883,8 +1942,10 @@ fn fail_update_requests(
         this.options
             .do_
             .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
+        if unanswered {
+            REQUEST_GOT_NO_ANSWER.store(true, Ordering::Relaxed);
+        }
     }
-    any_failed
 }
 
 /// Once per pass. Not under auto-install: the number is `fetch()`'s too.
@@ -1956,7 +2017,16 @@ pub fn generate_network_task_for_tarball<'a>(
     // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
     // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
-    let temp_dir = directories::get_temporary_directory(this).handle.fd();
+    let temp_dir = match directories::try_get_temporary_directory(this) {
+        Ok(temp_dir) => temp_dir.handle.fd(),
+        Err(why) => {
+            this.exit_or_log(&why);
+            this.mark_network_task_failed(task_id);
+            // No task will take the waiters: a later enqueue would think one was started.
+            let _ = this.task_queue.remove(&task_id);
+            return Err(ForTarballError::AlreadyFailed);
+        }
+    };
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer.
@@ -2092,8 +2162,10 @@ impl PackageManager {
     }
 
     pub(crate) fn mark_network_task_failed(&mut self, task_id: Task::Id) {
+        let turn = self.event_loop.iteration_number();
         if let Some(entry) = self.network_dedupe_map.get_mut(&task_id) {
             entry.failed = true;
+            entry.missed_in = Some(turn);
         }
     }
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {

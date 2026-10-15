@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, existsSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, nodeModulesPackages, tempDir, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  githubTarball,
+  hostedGitRepository,
+  isWindows,
+  nodeModulesPackages,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
 import { yamlAliasChain } from "./migration-harness";
@@ -1290,6 +1299,71 @@ snapshots:
       expect(await Bun.file(join(packageDir, "node_modules/no-deps/patched.txt")).text()).toBe("patched\n");
       expect(await Bun.file(join(packageDir, "node_modules/one-dep/patched.txt")).text()).toBe("patched\n");
     });
+
+    // pnpm also takes a version range and a bare name as the key; bun's key is one exact version.
+    test.each(["no-deps@^1.0.0", "no-deps@1", "no-deps"])(
+      "the key %s becomes one entry for each version it patches",
+      async key => {
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker: "hoisted" },
+          files: {
+            "package.json": JSON.stringify({
+              name: "patch-key-covers-two-versions",
+              dependencies: { "no-deps": "^1.0.0", older: "npm:no-deps@1.0.0" },
+              pnpm: { patchedDependencies: { [key]: "patches/no-deps.patch" } },
+            }),
+            "patches/no-deps.patch": ADD_FILE_PATCH,
+            "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+patchedDependencies:
+  ${key}:
+    hash: ${PATCH_HASH}
+    path: patches/no-deps.patch
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1(patch_hash=${PATCH_HASH})
+      older:
+        specifier: npm:no-deps@1.0.0
+        version: no-deps@1.0.0(patch_hash=${PATCH_HASH})
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0(patch_hash=${PATCH_HASH}): {}
+
+  no-deps@1.0.1(patch_hash=${PATCH_HASH}): {}
+`,
+          },
+        });
+
+        const { stderr, exitCode } = await run(packageDir, "install");
+
+        expect(stderr).not.toContain("warn:");
+        expect(stderr).not.toContain("error:");
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toStrictEqual({
+          "no-deps@1.0.0": "patches/no-deps.patch",
+          "no-deps@1.0.1": "patches/no-deps.patch",
+        });
+        expect(await Bun.file(join(packageDir, "node_modules/no-deps/patched.txt")).text()).toBe("patched\n");
+        expect(await Bun.file(join(packageDir, "node_modules/older/patched.txt")).text()).toBe("patched\n");
+        expect(exitCode).toBe(0);
+
+        await expectInstallToLeaveUnchanged(packageDir, await bunLockOf(packageDir));
+      },
+    );
 
     test.each(["hoisted", "isolated"] as const)(
       "the migrated bun.lock patches the installed registry package (%s linker)",
@@ -2958,16 +3032,122 @@ snapshots:
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
-      expect(workspaceBlock(await bunLockOf(packageDir), "")).toContain(
-        [
-          `      "peerDependencies": {`,
-          `        "has-peer": "^1.0.0",`,
-          `      },`,
-          `      "optionalPeers": [`,
-          `        "has-peer",`,
-          `      ],`,
-        ].join("\n"),
+      // left out, like a dependency added after pnpm-lock.yaml was written
+      const locked = [
+        `    "": {`,
+        `      "name": "unrecorded-peer",`,
+        `      "dependencies": {`,
+        `        "no-deps": "^1.0.0",`,
+        `      },`,
+      ];
+      expect(workspaceBlock(await bunLockOf(packageDir), "")).toBe([...locked, `    },`].join("\n"));
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      const resolved = await bunLockOf(packageDir);
+      expect(workspaceBlock(resolved, "")).toBe(
+        [...locked, `      "peerDependencies": {`, `        "has-peer": "^1.0.0",`, `      },`, `    },`].join("\n"),
       );
+      expect(resolved).toContain(`"has-peer": ["has-peer@1.0.0"`);
+      expect(resolved).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      await expectInstallToLeaveUnchanged(packageDir, resolved);
+    });
+
+    test.concurrent("bun install resolves the required peers that pnpm-lock.yaml does not record", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unrecorded-peers",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "^1.0.0" },
+            peerDependencies: { "a-dep": "1.0.1" },
+          }),
+          "packages/ui/package.json": JSON.stringify({
+            name: "ui",
+            version: "1.0.0",
+            dependencies: { "no-deps": "^1.0.0" },
+            peerDependencies: { "what-bin": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+  packages/ui:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      // a frozen install takes pnpm-lock.yaml as it is
+      const frozenMigration = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozenMigration.stderr).not.toContain("error:");
+      expect(frozenMigration.exitCode).toBe(0);
+      expect(existsSync(join(packageDir, "bun.lock"))).toBe(false);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).toContain('skipped peer "a-dep" of the root package');
+      expect(install.stderr).toContain('skipped peer "what-bin" of workspace "packages/ui"');
+      expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(install.exitCode).toBe(0);
+      const migrated = await bunLockOf(packageDir);
+      const { workspaces, packages } = Bun.JSONC.parse(migrated) as { workspaces: object; packages: object };
+      expect(workspaces).toEqual({
+        "": {
+          name: "unrecorded-peers",
+          dependencies: { "no-deps": "^1.0.0" },
+          peerDependencies: { "a-dep": "1.0.1" },
+        },
+        "packages/ui": {
+          name: "ui",
+          version: "1.0.0",
+          dependencies: { "no-deps": "^1.0.0" },
+          peerDependencies: { "what-bin": "1.0.0" },
+        },
+      });
+      expect(Object.entries(packages).map(([key, [resolution]]) => [key, resolution])).toEqual([
+        ["a-dep", "a-dep@1.0.1"],
+        ["no-deps", "no-deps@1.0.1"],
+        ["ui", "ui@workspace:packages/ui"],
+        ["what-bin", "what-bin@1.0.0"],
+        ["ui/no-deps", "no-deps@1.0.0"],
+      ]);
+
+      const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+      await expectInstallToLeaveUnchanged(packageDir, migrated);
     });
 
     test("peers declared with a catalog: range keep the catalog reference", async () => {
@@ -3195,6 +3375,204 @@ snapshots:
     const bunLock = await bunLockOf(String(dir));
     expect(bunLock).toContain(`"c": ["c@${repo}#${commit}", {}`);
     expect(bunLock).not.toContain("git+git+");
+  });
+
+  test.concurrent("bun install checks out the commit of a git resolution", async () => {
+    const url = "https://git.example.com/org/c.git";
+    using repo = await hostedGitRepository([url], { "package.json": JSON.stringify({ name: "c", version: "1.0.0" }) });
+    using dir = tempDir("pnpm-v9-git-install", {
+      "package.json": JSON.stringify({ name: "git-install", dependencies: { c: `git+${url}` } }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      c:
+        specifier: git+${url}
+        version: git+${url}#${repo.sha}
+
+packages:
+
+  c@git+${url}#${repo.sha}:
+    resolution: {commit: ${repo.sha}, repo: ${url}, type: git}
+    version: 1.0.0
+
+snapshots:
+
+  c@git+${url}#${repo.sha}: {}
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...repo.env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(await bunLockOf(String(dir))).toContain(`"c": ["c@git+${url}#${repo.sha}", {}, "${repo.sha}"]`);
+    expect(existsSync(join(String(dir), "node_modules", "c", "package.json"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // [`repo` as pnpm writes it, the version of the importer, the URL in bun.lock]; LOCAL is the repository's file: URL.
+  test.concurrent.each([
+    ["LOCAL", "git+LOCAL", "git+LOCAL"],
+    [
+      "https://git.example.com/org/c.git",
+      "git+https://git.example.com/org/c.git",
+      "git+https://git.example.com/org/c.git",
+    ],
+    [
+      "git+https://git.example.com/org/c.git",
+      "git+https://git.example.com/org/c.git",
+      "git+https://git.example.com/org/c.git",
+    ],
+    [
+      "ssh://git@git.example.com/org/c.git",
+      "git+ssh://git@git.example.com/org/c.git",
+      "git+ssh://git@git.example.com/org/c.git",
+    ],
+    [
+      "git@git.example.com:org/c.git",
+      "git+ssh://git@git.example.com/org/c.git",
+      "git+ssh://git@git.example.com:org/c.git",
+    ],
+  ])("a git resolution with repo: %s stays at a commit that is not the newest", async (...row) => {
+    using dir = tempDir("pnpm-v9-git-pin", {
+      repo: { "package.json": JSON.stringify({ name: "c", version: "1.0.0" }), "index.js": "pinned" },
+    });
+    const repo = join(String(dir), "repo");
+    const git = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          "git",
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "-c",
+          "commit.gpgsign=false",
+          ...args,
+        ],
+        cwd: repo,
+        env: { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+      return stdout.trim();
+    };
+    await git("-c", "init.defaultBranch=main", "init", "--quiet");
+    await git("add", "-A");
+    await git("commit", "--quiet", "-m", "pinned");
+    const pinned = await git("rev-parse", "HEAD");
+    writeFileSync(join(repo, "index.js"), "newer");
+    await git("commit", "--quiet", "-a", "-m", "newer");
+
+    const local = Bun.pathToFileURL(repo).href;
+    const [repoField, version, inBunLock] = row.map(text => text.replace("LOCAL", local));
+    const project = join(String(dir), "project");
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "git-pin", dependencies: { c: version } }));
+    await Bun.write(
+      join(project, "pnpm-lock.yaml"),
+      `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      c:
+        specifier: ${version}
+        version: ${version}#${pinned}
+
+packages:
+
+  c@${version}#${pinned}:
+    resolution: {commit: ${pinned}, repo: ${repoField}, type: git}
+    version: 1.0.0
+
+snapshots:
+
+  c@${version}#${pinned}: {}
+`,
+    );
+    // The two URLs bun clones first; git takes the local repository for them and refuses every other transport.
+    const env = {
+      GIT_ALLOW_PROTOCOL: "file",
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: `url.${local}.insteadOf`,
+      GIT_CONFIG_VALUE_0: "https://git.example.com/org/c.git",
+      GIT_CONFIG_KEY_1: `url.${local}.insteadOf`,
+      GIT_CONFIG_VALUE_1: "https://git@git.example.com/org/c.git",
+    };
+
+    const { stderr, exitCode } = await runWithEnv(project, env, "install");
+
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(await Bun.file(join(project, "node_modules", "c", "index.js")).text()).toBe("pinned");
+    expect(await bunLockOf(project)).toContain(`"c": ["c@${inBunLock}#${pinned}", {}, "${pinned}"]`);
+    expect(exitCode).toBe(0);
+
+    const frozen = await runWithEnv(project, env, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  test.concurrent("bun install downloads the commit of a codeload tarball resolution", async () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567";
+    const tarball = await githubTarball(`me-c-${commit.slice(0, 7)}`, {
+      "package.json": JSON.stringify({ name: "c", version: "1.0.0" }),
+    });
+    const requests: string[] = [];
+    await using github = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tarball);
+      },
+    });
+    const url = `https://codeload.github.com/me/c/tar.gz/${commit}`;
+    using dir = tempDir("pnpm-v9-codeload-install", {
+      "package.json": JSON.stringify({ name: "codeload-install", dependencies: { c: "github:me/c" } }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      c:
+        specifier: github:me/c
+        version: ${url}
+
+packages:
+
+  c@${url}:
+    resolution: {tarball: ${url}}
+    version: 1.0.0
+
+snapshots:
+
+  c@${url}: {}
+`,
+    });
+
+    const { stderr, exitCode } = await runWithEnv(String(dir), { GITHUB_API_URL: github.url.origin }, "install");
+
+    expect(stderr.split("\n").filter(line => line.startsWith("error"))).toEqual([]);
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(requests).toEqual([`/repos/me/c/tarball/${commit}`]);
+    expect(existsSync(join(String(dir), "node_modules", "c", "package.json"))).toBe(true);
+    expect(await bunLockOf(String(dir))).toContain(`"c": ["c@github:me/c#${commit}", {}, "${commit}"`);
+    expect(exitCode).toBe(0);
   });
 
   describe("registry tarball: urls", () => {
@@ -5343,6 +5721,30 @@ importers:
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(packageJson);
+    });
+
+    test.concurrent.each([
+      { from: "pnpm-workspace.yaml", yaml: "onlyBuiltDependencies: []\n", pnpm: undefined },
+      { from: "pnpm.", yaml: "", pnpm: { onlyBuiltDependencies: [] } },
+    ])("an empty list from $from becomes an empty trustedDependencies", async ({ from, yaml, pnpm }) => {
+      using dir = tempDir("pnpm-v9-only-built-empty", {
+        "package.json": JSON.stringify({ name: "only-built-empty", pnpm }),
+        "pnpm-workspace.yaml": `packages: []\n${yaml}`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain(
+        `${from.replace(/yaml$/, "yaml ")}onlyBuiltDependencies to trustedDependencies in package.json`,
+      );
+      expect((await Bun.file(join(String(dir), "package.json")).json()).trustedDependencies).toEqual([]);
+      expect(exitCode).toBe(0);
     });
   });
 });

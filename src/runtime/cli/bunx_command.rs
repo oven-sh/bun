@@ -998,6 +998,15 @@ impl BunxCommand {
             .map
             .put(b"BUN_INTERNAL_BUNX_INSTALL", b"true")
             .expect("oom");
+        let has_copy: &[u8] = if finished_package_json.is_some() && look_for_existing_bin {
+            b"true"
+        } else {
+            b"false"
+        };
+        env_loader
+            .map
+            .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)
+            .expect("oom");
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
@@ -1034,8 +1043,9 @@ impl BunxCommand {
             Ok(Ok(result)) => result,
         };
 
-        // Only for the install: the tool's own `bunx` and `bun install` must not inherit it.
+        // Only for the install: the tool's own `bunx` and `bun install` must not inherit them.
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
         /// The raw byte: `signal_code()` would drop RT signals (>31).
         fn raise(signal: u8) -> ! {

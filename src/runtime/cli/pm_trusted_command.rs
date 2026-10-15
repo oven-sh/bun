@@ -44,6 +44,8 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     }
 }
 
+const CANNOT_TRUST: &str = "cannot be trusted by name: declare it in your package.json";
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     Skip,
@@ -52,7 +54,7 @@ enum Action {
     Defer,
 }
 
-/// An installed dependency whose lifecycle scripts the installers do not run.
+/// An installed dependency that has lifecycle scripts, blocked unless `is_trusted`.
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
@@ -65,7 +67,7 @@ struct Blocked {
 }
 
 impl Blocked {
-    /// The installers' gate: the project's and its workspaces' scripts always run, every other package needs trust.
+    /// None for the project and its workspaces, whose scripts always run.
     fn scripts_at(
         log: &mut bun_ast::Log,
         lockfile: &Lockfile,
@@ -84,10 +86,6 @@ impl Blocked {
         if matches!(
             resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace
-        ) || lockfile.has_trusted_dependency(
-            alias,
-            packages.items_name()[package_id].slice(buf),
-            resolution,
         ) {
             return Ok(None);
         }
@@ -101,7 +99,60 @@ impl Blocked {
         }
     }
 
-    fn find_all(pm: &PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
+    fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
+        // Without a store another tool laid out node_modules: look where a package resolves from.
+        let mut store = AutoAbsPath::init_top_level_dir();
+        let _ = store.append(b"node_modules/.bun");
+        if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
+            return Self::find_in_store(pm);
+        }
+        // The saved tree also has what packages ship inside themselves, which no install runs.
+        bun_install::prune::with_install_tree(pm, Self::find_in_tree)?
+    }
+
+    fn find_in_store(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
+        let log = pm.log_mut();
+        let lockfile: &Lockfile = &pm.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut blocked: Vec<Blocked> = Vec::new();
+        let mut path = AutoAbsPath::init_top_level_dir();
+        let top_level_len = path.len();
+
+        let mut link_buf = bun_paths::path_buffer_pool::get();
+        for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
+            path.set_length(top_level_len);
+            let _ = path.append(folder.entry_dir.as_slice());
+            let entry_dir_len = path.len();
+            let _ = path.append(b"node_modules");
+            let is_link = lockfile.packages.items_resolution()[folder.pkg_id as usize].tag
+                == ResolutionTag::Symlink;
+            let name = if is_link {
+                lockfile.buffers.dependencies.as_slice()[folder.dep_id as usize].name
+            } else {
+                lockfile.packages.items_name()[folder.pkg_id as usize]
+            };
+            let _ = path.append(name.slice(buf));
+            let Some(scripts_list) =
+                Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
+            else {
+                continue;
+            };
+            path.set_length(entry_dir_len);
+            blocked.push(Blocked {
+                dep_id: folder.dep_id,
+                package_id: folder.pkg_id,
+                depth: folder.depth,
+                scripts_list,
+                in_global_store: !is_link
+                    && bun_sys::readlink(path.slice_z(), &mut link_buf[..]).is_ok(),
+                action: Action::Skip,
+            });
+        }
+        Ok(blocked)
+    }
+
+    fn find_in_tree(pm: &PackageManager) -> crate::Result<Vec<Blocked>> {
         let log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -110,35 +161,6 @@ impl Blocked {
         let mut blocked: Vec<Blocked> = Vec::new();
         let mut path = AutoAbsPath::init_top_level_dir();
         let top_level_len = path.len();
-
-        // Without a store another tool laid out node_modules: look where a package resolves from.
-        let _ = path.append(b"node_modules/.bun");
-        if linker == NodeLinker::Isolated && bun_sys::exists(path.slice()) {
-            let mut link_buf = bun_paths::path_buffer_pool::get();
-            for folder in bun_install::isolated_install::store_folders(pm, lockfile)? {
-                path.set_length(top_level_len);
-                let _ = path.append(folder.entry_dir.as_slice());
-                let entry_dir_len = path.len();
-                let _ = path.append(b"node_modules");
-                let _ =
-                    path.append(lockfile.packages.items_name()[folder.pkg_id as usize].slice(buf));
-                let Some(scripts_list) =
-                    Self::scripts_at(log, lockfile, folder.dep_id, folder.pkg_id, &mut path)?
-                else {
-                    continue;
-                };
-                path.set_length(entry_dir_len);
-                blocked.push(Blocked {
-                    dep_id: folder.dep_id,
-                    package_id: folder.pkg_id,
-                    depth: folder.depth,
-                    scripts_list,
-                    in_global_store: bun_sys::readlink(path.slice_z(), &mut link_buf[..]).is_ok(),
-                    action: Action::Skip,
-                });
-            }
-            return Ok(blocked);
-        }
 
         let mut tree_iterator =
             tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
@@ -152,7 +174,9 @@ impl Blocked {
 
             for &dep_id in node_modules.dependencies {
                 let package_id = resolutions[dep_id as usize];
-                if package_id as usize >= lockfile.packages.len() {
+                if package_id as usize >= lockfile.packages.len()
+                    || lockfile.is_folder_inside_declarer(dep_id)
+                {
                     continue;
                 }
                 path.set_length(node_modules_len);
@@ -190,6 +214,23 @@ impl Blocked {
         (alias, trusted_name)
     }
 
+    /// The installers' gate.
+    fn is_trusted(&self, lockfile: &Lockfile) -> bool {
+        lockfile.has_trusted_dependency(
+            self.names(lockfile).0,
+            lockfile.str(&lockfile.packages.items_name()[self.package_id as usize]),
+            &lockfile.packages.items_resolution()[self.package_id as usize],
+        )
+    }
+
+    /// Whether the installers run it once its name is listed. `bun pm trust` runs nothing else.
+    fn can_trust(&self, lockfile: &Lockfile) -> bool {
+        lockfile.can_trust_by_name(
+            self.names(lockfile).0,
+            &lockfile.packages.items_resolution()[self.package_id as usize],
+        )
+    }
+
     fn print(&self, lockfile: &Lockfile, format: PrintFormat) {
         self.scripts_list.print_scripts(
             &lockfile.packages.items_resolution()[self.package_id as usize],
@@ -200,6 +241,9 @@ impl Blocked {
         let (alias, trusted_name) = self.names(lockfile);
         if trusted_name != alias {
             bun_core::pretty!(" <d>alias of<r> {}\n", bun_core::fmt::quote(trusted_name));
+        }
+        if !self.can_trust(lockfile) {
+            bun_core::pretty!(" <d>{}<r>\n", CANNOT_TRUST);
         }
         bun_core::pretty!("\n");
     }
@@ -245,7 +289,8 @@ impl UntrustedCommand {
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         read_trusted_dependencies(pm);
 
-        let blocked = Blocked::find_all(pm, linker)?;
+        let mut blocked = Blocked::find_all(pm, linker)?;
+        blocked.retain(|info| !info.is_trusted(&pm.lockfile));
         if blocked.is_empty() {
             bun_core::pretty!(
                 "Found <b>0<r> untrusted dependencies with scripts.\n\
@@ -284,12 +329,12 @@ impl TrustCommand {
         Output::print(format_args!("\n"));
         if trust_all {
             Output::err_generic(
-                "0 scripts ran. This means all dependencies are already trusted or none have scripts.",
+                "0 scripts ran. This means none of your dependencies have scripts.",
                 (),
             );
         } else {
             Output::err_generic(
-                "0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n",
+                "0 scripts ran. The following packages don't have scripts to run or don't exist:\n\n",
                 (),
             );
             for arg in packages_to_trust {
@@ -349,7 +394,8 @@ impl TrustCommand {
     pub(crate) fn exec(
         ctx: Command::Context,
         pm: &mut PackageManager,
-        args: &[&[u8]],
+        packages_to_trust: &[&[u8]],
+        trust_all: bool,
     ) -> crate::Result<()> {
         bun_core::pretty_error!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
@@ -357,13 +403,21 @@ impl TrustCommand {
         );
         Output::flush();
 
-        if args.len() == 2 {
+        if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();
         }
 
         if !pm.options.do_.run_scripts() {
             Output::err_generic(
                 "lifecycle scripts are turned off (ignore-scripts), so bun pm trust cannot run any",
+                (),
+            );
+            Global::crash();
+        }
+
+        if pm.options.enable.frozen_lockfile() && !pm.options.dry_run {
+            Output::err_generic(
+                "the lockfile is frozen, and bun pm trust records the packages in package.json and the lockfile",
                 (),
             );
             Global::crash();
@@ -383,18 +437,8 @@ impl TrustCommand {
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
         let recorded = read_trusted_dependencies(unsafe { &mut *pm_raw });
 
-        let packages_to_trust: Vec<&[u8]> = (args[2..].iter().copied())
-            .filter(|arg| !arg.is_empty() && arg[0] != b'-')
-            .collect();
-        let trust_all =
-            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
-
-        if !trust_all && packages_to_trust.is_empty() {
-            Self::error_expected_args();
-        }
-
-        // SAFETY: `pm_raw` singleton; the discovery phase only reads it.
-        let mut blocked = Blocked::find_all(unsafe { &*pm_raw }, linker)?;
+        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced while this runs.
+        let mut blocked = Blocked::find_all(unsafe { &mut *pm_raw }, linker)?;
         bun_collections::index_sort::sort_slice_by(&mut blocked, |a, b| b.depth.cmp(&a.depth));
 
         // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
@@ -403,6 +447,7 @@ impl TrustCommand {
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
         // alias given on the command line -> the name its package is trusted under
         let mut aliased_args: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+        let mut undeclared_args: StringArrayHashMap<()> = StringArrayHashMap::new();
         let mut scripts_count: usize = 0;
 
         let named = |name: &[u8]| {
@@ -418,6 +463,10 @@ impl TrustCommand {
                 }
                 continue;
             }
+            if !info.can_trust(lockfile) {
+                undeclared_args.put(trusted_name, ())?;
+                continue;
+            }
             package_names_to_add.put(trusted_name, ())?;
             if info.in_global_store {
                 info.action = Action::Defer;
@@ -426,10 +475,15 @@ impl TrustCommand {
                 scripts_count += info.scripts_list.total as usize;
             }
         }
+        // A trusted one that was asked for runs again: nothing says whether its scripts ran here.
+        blocked.retain(|info| info.action != Action::Skip || !info.is_trusted(lockfile));
 
         if package_names_to_add.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_error_zero_untrusted_dependencies_found(trust_all, packages_to_trust);
             Self::print_aliased_args(&aliased_args);
+            for name in undeclared_args.keys() {
+                bun_core::note!("{} {}", bun_core::fmt::quote(name), CANNOT_TRUST);
+            }
             Global::crash();
         }
 

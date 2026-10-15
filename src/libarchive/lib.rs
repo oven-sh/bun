@@ -160,11 +160,16 @@ pub mod lib {
     /// One per extraction: once `pwrite` fails, later entries do not try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
+        /// Off for npm tarballs: a file is its stored bytes, whatever length a sparse map claims.
+        pub holes: bool,
     }
 
     impl Default for WriteStrategy {
         fn default() -> Self {
-            Self { pwrite: cfg!(unix) }
+            Self {
+                pwrite: cfg!(unix),
+                holes: true,
+            }
         }
     }
 
@@ -215,6 +220,7 @@ pub mod lib {
             if data.is_empty() {
                 return Ok(());
             }
+            let offset = if strategy.holes { offset } else { self.end };
             let fd = self.fd;
             let file = bun_sys::File::borrow(&fd);
 
@@ -233,8 +239,6 @@ pub mod lib {
                     }
                 }
             }
-            #[cfg(not(unix))]
-            let _ = strategy;
 
             if offset != self.cursor {
                 if offset > self.end {
@@ -251,8 +255,8 @@ pub mod lib {
         }
 
         /// `end` is the offset libarchive returned with `ARCHIVE_EOF`: the length of the file.
-        pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
-            if end > self.end {
+        pub fn finish(&mut self, strategy: &WriteStrategy, end: i64) -> bun_sys::Maybe<()> {
+            if strategy.holes && end > self.end {
                 self.before_hole();
                 bun_sys::ftruncate(self.fd, end)?;
                 self.end = end;
@@ -312,29 +316,19 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Reads in steps so an untrusted `size` doesn't drive allocation. `Ok(false)`: read error.
-        pub(crate) fn read_data_to_vec(
+        /// Appends the entry's stored bytes, not a sparse map's holes. `Ok(false)`: read error.
+        pub fn read_data_to_vec(
             &self,
-            size: usize,
             out: &mut Vec<u8>,
         ) -> core::result::Result<bool, bun_core::OOM> {
-            let start = out.len();
-            while out.len() - start < size {
-                let to_read = (size - (out.len() - start)).min(64 * 1024);
-                out.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
-                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
-                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(out)[..to_read] };
-                let read = self.read_data(dest);
-                if read < 0 {
+            let mut offset: i64 = 0;
+            while let Some(block) = self.next(&mut offset) {
+                if block.result != Result::Ok {
                     return Ok(false);
                 }
-                if read == 0 {
-                    break;
-                }
-                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe {
-                    bun_core::vec::commit_spare(out, usize::try_from(read).expect("int cast"))
-                };
+                out.try_reserve(block.bytes.len())
+                    .map_err(|_| bun_core::AllocError)?;
+                out.extend_from_slice(block.bytes);
             }
             Ok(true)
         }
@@ -378,7 +372,7 @@ pub mod lib {
                     return Result::Failed;
                 }
             }
-            match writer.finish(offset) {
+            match writer.finish(strategy, offset) {
                 Ok(()) => Result::Ok,
                 Err(_) => Result::Failed,
             }
@@ -731,15 +725,6 @@ pub mod lib {
                 }
                 _ => {}
             }
-            match a.read_set_options(c"read_concatenated_archives") {
-                Result::Failed | Result::Fatal | Result::Warn => {
-                    return IteratorResult::init_err(
-                        archive,
-                        b"failed to set option `read_concatenated_archives`",
-                    );
-                }
-                _ => {}
-            }
             match a.read_open_memory(tarball_bytes) {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return IteratorResult::init_err(archive, b"failed to read tarball");
@@ -799,16 +784,8 @@ pub mod lib {
             &self,
             archive: &Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
-            // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
-            let size = unsafe { (*self.entry).size() };
-            let Ok(size) = usize::try_from(size) else {
-                return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
-                    b"invalid archive entry size",
-                ));
-            };
             let mut buf: Vec<u8> = Vec::new();
-            if !archive.read_data_to_vec(size, &mut buf)? {
+            if !archive.read_data_to_vec(&mut buf)? {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"failed to read archive data",
@@ -845,16 +822,26 @@ pub mod lib {
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
-    pub struct GrowingBuffer {
+    pub struct GrowingBuffer<'a> {
         pub(crate) list: Vec<u8>,
         pub(crate) had_error: bool,
+        /// Takes each write in place of `list`, which then stays empty.
+        pub(crate) forward_to: Option<&'a mut dyn FnMut(&[u8])>,
     }
 
-    impl GrowingBuffer {
-        pub fn init() -> GrowingBuffer {
+    impl<'a> GrowingBuffer<'a> {
+        pub fn init() -> Self {
             GrowingBuffer {
                 list: Vec::new(),
                 had_error: false,
+                forward_to: None,
+            }
+        }
+
+        pub fn forward_to(write: &'a mut dyn FnMut(&[u8])) -> Self {
+            GrowingBuffer {
+                forward_to: Some(write),
+                ..Self::init()
             }
         }
 
@@ -870,7 +857,7 @@ pub mod lib {
             client_data: *mut c_void,
         ) -> c_int {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = unsafe { bun_core::callback_ctx::<Self>(client_data) };
             this.list.clear();
             this.had_error = false;
             0
@@ -883,12 +870,16 @@ pub mod lib {
             length: usize,
         ) -> la_ssize_t {
             // SAFETY: client_data is a *mut GrowingBuffer registered via archive_write_open2.
-            let this = unsafe { bun_core::callback_ctx::<GrowingBuffer>(client_data) };
+            let this = unsafe { bun_core::callback_ctx::<Self>(client_data) };
             if buff.is_null() || length == 0 {
                 return 0;
             }
             // SAFETY: buff[0..length] is valid for reads per libarchive contract.
             let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
+            if let Some(write) = this.forward_to.as_deref_mut() {
+                write(data);
+                return la_ssize_t::try_from(length).expect("int cast");
+            }
             if this.list.try_reserve(length).is_err() {
                 this.had_error = true;
                 // libarchive sets no error of its own for a failed client write.
@@ -964,18 +955,17 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    pub(crate) fn open_read(&mut self) -> lib::Result {
+    /// `npm`: see patches/libarchive/tar-npm-compat.patch.
+    pub(crate) fn open_read(&mut self, npm: bool) -> lib::Result {
         let archive = self.archive();
 
         let _ = archive.read_support_format_tar();
         let _ = archive.read_support_format_gnutar();
         let _ = archive.read_support_filter_gzip();
 
-        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
-        // have been concatenated together.
-        // Without this option, only the contents of
-        // the first concatenated archive would be read.
-        let _ = archive.read_set_options(c"read_concatenated_archives");
+        if npm {
+            let _ = archive.read_set_options(c"npm");
+        }
 
         archive.read_open_memory(self.buf())
     }
@@ -1005,6 +995,35 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
         mode |= 0o1;
     }
     mode
+}
+
+/// Where node-tar puts an entry of an npm tarball, given its name without `package/`.
+/// Empty for a name with a `..` part: node-tar skips those.
+/// On POSIX only `/` separates, so `a\b.js` is the name of one file.
+pub fn normalize_npm_entry_path<'a>(
+    path: &[OSPathChar],
+    buf: &'a mut [OSPathChar],
+) -> &'a mut [OSPathChar] {
+    if path
+        .split(|c| bun_paths::is_sep_any_t(*c))
+        .any(|part| part == [b'.' as OSPathChar; 2])
+    {
+        return &mut buf[..0];
+    }
+    #[cfg(windows)]
+    return bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Auto>(path, buf);
+    #[cfg(not(windows))]
+    bun_paths::resolve_path::normalize_string_generic_t::<u8, false, false>(path, buf, b'/', |c| {
+        c == b'/'
+    })
+}
+
+/// The root folder of an archive, from the path of any of its entries.
+pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
+    let sep = b'/' as OSPathChar;
+    let start = path.iter().take_while(|c| **c == sep).count();
+    let rest = &path[start..];
+    &rest[..strings::index_of_scalar(rest, sep).unwrap_or(rest.len())]
 }
 
 /// Validates that a symlink target doesn't escape the extraction directory.
@@ -1291,7 +1310,7 @@ impl Archiver {
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(false);
         let archive = stream.archive;
 
         // Uses the bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
@@ -1452,7 +1471,7 @@ impl Archiver {
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
-        let _ = stream.open_read();
+        let _ = stream.open_read(options.npm);
         let archive = stream.archive;
         let mut count: u32 = 0;
         let dir_fd = dir;
@@ -1467,7 +1486,10 @@ impl Archiver {
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
-        let mut write_strategy = lib::WriteStrategy::default();
+        let mut write_strategy = lib::WriteStrategy {
+            holes: !options.npm,
+            ..Default::default()
+        };
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1497,22 +1519,16 @@ impl Archiver {
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
+                            let root = first_path_component(&pathname_z[..]);
                             #[cfg(windows)]
                             {
-                                let result = strings::to_utf8_list_with_type(
-                                    Vec::new(),
-                                    pathname_z.as_slice(),
-                                )?;
+                                let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
-                                appender.on_first_directory_name(strings::without_trailing_slash(
-                                    &result,
-                                ));
+                                appender.on_first_directory_name(&result);
                             }
                             #[cfg(not(windows))]
                             {
-                                appender.on_first_directory_name(strings::without_trailing_slash(
-                                    pathname_z.as_bytes(),
-                                ));
+                                appender.on_first_directory_name(root);
                             }
                         }
                     }
@@ -1545,8 +1561,9 @@ impl Archiver {
                         let sep: OSPathChar = b'/' as OSPathChar;
                         let mut i = 0usize;
                         while i < options.depth_to_skip {
+                            // For npm what is in front of a leading `/` is a part too.
                             while let [first, rest @ ..] = remaining {
-                                if *first == sep {
+                                if *first == sep && !options.npm {
                                     remaining = rest;
                                 } else {
                                     break;
@@ -1556,7 +1573,7 @@ impl Archiver {
                                 continue 'loop_;
                             }
                             match strings::index_of_scalar(remaining, sep) {
-                                Some(j) => remaining = &remaining[j..],
+                                Some(j) => remaining = &remaining[j + 1..],
                                 None => remaining = &remaining[remaining.len()..],
                             }
                             i += 1;
@@ -1584,10 +1601,14 @@ impl Archiver {
                         continue;
                     }
 
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        OSPathChar,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
+                    let normalized = if options.npm {
+                        normalize_npm_entry_path(pathname, &mut normalized_buf[..])
+                    } else {
+                        bun_paths::resolve_path::normalize_buf_t::<
+                            OSPathChar,
+                            bun_paths::platform::Auto,
+                        >(pathname, &mut normalized_buf[..])
+                    };
                     let normalized_len = normalized.len();
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
@@ -1805,10 +1826,8 @@ impl Archiver {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.list.clear();
                                             // SAFETY: archive valid
-                                            let read_ok = unsafe { &*archive }.read_data_to_vec(
-                                                size,
-                                                &mut plucker_.contents.list,
-                                            )?;
+                                            let read_ok = unsafe { &*archive }
+                                                .read_data_to_vec(&mut plucker_.contents.list)?;
                                             if !read_ok {
                                                 if options.log {
                                                     // SAFETY: `archive` is the live

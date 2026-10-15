@@ -3,10 +3,12 @@ import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { closeSync, existsSync, constants as fsConstants, openSync, readFileSync, readSync, realpathSync } from "fs";
-import { chmod, exists, lstat, readdir, rm, symlink, writeFile } from "fs/promises";
+import { chmod, exists, lstat, readdir, rm, symlink, truncate, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
+  isASAN,
+  isDebug,
   isLinux,
   isRoot,
   isWindows,
@@ -17,6 +19,7 @@ import {
   substDrive,
   tempDir,
   unprivilegedSpawnOptions,
+  writeBinCommand,
 } from "harness";
 import { mkfifo } from "mkfifo";
 import { constants } from "os";
@@ -1034,10 +1037,10 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
   }
 
   test.concurrent.each([
-    { args: [], tarball: "pack-failed-1.0.0.tgz" },
-    { args: ["--destination=out"], tarball: join("out", "pack-failed-1.0.0.tgz") },
-    { args: ["--filename=custom.tgz"], tarball: "custom.tgz" },
-  ])("when the tarball cannot be written (args: $args)", async ({ args, tarball }) => {
+    { args: [], left: ["index.js", "package.json"] },
+    { args: ["--destination=out"], left: ["index.js", "out", "package.json"] },
+    { args: ["--filename=custom.tgz"], left: ["index.js", "package.json"] },
+  ])("when the tarball cannot be written (args: $args)", async ({ args, left }) => {
     await using dir = tempDir("pack-failed", {
       "package.json": packageJson,
       "index.js": "module.exports = 1;",
@@ -1047,9 +1050,23 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
 
     expect(err).toContain("EFBIG");
     expect(err).toContain('failed to write tarball "');
-    expect({ exitCode, tarballExists: await exists(join(dir, tarball)) }).toEqual({
+    expect({ exitCode, left: (await readdir(dir, { recursive: true })).sort() }).toEqual({ exitCode: 1, left });
+  });
+
+  test.concurrent("and keeps the tarball of an earlier pack", async () => {
+    await using dir = tempDir("pack-failed-earlier", {
+      "package.json": packageJson,
+      "index.js": "module.exports = 1;",
+      "pack-failed-1.0.0.tgz": "an earlier tarball",
+    });
+
+    const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: true });
+
+    expect(err).toContain('failed to write tarball "');
+    expect(await sortedNames(dir)).toEqual(["index.js", "pack-failed-1.0.0.tgz", "package.json"]);
+    expect({ exitCode, earlier: await file(join(dir, "pack-failed-1.0.0.tgz")).text() }).toEqual({
       exitCode: 1,
-      tarballExists: false,
+      earlier: "an earlier tarball",
     });
   });
 
@@ -1065,9 +1082,9 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
     const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: false });
 
     expect(err).toContain('EACCES: Permission denied: failed to open file: "unreadable.js"');
-    expect({ exitCode, tarballExists: await exists(join(dir, "pack-failed-1.0.0.tgz")) }).toEqual({
+    expect({ exitCode, left: await sortedNames(dir) }).toEqual({
       exitCode: 1,
-      tarballExists: false,
+      left: ["index.js", "package.json", "unreadable.js"],
     });
   });
 
@@ -1109,6 +1126,39 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
       destination: "an earlier tarball",
     });
   });
+});
+
+// A file of zeroes costs no disk, and --gzip-level=0 stores it, so the tarball is as big as the file.
+test.concurrent("peak memory does not grow with the size of the tarball", async () => {
+  using dir = tempDir("pack-memory", {
+    "package.json": JSON.stringify({ name: "pack-memory", version: "1.0.0", files: ["zeroes.bin"] }),
+    "zeroes.bin": "",
+  });
+
+  async function peakMemory(size: number) {
+    await truncate(join(dir, "zeroes.bin"), size);
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--quiet", "--gzip-level=0"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(out).toBe("pack-memory-1.0.0.tgz\n");
+    expect(exitCode).toBe(0);
+    expect(file(join(dir, "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
+    return proc.resourceUsage()!.maxRSS;
+  }
+
+  const MiB = 1024 * 1024;
+  const small = await peakMemory(1 * MiB);
+  const large = await peakMemory(32 * MiB);
+  // A release build grows by under 1 MiB. One that holds the tarball in memory grew by 36 to 54 MiB, never under 31.
+  expect(large - small).toBeLessThan((isASAN || isDebug ? 16 : 8) * MiB);
+  expect(await sortedNames(dir)).toEqual(["pack-memory-1.0.0.tgz", "package.json", "zeroes.bin"]);
 });
 
 test.concurrent("shasum and integrity are consistent", async () => {
@@ -2061,6 +2111,39 @@ test.concurrent("--dry-run still runs prepack, prepare and postpack", async () =
   expect(exitCode).toBe(0);
 });
 
+describe.concurrent("lifecycle scripts run the commands in node_modules/.bin", () => {
+  const scripts = { prepack: "tool", prepare: "tool", postpack: "tool" };
+
+  test("of the package", async () => {
+    using dir = tempDir("pack-bin-path", {
+      "package.json": JSON.stringify({ name: "pack-bin-path", version: "1.0.0", scripts }),
+    });
+    writeBinCommand(String(dir), "tool", "tool of the package");
+
+    const { stdout, err, exitCode } = await runPack(String(dir));
+    expect(err).toBe("$ tool\n$ tool\n$ tool");
+    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill("tool of the package"));
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["of the member before the workspace root's", ["root", "member"], "member"],
+    ["of the workspace root, for a member", ["root"], "root"],
+  ] as const)("%s", async (_, has, runs) => {
+    using dir = tempDir("pack-bin-path-workspace", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["pkgs/*"] }),
+      "pkgs/member/package.json": JSON.stringify({ name: "member", version: "1.0.0", scripts }),
+    });
+    const dirs = { root: String(dir), member: join(dir, "pkgs", "member") };
+    for (const owner of has) writeBinCommand(dirs[owner], "tool", `tool of the ${owner}`);
+
+    const { stdout, err, exitCode } = await runPack(dirs.member, ["--dry-run"]);
+    expect(err).toBe("$ tool\n$ tool\n$ tool");
+    expect(stdout.match(/^tool of .*$/gm)).toEqual(Array(3).fill(`tool of the ${runs}`));
+    expect(exitCode).toBe(0);
+  });
+});
+
 test.concurrent("lifecycle script modifying version updates tarball filename (#17195)", async () => {
   const updateScript = `const fs = require("fs");
   const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
@@ -2385,8 +2468,8 @@ describe.concurrent("bundledDependencies", () => {
 
       packed 153B package.json
       bundled @scoped/dep1
-      bundled dep3
-      bundled dep2
+      bundled @scoped/dep3
+      bundled @scoped/dep2
 
       pack-resolve-scoped-6.6.6.tgz
 
@@ -2556,6 +2639,191 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
+  // A lockfile is only left out of the project's own root.
+  test.each(["x-node_modules-y", "@node_modules/x"])(
+    'the dependency of a bundled dependency named "%s" is packed whole',
+    async host => {
+      using dir = tempDir("pack-bundled-dep-name", {
+        "package.json": JSON.stringify({
+          name: "pack-bundled-dep-name",
+          version: "1.0.0",
+          bundledDependencies: [host],
+        }),
+        [`node_modules/${host}/package.json`]: JSON.stringify({
+          name: host,
+          version: "1.0.0",
+          dependencies: { dep: "1.0.0" },
+        }),
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "node_modules/dep/fixtures/yarn.lock": "# a fixture of dep\n",
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+
+      expect(tarballEntries(join(dir, "pack-bundled-dep-name-1.0.0.tgz")).sort()).toEqual(
+        [
+          "package/package.json",
+          `package/node_modules/${host}/package.json`,
+          "package/node_modules/dep/fixtures/yarn.lock",
+          "package/node_modules/dep/package.json",
+        ].sort(),
+      );
+    },
+  );
+
+  // The tarball's package.json keeps the field, so whoever installs the tarball does not install the package.
+  test.each([{ args: [] }, { args: ["--dry-run"] }])(
+    "a bundled dependency that is not installed is an error (args: $args)",
+    async ({ args }) => {
+      using dir = tempDir("pack-bundled-missing", {
+        "package.json": JSON.stringify({
+          name: "pack-bundled-missing",
+          version: "1.0.0",
+          dependencies: { dep1: "1.0.0", dep2: "1.0.0" },
+          bundledDependencies: ["dep1", "dep2"],
+        }),
+        "node_modules/dep1/package.json": JSON.stringify({ name: "dep1", version: "1.0.0" }),
+      });
+
+      const { out, err, exitCode } = await runPack(dir, args);
+      expect(err).toBe('error: bundled dependency "dep2" is not installed');
+      expect(out).toBe("bun pack <version> (<revision>)");
+      expect(exitCode).toBe(1);
+      expect(await sortedNames(dir)).toEqual(["node_modules", "package.json"]);
+    },
+  );
+
+  test("a workspace bundles what is in the node_modules of the workspace root", async () => {
+    using dir = tempDir("pack-bundled-hoisted-workspace", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { x: "1.0.0", "@s/x": "1.0.0" },
+        bundledDependencies: ["x", "@s/x"],
+      }),
+      "node_modules/x/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { y: "^1.0.0" } }),
+      "node_modules/@s/x/package.json": JSON.stringify({ name: "@s/x", version: "1.0.0" }),
+      "node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0", dependencies: { z: "^1.0.0" } }),
+      "node_modules/z/package.json": JSON.stringify({ name: "z", version: "1.0.0" }),
+      "node_modules/not-bundled/package.json": JSON.stringify({ name: "not-bundled", version: "1.0.0" }),
+    });
+    const lib = join(dir, "packages", "lib");
+
+    const { out, err, exitCode } = await runPack(lib);
+    expect(err).toBe("");
+    expect(out.split("\n").filter(line => line.startsWith("bundled "))).toEqual([
+      "bundled x",
+      "bundled @s/x",
+      "bundled y",
+      "bundled z",
+    ]);
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(lib, "lib-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/@s/x/package.json",
+      "package/node_modules/x/package.json",
+      "package/node_modules/y/package.json",
+      "package/node_modules/z/package.json",
+    ]);
+  });
+
+  // What the isolated linker lays: node_modules holds links into a store, where the dependencies of a package are
+  // links next to it. `y` goes next to `x`, unless the packed package has a `y` of its own that it does not bundle.
+  test.skipIf(isWindows).each([
+    { name: "x", own: {}, y: "node_modules/y" },
+    { name: "@s/x", own: {}, y: "node_modules/y" },
+    { name: "x", own: { y: "2.0.0" }, y: "node_modules/x/node_modules/y" },
+    { name: "@s/x", own: { y: "2.0.0" }, y: "node_modules/@s/x/node_modules/y" },
+  ])("$name is a link into a store, and its dependency goes to $y", async ({ name, own, y }) => {
+    const entry = `node_modules/.bun/${name.replace("/", "+")}@1.0.0/node_modules`;
+    using dir = tempDir("pack-bundled-store", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-store",
+        version: "1.0.0",
+        dependencies: { [name]: "1.0.0" },
+        devDependencies: own,
+        bundledDependencies: [name],
+      }),
+      "node_modules/@s": {},
+      [`${entry}/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", dependencies: { y: "^1.0.0" } }),
+      [`${entry}/${name}/index.js`]: indexJs,
+      "node_modules/.bun/y@1.0.0/node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      "node_modules/.bun/y@2.0.0/node_modules/y/package.json": JSON.stringify({ name: "y", version: "2.0.0" }),
+    });
+    await symlink(join(dir, entry, name), join(dir, "node_modules", name));
+    await symlink(join(dir, "node_modules/.bun/y@1.0.0/node_modules/y"), join(dir, entry, "y"));
+    if ("y" in own)
+      await symlink(join(dir, "node_modules/.bun/y@2.0.0/node_modules/y"), join(dir, "node_modules", "y"));
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bundled-store-1.0.0.tgz"));
+    expect(entryNames(tarball).sort()).toEqual(
+      [
+        "package/package.json",
+        `package/node_modules/${name}/index.js`,
+        `package/node_modules/${name}/package.json`,
+        `package/${y}/package.json`,
+      ].sort(),
+    );
+    const packed = tarball.entries.find(entry => entry.pathname === `package/${y}/package.json`);
+    expect(JSON.parse(packed!.contents)).toEqual({ name: "y", version: "1.0.0" });
+  });
+
+  // Like npm: a link to a folder that is no installed copy is packed by that folder's own rules.
+  test.skipIf(isWindows)("a bundled workspace is packed with its own files and .npmignore", async () => {
+    using dir = tempDir("pack-bundled-sibling", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { util: "workspace:*", other: "workspace:*" },
+        bundledDependencies: ["util", "other"],
+      }),
+      "packages/util/package.json": JSON.stringify({
+        name: "util",
+        version: "1.0.0",
+        files: ["dist"],
+        // `lib` is not packed into itself.
+        dependencies: { lib: "workspace:*", y: "1.0.0" },
+      }),
+      "packages/util/dist/index.js": indexJs,
+      "packages/util/src/index.ts": indexJs,
+      "packages/util/node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      "packages/other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+      "packages/other/index.js": indexJs,
+      "packages/other/test/index.js": indexJs,
+      "packages/other/.npmignore": "test\n",
+      "node_modules": {},
+    });
+    for (const name of ["lib", "util", "other"]) {
+      await symlink(join("..", "packages", name), join(dir, "node_modules", name));
+    }
+    const lib = join(dir, "packages", "lib");
+
+    const { err, exitCode } = await runPack(lib);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(lib, "lib-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual([
+      "package/package.json",
+      "package/node_modules/other/index.js",
+      "package/node_modules/other/package.json",
+      "package/node_modules/util/dist/index.js",
+      "package/node_modules/util/node_modules/y/package.json",
+      "package/node_modules/util/package.json",
+    ]);
+    // No other package manager reads `workspace:`.
+    expect(JSON.parse(tarball.entries.at(-1)!.contents).dependencies).toEqual({ lib: "1.0.0", y: "1.0.0" });
+  });
+
   test("a dependency of a bundled dependency that is not there is left out", async () => {
     using dir = tempDir("pack-bundled-dep-absent", {
       "package.json": JSON.stringify({
@@ -2609,17 +2877,16 @@ describe.concurrent("bundledDependencies", () => {
     await symlink("../../dep2", join(dir, "node_modules", "dep1", "node_modules", "dep2"));
     await symlink("../../dep1", join(dir, "node_modules", "dep2", "node_modules", "dep1"));
 
-    // Each level goes through one more link. The lookup ends where the OS refuses the path (ELOOP).
+    // From where `dep2` is in the tarball, `dep1` is found further up: it is not packed again.
     const { err, exitCode } = await runPack(dir);
     expect(err).toBe("");
     expect(exitCode).toBe(0);
 
-    expect(tarballEntries(join(dir, "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual(
-      expect.arrayContaining([
-        "package/node_modules/dep1/package.json",
-        "package/node_modules/dep1/node_modules/dep2/package.json",
-      ]),
-    );
+    expect(tarballEntries(join(dir, "pack-bundled-dep-cycle-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/node_modules/dep2/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
   });
 
   // What `bun install` makes of a workspace that is a dependency.
@@ -2646,8 +2913,8 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  // The lookup keeps every directory it found open. Before, the ones past the limit were left out: `Bundled deps: 190`, exit 0.
-  test.skipIf(isWindows)("running out of file descriptors is an error", async () => {
+  // The lookup used to keep every directory it found open.
+  test.skipIf(isWindows)("more dependencies than file descriptors", async () => {
     const names = Array.from({ length: 299 }, (_, i) => `d${i}`);
     using dir = tempDir("pack-bundled-dep-emfile", {
       "package.json": JSON.stringify({
@@ -2676,10 +2943,11 @@ describe.concurrent("bundledDependencies", () => {
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(err).toMatch(/^EMFILE: failed to open directory "node_modules\/dep1\/node_modules\/d\d+" for packing\n$/);
-    expect(await sortedNames(dir)).toEqual(["node_modules", "package.json"]);
-    expect(exitCode).toBe(1);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(out).toContain("Bundled deps: 300\n");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-bundled-dep-emfile-1.0.0.tgz"))).toHaveLength(301);
   });
 });
 
@@ -4263,7 +4531,7 @@ describe.concurrent.skipIf(isWindows)("an entry that is there and does not open"
     {
       what: "the scope of a bundled dependency",
       locked: "node_modules/@scope",
-      failsOn: "node_modules/@scope",
+      failsOn: "node_modules/@scope/dep",
       tree: {
         "package.json": manifest("pack-locked", { bundledDependencies: ["@scope/dep", "plain"] }),
         "node_modules/@scope/dep/package.json": manifest("@scope/dep"),
@@ -4285,7 +4553,7 @@ describe.concurrent.skipIf(isWindows)("an entry that is there and does not open"
     using dir = tempDir("pack-locked-dep", tree);
 
     const { out, err, exitCode } = await runWithout(dir, locked, ["pm", "pack"]);
-    expect(err).toBe(`EACCES: failed to open directory "${failsOn}" for packing`);
+    expect(err).toBe(`EACCES: failed to open directory "<dir>/${failsOn}" for packing`);
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await tarballs(dir)).toEqual([]);
@@ -4711,18 +4979,6 @@ long syscall(long nr, ...) {
       dir: "bin",
     },
     {
-      walk: "bundledDependencies, node_modules",
-      packageJson: { bundledDependencies: ["dep"] },
-      files: { "node_modules/dep/package.json": "{}" },
-      dir: "node_modules",
-    },
-    {
-      walk: "bundledDependencies, a scope directory",
-      packageJson: { bundledDependencies: ["@scope/dep"] },
-      files: { "node_modules/@scope/dep/package.json": "{}" },
-      dir: "node_modules/@scope",
-    },
-    {
       walk: "bundledDependencies, the dependency",
       packageJson: { bundledDependencies: ["dep"] },
       files: { "node_modules/dep/package.json": "{}" },
@@ -4827,6 +5083,27 @@ long syscall(long nr, ...) {
     expect(tarballEntries(join(dir, "pack-read-healthy-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/lib/index.js",
+    ]);
+  });
+
+  // A bundled dependency is opened by its path. pack used to list these directories to find it, and their first read would fail.
+  test.concurrent.each([
+    { name: "dep", listed: "node_modules" },
+    { name: "@scope/dep", listed: "node_modules/@scope" },
+  ])("bun pm pack: bundledDependencies does not read $listed", async ({ name, listed }) => {
+    using dir = tempDir("pack-read-not-listed", {
+      "package.json": JSON.stringify({ name: "pack-read-not-listed", version: "1.0.0", bundledDependencies: [name] }),
+      [`node_modules/${name}/package.json`]: "{}",
+    });
+    const fault = failDirRead({ dir: join(dir, listed), read: 1 });
+
+    const { err, exitCode } = await bun(["pm", "pack"], dir, fault.env);
+    expect(fault.reads()).toEqual({ ok: [], failed: [] });
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-read-not-listed-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      `package/node_modules/${name}/package.json`,
     ]);
   });
 

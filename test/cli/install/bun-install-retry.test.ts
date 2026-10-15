@@ -726,6 +726,66 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(1);
   });
 
+  // What `bun init` writes. Peers are resolved after everything else, so offline they doubled the wait.
+  it("does not ask for the project's peers once a dependency has failed", async () => {
+    const requested: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        requested.push(new URL(request.url).pathname);
+        return busy(503);
+      },
+    });
+    using dir = tempDir("install-retry-peers", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        devDependencies: { bar: "latest" },
+        peerDependencies: { baz: "^1" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: server.url.href } }),
+    });
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.startsWith("error:"))).toEqual([
+      "error: GET " + server.url.href + "bar - 503",
+      "error: bar@latest failed to resolve",
+    ]);
+    expect(requested).toEqual(Array(6).fill("/bar"));
+    expect(exitCode).toBe(1);
+  });
+
+  // yarn.lock and pnpm-lock.yaml do not record `bin`, so a migration asks the registry for it and goes on without an answer.
+  describe.each(["yarn.lock", "pnpm-lock.yaml"] as const)("the manifests a migrated %s is completed from", name => {
+    const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const lockfile = {
+      "yarn.lock": `# yarn lockfile v1\n\n\nbar@0.0.2:\n  version "0.0.2"\n  integrity ${integrity}\n`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      bar:\n        specifier: 0.0.2\n        version: 0.0.2\n\npackages:\n\n  bar@0.0.2:\n    resolution: {integrity: ${integrity}}\n\nsnapshots:\n\n  bar@0.0.2: {}\n`,
+    }[name];
+
+    it("are asked for once when the registry cannot be reached", async () => {
+      const closed = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+      await closed.stop(true);
+      using dir = project(closed.url.href);
+      await writeFile(join(String(dir), name), lockfile);
+      const { lines, exitCode } = await install(String(dir), {}, "--lockfile-only", "--verbose");
+      expect(lines.filter(line => line.includes("downloading package manifest"))).toEqual([
+        "warn: ConnectionRefused downloading package manifest bar",
+      ]);
+      expect(await file(join(String(dir), "bun.lock")).text()).toContain(`"bar": ["bar@0.0.2", `);
+      expect(exitCode).toBe(0);
+    });
+
+    it("are asked for again when the registry is busy", async () => {
+      using registry = flakyRegistry((_, hit) => (hit <= 2 ? busy(503) : undefined));
+      using dir = project(registry.url);
+      await writeFile(join(String(dir), name), lockfile);
+      const { err, exitCode } = await install(String(dir), {}, "--lockfile-only");
+      expect(err).not.toContain("warn:");
+      expect(registry.at.manifest.length).toBe(3);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("request concurrency", () => {
     /**
      * `bar` needs 8 packages, so the install wants their 8 manifests at once. The

@@ -51,7 +51,7 @@ const SKIP_FILES: &[&OSPathSlice] = &[
     bun_core::w!(".git"),
 ];
 
-const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
+const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".git/"];
 
 /// Runs one `bun-create` task like a package.json script. A non-zero exit ends the process.
 fn exec_task(
@@ -128,6 +128,7 @@ impl Drop for RefreshOnDrop {
 
 struct CreateOptions {
     skip_install: bool,
+    ignore_scripts: bool,
     overwrite: bool,
     skip_git: bool,
     skip_package_json: bool,
@@ -142,7 +143,8 @@ impl CreateOptions {
             clap::param!("-h, --help                     Print this menu"),
             clap::param!("--force                        Overwrite existing files"),
             clap::param!("--no-install                   Don't install node_modules"),
-            clap::param!("--no-git                       Don't create a git repository"),
+            clap::param!("--ignore-scripts               Don't run tasks or lifecycle scripts"),
+            clap::param!("--no-git                      Don't create a git repository"),
             clap::param!("--verbose                      Too many logs"),
             clap::param!("--no-package-json              Disable package.json transforms"),
             clap::param!("--open                         On finish, start bun & open in-browser"),
@@ -175,6 +177,7 @@ impl CreateOptions {
             verbose: args.flag(b"--verbose") || Output::is_verbose(),
             open: args.flag(b"--open"),
             skip_install: args.flag(b"--no-install"),
+            ignore_scripts: args.flag(b"--ignore-scripts"),
             skip_git: args.flag(b"--no-git"),
             overwrite: args.flag(b"--force"),
         })
@@ -399,14 +402,17 @@ impl CreateCommand {
         let mut package_json_file: Option<bun_sys::File> = None;
 
         // What the destination already holds is the user's, not the template's.
-        let (had_gitignore, had_npmignore, had_git) = match bun_sys::Dir::open(destination) {
-            Ok(dir) => (
-                bun_sys::exists_at(&dir, bun_core::zstr!("gitignore")),
-                bun_sys::exists_at(&dir, bun_core::zstr!(".npmignore")),
-                bun_sys::exists_at_type(dir.fd(), bun_core::zstr!(".git")).is_ok(),
-            ),
-            Err(_) => (false, false, false),
-        };
+        let (had_gitignore, had_dot_gitignore, had_npmignore, had_git) =
+            match bun_sys::Dir::open(destination) {
+                Ok(dir) => (
+                    bun_sys::exists_at(&dir, bun_core::zstr!("gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".gitignore")),
+                    bun_sys::exists_at(&dir, bun_core::zstr!(".npmignore")),
+                    bun_sys::exists_at_type(dir.fd(), bun_core::zstr!(".git")).is_ok(),
+                ),
+                Err(_) => (false, false, false, false),
+            };
+        let mut template_has_dot_gitignore = false;
 
         if example_tag != ExampleTag::LocalFolder && create_options.verbose {
             pretty_errorln!("Downloading as {}\n", <&'static str>::from(example_tag),);
@@ -547,6 +553,7 @@ impl CreateCommand {
                         &mut archive_context,
                         &mut OverwriteListAppender { buf: Vec::new() },
                         &mut |path: &[u8]| {
+                            template_has_dot_gitignore |= path == b".gitignore";
                             leaves_destination(destination, path, create_options.overwrite)
                         },
                     )?;
@@ -693,6 +700,8 @@ impl CreateCommand {
                     &mut template_path_buf,
                 )?;
 
+                template_has_dot_gitignore =
+                    bun_sys::exists_at(&template_dir, bun_core::zstr!(".gitignore"));
                 if bun_sys::exists_at(&template_dir, bun_core::zstr!("package.json")) {
                     package_json_file = destination_dir
                         .open_file(b"package.json", bun_sys::O::RDWR, 0)
@@ -781,20 +790,30 @@ impl CreateCommand {
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            if !had_gitignore
-                && let Err(err) = bun_sys::renameat(
+            if !had_gitignore {
+                // The template's own .gitignore stays; the user's stays without --force.
+                let replaces_the_users =
+                    create_options.overwrite && had_dot_gitignore && !template_has_dot_gitignore;
+                if !replaces_the_users
+                    && matches!(
+                        bun_sys::exists_at_type(parent_dir.fd(), bun_core::zstr!(".gitignore")),
+                        Ok(bun_sys::ExistsAtType::File)
+                    )
+                {
+                    let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+                } else if let Err(err) = bun_sys::renameat(
                     &parent_dir,
                     bun_core::zstr!("gitignore"),
                     &parent_dir,
                     bun_core::zstr!(".gitignore"),
-                )
-                && err.get_errno() != bun_sys::E::ENOENT
-            {
-                pretty_errorln!(
-                    "<r><red>{}<r>: renaming gitignore to .gitignore",
-                    bstr::BStr::new(err.name()),
-                );
-                Global::exit(1);
+                ) && err.get_errno() != bun_sys::E::ENOENT
+                {
+                    pretty_errorln!(
+                        "<r><red>{}<r>: renaming gitignore to .gitignore",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Global::exit(1);
+                }
             }
             if !had_npmignore {
                 let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
@@ -1020,8 +1039,18 @@ impl CreateCommand {
             bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
+        // What turns off the scripts of a `bun install` here also holds for the tasks and the new project.
+        let ignore_scripts = create_options.ignore_scripts
+            || (!create_options.skip_install
+                && bun_install::package_manager::config_ignores_scripts(
+                    ctx,
+                    env_loader,
+                    filesystem.top_level_dir,
+                )?);
+
         // `--no-install` skips the tasks too. No dependencies skips only `bun install`.
         let run_tasks = !create_options.skip_install
+            && !ignore_scripts
             && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
@@ -1052,9 +1081,16 @@ impl CreateCommand {
 
         if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = &[bun_exe, b"install"];
+            let install_args: &[&[u8]] = if ignore_scripts {
+                &[bun_exe, b"install", b"--ignore-scripts"]
+            } else {
+                &[bun_exe, b"install"]
+            };
             Output::flush();
             bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
+            if ignore_scripts {
+                bun_core::pretty!(" --ignore-scripts");
+            }
             bun_core::pretty!("<r>\n");
             Output::flush();
 

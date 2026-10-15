@@ -631,6 +631,7 @@ describe.concurrent("local template into an existing directory", () => {
 
     const message = err.slice(err.indexOf("error:")).replaceAll("\\", "/");
     expect(message.split("\n").filter(Boolean).sort()).toEqual([
+      "  .gitignore",
       "  index.ts",
       "  sub/nested.ts",
       "To overwrite them, use --force",
@@ -662,17 +663,16 @@ describe.concurrent("local template into an existing directory", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("replaces README.md and .gitignore like a remote template", async () => {
+  it("replaces README.md like a remote template", async () => {
     using dir = tempDir("create-local-never-conflict", {
       "bun-create/tpl/README.md": "template",
-      "bun-create/tpl/.gitignore": "template",
       "proj/README.md": "mine",
       "proj/.gitignore": "mine",
     });
     const { err, exitCode } = await createInProj(String(dir));
 
     expect(err).not.toContain("error");
-    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template", "README.md": "template" });
+    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "mine", "README.md": "template" });
     expect(exitCode).toBe(0);
   });
 
@@ -686,18 +686,6 @@ describe.concurrent("local template into an existing directory", () => {
 
     expect(err).not.toContain("error");
     expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template", "keep.txt": "mine" });
-    expect(exitCode).toBe(0);
-  });
-
-  it("replaces .gitignore with the template's gitignore, as with its .gitignore", async () => {
-    using dir = tempDir("create-local-gitignore-replace", {
-      "bun-create/tpl/gitignore": "template",
-      "proj/.gitignore": "mine",
-    });
-    const { err, exitCode } = await createInProj(String(dir));
-
-    expect(err).not.toContain("error");
-    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template" });
     expect(exitCode).toBe(0);
   });
 
@@ -1006,6 +994,66 @@ describe.concurrent("GitHub template", () => {
   });
 });
 
+describe.concurrent.each([
+  ["local", "."],
+  ["local", "proj"],
+  ["GitHub", "."],
+  ["GitHub", "proj"],
+])("the .gitignore after `bun create <%s template> %s`", (kind, dest) => {
+  /** `files` is what `proj` holds afterwards. With `mine`, it had a .gitignore of its own; else "proj" is new and "." is empty. */
+  async function createInProj(ignores: Record<string, string>, mine: boolean, ...args: string[]) {
+    const template = { "tpl.txt": "template", ...ignores };
+    using github = await serveGithub(template);
+    using dir = tempDir("create-gitignore", {
+      "bun-create/tpl": template,
+      ...(mine ? { "proj/.gitignore": "mine" } : dest === "." ? { "proj": {} } : {}),
+    });
+    const result = await create(
+      join(String(dir), dest === "." ? "proj" : "."),
+      [kind === "local" ? "tpl" : "dylan-conway/create-test", dest, "--no-git", ...args],
+      { ...github.env, BUN_CREATE_DIR: join(String(dir), "bun-create") },
+    );
+    return { ...result, files: await tree(join(String(dir), "proj")) };
+  }
+  const dot = { ".gitignore": "dot" };
+  const plain = { "gitignore": "plain" };
+
+  const rows: [string, Record<string, string>, boolean, string[], string][] = [
+    ["is the template's .gitignore, not its gitignore", { ...dot, ...plain }, false, [], "dot"],
+    ["is the template's .gitignore, not its gitignore, with --force", { ...dot, ...plain }, false, ["--force"], "dot"],
+    ["stays the destination's when the template has a gitignore", plain, true, [], "mine"],
+    ["stays the destination's with --force when the template has neither", {}, true, ["--force"], "mine"],
+    ["is replaced by the template's gitignore with --force", plain, true, ["--force"], "plain"],
+    ["is replaced by the template's .gitignore with --force", dot, true, ["--force"], "dot"],
+    [
+      "is replaced by the template's .gitignore, not its gitignore, with --force",
+      { ...dot, ...plain },
+      true,
+      ["--force"],
+      "dot",
+    ],
+  ];
+  it.each(rows)("%s", async (_, ignores, mine, args, expected) => {
+    const { err, exitCode, files } = await createInProj(ignores, mine, ...args);
+
+    expect(err).not.toContain("error");
+    expect(files).toEqual({ ".gitignore": expected, "tpl.txt": "template" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("is in the way of the template's .gitignore", async () => {
+    const { err, exitCode, files } = await createInProj(dot, true);
+
+    expect(err.slice(err.indexOf("error:")).split("\n").filter(Boolean)).toEqual([
+      "error: The directory proj/ contains files that could conflict:",
+      "  .gitignore",
+      "To overwrite them, use --force",
+    ]);
+    expect(files).toEqual({ ".gitignore": "mine" });
+    expect(exitCode).toBe(1);
+  });
+});
+
 // Both kinds of template were written through a link in the destination, to wherever it leads.
 describe.concurrent.each(["local", "GitHub"])("a link in the destination of a %s template", kind => {
   const template = {
@@ -1147,9 +1195,16 @@ describe.concurrent("bun-create tasks", () => {
   };
 
   /** Creates `dest` from a template with this package.json and these files; returns what is in `dest` afterwards. */
-  async function createFrom(packageJson: object, files: Record<string, string> = {}, args: string[] = ["--no-git"]) {
+  async function createFrom(
+    packageJson: object,
+    files: Record<string, string> = {},
+    args: string[] = ["--no-git"],
+    /** Files in the directory that `bun create` runs in, and variables of its environment. */
+    where: { files?: Record<string, string>; env?: Record<string, string> } = {},
+  ) {
     using dir = tempDir("create-tasks", {
       ...stubs,
+      ...where.files,
       "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0", ...packageJson }),
       ...Object.fromEntries(Object.entries(files).map(([file, contents]) => [`bun-create/tmpl/${file}`, contents])),
     });
@@ -1160,6 +1215,7 @@ describe.concurrent("bun-create tasks", () => {
     const result = await create(root, ["tmpl", "dest", ...args], {
       PATH: join(root, "bin") + delimiter + process.env.PATH,
       ...gitIdentity,
+      ...where.env,
     });
     const dest = join(root, "dest");
     const written = await tree(dest);
@@ -1238,6 +1294,30 @@ describe.concurrent("bun-create tasks", () => {
     );
 
     expect(err).not.toContain("$ echo");
+    expect(written).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+
+  it.each<[string, { args?: string[]; files?: Record<string, string>; env?: Record<string, string> }]>([
+    ["--ignore-scripts", { args: ["--ignore-scripts"] }],
+    ["ignoreScripts in bunfig.toml", { files: { "bunfig.toml": "[install]\nignoreScripts = true\n" } }],
+    ["ignore-scripts in .npmrc", { files: { ".npmrc": "ignore-scripts=true\n" } }],
+    ["NPM_CONFIG_IGNORE_SCRIPTS", { env: { NPM_CONFIG_IGNORE_SCRIPTS: "true" } }],
+  ])("are all skipped by %s, with the scripts of the install", async (_, { args = [], ...where }) => {
+    const { out, err, exitCode, written } = await createFrom(
+      {
+        ...localdep,
+        scripts: { postinstall: "echo script > SCRIPT" },
+        "bun-create": { preinstall: "echo pre > PRE", postinstall: "echo post > POST" },
+      },
+      localdepFiles,
+      ["--no-git", ...args],
+      where,
+    );
+
+    expect(err).not.toContain("$ echo");
+    expect(out).toContain("$ bun install --ignore-scripts\n");
+    expect(out).toContain("1 package installed");
     expect(written).toEqual({});
     expect(exitCode).toBe(0);
   });

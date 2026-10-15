@@ -121,7 +121,6 @@ fn fmt_size(bytes: usize) -> bun_fmt::SizeFormatter {
 #[derive(Clone)]
 pub(crate) struct BundledDep {
     pub name: Box<[u8]>,
-    pub(crate) was_packed: bool,
 }
 
 impl PackCommand {
@@ -477,7 +476,7 @@ fn print_ignored(
     Output::flush();
 }
 
-/// The path names nothing. ELOOP is here because it ends `add_bundled_dep` on dependencies that link to each other.
+/// The path names nothing. ELOOP: a link that leads back to itself.
 fn is_absent(errno: bun_sys::E) -> bool {
     matches!(
         errno,
@@ -565,171 +564,234 @@ fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocErr
     ))
 }
 
+/// A package in one of the tarball's `node_modules`.
+struct BundledPackage {
+    /// `node_modules/a`, or `node_modules/a/node_modules/b` where `a` must not find the `b` further up.
+    subpath: Box<[u8]>,
+    /// Where the package's name starts in `subpath`.
+    name_start: usize,
+    /// The folder it is read from, links resolved.
+    real_path: Box<[u8]>,
+    /// The bundled package whose `node_modules` it is in. `None`: that of the packed package.
+    parent: Option<usize>,
+}
+
+/// `path` in the tarball gets the bytes of the file `source`.
+struct BundledFile {
+    path: ZBox,
+    source: ZBox,
+    /// In place of its bytes: the package.json of a workspace, edited as for its own tarball.
+    edited: Option<Box<[u8]>>,
+}
+
+#[derive(Default)]
+struct Bundle {
+    packages: Vec<BundledPackage>,
+    /// `BundledPackage::subpath` to its index in `packages`.
+    placed: StringHashMap<usize>,
+    /// Placed, and neither its files nor its dependencies are looked at yet.
+    pending: Vec<usize>,
+    files: Vec<BundledFile>,
+}
+
+impl Bundle {
+    fn subpath_in(&self, parent: Option<usize>, name: &[u8]) -> Vec<u8> {
+        match parent {
+            Some(parent) => [&*self.packages[parent].subpath, b"/node_modules/", name].concat(),
+            None => [b"node_modules/".as_slice(), name].concat(),
+        }
+    }
+
+    fn place(
+        &mut self,
+        parent: Option<usize>,
+        name: &[u8],
+        real_path: Box<[u8]>,
+    ) -> Result<usize, AllocError> {
+        let subpath = self.subpath_in(parent, name);
+        let index = self.packages.len();
+        self.placed.put(&subpath, index)?;
+        self.packages.push(BundledPackage {
+            name_start: subpath.len() - name.len(),
+            subpath: subpath.into_boxed_slice(),
+            real_path,
+            parent,
+        });
+        Ok(index)
+    }
+
+    /// What `require(name)` in the package `from` finds once the tarball is unpacked.
+    fn visible_from(&self, from: usize, name: &[u8]) -> Option<&BundledPackage> {
+        let mut level = Some(from);
+        loop {
+            if let Some(&index) = self.placed.get(self.subpath_in(level, name).as_slice()) {
+                return Some(&self.packages[index]);
+            }
+            level = self.packages[level?].parent;
+        }
+    }
+}
+
+/// What `require(name)` finds from the folder `from`: the closest `node_modules/<name>`, links resolved.
+/// The flag: it is in the `node_modules` of `from` itself.
+fn resolve_installed(from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
+    let mut spill: Vec<u8> = Vec::new();
+    let mut real_path_buf = bun_paths::path_buffer_pool::get();
+    let mut next = Some(from);
+    while let Some(dir) = next {
+        next = path::dirname(dir);
+        if path::basename(dir) == b"node_modules" {
+            continue;
+        }
+        let parts: [&[u8]; 3] = [dir, b"node_modules", name];
+        let candidate =
+            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        let Some(found) = open_dir_if_present(&Dir::cwd(), candidate) else {
+            continue;
+        };
+        let real_path = found
+            .get_fd_path(&mut real_path_buf)
+            .unwrap_or_else(|err| fail_open_dir(err.into(), candidate.as_bytes()));
+        return Some((Box::from(&*real_path), dir.len() == from.len()));
+    }
+    None
+}
+
+/// The files of the bundled dependencies and of everything they depend on, in the order of their paths in the tarball.
 fn iterate_bundled_deps(
     bundled_deps: &mut Vec<BundledDep>,
     stats: &mut Stats,
     log: &mut bun_ast::Log,
+    workspace_manifests: Option<&WorkspaceManifests>,
     root_dir: &Dir,
     log_level: LogLevel,
-) -> Result<PackQueue, AllocError> {
-    let mut bundled_pack_queue = PackQueue::default();
+) -> Result<Vec<BundledFile>, AllocError> {
+    let mut bundle = Bundle::default();
     if bundled_deps.is_empty() {
-        return Ok(bundled_pack_queue);
+        return Ok(bundle.files);
     }
 
-    let dir: Dir = match root_dir
-        .open_dir(b"node_modules", ITERABLE)
-        .map_err(crate::Error::from)
-    {
-        Ok(d) => d,
-        Err(crate::Error::Sys(
-            bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT,
-        )) => return Ok(bundled_pack_queue),
+    let mut root_path_buf = bun_paths::path_buffer_pool::get();
+    let root_path: &[u8] = root_dir
+        .get_fd_path(&mut root_path_buf)
+        .unwrap_or_else(|err| fail_open_dir(err.into(), b"."));
+
+    // All of these first: what one of them depends on must not take the place of another.
+    for dep in bundled_deps.iter() {
+        let found = bun_install::package_installer::alias_is_safe_install_target(&dep.name)
+            .then(|| resolve_installed(root_path, &dep.name))
+            .flatten();
+        // The tarball's package.json tells whoever installs it that the package is inside.
+        let Some((real_path, _)) = found else {
+            Output::err_generic(
+                "bundled dependency \"{}\" is not installed",
+                format_args!("{}", bstr::BStr::new(&dep.name)),
+            );
+            Global::crash();
+        };
+        let subpath = bundle.subpath_in(None, &dep.name);
+        if !bundle.placed.contains_key(subpath.as_slice()) {
+            bundle.place(None, &dep.name, real_path)?;
+        }
+    }
+
+    let mut add = |bundle: &mut Bundle, index: usize| {
+        stats.bundled_deps += 1;
+        add_bundled_dep(
+            bundle,
+            index,
+            log,
+            workspace_manifests,
+            root_path,
+            log_level,
+        )
+    };
+    for index in 0..bundle.packages.len() {
+        add(&mut bundle, index)?;
+    }
+    while let Some(index) = bundle.pending.pop() {
+        let package = &bundle.packages[index];
+        bundled_deps.push(BundledDep {
+            name: Box::from(&package.subpath[package.name_start..]),
+        });
+        add(&mut bundle, index)?;
+    }
+
+    bun_collections::index_sort::sort_slice_by(&mut bundle.files, |a, b| {
+        strings::order(a.path.as_bytes(), b.path.as_bytes())
+    });
+    Ok(bundle.files)
+}
+
+/// Places the dependencies of the package `index`, and queues its files.
+fn add_bundled_dep(
+    bundle: &mut Bundle,
+    index: usize,
+    log: &mut bun_ast::Log,
+    manifests: Option<&WorkspaceManifests>,
+    root_path: &[u8],
+    log_level: LogLevel,
+) -> Result<(), AllocError> {
+    let subpath = bundle.packages[index].subpath.clone();
+    let real_path = bundle.packages[index].real_path.clone();
+    let dir = (Dir::cwd().open_dir(&real_path, ITERABLE))
+        .unwrap_or_else(|err| fail_open_dir(err.into(), &real_path));
+
+    let source = match File::read_from(dir.fd, b"package.json") {
+        Ok(bytes) => Some(bun_ast::Source::init_path_string_owned(
+            b"package.json",
+            bytes,
+        )),
+        Err(err) if is_absent(err.get_errno()) || err.get_errno() == bun_sys::E::EISDIR => None,
         Err(err) => {
             Output::err(
                 err,
-                "failed to open \"node_modules\" to pack bundled dependencies",
-                (),
+                "failed to read package.json: \"{}/package.json\"",
+                format_args!("{}", bstr::BStr::new(&subpath)),
             );
             Global::crash();
         }
     };
+    let json = (source.as_ref())
+        .and_then(|source| JSON::parse_package_json_utf8(source, log, pack_bump()).ok());
 
-    // A set of bundled dependency locations
-    // - node_modules/is-even
-    // - node_modules/is-even/node_modules/is-odd
-    // - node_modules/is-odd
-    // - ...
-    let mut dedupe: StringHashMap<()> = StringHashMap::new();
+    if let (Some(source), Some(json)) = (&source, &json) {
+        find_dependencies_to_bundle(bundle, index, json, root_path)?;
 
-    let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
-
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-    while let Some(entry) = next_dir_entry(&mut iter, b"node_modules") {
-        if entry.kind != bun_sys::FileKind::Directory {
-            continue;
-        }
-
-        let entry_name = entry.name.slice_u8();
-
-        if strings::starts_with_char(entry_name, b'@') {
-            let scope_name = entry_name;
-            // A scope that no bundled dependency is in stays closed.
-            if !bundled_deps.iter().any(|dep| {
-                dep.name.len() > scope_name.len()
-                    && dep.name[scope_name.len()] == b'/'
-                    && dep.name.starts_with(scope_name)
-            }) {
-                continue;
-            }
-            let scope_subpath = entry_subpath(b"node_modules", scope_name)?;
-            let scope_dir = open_subdir(&dir, scope_name, &scope_subpath);
-
-            let mut scope_iter = DirIterator::iterate(Fd::from_std_dir(&scope_dir));
-            while let Some(scope_entry) = next_dir_entry(&mut scope_iter, scope_subpath.as_bytes())
-            {
-                let dep_name = entry_subpath(scope_name, scope_entry.name.slice_u8())?;
-
-                let Some(dep) = bundled_deps
-                    .iter_mut()
-                    .find(|dep| strings::eql_long(dep_name.as_bytes(), &dep.name, true))
-                else {
-                    continue;
-                };
-
-                let dep_subpath = entry_subpath(b"node_modules", dep_name.as_bytes())?;
-                // Not `open_subdir`: this loop has always followed a scoped dependency that is a link.
-                let Some(subdir) = open_dir_if_present(root_dir, &dep_subpath) else {
-                    continue;
-                };
-
-                let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
-                dep.was_packed = true;
-                if dedupe_entry.found_existing {
-                    // already got to it in `add_bundled_dep` below
-                    continue;
-                }
-
-                add_bundled_dep(
-                    stats,
-                    log,
-                    root_dir,
-                    DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
-                    &mut bundled_pack_queue,
-                    &mut dedupe,
-                    &mut additional_bundled_deps,
-                    log_level,
-                )?;
-            }
-        } else {
-            let dep_name = entry_name;
-            let Some(dep) = bundled_deps
-                .iter_mut()
-                .find(|dep| strings::eql_long(dep_name, &dep.name, true))
-            else {
-                continue;
+        // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball.
+        if !strings::contains(&real_path, path::NODE_MODULES_NEEDLE) {
+            let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
+                bundle.files.push(BundledFile {
+                    path: entry_subpath(&subpath, file)?,
+                    source: entry_subpath(&real_path, file)?,
+                    edited,
+                });
+                Ok(())
             };
-
-            let dep_subpath = entry_subpath(b"node_modules", dep_name)?;
-
-            let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
-            dep.was_packed = true;
-            if dedupe_entry.found_existing {
-                // already got to it in `add_bundled_dep` below
-                continue;
+            let edited = if needs_workspace_manifests(*json) {
+                let indentation = JSON::guess_indentation(&source.contents);
+                Some(edit_root_package_json(
+                    manifests,
+                    &real_path,
+                    *json,
+                    source,
+                    indentation,
+                )?)
+            } else {
+                None
+            };
+            add_file(b"package.json", edited)?;
+            let (published, _) = published_files(&dir, &real_path, json, pack_bump(), log_level)?;
+            for file in published.into_paths() {
+                add_file(file.as_bytes(), None)?;
             }
-
-            let subdir = open_subdir(&dir, dep_name, &dep_subpath);
-            add_bundled_dep(
-                stats,
-                log,
-                root_dir,
-                DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
-                &mut bundled_pack_queue,
-                &mut dedupe,
-                &mut additional_bundled_deps,
-                log_level,
-            )?;
+            return Ok(());
         }
     }
 
-    while let Some(bundled_dir_info) = additional_bundled_deps.pop() {
-        let dir_subpath = &bundled_dir_info.1;
-        let name_start = strings::last_index_of_char(dir_subpath, b'/').map_or(0, |i| i + 1);
-        bundled_deps.push(BundledDep {
-            name: Box::from(&dir_subpath[name_start..]),
-            was_packed: true,
-        });
-
-        add_bundled_dep(
-            stats,
-            log,
-            root_dir,
-            bundled_dir_info,
-            &mut bundled_pack_queue,
-            &mut dedupe,
-            &mut additional_bundled_deps,
-            log_level,
-        )?;
-    }
-
-    Ok(bundled_pack_queue)
-}
-
-fn add_bundled_dep(
-    stats: &mut Stats,
-    log: &mut bun_ast::Log,
-    root_dir: &Dir,
-    bundled_dir_info: DirInfo,
-    bundled_pack_queue: &mut PackQueue,
-    dedupe: &mut StringHashMap<()>,
-    additional_bundled_deps: &mut Vec<DirInfo>,
-    log_level: LogLevel,
-) -> Result<(), AllocError> {
-    stats.bundled_deps += 1;
-
-    let bundled_root_depth = bundled_dir_info.2;
-    let mut dirs = vec![bundled_dir_info];
+    // Any depth but 1, the project root's, means the same to `is_excluded`.
+    const PACKAGE_DEPTH: usize = 2;
+    let mut dirs = vec![DirInfo(dir, subpath.clone(), PACKAGE_DEPTH)];
 
     while let Some(DirInfo(dir, dir_subpath, dir_depth)) = dirs.pop() {
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
@@ -741,21 +803,8 @@ fn add_bundled_dep(
             let entry_name = entry.name.slice_u8();
             let entry_subpath_ = entry_subpath(&dir_subpath, entry_name)?;
 
-            if dir_depth == bundled_root_depth {
-                if entry_name == b"node_modules" {
-                    continue;
-                }
-                if entry_name == b"package.json" && entry.kind == bun_sys::FileKind::File {
-                    find_dependencies_to_bundle(
-                        log,
-                        root_dir,
-                        &dir,
-                        &dir_subpath,
-                        dir_depth,
-                        dedupe,
-                        additional_bundled_deps,
-                    )?;
-                }
+            if dir_depth == PACKAGE_DEPTH && entry_name == b"node_modules" {
+                continue;
             }
 
             if let Exclusion::Excluded(pattern, kind) =
@@ -766,9 +815,12 @@ fn add_bundled_dep(
             }
 
             if entry.kind == bun_sys::FileKind::File {
-                bundled_pack_queue.add(PackQueueItem {
+                let in_package = &entry_subpath_.as_bytes()[subpath.len() + 1..];
+                bundle.files.push(BundledFile {
+                    source: entry_subpath(&real_path, in_package)?,
                     path: entry_subpath_,
-                })?;
+                    edited: None,
+                });
             } else {
                 let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
                 dirs.push(DirInfo(
@@ -783,31 +835,14 @@ fn add_bundled_dep(
     Ok(())
 }
 
-/// Queues the closest `node_modules/<name>` of each dependency of the bundled package in `dir`.
+/// Places each dependency of the bundled package `index` where that package finds, in the unpacked
+/// tarball, the folder that it finds on disk. `json` is its package.json.
 fn find_dependencies_to_bundle(
-    log: &mut bun_ast::Log,
-    root_dir: &Dir,
-    dir: &Dir,
-    dir_subpath: &[u8],
-    dir_depth: usize,
-    dedupe: &mut StringHashMap<()>,
-    additional_bundled_deps: &mut Vec<DirInfo>,
+    bundle: &mut Bundle,
+    index: usize,
+    json: &Expr,
+    root_path: &[u8],
 ) -> Result<(), AllocError> {
-    let source = match File::read_from(dir.fd, b"package.json") {
-        Ok(bytes) => bun_ast::Source::init_path_string_owned(b"package.json", bytes),
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to read package.json: \"{}/package.json\"",
-                format_args!("{}", bstr::BStr::new(dir_subpath)),
-            );
-            Global::crash();
-        }
-    };
-    let Ok(json) = JSON::parse_package_json_utf8(&source, log, pack_bump()) else {
-        return Ok(());
-    };
-
     for dependency_group in [
         b"dependencies".as_slice(),
         b"optionalDependencies".as_slice(),
@@ -828,33 +863,27 @@ fn find_dependencies_to_bundle(
                 continue;
             }
 
-            let mut dep_subpath_buf = [dir_subpath, b"/node_modules/", dep_name, b"\0"].concat();
-            // `node_modules/is-even/node_modules/is-odd` first, then `node_modules/is-odd`
-            let mut remain_end = dir_subpath.len() + "/node_modules".len();
-            let mut dep_dir_depth: usize = dir_depth + 4;
-            while let Some(node_modules_start) =
-                strings::last_index_of(&dep_subpath_buf[..remain_end], b"node_modules")
-            {
-                dep_dir_depth -= 2;
-                remain_end = node_modules_start;
-                let name_start = node_modules_start + "node_modules/".len();
-                dep_subpath_buf[name_start - 1] = b'/';
-                dep_subpath_buf[name_start..][..dep_name.len()].copy_from_slice(dep_name);
-                dep_subpath_buf[name_start + dep_name.len()] = 0;
-                let dep_subpath = ZStr::from_buf(&dep_subpath_buf[..], name_start + dep_name.len());
-
-                let Some(dep_dir) = open_dir_if_present(root_dir, dep_subpath) else {
-                    continue;
-                };
-                if !dedupe.get_or_put(dep_subpath.as_bytes())?.found_existing {
-                    additional_bundled_deps.push(DirInfo(
-                        dep_dir,
-                        dep_subpath.as_bytes().into(),
-                        dep_dir_depth,
-                    ));
-                }
-                break;
+            let from = &bundle.packages[index].real_path;
+            let Some((real_path, is_nested)) = resolve_installed(from, dep_name) else {
+                continue;
+            };
+            // A workspace can depend on the package that bundles it.
+            if *real_path == *root_path {
+                continue;
             }
+
+            let other_at_the_top = || {
+                resolve_installed(root_path, dep_name).is_some_and(|(other, _)| other != real_path)
+            };
+            let parent = match bundle.visible_from(index, dep_name) {
+                Some(visible) if visible.real_path == real_path => continue,
+                Some(_) => Some(index),
+                // Nested as on disk. Or the packed package finds another one by this name, and has to still.
+                None if is_nested || other_at_the_top() => Some(index),
+                None => None,
+            };
+            let placed = bundle.place(parent, dep_name, real_path)?;
+            bundle.pending.push(placed);
         }
     }
 
@@ -980,7 +1009,6 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Option<Vec<BundledDep>>
         let dep = |name: &Expr| {
             Some(BundledDep {
                 name: name.as_string(pack_bump())?.into(),
-                was_packed: false,
             })
         };
         names.iter().map(dep).collect()
@@ -1472,7 +1500,7 @@ pub(crate) fn pack(
         ctx.manager
             .options
             .apply_publish_config(&json.root, bump, package_name)?;
-        Publish::PublishCommand::refuse_publish_config_provenance(&json.root);
+        Publish::PublishCommand::refuse_provenance(ctx.manager, &json.root);
         if ctx.manager.options.publish_config.access == Some(bun_install::Access::Restricted)
             && !is_scoped
         {
@@ -1567,16 +1595,30 @@ pub(crate) fn pack(
     if for_publish {
         package_version =
             published_version(package_version).ok_or(PackError::InvalidPackageVersion)?;
+        Publish::PublishCommand::refuse_tag(ctx.manager, package_version);
     }
 
-    let workspace_manifests =
-        needs_workspace_manifests(json.root).then(|| WorkspaceManifests::load(ctx.manager));
+    ctx.bundled_deps = get_bundled_deps(&json.root, "bundledDependencies")
+        .or_else(|| get_bundled_deps(&json.root, "bundleDependencies"))
+        .unwrap_or_default();
+
+    // A workspace that is bundled has such specs of its own.
+    let needs_manifests = !ctx.bundled_deps.is_empty() || needs_workspace_manifests(json.root);
+    let workspace_manifests = needs_manifests.then(|| WorkspaceManifests::load(ctx.manager));
     if workspace_manifests.is_some() {
         // Loading added the other workspaces' package.json files to the cache `json` points into.
         json = package_json_entry(ctx.manager, abs_package_json_path);
     }
-    let edited_package_json =
-        edit_root_package_json(workspace_manifests.as_ref(), abs_workspace_path, json)?;
+    // A copy: the edits add `Store` nodes, and the next workspace of `bun publish -r` reads the cached tree.
+    let root = json.root.deep_clone(bump);
+    let mut root = root.map_err(|_| PackError::OutOfMemory)?;
+    let edited_package_json = edit_root_package_json(
+        workspace_manifests.as_ref(),
+        abs_workspace_path,
+        root,
+        &json.source,
+        json.indentation,
+    )?;
 
     let root_dir: Dir = match Dir::cwd().open_dir(abs_workspace_path, ITERABLE) {
         Ok(d) => d,
@@ -1595,23 +1637,20 @@ pub(crate) fn pack(
         .then(|| Publish::PublishCommand::find_workspace_readme(abs_workspace_path))
         .flatten();
 
-    ctx.bundled_deps = get_bundled_deps(&json.root, "bundledDependencies")
-        .or_else(|| get_bundled_deps(&json.root, "bundleDependencies"))
-        .unwrap_or_default();
-
     let (mut pack_queue, bins) =
         published_files(&root_dir, abs_workspace_path, &json.root, bump, log_level)?;
 
-    let mut bundled_pack_queue = iterate_bundled_deps(
+    let bundled_files = iterate_bundled_deps(
         &mut ctx.bundled_deps,
         &mut ctx.stats,
         ctx.manager.log_mut(),
+        workspace_manifests.as_ref(),
         &root_dir,
         log_level,
     )?;
 
     // +1 for package.json
-    ctx.stats.total_files = pack_queue.count() + bundled_pack_queue.count() + 1;
+    ctx.stats.total_files = pack_queue.count() + bundled_files.len() + 1;
 
     let prints_bare_filename = ctx.manager.options.pack_destination.is_empty()
         && ctx.manager.options.pack_filename.is_empty();
@@ -1667,8 +1706,6 @@ pub(crate) fn pack(
         }));
     }
 
-    // Must outlive `archive`, whose close (also run by its Drop) writes into it.
-    let mut tarball_buffer = GrowingBuffer::init();
     let archive = WriteArchive::new();
 
     expect_archive_ok(
@@ -1733,6 +1770,32 @@ pub(crate) fn pack(
         let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
         Some(abs_tarball_dest)
     };
+    let tarball_file = abs_tarball_dest.map(|dest| (open_tarball(dest), dest));
+
+    let mut tarball_bytes: Vec<u8> = Vec::new();
+    let mut packed_size: usize = 0;
+    let mut sha1 = sha::SHA1::init();
+    let mut sha512 = sha::SHA512::init();
+    let mut write_tarball = |bytes: &[u8]| {
+        packed_size += bytes.len();
+        sha1.update(bytes);
+        sha512.update(bytes);
+        let Some((file, dest)) = &tarball_file else {
+            tarball_bytes.extend_from_slice(bytes);
+            return;
+        };
+        if let Err(err) = file.write_all(bytes) {
+            Output::err(
+                err,
+                "failed to write tarball \"{}\"",
+                format_args!("{}", bstr::BStr::new(dest.as_bytes())),
+            );
+            Global::crash();
+        }
+    };
+    let mut tarball_buffer = GrowingBuffer::forward_to(&mut write_tarball);
+    // Declared last, so dropped first: its close (also run by its Drop) writes into `tarball_buffer`.
+    let archive = archive;
 
     if archive_write_open2(
         &archive,
@@ -1806,6 +1869,7 @@ pub(crate) fn pack(
                 &archive,
                 entry,
                 &bins,
+                None,
             );
 
             if let Some(node) = node.as_mut() {
@@ -1813,9 +1877,9 @@ pub(crate) fn pack(
             }
         }
 
-        while let Some(item) = bundled_pack_queue.remove_or_null() {
+        for item in &bundled_files {
             let path = item.path.as_bytes();
-            let file = (root_dir.open_file(path, bun_sys::O::RDONLY, 0))
+            let file = (Dir::cwd().open_file(item.source.as_bytes(), bun_sys::O::RDONLY, 0))
                 .unwrap_or_else(|err| fail_file(err, "open", path));
             let stat = file
                 .stat()
@@ -1830,6 +1894,7 @@ pub(crate) fn pack(
                 &archive,
                 entry,
                 &bins,
+                item.edited.as_deref(),
             );
 
             if let Some(node) = node.as_mut() {
@@ -1844,7 +1909,7 @@ pub(crate) fn pack(
 
     ArchiveEntry::opaque_ref(entry).free();
 
-    // Flushes the compressor and the end-of-archive blocks into the buffer.
+    // Flushes the compressor and the end-of-archive blocks.
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             archive_write_failed(&archive);
@@ -1853,28 +1918,20 @@ pub(crate) fn pack(
     }
 
     drop(archive);
-    // Only fails after a write into the buffer failed, which crashed above.
-    let tarball_bytes = tarball_buffer.to_owned_slice()?;
 
     let mut shasum: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
-    let mut sha1 = sha::SHA1::init();
-    sha1.update(&tarball_bytes);
     sha1.r#final(&mut shasum);
 
     let mut integrity: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
-    let mut sha512 = sha::SHA512::init();
-    sha512.update(&tarball_bytes);
     sha512.r#final(&mut integrity);
 
-    ctx.stats.packed_size = tarball_bytes.len();
+    ctx.stats.packed_size = packed_size;
 
-    if let Some(abs_tarball_dest) = abs_tarball_dest {
-        write_tarball(abs_tarball_dest, &tarball_bytes);
+    if let Some((file, abs_tarball_dest)) = tarball_file {
+        finish_tarball(file, abs_tarball_dest);
     }
 
     let normalized_pkg_info: Box<[u8]> = if for_publish {
-        // `normalized_package` prints the tree it edits, so the edit of the root node need not flow back.
-        let mut root = json.root;
         Publish::PublishCommand::normalized_package(
             ctx.manager,
             abs_workspace_path,
@@ -1936,16 +1993,13 @@ fn run_lifecycle_script(
     name: &[u8],
     abs_workspace_path: &[u8],
 ) -> Result<(), PackError> {
-    let use_system_shell = ctx.command_ctx.debug.use_system_shell;
-    match RunCommand::run_package_script_foreground(
+    match RunCommand::run_lifecycle_script_foreground(
         ctx.command_ctx,
         script,
         name,
         abs_workspace_path,
         ctx.manager.env_mut(),
-        &[],
         ctx.manager.options.log_level == LogLevel::Silent,
-        use_system_shell,
     ) {
         Ok(()) => Ok(()),
         Err(crate::Error::MissingShell) => {
@@ -1956,7 +2010,10 @@ fn run_lifecycle_script(
             Global::crash();
         }
         Err(crate::Error::Alloc(_)) => Err(PackError::OutOfMemory),
-        Err(_) => unreachable!(),
+        Err(err) => {
+            Output::err(err, "failed to run {} script", (bstr::BStr::new(name),));
+            Global::crash();
+        }
     }
 }
 
@@ -2075,33 +2132,68 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// The only write to disk, and so the only failure that has a partial file to remove.
-fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
-    let file = match File::create(Fd::cwd(), abs_tarball_dest, true) {
-        Ok(file) => file,
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to open tarball file destination: \"{}\"",
-                format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-            );
-            Global::crash();
-        }
-    };
-    if let Err(err) = file.write_all(tarball_bytes) {
+/// `open_tarball`'s temporary file. A failed pack exits from many places, so an exit callback removes it.
+static UNFINISHED_TARBALL: bun_core::Mutex<Option<(Fd, ZBox)>> = bun_core::Mutex::new(None);
+
+extern "C" fn remove_unfinished_tarball() {
+    if let Some((fd, path)) = UNFINISHED_TARBALL.lock().take() {
+        // Windows cannot delete the file while it is open.
+        fd.close();
+        let _ = bun_sys::unlink(&path);
+    }
+}
+
+/// A temporary file next to the destination, which `finish_tarball` renames to it: the destination
+/// never holds a partial tarball.
+fn open_tarball(abs_tarball_dest: &ZStr) -> File {
+    // A FIFO, a device, a symlink or a read-only file is not ours to replace: it is opened itself.
+    let in_place = bun_sys::lstat(abs_tarball_dest).is_ok_and(|stat| {
+        bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) != bun_sys::FileKind::File
+            || bun_sys::access(abs_tarball_dest, bun_sys::posix::W_OK).is_err()
+    });
+    let tmp = (!in_place).then(|| {
+        let mut name_buf = [0u8; 64];
+        let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+            .expect("unreachable");
+        let dir = path::dirname_simple(abs_tarball_dest.as_bytes());
+        ZBox::from_vec_with_nul([dir, SEP_STR.as_bytes(), name.as_bytes_with_nul()].concat())
+    });
+    let file = match &tmp {
+        Some(tmp) => File::openat(
+            Fd::cwd(),
+            tmp,
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
+            0o666,
+        ),
+        None => File::create(Fd::cwd(), abs_tarball_dest, true),
+    }
+    .unwrap_or_else(|err| {
+        Output::err(
+            err,
+            "failed to open tarball file destination: \"{}\"",
+            format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+        );
+        Global::crash();
+    });
+    if let Some(tmp) = tmp {
+        *UNFINISHED_TARBALL.lock() = Some((file.handle(), tmp));
+        Global::add_exit_callback(remove_unfinished_tarball);
+    }
+    file
+}
+
+fn finish_tarball(file: File, abs_tarball_dest: &ZStr) {
+    let unfinished = UNFINISHED_TARBALL.lock().take();
+    // Windows cannot rename the file while it is open.
+    drop(file);
+    let Some((_, tmp)) = unfinished else { return };
+    if let Err(err) = bun_sys::rename(&tmp, abs_tarball_dest) {
+        let _ = bun_sys::unlink(&tmp);
         Output::err(
             err,
             "failed to write tarball \"{}\"",
             format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
         );
-        // Windows cannot delete the file while it is open.
-        drop(file);
-        // A `--filename` that is a symlink or a device is not ours to delete.
-        if let Ok(stat) = bun_sys::lstat(abs_tarball_dest) {
-            if bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::File {
-                let _ = bun_sys::unlink(abs_tarball_dest);
-            }
-        }
         Global::crash();
     }
 }
@@ -2178,6 +2270,8 @@ fn add_archive_entry(
     archive: &Archive,
     entry: *mut ArchiveEntry,
     bins: &[BinInfo],
+    // Archived in place of the bytes of `file`.
+    edited: Option<&[u8]>,
 ) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
@@ -2188,7 +2282,7 @@ fn add_archive_entry(
     #[cfg(not(windows))]
     entry.set_pathname(&pathname);
 
-    entry.set_size(stat.st_size as i64);
+    entry.set_size(edited.map_or(stat.st_size as i64, |edited| edited.len() as i64));
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
@@ -2214,6 +2308,11 @@ fn add_archive_entry(
             Global::crash();
         }
         _ => {}
+    }
+
+    if let Some(edited) = edited {
+        ctx.stats.unpacked_size += write_archive_data(archive, edited);
+        return entry.clear();
     }
 
     loop {
@@ -2288,10 +2387,20 @@ impl<'a> Substitution<'a> {
                 )
                 .map_err(|why| ("workspace", why))
             }
-            Substitution::Catalog(catalog_name) => manifests
-                .catalog_version(catalog_name, dependency_name)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| ("catalog", "no matching catalog dependency".to_owned())),
+            Substitution::Catalog(catalog_name) => {
+                let spec = manifests
+                    .catalog_version(catalog_name, dependency_name)
+                    .ok_or_else(|| ("catalog", "no matching catalog dependency".to_owned()))?;
+                // `bun install` links a `workspace:` entry and refuses a `catalog:` one.
+                match Substitution::for_spec(spec) {
+                    None => Ok(spec.to_vec()),
+                    Some(Substitution::Catalog(_)) => Err((
+                        "catalog",
+                        "the catalog entry refers to another catalog".to_owned(),
+                    )),
+                    Some(found) => found.published(manifests, package_dir, dependency_name),
+                }
+            }
         }
     }
 }
@@ -2416,14 +2525,17 @@ fn publish_workspace(
     }
 }
 
-/// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
+/// Edits `root` in place (`bun publish` sends that tree to the registry) and returns it printed.
+/// `root` was parsed from `source`.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
     package_dir: &[u8],
-    json: &mut WorkspacePackageJSONCache::MapEntry,
+    root: Expr,
+    source: &bun_ast::Source,
+    indentation: bun_ast::Indentation,
 ) -> Result<Box<[u8]>, AllocError> {
     let bump = pack_bump();
-    for_each_dependency(json.root, |dependency_group, dependency| {
+    for_each_dependency(root, |dependency_group, dependency| {
         let (Some(name), Some(spec)) = (dependency.key.as_ref(), dependency.value.as_ref()) else {
             return;
         };
@@ -2467,20 +2579,18 @@ fn edit_root_package_json(
     });
 
     let mut buffer_writer = js_printer::BufferWriter::init();
-    buffer_writer
-        .buffer
-        .list
-        .reserve(json.source.contents.len() + 1);
-    buffer_writer.append_newline = json.source.contents.ends_with(b"\n");
+    let contents = &source.contents;
+    buffer_writer.buffer.list.reserve(contents.len() + 1);
+    buffer_writer.append_newline = contents.ends_with(b"\n");
     let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
 
     if let Err(err) = js_printer::print_json(
         &mut package_json_writer,
-        json.root,
+        root,
         // shouldn't be used
-        &json.source,
+        source,
         js_printer::PrintJsonOptions {
-            indent: json.indentation,
+            indent: indentation,
             mangled_props: None,
             ..Default::default()
         },
@@ -2735,7 +2845,7 @@ fn print_archived_files_and_packages(
         }
     }
 
-    for dep in ctx.bundled_deps.iter().filter(|dep| dep.was_packed) {
+    for dep in ctx.bundled_deps.iter() {
         bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
     }
 
@@ -2859,10 +2969,6 @@ pub(crate) mod bindings {
         check(
             archive.read_support_filter_gzip(),
             "support gzip compression",
-        )?;
-        check(
-            archive.read_set_options(c"read_concatenated_archives"),
-            "set read_concatenated_archives option",
         )?;
         check(archive.read_open_memory(&tarball), "open archive in memory")?;
 

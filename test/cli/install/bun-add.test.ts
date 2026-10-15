@@ -294,6 +294,79 @@ it("bun add --only-missing should not install existing package", async () => {
   }
 });
 
+// Writes `source` to entry-point.ts and returns what `bun <command> --analyze` adds to package.json.
+async function analyze(command: "add" | "install", source: string) {
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+  await writeFile(join(package_dir, "entry-point.ts"), source);
+  // The registry has no tarball for most of these names.
+  await using proc = spawn({
+    cmd: [bunExe(), command, "--analyze", "--lockfile-only", "./entry-point.ts"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { dependencies = {} } = await file(join(package_dir, "package.json")).json();
+  return {
+    added: Object.keys(dependencies).sort(),
+    errors: err.split("\n").filter(l => l.includes("error")),
+    exitCode,
+  };
+}
+
+it.each(["add", "install"] as const)(
+  "bun %s --analyze adds the package that a subpath is imported from",
+  async command => {
+    expect(
+      await analyze(
+        command,
+        `
+      import "bar";
+      import debounce from "lodash/debounce";
+      import "deep/a/b.js";
+      import "styles/dist/main.css";
+      import "@scope/pkg/button";
+      export * from "re-exported/sub";
+      const { createRoot } = require("react-dom/client");
+      import("dynamic/sub");
+      import "twice";
+      import "twice/sub";
+      console.log(debounce, createRoot);
+      `,
+      ),
+    ).toEqual({
+      added: ["@scope/pkg", "bar", "deep", "dynamic", "lodash", "re-exported", "react-dom", "styles", "twice"],
+      errors: [],
+      exitCode: 0,
+    });
+  },
+);
+
+it("bun add --analyze leaves out builtins, paths and aliases, with or without a subpath", async () => {
+  expect(
+    await analyze(
+      "add",
+      `
+      import "bar/sub";
+      import "fs/promises";
+      import "fs/not-a-builtin";
+      import "node:path/posix";
+      import "bun:sqlite";
+      import "bun/sub";
+      import "@/alias";
+      import "@/components/ui/button";
+      import "~/alias";
+      import "#internal/thing";
+      import "./missing/file";
+      import "/missing/file";
+      import "https://example.com/mod/x.js";
+      `,
+    ),
+  ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+});
+
 it("bun add --analyze should scan dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -492,6 +565,25 @@ it("should reject positionals longer than 2048 bytes without stack overflow", as
       version: "0.0.2",
     }),
   );
+});
+
+// PATH_MAX is 4096 on Linux and 1024 on macOS. Windows' path buffer is larger than any command line.
+it.skipIf(isWindows)("should fail with ENAMETOOLONG for a local tarball path longer than PATH_MAX", async () => {
+  const package_json = JSON.stringify({ name: "foo", version: "0.0.1" });
+  using dir = tempDir("bun-add-long-tarball-path", { "package.json": package_json });
+  const tarball = `./${Buffer.alloc(5000, "a").toString()}.tgz`;
+  await using proc = spawn({
+    cmd: [bunExe(), "add", tarball],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain(`error: ENAMETOOLONG extracting tarball from ${tarball}`);
+  expect(out).not.toContain("installed");
+  expect(await file(join(String(dir), "package.json")).text()).toBe(package_json);
+  expect(exitCode).toBe(1);
 });
 
 it("should handle semver-like names", async () => {
@@ -2017,7 +2109,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",
-    "installed uglify-js@git+ssh://bun@github.com:mishoo/UglifyJS.git with binaries:",
+    "installed uglify-js@git+ssh://***@github.com:mishoo/UglifyJS.git with binaries:",
     " - uglifyjs",
     "",
     "1 package installed",
@@ -3717,6 +3809,40 @@ describe("should move existing dependency when an explicit group flag is given",
   it("does not move when no group flag is given", async () => {
     const initial = { ...root, devDependencies: { BaR: "^0.0.2" } };
     expect(await add(initial, ["BaR"])).toBe(pkgJson(initial));
+  });
+
+  // Each group keeps its own version: a full install lays the devDependencies one, --production the dependencies one.
+  it.each([
+    ["baz@0.0.5", "0.0.5"],
+    ["baz", "^0.0.5"],
+  ])("without a group flag, bun add %s writes dependencies and leaves devDependencies alone", async (spec, saved) => {
+    const initial = { ...root, dependencies: { baz: "0.0.3" }, devDependencies: { baz: "0.0.3" } };
+    expect(await add(initial, [spec], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...initial, dependencies: { baz: saved } }),
+    );
+
+    for (const { args, says, version } of [
+      { args: [], says: "(no changes)", version: "0.0.3" },
+      { args: ["--frozen-lockfile"], says: "(no changes)", version: "0.0.3" },
+      { args: ["--production"], says: "1 package installed", version: "0.0.5" },
+    ]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        args,
+        saved: err.includes("Saved lockfile"),
+        failed: err.includes("error:"),
+        out,
+        version: (await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version,
+        exitCode,
+      }).toEqual({ args, saved: false, failed: false, out: expect.stringContaining(says), version, exitCode: 0 });
+    }
   });
 
   it("does not move with --only-missing", async () => {

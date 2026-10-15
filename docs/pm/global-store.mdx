@@ -104,7 +104,9 @@ project/node_modules/
 └── react -> .bun/react@18.3.1/node_modules/react
 ```
 
-The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory. A project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component. The key is therefore independent of which member a given project's dependency graph happened to reach first.
+The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory. A project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component: every member and the dependencies each of them links to. The key is therefore independent of which member a given project's dependency graph happened to reach first.
+
+The hash also covers a version number of the entry layout. A Bun release that changes what an entry contains builds new entries and leaves the ones an older release made unused.
 
 ## What stays project-local
 

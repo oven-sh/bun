@@ -514,6 +514,8 @@ impl HttpThread {
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
+        // The dial takes a C string: a host with a NUL would connect to the part before it.
+        crate::validate_request_target(hn)?;
         ctx.connect(client, hn, pt)
     }
 

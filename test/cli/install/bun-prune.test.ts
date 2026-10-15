@@ -5,6 +5,7 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -2656,9 +2657,13 @@ test.concurrent(
     expect(existsSync(join(nested, "package.json"))).toBeTrue();
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
 
+    const saved = join(dir, "saved");
+    cpSync(nested, saved, { recursive: true });
     await install(dir);
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "1.0.1" });
-    expect(existsSync(nested)).toBeTrue();
+    // `bun install` removes it itself. `bun prune` does the same for one that comes from elsewhere.
+    expect(existsSync(nested)).toBeFalse();
+    cpSync(saved, nested, { recursive: true });
 
     const { stdout, stderr, exitCode } = await prune(dir);
     expect(out(stdout)).toMatchInlineSnapshot(`
@@ -2676,7 +2681,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "hoisted: --production keeps the nested copy a production package resolves to while the root holds the dev version",
+  "hoisted: --production removes the dev version at the root and keeps the nested copy a production package resolves to",
   async () => {
     const pkg = { name: "foo", dependencies: { "one-fixed-dep": "1.0.0" }, devDependencies: { "no-deps": "2.0.0" } };
     const [dir, silentDir] = await Promise.all([setup(pkg), setup(pkg)]);
@@ -2685,18 +2690,51 @@ test.concurrent(
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
     expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
 
-    // The root copy is the one a full install hoists there, not a stale tree:
-    // no "is not the version bun.lock expects" warning, no install hint.
+    // Nothing waits for the place at the root, so whatever version is in it goes without a warning.
+    const rootPkg = await file(rootPkgJson).json();
+    await write(rootPkgJson, JSON.stringify({ ...rootPkg, version: "9.9.9" }));
+    const other = await prune(dir, "--production", "--dry-run");
+    expect(out(other.stdout)).toContain(`- no-deps@9.9.9\n${CAN_BE_REMOVED(1, 3)}`);
+    expect(other.stderr).toBe("");
+    expect(other.exitCode).toBe(0);
+    await write(rootPkgJson, JSON.stringify(rootPkg));
+
+    // A production install leaves the place at the root empty: it does not move the nested copy there.
     const { stdout, stderr, exitCode } = await prune(dir, "--production");
     expect(out(stdout)).toMatchInlineSnapshot(`
       "bun prune <version> (<revision>)
 
-      Done! Checked 3 installed packages across 2 folders (nothing to prune)"
+      - no-deps@2.0.0
+      1 package removed (checked 3 installed packages)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
-    expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
+    expect(existsSync(rootPkgJson)).toBeFalse();
+    await expectProductionInstallIsNoop(dir);
+
+    const silent = await prune(silentDir, "--production", "--silent");
+    expect(silent.stdout).toBe("");
+    expect(silent.stderr).toBe("");
+    expect(silent.exitCode).toBe(0);
+    expect(
+      existsSync(join(silentDir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json")),
+    ).toBeTrue();
+  },
+);
+
+test.concurrent(
+  "hoisted: --production keeps a nested copy that left bun.lock while the root copy is not the version bun.lock expects",
+  async () => {
+    const dir = await setup({ name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0" } });
+    const rootPkgJson = join(dir, "node_modules", "no-deps", "package.json");
+    const nestedPkgJson = join(dir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json");
+    await write(
+      join(dir, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "1.0.0" } }),
+    );
+    await install(dir, "--lockfile-only");
+    expect(await lock(dir)).not.toContain('"one-fixed-dep/no-deps"');
 
     // A root copy whose version the lockfile does not know anywhere is a
     // genuinely stale tree and still warns under --production.
@@ -2709,17 +2747,74 @@ test.concurrent(
     expect(stale.exitCode).toBe(0);
     await write(rootPkgJson, JSON.stringify(rootPkg));
 
-    await runBunInstall(installEnv(dir), dir, { production: true });
-
-    const silent = await prune(silentDir, "--production", "--silent");
-    expect(silent.stdout).toBe("");
-    expect(silent.stderr).toBe("");
-    expect(silent.exitCode).toBe(0);
-    expect(
-      existsSync(join(silentDir, "node_modules", "one-fixed-dep", "node_modules", "no-deps", "package.json")),
-    ).toBeTrue();
+    const kept = await prune(dir, "--production");
+    expect(out(kept.stderr)).toBe(
+      `${WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${NOTE}`,
+    );
+    expect(kept.exitCode).toBe(0);
+    expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
   },
 );
+
+// name -> version -> dependencies. The fixture registry has no package whose versions have different names below them.
+async function serveGraph(graph: Record<string, Record<string, Record<string, string>>>) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, versions] of Object.entries(graph)) {
+    for (const [version, dependencies] of Object.entries(versions)) {
+      const files = { "package/package.json": JSON.stringify({ name, version, dependencies }) };
+      tarballs.set(`/${name}-${version}.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+    }
+  }
+  return Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const name = pathname.slice(1);
+      const versions: Record<string, object> = {};
+      for (const [version, dependencies] of Object.entries(graph[name] ?? {})) {
+        versions[version] = { name, version, dependencies, dist: { tarball: `${origin}/${name}-${version}.tgz` } };
+      }
+      return Response.json({ name, versions, "dist-tags": { latest: Object.keys(versions).at(-1) } });
+    },
+  });
+}
+
+test.concurrent("hoisted: --production keeps what is below a package in the place of another version", async () => {
+  // The devDependencies take the top `d` and `g`, which is where `b` finds the 2.0.0 that it needs. The 1.0.0 that
+  // `a` needs would get these places without them.
+  using server = await serveGraph({
+    a: { "1.0.0": { d: "1.0.0", g: "1.0.0" } },
+    b: { "1.0.0": { d: "2.0.0", g: "2.0.0" } },
+    d: { "1.0.0": { k: "1.0.0" }, "2.0.0": { e: "2.0.0", k: "1.0.0" } },
+    g: { "1.0.0": {}, "2.0.0": { e: "2.0.0" } },
+    k: { "1.0.0": { e: "1.0.0", f: "1.0.0" }, "2.0.0": {} },
+    e: { "1.0.0": {}, "2.0.0": {} },
+    f: { "1.0.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("prune-other-version", {
+    "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    "package.json": JSON.stringify({
+      name: "foo",
+      dependencies: { a: "1.0.0", b: "1.0.0", e: "1.0.0", f: "2.0.0", k: "2.0.0" },
+      devDependencies: { d: "2.0.0", g: "2.0.0" },
+    }),
+  });
+  const dir = String(tmp);
+  await install(dir);
+  const before = listing(dir, "node_modules");
+  // g@1.0.0 has nothing below it, d@1.0.0 has only `k`, and the `k` below d@1.0.0 finds its `e` at the top.
+  for (const path of ["g/node_modules/e", "d/node_modules/e", "d/node_modules/k/node_modules/e"]) {
+    expect(before).toContain(join("node_modules", path));
+  }
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--production");
+  expect(listing(dir, "node_modules")).toEqual(before);
+  expect(out(stdout)).toEndWith("(nothing to prune)");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent(
   "hoisted: inside a tree folder, junk is removed but a copy shadowed by a mismatched root package is kept",
@@ -2759,7 +2854,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "hoisted + workspaces: --production keeps a workspace's copy while the root still holds the dev version",
+  "hoisted + workspaces: --production removes the dev version at the root and keeps a workspace's copy",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
     await Promise.all([
@@ -2779,19 +2874,19 @@ test.concurrent(
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
     expect(await file(workspacePkgJson).json()).toMatchObject({ version: "1.0.0" });
 
-    // The root copy is the dev version a full install hoists there; not a
-    // stale tree, so no warning under --production.
+    // A production install leaves the place at the root empty: it does not move the workspace's copy there.
     const { stdout, stderr, exitCode } = await prune(dir, "--production", "--linker", "hoisted");
     expect(out(stdout)).toMatchInlineSnapshot(`
       "bun prune <version> (<revision>)
 
-      Done! Checked 3 installed packages across 2 folders (nothing to prune)"
+      - no-deps@2.0.0
+      1 package removed (checked 3 installed packages)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(await file(workspacePkgJson).json()).toMatchObject({ version: "1.0.0" });
     expect(isSymlink(join(nm, "a"))).toBeTrue();
-    expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
+    expect(existsSync(rootPkgJson)).toBeFalse();
   },
 );
 
@@ -3863,7 +3958,7 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
 });
 
 // Behind a workspace's `node_modules` that is a link are entries the workspace does not own (the root's, for one).
-// So a project with such a link is not pruned at all. An install puts a directory in the place of the link.
+// So a project with such a link is not pruned at all. The hoisted linker installs through the link, and that is all.
 const REFUSED = (...folders: string[]) =>
   [
     ...folders.map(folder => `error: ${folder} is a symlink, so nothing was pruned`),
@@ -4035,6 +4130,38 @@ test.concurrent("hoisted: bun update removes no copy while a workspace node_modu
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("hoisted: bun install says so when a copy left a workspace node_modules that is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
+  });
+  const storage = linkToOwnStorage(dir, "a");
+  await write(
+    join(dir, "packages", "a", "package.json"),
+    JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+  );
+
+  const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
+  expect(stderr).toContain(
+    "warn: packages/a/node_modules is a symlink, so stale copies in node_modules were not removed\n" +
+      "note: remove the link and run 'bun install', then 'bun prune'",
+  );
+  expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("hoisted: an install removes the packages of the last dependency that left package.json", async () => {
+  const dir = await setup({ name: "foo", dependencies: { "one-dep": "1.0.0", "what-bin": "1.0.0" } });
+  const nm = join(dir, "node_modules");
+  plant(dir, "node_modules/mine");
+  expect(readdirSync(nm).toSorted()).toEqual([".bin", "mine", "no-deps", "one-dep", "what-bin"]);
+
+  await write(join(dir, "package.json"), JSON.stringify({ name: "foo" }));
+  await install(dir);
+  expect(readdirSync(nm).toSorted()).toEqual([".bin", "mine"]);
+  expect(readdirSync(join(nm, ".bin"))).toEqual([]);
+});
+
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
   const nm = join(dir, "node_modules");
@@ -4050,12 +4177,16 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
       overrides: { "no-deps": copyTarball(dir, "no-deps", "2.0.0") },
     }),
   );
-  // In two steps, as after a `git pull`: the install that changes bun.lock removes the copy itself.
+  const saved = join(dir, "saved");
+  cpSync(nested, saved, { recursive: true });
+  // In two steps, as after a `git pull`.
   await install(dir, "--lockfile-only");
   await install(dir);
   expect(await lock(dir)).not.toContain('"one-dep/no-deps"');
   expect(await lock(dir)).toContain("no-deps-2.0.0.tgz");
-  expect(existsSync(join(nested, "package.json"))).toBeTrue();
+  // `bun install` removes it itself. `bun prune` does the same for one that comes from elsewhere.
+  expect(existsSync(nested)).toBeFalse();
+  cpSync(saved, nested, { recursive: true });
 
   const { stdout, stderr, exitCode } = await prune(dir);
   expect(stderr).not.toContain("warn:");

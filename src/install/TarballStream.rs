@@ -254,7 +254,10 @@ impl TarballStream {
             archive: None,
             phase: Phase::WantHeader,
             out: None,
-            write_strategy: lib::WriteStrategy::default(),
+            write_strategy: lib::WriteStrategy {
+                holes: !npm_mode,
+                ..Default::default()
+            },
             dest: None,
             tmpname: ZBox::from_bytes(b""),
             hasher,
@@ -527,7 +530,18 @@ impl TarballStream {
         // those do not call into libarchive.
         unsafe {
             if (*this).archive.is_none() {
-                Self::open_archive(this)?;
+                let head: &[u8] = &(*this).reading;
+                let gzip = head.starts_with(&[0x1f, 0x8b]);
+                if head.len() < 2 {
+                    // One byte does not tell gzip from tar: wait, unless it is the whole body.
+                    (*this).mutex.lock();
+                    let closed = (*this).closed;
+                    (*this).mutex.unlock();
+                    if !closed {
+                        return Ok(());
+                    }
+                }
+                Self::open_archive(this, gzip, (*this).npm_mode)?;
             }
             if (*this).dest.is_none() {
                 (*this).open_destination()?;
@@ -547,7 +561,7 @@ impl TarballStream {
                             lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
-                                // The gzip filter reads a body that is not gzip as end of input.
+                                // The tar reader skips every block of a body that is not an archive.
                                 if (*this).entry_count == 0 {
                                     (*this).fail_detail = b"the archive holds no files".to_vec();
                                     return Err(crate::Error::Fail);
@@ -599,10 +613,11 @@ impl TarballStream {
     /// client_data and `archive_read_callback` dereferences it across the
     /// lifetime of the archive — see `step()` # Safety for the provenance
     /// requirement.
-    unsafe fn open_archive(this: *mut Self) -> crate::Result<()> {
+    unsafe fn open_archive(this: *mut Self, gzip: bool, npm: bool) -> crate::Result<()> {
         let archive = lib::ReadArchive::new();
-        // Bypass bidding entirely: the stream is always gzip → tar, and
-        // bidding would try to read-ahead before any bytes have arrived.
+        // Bypass bidding entirely: it reads ahead further than a short first
+        // chunk reaches. `gzip` is what the first two bytes of the body say: a
+        // .tgz sent with `Content-Encoding: gzip` gets here as a plain tar.
         // With patches/libarchive/select-registered-only.patch,
         // archive_read_append_filter / archive_read_set_format only select a
         // filter/format that was already registered, so register gzip and tar
@@ -612,13 +627,18 @@ impl TarballStream {
         // and losing the selected format means archive_read_open1() falls
         // back to bidding, which fails when the first HTTP chunk is short.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
-        let _ = archive.read_support_filter_gzip();
-        // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
-        if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
-            return Err(crate::Error::Fail);
+        if gzip {
+            let _ = archive.read_support_filter_gzip();
+            // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
+            if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
+                return Err(crate::Error::Fail);
+            }
         }
         let _ = archive.read_support_format_tar();
-        let _ = archive.read_set_options(c"read_concatenated_archives");
+        if npm {
+            // See patches/libarchive/tar-npm-compat.patch.
+            let _ = archive.read_set_options(c"npm");
+        }
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_set_format(archive.as_mut_ptr(), 0x30000) } != 0 {
             return Err(crate::Error::Fail);
@@ -702,12 +722,12 @@ impl TarballStream {
         Ok(())
     }
 
-    /// The entry's data ended at `end`: the output file gets that length.
+    /// The entry's data ended; `end` is the length its header or sparse map claims.
     fn finish_output_file(&mut self, end: i64) -> crate::Result<()> {
         let Some(mut out) = self.out.take() else {
             return Ok(());
         };
-        let result = out.finish(end);
+        let result = out.finish(&self.write_strategy, end);
         out.fd().close();
         result.map_err(|e| e.to_zig_err().into())
     }
@@ -738,15 +758,8 @@ impl TarballStream {
 
         if self.want_first_dirname {
             self.want_first_dirname = false;
-            // GitHub's archive API always emits an explicit `repo-sha/`
-            // directory entry first, which is what the buffered path
-            // relies on. Take only the leading component so a tarball
-            // whose first member is `repo-sha/file` (no directory entry)
-            // still yields the correct cache-folder name.
-            let mut root_it = pathname[..]
-                .split(|c| *c == ('/' as OSPathChar))
-                .filter(|s| !s.is_empty());
-            let root: &[OSPathChar] = root_it.next().unwrap_or(&[]);
+            // GitHub sends `repo-sha/` first; a mirror may start with `repo-sha/file`.
+            let root = bun_libarchive::first_path_component(&pathname[..]);
             #[cfg(windows)]
             {
                 let result = strings::to_utf8_list_with_type(Vec::new(), root)?;
@@ -792,7 +805,7 @@ impl TarballStream {
         // straight to `normalize_buf_t` (which takes `&[OSPathChar]`, not a
         // NUL-terminated slice) so there is no need to reconstruct an
         // `OSPathSliceZ` suffix view here.
-        let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
+        let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..], self.npm_mode);
 
         let mut norm_buf = bun_paths::os_path_buffer_pool::get();
         if rest.len() >= norm_buf.len() {
@@ -804,8 +817,11 @@ impl TarballStream {
             self.out = None;
             return Ok(());
         }
-        let normalized =
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..]);
+        let normalized = if self.npm_mode {
+            bun_libarchive::normalize_npm_entry_path(rest, &mut norm_buf[..])
+        } else {
+            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
+        };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;
         // SAFETY: norm_buf[norm_len] == 0 written above.
@@ -1361,9 +1377,10 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 // Skips any leading `/` delimiters, then returns everything after the first
 // path component, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
+// `npm`: what is in front of a leading `/` is the first component, as it is for npm.
+fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
     let mut i = 0;
-    while i < s.len() && s[i] == ('/' as OSPathChar) {
+    while !npm && i < s.len() && s[i] == ('/' as OSPathChar) {
         i += 1;
     }
     while i < s.len() && s[i] != ('/' as OSPathChar) {

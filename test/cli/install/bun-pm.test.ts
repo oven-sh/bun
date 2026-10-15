@@ -432,6 +432,53 @@ describe.concurrent("bun pm ls lists what is on disk", () => {
     expect(await bun("pm", "ls")).toEqual(listed("<dir> node_modules (2 installed)", member));
     expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "├── a-dep@1.0.1", member));
   });
+
+  test("--production, --omit, --depth=0 and package names narrow the list", async () => {
+    const { bun } = await project(
+      { linker: "hoisted" },
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "a-dep": "1.0.1" },
+          devDependencies: { "one-fixed-dep": "1.0.0" },
+        },
+      },
+    );
+    expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+    const direct = listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0");
+    const noMatch = (header: string, names: string) => ({
+      stdout: header + "\n",
+      stderr: `error: no packages match: ${names}\n`,
+      exitCode: 1,
+    });
+    const cases: [string, object][] = [
+      ["pm ls", direct],
+      ["pm ls --production", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],
+      ["pm ls --omit=dev", listed("<dir> node_modules (1 installed)", "└── a-dep@1.0.1")],
+      ["list --all --prod", listed("<dir> node_modules", "└── a-dep@1.0.1")],
+      ["pm ls --depth=0", direct],
+      ["pm ls --all --depth 0", direct],
+      [
+        "pm ls --depth=1",
+        {
+          stdout: "",
+          stderr:
+            "error: bun pm ls --depth only accepts 0 (direct dependencies, the default). --all lists every installed package\n",
+          exitCode: 1,
+        },
+      ],
+      // no-deps is a dependency of one-fixed-dep only.
+      ["pm ls no-deps", listed("<dir> node_modules", "└── no-deps@1.0.0")],
+      ["list no-deps a-dep nope", listed("<dir> node_modules", "├── a-dep@1.0.1", "└── no-deps@1.0.0")],
+      ["pm ls a-dep no-deps --depth=0", listed("<dir> node_modules (3 installed)", "└── a-dep@1.0.1")],
+      ["pm ls no-deps --depth=0", noMatch("<dir> node_modules (3 installed)", "no-deps")],
+      ["pm ls no-deps --production", noMatch("<dir> node_modules", "no-deps")],
+      ["pm ls nope nada", noMatch("<dir> node_modules", "nope, nada")],
+    ];
+    const results = await Promise.all(cases.map(([cmd]) => bun(...cmd.split(" "))));
+    expect(results.map((result, i) => [cases[i][0], result])).toEqual(cases);
+  });
 });
 
 it("should list top-level aliased dependency", async () => {
@@ -3008,6 +3055,47 @@ describe.concurrent("without a package.json", () => {
   );
 });
 
+describe.concurrent("bun pm refuses a flag that only other subcommands take", () => {
+  const json = "`bun pm diff`, `bun pm licenses`, `bun pm pkg`, `bun pm view`";
+  test.each([
+    ["pm why x --json", "--json", json],
+    ["pm ls --json", "--json", json],
+    ["list --all --json", "--json", json],
+    ["pm untrusted --json", "--json", json],
+    ["pm hash --json", "--json", json],
+    ["pm bin --json", "--json", json],
+    ["pm pack --dry-run --json", "--json", json],
+    ["pm version patch --dry-run --json", "--json", json],
+    ["pm default-trusted --json", "--json", json],
+    ["pm hash --all", "--all", "`bun pm ls`, `bun pm trust`"],
+    ["pm bin --depth=1", "--depth", "`bun pm ls`, `bun pm why`"],
+    ["pm ls --top", "--top", "`bun pm why`"],
+    ["pm ls -m x", "--message", "`bun pm version`"],
+    ["pm why x -D", "--dev", "`bun pm licenses`"],
+    ["pm cache --stat", "--stat", "`bun pm diff`"],
+    ["pm pack --max-age=1", "--max-age", "`bun pm cache`"],
+    ["pm pkg get name --filename=x", "--filename", "`bun pm pack`"],
+  ])("bun %s", async (cmd, flag, commands) => {
+    using dir = tempDir("bun-pm-flags", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd.split(" ")],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: `error: ${flag} is only supported by ${commands}\n`,
+      exitCode: 1,
+    });
+  });
+});
+
 describe.concurrent("usage text keeps its indent", () => {
   async function run(...args: string[]) {
     using dir = tempDir("bun-pm-usage", {
@@ -3047,9 +3135,11 @@ describe.concurrent("usage text keeps its indent", () => {
     );
     expect(lines).toContain("  └ --json                    one JSON document (files, patch text, notes, totals)");
     const ls = lines.indexOf("  bun pm ls                   list the tree of installed dependencies");
-    expect(lines.slice(ls + 1, ls + 5)).toEqual([
+    expect(lines.slice(ls + 1, ls + 7)).toEqual([
+      "  ├ names ...                 list every installed package with one of these names",
       "  ├ --all                     list the entire tree of installed dependencies",
       "  ├ --trusted                 list only trusted dependencies",
+      "  ├ --prod                    omit devDependencies",
       "  └ -g                        list the tree of globally installed dependencies",
       "  bun pm why <pkg>            show dependency tree explaining why a package is installed",
     ]);

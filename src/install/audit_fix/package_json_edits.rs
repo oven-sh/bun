@@ -112,6 +112,7 @@ impl PackageJsonEdit {
 
 pub(super) fn new_literal_for(old_literal: &[u8], to: &[u8], exact: bool) -> Box<[u8]> {
     let old = strings::trim(old_literal, &strings::WHITESPACE_CHARS);
+    let old = crate::dependency::without_npm_protocol(old);
     let mut out: Vec<u8> = Vec::with_capacity(old.len() + to.len() + 2);
     let range: &[u8] = match old.strip_prefix(b"npm:") {
         Some(alias) => match strings::last_index_of_char(alias, b'@') {

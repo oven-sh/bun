@@ -47,8 +47,9 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
+        // `as_array` has nothing for `[]`, which replaces the built-in entries like any other list.
         let Some(mut array) = expr.as_array() else {
-            return Ok(false);
+            return Ok(expr.is_array());
         };
 
         while let Some(entry) = array.next() {
@@ -216,17 +217,17 @@ impl List {
         }
         for default in DEFAULT_IGNORE.iter() {
             if default.name_hash == pkg_info.name_hash {
-                if let Some(version) = pkg_info.version {
-                    if version.order(
-                        default.minimum_version,
-                        pkg_info.version_buf,
-                        // minimum version doesn't need a string_buf because
-                        // it doesn't use pre/build tags
-                        b"",
-                    ) == core::cmp::Ordering::Less
-                    {
-                        return None;
-                    }
+                // Only a registry package has one: a fork or a workspace of that name builds itself.
+                let version = pkg_info.version?;
+                if version.order(
+                    default.minimum_version,
+                    pkg_info.version_buf,
+                    // minimum version doesn't need a string_buf because
+                    // it doesn't use pre/build tags
+                    b"",
+                ) == core::cmp::Ordering::Less
+                {
+                    return None;
                 }
                 return Some(PostinstallOptimizer::Ignore);
             }

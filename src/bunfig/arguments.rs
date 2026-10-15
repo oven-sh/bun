@@ -9,6 +9,7 @@ use bun_core::ZStr;
 use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
+use bun_options_types::schema::api;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
@@ -57,20 +58,25 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
 fn unreadable_config(
     cmd: CommandTag,
     auto_loaded: bool,
+    ctx: Context<'_>,
     err: &bun_sys::Error,
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
-        if bun_ast::DEFAULT_LOG_LEVEL
-            .load()
-            .at_least(bun_ast::Level::Warn)
-            && err.is_unreadable_file(config_path)
-        {
-            bun_core::warn!(
-                "{}\nThe settings in <b>{}<r> are not applied.",
-                err,
-                BStr::new(config_path),
-            );
+        if err.is_unreadable_file(config_path) {
+            if !ctx.debug.silent
+                && bun_ast::DEFAULT_LOG_LEVEL
+                    .load()
+                    .at_least(bun_ast::Level::Warn)
+            {
+                bun_core::warn!(
+                    "{}\nThe settings in <b>{}<r> are not applied.",
+                    err,
+                    BStr::new(config_path),
+                );
+            }
+            ctx.unreadable_config
+                .get_or_insert_with(|| config_path.into());
         }
         return Ok(());
     }
@@ -113,10 +119,14 @@ fn load_bunfig(
     counts: Counts,
 ) -> Result<(), crate::Error> {
     let auto_loaded = file != ConfigFile::Named;
+    // Also for a file that cannot be read: the later stages of `bun run` that ask would read it, and warn, again.
+    ctx.debug.loaded_bunfig = true;
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
-            Err(err) => return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes()),
+            Err(err) => {
+                return unreadable_config(cmd, auto_loaded, ctx, &err, config_path.as_bytes());
+            }
         };
 
     bun_ast::stmt::data::Store::create();
@@ -138,7 +148,6 @@ fn load_bunfig(
         log: log_ptr,
         level: original_level,
     };
-    ctx.debug.loaded_bunfig = true;
     Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
 }
 
@@ -155,6 +164,54 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
             report_bunfig_load_failure(cmd, ctx.log, err);
         }
     }
+}
+
+/// Whether `[install.security] scanner` is set where `bun install` in `dir` would read it: the user's own file, and the
+/// bunfig.toml of the project's root, which is `dir` or a directory above it. All of those are asked.
+/// `Err`: the path of one that is there and cannot be read or parsed.
+pub fn has_security_scanner(dir: &[u8]) -> Result<bool, Box<[u8]>> {
+    let mut config_buf = bun_paths::path_buffer_pool::get();
+    if let Some(path) = get_home_config_path(&mut config_buf)
+        && file_has_security_scanner(path)?
+    {
+        return Ok(true);
+    }
+    let mut next_dir = Some(dir);
+    while let Some(dir) = next_dir {
+        if let Some(path) = join_config_path(dir, b"bunfig.toml", &mut config_buf)
+            && file_has_security_scanner(path)?
+        {
+            return Ok(true);
+        }
+        next_dir = bun_core::dirname(dir);
+    }
+    Ok(false)
+}
+
+fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
+    let path = config_path.as_bytes();
+    match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
+        Ok(source) => Bunfig::has_security_scanner(&source).map_err(|_| path.into()),
+        Err(err) if err.is_unreadable_file(path) => Err(path.into()),
+        Err(_) => Ok(false),
+    }
+}
+
+/// What `[install]` of the bunfig.toml in `dir` has for the package manager, as `bun install` in `dir` reads it.
+/// `Err`: the path of the file, which is there and cannot be read or parsed.
+pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
+    let mut config_buf = bun_paths::path_buffer_pool::get();
+    let Some(config_path) = join_config_path(dir, b"bunfig.toml", &mut config_buf) else {
+        return Ok(None);
+    };
+    let path = config_path.as_bytes();
+    let source =
+        match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
+            Ok(source) => source,
+            Err(err) if err.is_unreadable_file(path) => return Err(path.into()),
+            Err(_) => return Ok(None),
+        };
+    Bunfig::parse_install_section(&source).map_err(|_| path.into())
 }
 
 pub fn load_config_path(
@@ -301,6 +358,7 @@ pub fn load_config_for_tool(
         return unreadable_config(
             cmd,
             auto_loaded,
+            ctx,
             &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                 .with_path(config_path_),
             config_path_,

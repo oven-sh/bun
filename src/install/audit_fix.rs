@@ -61,6 +61,7 @@ pub struct Blocker {
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
+    pub peer: bool,
     pub latest_fixes: bool,
     /// `OverrideSelector::key` of the `overrides` rule that holds the version.
     pub override_rule: Option<Box<[u8]>>,
@@ -625,7 +626,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 override_rule: rule
                     .map(|rule| OverrideSelector::from_rule(rule, buf).key(dep.name.slice(buf))),
                 bundled: dep.behavior.is_bundled(),
-                peer: dep.behavior.is_peer(),
+                peer: dep.behavior.is_peer() && !dep.behavior.is_bundled(),
                 latest_fixes,
                 pin,
             });
@@ -841,10 +842,22 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
         }
 
+        // Every peer gets the copy the root itself depends on, whatever its range (`hoist_dependency`).
+        let root_target = inst
+            .edges
+            .iter()
+            .zip(&target)
+            .find_map(|(edge, t)| (edge.parent == 0 && !edge.peer).then_some(*t));
         let mut chosen: Vec<usize> = if inst.edges.is_empty() {
             vec![0]
         } else {
-            target.iter().flatten().map(|t| t.candidate).collect()
+            inst.edges
+                .iter()
+                .zip(&target)
+                // While that copy stays, a peer that moves changes nothing.
+                .filter(|(edge, _)| !(edge.peer && matches!(root_target, Some(None))))
+                .filter_map(|(_, t)| t.map(|t| t.candidate))
+                .collect()
         };
         index_sort::sort_slice_unstable_by(&mut chosen, |a, b| a.cmp(b));
         chosen.dedup();
@@ -926,6 +939,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     }
                 },
                 bundled: edge.bundled,
+                peer: edge.peer && edge.override_rule.is_none() && !edge.latest_fixes,
                 latest_fixes: edge.latest_fixes,
                 override_rule: edge.override_rule.clone(),
             };
@@ -938,8 +952,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             expected_gone.push((inst.name_hash, inst.from));
             continue;
         }
-        for &a in &inst.advisories {
-            advisory_still_present.set(a);
+        // When that copy moves, the old version goes although these peers reject the new one.
+        if !(matches!(root_target, Some(Some(_))) && blockers.iter().all(|blocker| blocker.peer)) {
+            for &a in &inst.advisories {
+                advisory_still_present.set(a);
+            }
         }
         blocked.push(BlockedFix {
             name: inst.name,
@@ -1060,6 +1077,7 @@ impl FixPlan {
                     );
                     match &blocker.override_rule {
                         Some(rule) if **rule != *item.name => pretty!(" ({})", BStr::new(rule)),
+                        None if blocker.peer => pretty!(" <d>(peer)<r>"),
                         _ => {}
                     }
                     prettyln!("");

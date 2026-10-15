@@ -46,7 +46,7 @@ bunx my-cli
 
 As with `npx`, `bunx` checks for a locally installed package first, then falls back to auto-installing it from `npm`. `bunx` stores installed packages in Bun's [global cache](/pm/global-cache) for future use.
 
-`bunx my-cli` asks the registry for a newer version once a day. If the registry cannot be reached, it warns and runs the version it has. `bunx my-cli@latest` asks on every run.
+`bunx my-cli` asks the registry for a newer version once a day. If the registry cannot be reached or answers with a 5xx, 429 or 408 status, it warns and runs the version it has. `bunx my-cli@latest` asks on every run.
 
 ## Arguments and flags
 

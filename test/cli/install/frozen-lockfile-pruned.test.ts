@@ -754,6 +754,9 @@ describe.each(linkers)("linker: %s", linker => {
       // The hook is a diff of its own, so that install takes the other path through the differ's result.
       { list: [], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
       { list: [], nodeModules: "intact", diff: "a hook", complete: [false, false], pruned: [false, false] },
+      // Names nothing that is installed.
+      { list: ["no-deps"], nodeModules: "absent", diff: "none", complete: [false, false], pruned: [false, false] },
+      { list: ["no-deps"], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
       // Recorded and on the default list.
       { list: ["electron"], nodeModules: "absent", diff: "none", complete: [true, false], pruned: [true, false] },
       // No package.json on disk vouches for the recorded name, and the default list stays off.
@@ -884,6 +887,23 @@ describe.each(linkers)("linker: %s", linker => {
   });
 
   describe("a range on the name of a pruned workspace that bun.lock binds to the registry still passes", () => {
+    // hoisted: at its bun.lock key, `app/no-deps`. The place at the root is the workspace's, pruned or not.
+    const expectAppGets = async (packageDir: string, version: string) => {
+      const app = join(packageDir, "packages", "app");
+      const manifest = byLinker(
+        linker,
+        join(app, "node_modules", "no-deps", "package.json"),
+        installedPath(packageDir, linker, "no-deps", version),
+      );
+      expect(await file(manifest).json()).toMatchObject({ version });
+      const script = "require('no-deps/package.json').version";
+      expect(await spawnBun(packageDir, ["--no-install", "-p", script], app)).toEqual({
+        stdout: `${version}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    };
+
     // bun.lock is written with `linkWorkspacePackages = false`. The pruned checkout keeps that bunfig line only when
     // `keepSetting` is set (a Docker context often copies no bunfig.toml).
     test.concurrent.each([
@@ -908,9 +928,7 @@ describe.each(linkers)("linker: %s", linker => {
       await frozen(packageDir, linker, [skippedNote("no-deps")]);
 
       expect(await lockText(packageDir)).toBe(full);
-      expect(await file(installedPath(packageDir, linker, "no-deps", "1.1.0")).json()).toMatchObject({
-        version: "1.1.0",
-      });
+      await expectAppGets(packageDir, "1.1.0");
     });
 
     test.concurrent("a range the workspace does not satisfy", async () => {
@@ -921,9 +939,7 @@ describe.each(linkers)("linker: %s", linker => {
       await frozen(packageDir, linker, [skippedNote("no-deps")]);
 
       expect(await lockText(packageDir)).toBe(full);
-      expect(await file(installedPath(packageDir, linker, "no-deps", "2.0.0")).json()).toMatchObject({
-        version: "2.0.0",
-      });
+      await expectAppGets(packageDir, "2.0.0");
     });
   });
 

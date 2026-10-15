@@ -123,7 +123,7 @@ pub struct DedupeMapEntry {
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
-    /// The event loop iteration in which a runtime lookup of this manifest found nothing.
+    /// The event loop iteration in which a runtime lookup of this manifest found nothing, or in which the task failed.
     pub(crate) missed_in: Option<u64>,
     /// `Registry::manifest_expiry` of a 404: a runtime lookup does not ask again before.
     pub(crate) missing_until: u32,
@@ -745,6 +745,7 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
+                idle_timeout_seconds: pm.idle_timeout_seconds(),
                 ..Default::default()
             },
         );
@@ -935,6 +936,7 @@ impl NetworkTask {
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            idle_timeout_seconds: pm.idle_timeout_seconds(),
             ..Default::default()
         };
 

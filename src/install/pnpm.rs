@@ -133,6 +133,8 @@ fn missing_package_entry(
 }
 
 type StringMap = StringArrayHashMap<Box<[u8]>>;
+/// A pnpm `patchedDependencies` key (`d`, `d@^1.0.0`, `d@1.0.0`) -> bun's key of each package it patches.
+type FoundPatches = StringArrayHashMap<Vec<Box<[u8]>>>;
 
 fn collect_strings(obj: &Expr, out: &mut StringMap) -> Result<(), AllocError> {
     for (key, value) in props(obj) {
@@ -258,9 +260,12 @@ fn resolution_from_package_entry(
         if ty == b"git"
             && let Some(repo) = get_str(obj, b"repo")
         {
+            let commit = string_buf.append(get_str(obj, b"commit").unwrap_or_default())?;
             return Ok(Resolution::init(TaggedValue::Git(Repository {
                 repo: string_buf.append(strings::without_prefix(repo, b"git+"))?,
-                committish: string_buf.append(get_str(obj, b"commit").unwrap_or_default())?,
+                committish: commit,
+                // The checkout and its cache folder go by `resolved`.
+                resolved: commit,
                 ..Default::default()
             })));
         }
@@ -463,7 +468,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         .and_then(|e| e.as_bool())
         == Some(true);
 
-    let mut found_patches = StringMap::new();
+    let mut found_patches = FoundPatches::new();
     let mut snapshot_dep_paths = SnapshotDepPaths::new();
     let mut packages_with_unbound_peers: bun_collections::HashMap<PackageID, ()> =
         bun_collections::HashMap::new();
@@ -939,16 +944,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let resolved = res
                 .fmt(string_bytes!(lockfile), bun_core::fmt::PathSep::Posix)
                 .to_string();
+            let key = [name_str, b"@", resolved.as_bytes()].concat();
             lockfile.patched_dependencies.put(
-                string_hash(&[name_str, b"@", resolved.as_bytes()].concat()),
+                string_hash(&key),
                 crate::lockfile_real::PatchedDep::with_path(patch.path),
             )?;
-            if Dependency::split_name_and_maybe_version(&patch.config_key)
-                .1
-                .is_none()
-            {
-                found_patches.put(&patch.config_key, Box::from(resolved.as_bytes()))?;
-            }
+            let found = found_patches.get_or_put(&patch.config_key)?;
+            found.value_ptr.push(key.into_boxed_slice());
         }
 
         if res.tag == resolution::Tag::Npm {
@@ -1059,6 +1061,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             .ok_or(InvalidPnpmLockfile)?;
 
         let deps = lockfile.packages.items_dependencies()[pkg_id];
+        let mut unlocked_peers: Vec<usize> = Vec::new();
         for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
@@ -1081,6 +1084,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
             let Some(version_maybe_alias) = importer_versions.get(dep_name) else {
                 if dep.behavior.is_peer() {
+                    // A frozen install takes pnpm-lock.yaml as it is.
+                    if !dep.behavior.is_optional_peer()
+                        && !manager.options.enable.frozen_lockfile()
+                        && lockfile.packages_named(dep.name_hash).is_empty()
+                    {
+                        unlocked_peers.push(dep_id as usize);
+                    }
                     continue;
                 }
                 if pkg_id == 0 {
@@ -1121,6 +1131,15 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
             lockfile.buffers.resolutions[dep_id as usize] = *res_pkg_id;
         }
+
+        // `bun install` resolves them, like dependencies added after pnpm-lock.yaml was written.
+        for &row in unlocked_peers.iter().rev() {
+            lockfile.buffers.dependencies[row..deps.end() as usize].rotate_left(1);
+            lockfile.buffers.resolutions[row..deps.end() as usize].rotate_left(1);
+        }
+        let len = deps.len - unlocked_peers.len() as u32;
+        lockfile.packages.items_dependencies_mut()[pkg_id].len = len;
+        lockfile.packages.items_resolutions_mut()[pkg_id].len = len;
     }
 
     for pkg_id in workspace_pkgs_end..lockfile.packages.len() {
@@ -1646,21 +1665,20 @@ fn parse_append_importer_dependencies(
 }
 
 /// pnpm's allow-list of packages that may run lifecycle scripts, i.e. bun's `trustedDependencies`.
+/// True for a list, also an empty one, for which `as_array` has nothing: it allows no package.
 fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) -> bool {
     let Some(mut items) = list.as_array() else {
-        return false;
+        return list.is_array();
     };
-    let mut found_any = false;
     while let Some(item) = items.next() {
         let Some(name) = as_str(&item).filter(|name| !name.is_empty()) else {
             continue;
         };
-        found_any = true;
         if !out.contains(&name) {
             out.push(name);
         }
     }
-    found_any
+    true
 }
 
 fn add_trusted_dependencies(
@@ -1687,7 +1705,7 @@ fn add_trusted_dependencies(
             VecExt::append(&mut items, item);
         }
     }
-    if items.len_u32() == existing_len {
+    if existing.is_some() && items.len_u32() == existing_len {
         return Ok(false);
     }
 
@@ -1729,7 +1747,7 @@ fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-    patches: &StringMap,
+    patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
     let silent = manager.options.log_level.is_silent();
@@ -1907,7 +1925,9 @@ fn update_package_json_after_migration(
         }
     }
 
-    if !trusted_names.is_empty() && add_trusted_dependencies(&mut json, &bump, &trusted_names)? {
+    if (pnpm_only_built_deps || workspace_only_built_deps)
+        && add_trusted_dependencies(&mut json, &bump, &trusted_names)?
+    {
         if pnpm_only_built_deps {
             copied.push("copied pnpm.onlyBuiltDependencies to trustedDependencies");
         }
@@ -2020,7 +2040,7 @@ fn copy_into_root(
     bump: &bun_alloc::Arena,
     field: &[u8],
     src: &Expr,
-    patches: Option<&StringMap>,
+    patches: Option<&FoundPatches>,
 ) -> Result<bool, AllocError> {
     let mut dest = match json.get(field) {
         Some(dest) if !dest.is_object() => return Ok(false),
@@ -2032,13 +2052,16 @@ fn copy_into_root(
         }
     };
     for (key, value) in props(src) {
-        let Some(mut key) = as_str(key) else {
+        let Some(key) = as_str(key) else {
             continue;
         };
-        if let Some(resolved) = patches.and_then(|patches| patches.get(key)) {
-            key = js_ast::data_store_dupe_str(&[key, b"@", resolved].concat());
+        let Some(found) = patches.and_then(|patches| patches.get(key)) else {
+            e_object_mut(&mut dest).put(bump, key, *value)?;
+            continue;
+        };
+        for key in found {
+            e_object_mut(&mut dest).put(bump, js_ast::data_store_dupe_str(key), *value)?;
         }
-        e_object_mut(&mut dest).put(bump, key, *value)?;
     }
     Ok(true)
 }

@@ -1556,6 +1556,7 @@ describe("package-lock.json migration fixes", () => {
       expect(lock.packages.devdep[2]).toStrictEqual({
         dependencies: { devopt: "" },
         optionalDependencies: { "opt-and-dev": "" },
+        hasInstallScript: true,
       });
       expect(Object.keys(lock.packages).sort()).toStrictEqual(["devdep", "devopt", "opt-and-dev", "optdep"]);
       expect(await pmHash(dir)).toBe(before);
@@ -1796,7 +1797,7 @@ describe("package-lock.json migration fixes", () => {
       'warn: skipped "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
     );
     // a range can be a tarball URL with credentials
-    expect(stderr).toContain('warn: skipped "z@http://carol:******@localhost:1/z-1.0.0.tgz" from package-lock.json');
+    expect(stderr).toContain('warn: skipped "z@http://***@localhost:1/z-1.0.0.tgz" from package-lock.json');
     expect(stderr).not.toContain("s3cret");
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);
@@ -2046,6 +2047,54 @@ describe("package-lock.json migration fixes", () => {
       expect(lock.packages).toStrictEqual(freshLock.packages);
     },
   );
+
+  test.concurrent("bun install resolves the required peers of the project that package-lock.json lacks", async () => {
+    // what `npm install --legacy-peer-deps` writes
+    using registry = localRegistry();
+    const root = {
+      name: "unlocked-peers",
+      dependencies: { "no-deps": "1.0.0" },
+      peerDependencies: { "a-dep": "1.0.1" },
+    };
+    const ui = { name: "ui", version: "1.0.0", peerDependencies: { "what-bin": "1.0.0" } };
+    using dir = synthetic(
+      "npm-migrate-unlocked-peers",
+      {
+        "package.json": JSON.stringify({ ...root, workspaces: ["ui"] }),
+        "ui/package.json": JSON.stringify(ui),
+        "package-lock.json": npmLock("unlocked-peers", {
+          "": { ...root, workspaces: ["ui"] },
+          "node_modules/no-deps": {
+            version: "1.0.0",
+            resolved: registry.tarball("no-deps", "1.0.0"),
+            integrity: registry.integrity("no-deps", "1.0.0"),
+          },
+          "node_modules/ui": { resolved: "ui", link: true },
+          ui,
+        }),
+      },
+      registry.url,
+    );
+
+    // a frozen install takes package-lock.json as it is
+    const frozenMigration = await run(dir, "install", "--frozen-lockfile");
+    expect(frozenMigration.stderr).not.toContain("error:");
+    expect(frozenMigration.exitCode).toBe(0);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(false);
+
+    const install = await run(dir, "install");
+    expect(install.stderr).toContain("migrated lockfile from package-lock.json");
+    expect(install.exitCode).toBe(0);
+    const { lock } = await readLock(dir);
+    expect(lock.workspaces).toStrictEqual({ "": root, ui });
+    expect(firstsOf(lock.packages)).toStrictEqual([
+      "a-dep@1.0.1",
+      "no-deps@1.0.0",
+      "ui@workspace:ui",
+      "what-bin@1.0.0",
+    ]);
+    await frozen(dir);
+  });
 
   test.concurrent("workspace listed in the lockfile but deleted from disk is skipped", async () => {
     const src = join(ARBORIST, "workspaces-simple-virtual");

@@ -2,7 +2,7 @@
 //! decided on the canonical form (so `1 + 1` vs `2`, quote style or a reformat is not a change, and a branch that
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
-use crate::cli::pm_diff_normalize::Normalized;
+use crate::cli::pm_diff_normalize::{Normalized, same_program};
 use bun_text_diff as text_diff;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -27,6 +27,28 @@ pub(crate) struct Projection<'a> {
     pub ops: Vec<Op<'a>>,
     /// Textually different lines that were folded away as equivalent.
     pub hidden: usize,
+}
+
+impl Projection<'_> {
+    /// Whether the folds stand, on the parser's and the printer's word rather than line by line: what is shown as
+    /// the old side (every line but the `+` ones: `old` with the folded lines as `new` has them) has to be the same
+    /// program as `old`. `same_key`: that is already known of `old` and `new`.
+    pub(crate) fn holds(&self, path: &[u8], old: &[u8], new: &[u8], same_key: bool) -> bool {
+        let mut shown = Vec::with_capacity(old.len());
+        let mut removed = Vec::new();
+        let on_old_side = self.ops.iter().filter(|op| op.kind != Operation::Insert);
+        for (line, op) in on_old_side.enumerate() {
+            if op.kind == Operation::Delete {
+                removed.push(line as u32);
+            }
+            shown.extend_from_slice(op.text);
+            shown.push(b'\n');
+        }
+        if shown == new {
+            return same_key;
+        }
+        shown == old || same_program(path, old, &shown, &removed)
+    }
 }
 
 /// A plain line diff as `Op`s — the skeleton every view starts from.

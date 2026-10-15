@@ -248,21 +248,21 @@ pub struct RedactedNpmUrlFormatter<'a> {
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
-        let mut password = if strings::contains(self.url, b"://") {
-            strings::next_url_password(self.url, 0)
+        let mut userinfo = if strings::contains(self.url, b"://") {
+            strings::next_url_userinfo(self.url, 0)
         } else {
             // A registry configured without a scheme: refused, and echoed in the refusal.
             let authority = if self.url.starts_with(b"//") { 2 } else { 0 };
-            strings::find_authority_password(&self.url[authority..])
+            strings::find_authority_userinfo(&self.url[authority..])
                 .map(|(offset, len)| (authority + offset, len))
         };
         while i < self.url.len() {
-            if let Some((offset, len)) = password
+            if let Some((offset, len)) = userinfo
                 && i == offset
             {
-                splat_byte_all(f, b'*', len)?;
+                f.write_str("***")?;
                 i += len;
-                password = strings::next_url_password(self.url, i);
+                userinfo = strings::next_url_userinfo(self.url, i);
                 continue;
             }
 
@@ -288,7 +288,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 if b.is_ascii_hexdigit()
                     || b == b'n'
                     || b == b'N'
-                    || password.is_some_and(|(offset, _)| next == offset)
+                    || userinfo.is_some_and(|(offset, _)| next == offset)
                 {
                     break;
                 }
@@ -2248,7 +2248,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     continue 'outer;
                                 }
 
-                                if let Some((offset, len)) = strings::find_url_password(inner) {
+                                if let Some((offset, len)) = strings::find_url_userinfo(inner) {
                                     write!(
                                         writer,
                                         "{}\x1b[32m{}{}",

@@ -887,6 +887,43 @@ describe("Bun.Archive", () => {
       expect(stdout).toContain("RSS growth:");
       expect(exitCode).toBe(0);
     });
+
+    describe("every way to read a damaged archive rejects", () => {
+      const member = ustarEntry("a.bin", randomBytes(300_000));
+      const tar = Buffer.concat([member, ustarEntry("b.bin", randomBytes(300_000)), Buffer.alloc(1024)]);
+      // Level 0 stores the bytes as they are, so only the CRC32 in the trailer can tell that one changed.
+      const wrongCrc = Buffer.from(Bun.gzipSync(tar, { level: 0 }));
+      wrongCrc[5000] ^= 0xff;
+
+      test.concurrent.each([
+        ["a gzip CRC32 that does not match", wrongCrc],
+        ["a tar cut inside a file", tar.subarray(0, member.length + 512 + 1000)],
+        ["a tar cut inside a header", tar.subarray(0, member.length + 200)],
+      ])("%s", async (_, bytes) => {
+        using dir = tempDir("archive-damaged", {});
+        const archive = new Bun.Archive(bytes);
+        const settled = (promise: Promise<unknown>) =>
+          promise.then(
+            () => "resolved",
+            () => "rejected",
+          );
+        expect({
+          "extract()": await settled(archive.extract(join(String(dir), "all"))),
+          "extract() with a glob": await settled(archive.extract(join(String(dir), "glob"), { glob: "**" })),
+          "extract() with a glob that matches nothing": await settled(
+            archive.extract(join(String(dir), "none"), { glob: "nothing" }),
+          ),
+          "files()": await settled(archive.files()),
+          "files() with a glob": await settled(archive.files("a.bin")),
+        }).toEqual({
+          "extract()": "rejected",
+          "extract() with a glob": "rejected",
+          "extract() with a glob that matches nothing": "rejected",
+          "files()": "rejected",
+          "files() with a glob": "rejected",
+        });
+      });
+    });
   });
 
   describe("path safety", () => {
@@ -1748,6 +1785,27 @@ describe("Bun.Archive", () => {
       expect(files.size).toBe(1);
       expect(await files.get("test.txt")!.text()).toBe("GC test content");
     });
+
+    // As in GNU tar and bsdtar without --ignore-zeros.
+    test("two zero blocks end the archive, whatever follows them", async () => {
+      const first = buildTarball([{ name: "a.txt", data: "first" }]);
+      const second = buildTarball([
+        { name: "a.txt", data: "second" },
+        { name: "b.txt", data: "second" },
+      ]);
+      for (const rest of [second, Buffer.from("not a block")]) {
+        const archive = new Bun.Archive(Buffer.concat([first, rest]));
+        const files = await archive.files();
+        expect(await Promise.all([...files].map(async ([name, file]) => [name, await file.text()]))).toEqual([
+          ["a.txt", "first"],
+        ]);
+
+        using dir = tempDir("archive-end", {});
+        expect(await archive.extract(String(dir))).toBe(1);
+        expect(readdirSync(String(dir))).toEqual(["a.txt"]);
+        expect(readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("first");
+      }
+    });
   });
 
   describe("sparse files", () => {
@@ -1909,6 +1967,17 @@ describe("Bun.Archive", () => {
       // system, and NTFS, which rounds a chunk up to 64 KiB.
       const chunkCount = members.reduce((n, m) => n + m.chunks.length, 0);
       if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
+    });
+
+    // In memory a hole would be real bytes.
+    test("files() returns the bytes stored for each member", async () => {
+      const files = await new Bun.Archive(bytes).files();
+      const wrong: { name: string; length?: number }[] = [];
+      for (const { name, chunks } of members) {
+        const got = await files.get(name)?.bytes();
+        if (!got || !Buffer.concat(chunks.map(c => c.data)).equals(got)) wrong.push({ name, length: got?.length });
+      }
+      expect(wrong).toEqual([]);
     });
 
     test("extract() does not size a file from a header that declares more than the archive holds", async () => {

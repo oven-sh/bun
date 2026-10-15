@@ -5256,9 +5256,28 @@ impl VirtualMachine {
                     };
 
                     // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
+                    let mut busted = self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    );
+                    // `require.resolve(id, { paths })` looks in `paths`, not next to the importer.
+                    for dir in self
+                        .transpiler
+                        .resolver
+                        .custom_dir_paths
+                        .unwrap_or_default()
+                    {
+                        let dir = dir.to_utf8();
+                        let parts: [&[u8]; 3] = [dir.slice(), normalized_specifier, b".."];
+                        if let Some(name) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                            bun_paths::resolve_path::platform::Auto,
+                        >(top_level_dir, buf, &parts)
+                        {
+                            busted |= self.transpiler.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(name),
+                            );
+                        }
+                    }
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

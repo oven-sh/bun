@@ -36,7 +36,7 @@ impl NpmAliasRegistry for PackageManager {
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
-        // One install records the same row several times (loader, differ, `clone_in`, `clean`).
+        // One install records the same row several times (the differ, `clone_in`).
         if self.get(&hash).is_some_and(|known| **known == *specifier) {
             return;
         }
@@ -1190,6 +1190,20 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
+/// `npm:^1.0.0` -> `^1.0.0`, as Yarn reads it: a range of the dependency's own name. An alias stays whole.
+/// `npm:x`, `npm:v8`, `npm:1` and `npm:1.x` can name a package, so they are aliases, as in npm.
+pub(crate) fn without_npm_protocol(literal: &[u8]) -> &[u8] {
+    let Some(range) = literal.strip_prefix(b"npm:") else {
+        return literal;
+    };
+    let is_no_name = strings::index_of_any(range, b"^~><=*| ").is_some()
+        || Semver::Version::parse_exact(SlicedString::init(range, range)).is_some();
+    if is_no_name && split_npm_alias(range).1.is_none() && Tag::infer(range) == Tag::Npm {
+        return range;
+    }
+    literal
+}
+
 /// `npm:`, `npm:@1.0.0`, `npm:@scope/@1`: it parses, as a lockfile may hold one.
 pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
     let (name, _) = split_npm_alias(trim_literal(literal).strip_prefix(b"npm:")?);
@@ -1209,7 +1223,7 @@ pub(crate) fn parse_with_tag(
     let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
-            let mut input = dependency;
+            let mut input = without_npm_protocol(dependency);
 
             let mut is_alias = false;
             let name = if let Some(target) = input.strip_prefix(b"npm:") {

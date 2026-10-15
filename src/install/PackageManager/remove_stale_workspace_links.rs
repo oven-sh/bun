@@ -23,7 +23,10 @@ pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfi
 
         remove_link_in(b"", name);
         for workspace_path in current.workspace_paths.values() {
-            remove_link_in(workspace_path.slice(&current.buffers.string_bytes), name);
+            let workspace_path = workspace_path.slice(&current.buffers.string_bytes);
+            if !current.is_member_path_outside(workspace_path) {
+                remove_link_in(workspace_path, name);
+            }
         }
     }
 }

@@ -2,6 +2,7 @@
 use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
+use crate::css_values::number::NonNegative;
 use crate::prefixes::Feature;
 use crate::properties::{Property, PropertyId};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
@@ -601,7 +602,7 @@ pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
     /// An explicit length.
-    LengthPercentage(LengthPercentage),
+    LengthPercentage(NonNegative<LengthPercentage>),
 }
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.

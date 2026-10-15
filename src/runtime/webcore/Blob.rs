@@ -6082,6 +6082,20 @@ impl Any {
         }
     }
 
+    /// The units after a leading U+FEFF: `text()` and `json()` drop one, as a UTF-8 decode does.
+    fn units_after_bom(&self) -> Option<&[u16]> {
+        let Any::WTFStringImpl(string) = self else {
+            return None;
+        };
+        if string.is_8bit() {
+            return None;
+        }
+        match string.utf16_slice() {
+            [0xFEFF, rest @ ..] => Some(rest),
+            _ => None,
+        }
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -6191,6 +6205,11 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let json = EncodedSlice::utf16(units).to_json_object(cx.global());
+                    *self = Any::Blob(Blob::default());
+                    return json;
+                }
                 let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -6261,7 +6280,18 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
+            Any::WTFStringImpl(_) => {
+                if let Some(units) = self.units_after_bom() {
+                    let mut text = Vec::new();
+                    if text.try_reserve_exact(units.len()).is_err() {
+                        return Err(cx.global().throw_memory_allocation_failed());
+                    }
+                    text.extend_from_slice(units);
+                    *self = Any::Blob(Blob::default());
+                    return bun_string_jsc::owned_utf16_into_js(cx.global(), text);
+                }
+                self.take_string().into_js(cx.global())
+            }
         }
     }
 

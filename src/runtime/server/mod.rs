@@ -204,7 +204,6 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
-        const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
     }
 }
 
@@ -296,8 +295,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
     /// suffice — this Strong is what keeps the cell live across that window).
-    /// The cycle through a user `.then(cb)` is broken by resolving the
-    /// promise in `deinit_if_we_can`, after which the Strong is dropped.
+    /// A `.then(cb)` can reach the wrapper, so `deinit_if_we_can` moves the Strong into the task that resolves the promise.
     pub(crate) all_closed_promise: jsc::JSPromiseStrong,
 
     pub poll_ref: KeepAlive,
@@ -1891,7 +1889,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // pass panicking means this server is unrecoverable anyway.
 
         httplog!(
-            "deinitIfWeCan. requests={}, listener={}, connections={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
+            "deinitIfWeCan. requests={}, listener={}, connections={}, websockets={}, all_closed_promise={}, has_js_deinited={}",
             self.pending_requests.get(),
             if self.listener.is_none() {
                 "null"
@@ -1904,8 +1902,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 "no"
             },
-            self.flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
             if self.all_closed_promise.has_value() {
                 "has"
             } else {
@@ -1916,9 +1912,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let closed = self.is_closed();
         if closed
-            && !self
-                .flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
             && self.all_closed_promise.has_value()
             // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
             // (without resolving the promise) when the VM is shutting down —
@@ -1929,21 +1922,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self.vm().is_shutting_down()
         {
             httplog!("schedule other promise");
-            // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
-            // again before the task has run.
-            self.flags
-                .insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
-
-            let global = self.global_this();
             let vm_ref = jsc::VirtualMachine::get_mut();
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
-                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    promise: jsc::JSPromiseStrong::from_value(
-                        self.all_closed_promise.value(),
-                        global,
-                    ),
+                    promise: self.all_closed_promise.take(),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                     context: self.context.get(),
                 },

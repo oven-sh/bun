@@ -22,7 +22,7 @@ use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
 
 // LAYERING: `PackageManager.initWithRuntime` lives in
-// `bun_install`, which depends on this crate. The lazy-init body is defined
+// `bun_install`, which depends on this crate. It and `Dependency.parse` are defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
@@ -37,7 +37,17 @@ unsafe extern "Rust" {
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
+        prefer_offline: bool,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
+
+    /// `Dependency.parse` with no `PackageManager`, which it only uses to record `npm:` aliases.
+    safe fn __bun_resolver_parse_dependency(
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -837,8 +847,15 @@ impl<'a> Resolver<'a> {
         // final binary; `self.log` / `self.opts.install` / `env` point at
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
+        let pm: NonNull<dyn AutoInstaller> = unsafe {
+            __bun_resolver_init_package_manager(
+                self.log,
+                self.opts.install,
+                env,
+                self.opts.install_preference
+                    == bun_options_types::offline_mode::OfflineMode::Offline,
+            )
+        }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
@@ -860,6 +877,21 @@ impl<'a> Resolver<'a> {
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    }
+
+    /// The project's package.json is parsed before the first bare import creates the manager.
+    pub(crate) fn parse_dependency(
+        &mut self,
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<Dependency::Version> {
+        match self.auto_installer() {
+            Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
+            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+        }
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -2922,7 +2954,7 @@ impl<'a> Resolver<'a> {
                         } else if esm_ref.version.is_empty() {
                             // If you don't specify a version, default to the one chosen in your package.json
                             dependencies_list = package_json.dependencies.map.values();
-                            string_buf = package_json.dependencies.source_buf;
+                            string_buf = &package_json.dependencies.source_buf;
                         }
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
@@ -2996,7 +3028,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version)
+                        if let Some(id) =
+                            manager!().lockfile_resolve(esm.name, &dependency_version, string_buf)
                         {
                             resolved_package_id = id;
                         }
@@ -3100,7 +3133,6 @@ impl<'a> Resolver<'a> {
                                                 resolved_package_id,
                                                 &resolution,
                                                 Install::TaskCallbackContext { root_request_id: 0 },
-                                                None,
                                             )
                                         {
                                             if let Some(d) = self.debug_logs.as_mut() {
@@ -3133,6 +3165,14 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Failure(err.into());
                     }
                 };
+
+                // Only an npm resolution has a folder here. On Windows "" would open the cwd.
+                if dir_path_for_resolution.is_empty() {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::NotFound;
+                }
 
                 match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
                     Ok(dir_info_to_use_) => {
@@ -3519,7 +3559,11 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
+        debug_assert!(
+            pm!()
+                .lockfile_resolve(esm.name, &version, version_buf)
+                .is_none()
+        );
 
         // Add the containing package to the lockfile
 
@@ -3555,15 +3599,6 @@ impl<'a> Resolver<'a> {
                 if let Err(err) = pm!().lockfile_append_root_stub() {
                     return DependencyToResolve::Failure(err.into());
                 }
-            }
-        }
-
-        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
-                *input_package_id_ = package_id;
-                return DependencyToResolve::Resolution(
-                    pm!().lockfile_package_resolution(package_id),
-                );
             }
         }
 
@@ -3675,9 +3710,14 @@ impl<'a> Resolver<'a> {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
+                let entry_kind = entry_lookup
+                    .as_ref()
+                    .map(|q| unsafe { q.entry().kind(self.rfs_ptr(), self.store_fd) });
                 let entry_query = match entry_lookup {
-                    Some(q) => q,
-                    None => {
+                    Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
+                    _ => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -3696,11 +3736,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
-                    == Fs::file_system::EntryKind::Dir
-                {
+                if entry_kind == Some(Fs::file_system::EntryKind::Dir) {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_target_extensions(
@@ -6416,10 +6452,9 @@ impl<'a> Resolver<'a> {
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
                     let parts = [path, b"tsconfig.json".as_slice()];
-                    tsconfig_path = Some(
-                        self.fs_ref()
-                            .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                    );
+                    tsconfig_path = self
+                        .fs_ref()
+                        .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
                 }
             }
             if tsconfig_path.is_none() {
@@ -6432,10 +6467,9 @@ impl<'a> Resolver<'a> {
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"jsconfig.json".as_slice()];
-                        tsconfig_path = Some(
-                            self.fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename)),
-                        );
+                        tsconfig_path = self
+                            .fs_ref()
+                            .abs_buf_checked(&parts, bufs!(dir_info_uncached_filename));
                     }
                 }
             }

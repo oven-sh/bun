@@ -1010,11 +1010,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             match mode {
                 // Invalid source indices in CSS are external URLs.
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
-                // Check IncrementalGraph for a file from a prior build.
-                EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
-                    Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
-                    None => return Ok(EdgeAttachmentResult::Continue),
-                },
+                // Check IncrementalGraph for a file from a prior build. `key` is a
+                // module's path only when import resolution pointed the record at
+                // one. Any other record (external, failed, waiting for a plugin)
+                // still holds the specifier, which can equal the key of a file.
+                EdgeAttachmentMode::JsOrHtml => {
+                    if !ir_flags.contains(bun_ast::ImportRecordFlags::PATH_IS_RESOLVED_MODULE) {
+                        return Ok(EdgeAttachmentResult::Continue);
+                    }
+                    match self.bundled_files.get_index(key) {
+                        Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
+                        None => return Ok(EdgeAttachmentResult::Continue),
+                    }
+                }
             }
         };
 

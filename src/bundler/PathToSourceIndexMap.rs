@@ -1,22 +1,7 @@
+use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_collections::StringHashMap;
 
 use crate::IndexStringMap::IndexInt;
-
-/// Abstracts over the two structurally-identical `Path` ports (`bun_paths::fs::Path`
-/// and `bun_resolver::fs::Path`) so the bundler can key the map with either while
-/// the crates converge. Both expose `.text: &[u8]`, which is all we need.
-pub trait PathLike {
-    fn path_text(&self) -> &[u8];
-}
-
-// `bun_resolver::fs::Path` is now a re-export of `bun_paths::fs::Path` (D090),
-// so a single impl covers both.
-impl PathLike for bun_paths::fs::Path<'_> {
-    #[inline]
-    fn path_text(&self) -> &[u8] {
-        self.text
-    }
-}
 
 /// The lifetime of the keys are not owned by this map.
 ///
@@ -33,8 +18,22 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
-    pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
-        self.get(path.path_text())
+    /// The module `record` was resolved to: its `source_index`, or for a record
+    /// the dev server left without one, the module registered under the path
+    /// that import resolution gave the record. A record that import resolution
+    /// did not point at a module (external, failed, waiting for a plugin) has
+    /// none, whatever its path text is.
+    pub(crate) fn module_of_record(&self, record: &ImportRecord) -> Option<IndexInt> {
+        if record.source_index.is_valid() {
+            return Some(record.source_index.get());
+        }
+        if !record
+            .flags
+            .contains(ImportRecordFlags::PATH_IS_RESOLVED_MODULE)
+        {
+            return None;
+        }
+        self.get(record.path.text)
     }
 
     pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {

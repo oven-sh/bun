@@ -112,6 +112,10 @@ pub struct BundleV2<'a> {
     pub(crate) resolve_tasks_waiting_for_import_source_index:
         ArrayHashMap<IndexInt, Vec<PendingImport>>,
 
+    /// The links of the last `resolve_import_records` call, consumed by the
+    /// `process_resolve_queue` call that follows it. One buffer for every file.
+    pub(crate) queued_links: Vec<QueuedLink>,
+
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
 
@@ -148,9 +152,39 @@ pub struct BundleV2<'a> {
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
 
-/// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
-/// dedups by path during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
+/// The modules one `resolve_import_records` call found that are not in the
+/// graph yet. The map only dedups by path during a single
+/// `on_parse_task_complete` pass.
+pub(crate) type ResolveQueue = StringHashMap<QueuedModule>;
+
+const NO_QUEUED_LINK: u32 = u32::MAX;
+
+#[derive(Clone, Copy)]
+pub(crate) struct QueuedModule {
+    /// Arena-owned by `graph.heap`.
+    pub(crate) task: *mut ParseTask,
+    /// The importer's records that import this module: the head of a list in
+    /// `BundleV2::queued_links`, or `NO_QUEUED_LINK`.
+    first_link: u32,
+}
+
+impl Default for QueuedModule {
+    fn default() -> Self {
+        Self {
+            task: core::ptr::null_mut(),
+            first_link: NO_QUEUED_LINK,
+        }
+    }
+}
+
+/// An import record that waits for the source index of a `QueuedModule`.
+/// `process_resolve_queue` writes it once the module is registered.
+#[derive(Clone, Copy)]
+pub(crate) struct QueuedLink {
+    import_record_index: u32,
+    /// The next record that imports the same module, or `NO_QUEUED_LINK`.
+    next: u32,
+}
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
@@ -279,7 +313,7 @@ impl<'a> BundleV2<'a> {
 // ══════════════════════════════════════════════════════════════════════════
 
 pub mod bv2_impl {
-    use super::ResolveQueue;
+    use super::{NO_QUEUED_LINK, QueuedLink, QueuedModule, ResolveQueue};
     use crate::IndexInt;
     use crate::mal_prelude::*;
     // This is Bun's JavaScript/TypeScript bundler
@@ -3279,6 +3313,7 @@ pub mod bv2_impl {
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
+                queued_links: Vec::new(),
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
@@ -3780,9 +3815,6 @@ pub mod bv2_impl {
 
             // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-            self.path_to_source_index_map(self.transpiler.options.target)
-                .put(&b"bun:wrap"[..], Index::RUNTIME.get())
-                .expect("oom");
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -6461,6 +6493,7 @@ pub mod bv2_impl {
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
+                this.queued_links.clear();
 
                 // A failed file's imports are not followed: the queue is cleared
                 // above. That includes the records barrel optimization deferred, so
@@ -6542,9 +6575,57 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Whether the records of an importer keep the source index of the module
+        /// they import. The dev server identifies a JS import by its path, so
+        /// there only a CSS or HTML importer and barrel un-deferral keep it.
+        #[inline]
+        pub(crate) fn importer_keeps_source_index(
+            &self,
+            importer_loader: Loader,
+            only_records: Option<&[u32]>,
+        ) -> bool {
+            only_records.is_some()
+                || self.dev_server.is_none()
+                || importer_loader == Loader::Html
+                || importer_loader.is_css()
+        }
+
+        /// Point `record` at the module it was resolved to. An import of a
+        /// stylesheet keeps its source index for every importer.
+        #[inline]
+        fn link_import_record(
+            record: &mut ImportRecord,
+            module: IndexInt,
+            module_loader: Loader,
+            importer_keeps_source_index: bool,
+        ) {
+            if importer_keeps_source_index || module_loader.is_css() {
+                record.source_index = Index::init(module);
+            }
+        }
+
+        /// Record that `import_records[import_record_index]` imports `module`, so
+        /// that `process_resolve_queue` links it once the module has a source index.
+        #[inline]
+        fn queue_link(
+            links: &mut Vec<QueuedLink>,
+            module: &mut QueuedModule,
+            import_record_index: usize,
+        ) {
+            let link = links.len() as u32;
+            links.push(QueuedLink {
+                import_record_index: import_record_index as u32,
+                next: module.first_link,
+            });
+            module.first_link = link;
+        }
+
         /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
         /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
+        /// A record that imports a module in the graph is linked here. A record that
+        /// imports a queued module is linked by the `process_resolve_queue` call that
+        /// must follow. No other record gets a source index.
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
             &mut self,
@@ -6555,6 +6636,8 @@ pub mod bv2_impl {
             let source_dir = source.path.source_dir();
             let only_records = ctx.only_records;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
+            let keeps_source_index = self.importer_keeps_source_index(loader, only_records);
+            self.queued_links.clear();
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
@@ -6793,10 +6876,14 @@ pub mod bv2_impl {
 
                         let resolve_entry =
                             resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::PATH_IS_RESOLVED_MODULE);
+                        Self::queue_link(&mut self.queued_links, resolve_entry.value_ptr, i);
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                                path_as_static(&unsafe { &*resolve_entry.value_ptr.task }.path);
                             continue;
                         }
 
@@ -6829,7 +6916,7 @@ pub mod bv2_impl {
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
+                        resolve_entry.value_ptr.task = resolve_task;
                         continue;
                     }
                 }
@@ -7134,6 +7221,9 @@ pub mod bv2_impl {
                                     import_record.path.is_disabled = true;
                                 }
                             }
+                            import_record
+                                .flags
+                                .insert(bun_ast::ImportRecordFlags::PATH_IS_RESOLVED_MODULE);
                             continue 'outer;
                         }
                     }
@@ -7170,6 +7260,15 @@ pub mod bv2_impl {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::PATH_IS_RESOLVED_MODULE);
+                        Self::link_import_record(
+                            import_record,
+                            id,
+                            self.graph.input_files.items_loader()[id as usize],
+                            keeps_source_index,
+                        );
                     } else {
                         import_record.source_index = Index::init(id);
                     }
@@ -7181,10 +7280,14 @@ pub mod bv2_impl {
                 }
 
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                import_record
+                    .flags
+                    .insert(bun_ast::ImportRecordFlags::PATH_IS_RESOLVED_MODULE);
                 if resolve_entry.found_existing {
+                    Self::queue_link(&mut self.queued_links, resolve_entry.value_ptr, i);
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
-                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                        path_as_static(&unsafe { &*resolve_entry.value_ptr.task }.path);
                     continue;
                 }
 
@@ -7211,7 +7314,6 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
@@ -7220,10 +7322,15 @@ pub mod bv2_impl {
                         resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
                     }
                 }
+                resolve_entry.value_ptr.task = resolve_task;
 
                 if is_html_entrypoint {
+                    // Links the record to the manifest module. The queued
+                    // module is the HTML file, an entry point of its own.
                     self.generate_server_html_module(path, target, import_record, path.text)
                         .expect("unreachable");
+                } else {
+                    Self::queue_link(&mut self.queued_links, resolve_entry.value_ptr, i);
                 }
             }
 
@@ -7233,13 +7340,43 @@ pub mod bv2_impl {
             }
         }
 
-        /// Process a resolve queue: create input file slots and schedule parse tasks.
+        /// Give the records in the list that starts at `first_link` the source
+        /// index of the module they import.
+        fn link_queued_records(
+            &self,
+            import_records: &mut [ImportRecord],
+            first_link: u32,
+            module: IndexInt,
+            module_loader: Loader,
+            importer_keeps_source_index: bool,
+        ) {
+            let mut link = first_link;
+            while link != NO_QUEUED_LINK {
+                let QueuedLink {
+                    import_record_index,
+                    next,
+                } = self.queued_links[link as usize];
+                Self::link_import_record(
+                    &mut import_records[import_record_index as usize],
+                    module,
+                    module_loader,
+                    importer_keeps_source_index,
+                );
+                link = next;
+            }
+        }
+
+        /// Process the resolve queue of the `resolve_import_records` call before it:
+        /// create input file slots, schedule parse tasks, and link the records of
+        /// `import_records` (the importer's) that import a queued module.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
         pub(crate) fn process_resolve_queue(
             &mut self,
             resolve_queue: &ResolveQueue,
             target: options::Target,
             importer_source_index: IndexInt,
+            import_records: &mut [ImportRecord],
+            importer_keeps_source_index: bool,
         ) -> i32 {
             let mut diff: i32 = 0;
             // reshaped for borrowck — `graph` and the
@@ -7254,11 +7391,11 @@ pub mod bv2_impl {
                     )
                 });
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
-                let value: *mut ParseTask = *value;
+            for (key, queued) in resolve_queue.iter() {
+                let first_link = queued.first_link;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
-                let value = unsafe { &mut *value };
+                let value = unsafe { &mut *queued.task };
                 let loader = value.loader.unwrap_or_else(|| {
                     value
                         .path
@@ -7282,6 +7419,31 @@ pub mod bv2_impl {
                     )
                 };
 
+                // The module in the slot: the one registered before under this
+                // path, or the one this iteration registers.
+                let (module, module_loader): (IndexInt, Loader) = if found_existing {
+                    // SAFETY: map slot from `get_or_put` above; map not mutated since.
+                    let existing = unsafe { *value_ptr };
+                    (
+                        existing,
+                        self.graph.input_files.items_loader()[existing as usize],
+                    )
+                } else {
+                    (self.graph.input_files.len() as u32, loader)
+                };
+                // An HTML file that server-side code imports is an entry point of
+                // the browser graph. Its importer is linked to the manifest module
+                // (`generate_server_html_module`), never to the HTML file itself.
+                if !is_html_entrypoint {
+                    self.link_queued_records(
+                        import_records,
+                        first_link,
+                        module,
+                        module_loader,
+                        importer_keeps_source_index,
+                    );
+                }
+
                 if !found_existing {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
@@ -7300,11 +7462,10 @@ pub mod bv2_impl {
                     self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths
                         || !new_input_file.secondary_path.is_empty();
 
-                    new_input_file.source.index =
-                        bun_ast::Index(self.graph.input_files.len() as u32);
+                    new_input_file.source.index = bun_ast::Index(module);
                     new_input_file.source.path = path_as_static(&new_task.path);
                     new_input_file.loader = loader;
-                    let new_source_index: u32 = new_input_file.source.index.0;
+                    let new_source_index: u32 = module;
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
                     // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
@@ -7348,12 +7509,10 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else {
                     if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
+                        additional_files.push(crate::AdditionalFile::SourceIndex(module));
                         self.graph.estimated_file_loader_count += 1;
                     }
 
@@ -7397,23 +7556,16 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// Patch source_index on import records from pathToSourceIndexMap and
-        /// resolve_tasks_waiting_for_import_source_index. Called after
-        /// processResolveQueue has registered new modules.
+        /// Apply the onResolve plugin answers that arrived before the importer's
+        /// records were on the graph (`resolve_tasks_waiting_for_import_source_index`),
+        /// and register a file that only re-exports another module under that
+        /// module. Called after `process_resolve_queue` linked the records.
         pub(crate) fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
             ctx: PatchImportRecordsCtx,
         ) {
-            // Borrowck rejects holding a `&self.graph` alias
-            // across the `&mut self.graph.build_graphs[...]` borrow
-            // below, so address the disjoint `self.graph.*` fields directly instead.
-            let input_file_loaders = self.graph.input_files.items_loader();
             debug_assert!(ctx.only_records.is_none_or(<[u32]>::is_sorted));
-            let save_import_record_source_index = ctx.only_records.is_some()
-                || self.dev_server.is_none()
-                || ctx.loader == Loader::Html
-                || ctx.loader.is_css();
 
             if let Some(idx) = self
                 .resolve_tasks_waiting_for_import_source_index
@@ -7422,37 +7574,32 @@ pub mod bv2_impl {
                 let (_, value) = self
                     .resolve_tasks_waiting_for_import_source_index
                     .swap_remove_at(idx);
+                let importer_keeps_source_index =
+                    self.importer_keeps_source_index(ctx.loader, ctx.only_records);
+                let input_file_loaders = self.graph.input_files.items_loader();
                 for to_assign in value.slice() {
-                    if save_import_record_source_index
-                        || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
-                    {
-                        import_records.as_mut_slice()[to_assign.import_record_index as usize]
-                            .source_index = to_assign.to_source_index;
-                    }
+                    Self::link_import_record(
+                        &mut import_records.as_mut_slice()[to_assign.import_record_index as usize],
+                        to_assign.to_source_index.get(),
+                        input_file_loaders[to_assign.to_source_index.get() as usize],
+                        importer_keeps_source_index,
+                    );
                 }
                 drop(value);
             }
 
-            // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
-            // so borrowck sees it as disjoint from `self.graph.input_files` above.
+            let Some(redirect) = get_redirect_id(ctx.redirect_import_record_index) else {
+                return;
+            };
+            if !only_selected_record(ctx.only_records, redirect as usize) {
+                return;
+            }
+            let Some(record) = import_records.as_slice().get(redirect as usize) else {
+                return;
+            };
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
-            for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
-                if !only_selected_record(ctx.only_records, i) {
-                    continue;
-                }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
-                    if save_import_record_source_index
-                        || input_file_loaders[source_index as usize].is_css()
-                    {
-                        record.source_index.0 = source_index;
-                    }
-
-                    if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
-                        if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
-                        }
-                    }
-                }
+            if let Some(source_index) = path_to_source_index_map.module_of_record(record) {
+                let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
             }
         }
 
@@ -7743,10 +7890,13 @@ pub mod bv2_impl {
                         this.graph.css_file_count += 1;
                     }
 
+                    let keeps_source_index = this.importer_keeps_source_index(result.loader, None);
                     diff += this.process_resolve_queue(
                         &resolve_queue,
                         result.ast.target,
                         result_source_index as IndexInt,
+                        &mut result.ast.import_records,
+                        keeps_source_index,
                     );
 
                     let result_heap = *result.ast.import_records.allocator();
@@ -7776,13 +7926,9 @@ pub mod bv2_impl {
                     for star_record_idx in result.ast.export_star_import_records.iter() {
                         if (*star_record_idx as usize) < import_records.len() as usize {
                             let star_ir = &import_records.as_slice()[*star_record_idx as usize];
-                            let resolved_index = if star_ir.source_index.is_valid() {
-                                star_ir.source_index.get()
-                            } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
-                            {
-                                idx
-                            } else {
+                            let Some(resolved_index) =
+                                this.graph.build_graphs[result_ast_target].module_of_record(star_ir)
+                            else {
                                 continue;
                             };
                             this.graph.input_files.items_flags_mut()[resolved_index as usize] |=

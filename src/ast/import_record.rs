@@ -107,8 +107,17 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The bundler's import resolution replaced `path` with the path of the
+        /// module this record imports. Only such a record may be matched to a
+        /// module by its path (the dev server leaves `source_index` unset on most
+        /// records). Any other `path` is the specifier, which can equal the path
+        /// of an unrelated module.
+        const PATH_IS_RESOLVED_MODULE = 1 << 19;
     }
 }
+
+const _: () = assert!(core::mem::size_of::<ImportRecord>() <= 96);
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 

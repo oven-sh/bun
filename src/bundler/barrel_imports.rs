@@ -313,8 +313,8 @@ fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) 
     true
 }
 
-/// The record's patched source_index, or (dev server, where indices are left
-/// unset on import records) a path-map lookup.
+/// The record's source_index, or (dev server, where indices are left unset on
+/// import records) the module its resolved path is registered under.
 #[inline]
 fn record_target(
     rec: &bun_ast::ImportRecord,
@@ -323,7 +323,23 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.module_of_record(rec)
+}
+
+/// The path text of the module a dev-server record without a source index was
+/// resolved to. A duplicate that HMR marked unused is never resolved: `dedup_fallback`
+/// maps its specifier to the resolved path of the record that survived.
+#[inline]
+fn resolved_module_path_text(
+    rec: &bun_ast::ImportRecord,
+    dedup_fallback: &StringArrayHashMap<&'static [u8]>,
+) -> Option<&'static [u8]> {
+    if rec.flags.contains(import_record::Flags::IS_UNUSED) {
+        return dedup_fallback.get(rec.path.text).copied();
+    }
+    rec.flags
+        .contains(import_record::Flags::PATH_IS_RESOLVED_MODULE)
+        .then_some(rec.path.text)
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -389,7 +405,14 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
+    let keeps_source_index = this.importer_keeps_source_index(loader, Some(un_deferred));
+    let scheduled = this.process_resolve_queue(
+        &resolve_result.resolve_queue,
+        target,
+        barrel_idx,
+        &mut barrel_ir,
+        keeps_source_index,
+    );
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,
@@ -487,12 +510,16 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // named_imports entries created for the dedup'd record still point at
     // its index, so the direct path lookup below fails for those entries.
     // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
+    // text, using the records of this file that were resolved to a module.
+    // See #28886.
     let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for ir_probe in file_import_records.as_slice() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
                 || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
+                || !ir_probe
+                    .flags
+                    .contains(import_record::Flags::PATH_IS_RESOLVED_MODULE)
             {
                 continue;
             }
@@ -525,18 +552,11 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // For dedup'd HMR records (is_unused), fall back to a sibling's
         // resolved path text since the record itself still has the raw
         // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
+        let resolved_path_text = resolved_module_path_text(ir, &dedup_fallback);
         let target = if ir.source_index.is_valid() {
             ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+        } else if let (Some(map), Some(text)) = (path_to_source_index_map, resolved_path_text) {
+            match map.get().get(text) {
                 Some(t) => t,
                 None => continue,
             }
@@ -558,7 +578,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, resolved_path_text.unwrap_or(ir.path.text), alias);
             }
         }
     }
@@ -618,18 +638,13 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
         let ir_target = if ir.source_index.is_valid() {
             ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
+        } else if let (Some(map), Some(text)) = (
+            path_to_source_index_map,
+            resolved_module_path_text(ir, &dedup_fallback),
+        ) {
+            match map.get().get(text) {
                 Some(t) => t,
                 None => continue,
             }

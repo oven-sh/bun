@@ -5302,47 +5302,45 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
-        if global.has_on_resolve() {
-            match run_on_resolve(global, specifier, source)? {
-                None => {}
-                Some(Err(error)) => return Ok(Err(error)),
-                Some(Ok(answer)) => {
-                    if let Some(name) = global.resolve_virtual_module(&answer, source) {
-                        return Ok(Ok(name));
-                    }
-                    // A bare name that an `onLoad` could serve may also be a package's in the registry.
-                    // It is the plugin's own, and not installed, if `onResolve` answers about it as well.
-                    let answer_utf8 = answer.to_utf8();
-                    let is_bare = bun_resolver::is_package_path(&answer_utf8)
-                        && ModuleLoader::on_load_namespace_and_path(&answer_utf8)
-                            .is_some_and(|(namespace, _)| namespace.is_empty());
-                    drop(answer_utf8);
-                    let is_own = is_bare
-                        && (answer.eql(specifier)
-                            || match run_on_resolve(global, &answer, source)? {
-                                None => false,
-                                Some(Ok(_)) => true,
-                                Some(Err(error)) => return Ok(Err(error)),
-                            });
-                    let global_cache = if is_own {
-                        bun_resolver::GlobalCache::disable
-                    } else {
-                        global.bun_vm().transpiler.resolver.opts.global_cache
-                    };
-                    let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
-                        global,
-                        &answer,
-                        source,
-                        query_string,
-                        mode,
-                        global_cache,
-                    )?;
-                    // Not on disk, for an `onLoad` to serve.
-                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
-                        return Ok(Ok(answer));
-                    }
-                    return Ok(resolved);
+        match run_on_resolve(global, specifier, source)? {
+            None => {}
+            Some(Err(error)) => return Ok(Err(error)),
+            Some(Ok(answer)) => {
+                if let Some(name) = global.resolve_virtual_module(&answer, source) {
+                    return Ok(Ok(name));
                 }
+                // A bare name that an `onLoad` could serve may also be a package's in the registry.
+                // It is the plugin's own, and not installed, if `onResolve` answers about it as well.
+                let answer_utf8 = answer.to_utf8();
+                let is_bare = bun_resolver::is_package_path(&answer_utf8)
+                    && ModuleLoader::on_load_namespace_and_path(&answer_utf8)
+                        .is_some_and(|(namespace, _)| namespace.is_empty());
+                drop(answer_utf8);
+                let is_own = is_bare
+                    && (answer.eql(specifier)
+                        || match run_on_resolve(global, &answer, source)? {
+                            None => false,
+                            Some(Ok(_)) => true,
+                            Some(Err(error)) => return Ok(Err(error)),
+                        });
+                let global_cache = if is_own {
+                    bun_resolver::GlobalCache::disable
+                } else {
+                    global.bun_vm().transpiler.resolver.opts.global_cache
+                };
+                let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+                    global,
+                    &answer,
+                    source,
+                    query_string,
+                    mode,
+                    global_cache,
+                )?;
+                // Not on disk, for an `onLoad` to serve.
+                if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
+                    return Ok(Ok(answer));
+                }
+                return Ok(resolved);
             }
         }
         Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
@@ -7774,39 +7772,52 @@ fn run_on_resolve(
     specifier: &bun_core::String,
     importer: &bun_core::String,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+    let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
+    if !in_file_namespace && !in_another_namespace {
+        return Ok(None);
+    }
     let specifier = specifier.to_utf8();
-    if specifier.is_empty() {
-        return Ok(None);
-    }
-    let vm = global.bun_vm();
-    // Without an extension or a namespace, skip builtin names and anything a callback resolves: a
-    // catch-all filter would otherwise claim `require("fs")` and recurse on its own `require()`.
-    if !ModuleLoader::has_extension_or_namespace(&specifier)
-        && (vm.is_in_on_resolve.get()
-            || ModuleLoader::HardcodedModule::Alias::get(
-                &specifier,
-                bun_ast::Target::Bun,
-                Default::default(),
-            )
-            .is_some())
-    {
-        return Ok(None);
-    }
     let (namespace, path) = ModuleLoader::namespace_and_path(&specifier);
+    let namespace: &[u8] = if namespace == b"file" { b"" } else { namespace };
+    let vm = global.bun_vm();
+    // "virtual:thing" is offered as "thing" in namespace "virtual", then as "virtual:thing" in namespace "file".
+    let asks_namespace = in_another_namespace && !namespace.is_empty();
+    // Without an extension, skip builtins and anything a callback resolves, or a catch-all filter would recurse forever.
+    let asks_file_namespace = in_file_namespace
+        && !specifier.is_empty()
+        && ((namespace.is_empty() && ModuleLoader::has_extension_or_namespace(&specifier))
+            || !(vm.is_in_on_resolve.get() || ModuleLoader::bun_aliases_get(&specifier).is_some()));
+    if !asks_namespace && !asks_file_namespace {
+        return Ok(None);
+    }
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
-    };
-    let answer = {
-        let _scope = OnResolveScope::enter(vm);
-        global.run_on_resolve_plugins(
-            &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
+    let importer = bun_core::String::borrow_utf8(
+        match bun_core::strings::index_of_char_usize(&importer, b'?') {
+            Some(query) => &importer[..query],
+            None => &importer[..],
+        },
+    );
+    let _scope = OnResolveScope::enter(vm);
+    let mut answer = None;
+    if asks_namespace {
+        answer = global.run_on_resolve_plugins(
+            &bun_core::String::from_bytes(namespace),
             &bun_core::String::borrow_utf8(path),
-            &bun_core::String::borrow_utf8(importer),
-        )?
-    };
+            &importer,
+        )?;
+    }
+    if answer.is_none() && asks_file_namespace {
+        answer = global.run_on_resolve_plugins(
+            &bun_core::String::EMPTY,
+            &bun_core::String::borrow_utf8(if namespace.is_empty() {
+                path
+            } else {
+                &specifier
+            }),
+            &importer,
+        )?;
+    }
     let Some(on_resolve_plugin) = answer else {
         return Ok(None);
     };

@@ -1685,6 +1685,14 @@ describe.concurrent("onResolve is asked about a specifier without an extension",
             loader: "object",
           }));
           build.onResolve({ filter: /^@app\\// }, ({ path }) => ({ path: "./" + path.slice("@app/".length) }));
+          build.onResolve({ filter: /^virtual:/ }, ({ path }) => {
+            console.log("onResolve", path);
+            return { path: path.slice("virtual:".length), namespace: "host" };
+          });
+          build.onResolve({ filter: /^first$/, namespace: "virtual" }, ({ path }) => {
+            console.log("onResolve virtual", path);
+            return { path: "first from virtual", namespace: "host" };
+          });
         },
       });
     `,
@@ -1763,6 +1771,25 @@ describe.concurrent("onResolve is asked about a specifier without an extension",
         "@somemodule/foo/bar",
         "onResolve @somemodule/foo/baz/qux",
         "host:@somemodule/foo/baz/qux",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The namespace's own onResolve is asked first, then the file namespace with the whole specifier.
+  it("and offers a specifier with a namespace to the file namespace as well", async () => {
+    const source = `
+      console.log((await import("virtual:thing")).path, (await import("virtual:first")).path);
+      console.log(require.resolve("virtual:other"));
+    `;
+    expect(await run("entry.mjs", source)).toEqual({
+      stdout: [
+        "onResolve virtual:thing",
+        "onResolve virtual first",
+        "thing first from virtual",
+        "onResolve virtual:other",
+        "host:other",
       ],
       stderr: "",
       exitCode: 0,

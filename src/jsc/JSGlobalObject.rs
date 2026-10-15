@@ -741,9 +741,10 @@ impl JSGlobalObject {
         Bun__hasPlugins(self)
     }
 
-    /// Whether an `onResolve` is registered.
-    pub(crate) fn has_on_resolve(&self) -> bool {
-        Bun__hasOnResolve(self)
+    /// Returns (an `onResolve` is registered in the `file` namespace, one is registered in another namespace).
+    pub(crate) fn has_on_resolve(&self) -> (bool, bool) {
+        let namespaces = Bun__onResolveNamespaces(self);
+        (namespaces & 1 != 0, namespaces & 2 != 0)
     }
 
     /// The key of the `build.module()` or `mock.module()` module that `specifier` names.
@@ -1528,7 +1529,7 @@ unsafe extern "C" {
         source: &BunString,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
-    safe fn Bun__hasOnResolve(global: &JSGlobalObject) -> bool;
+    safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,
         specifier: &BunString,

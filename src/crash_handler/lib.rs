@@ -549,7 +549,7 @@ mod draft {
             CMD_CHAR.store(c, Ordering::Relaxed);
         }
 
-        pub(crate) fn cmd_char() -> Option<u8> {
+        pub fn cmd_char() -> Option<u8> {
             match CMD_CHAR.load(Ordering::Relaxed) {
                 0 => None,
                 c => Some(c),

@@ -442,6 +442,10 @@ function reportCancelledFile(
   counts.topLevel++;
 }
 
+// Bound by the first file of the first run(): importing node:test costs nothing for it.
+type FileFlags = (cwd: string) => [beforeTest: string[], afterTest: string[]];
+let fileFlags: FileFlags | undefined;
+
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
@@ -450,10 +454,28 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
-  // in the child's process.execArgv; bun's CLI likewise takes runtime flags
-  // before the `test` keyword and user args after the path.
-  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  // Node's getRunArgs: the flags this process runs with, then execArgv, the path,
+  // and argv. The flags go before `test`, where they are the child's
+  // process.execArgv. A `bun test` caller has its own after `test`, so the
+  // child has those there too. execArgv is then given again after them: the
+  // last value of a flag counts, and the option has the last word.
+  fileFlags ??= $newRustFunction("jest.rs", "jsNodeTestFileFlags", 1) as FileFlags;
+  const [beforeTest, afterTest] = fileFlags(opts.cwd as string);
+  const execArgv = opts.execArgv as string[];
+  // With -e or -p the child evaluates a script, and what follows `test` is the script's.
+  const evaluates = execArgv.some(arg => ["-e", "-p", "-pe", "--eval", "--print"].includes(arg));
+  const args = evaluates
+    ? [process.execPath, ...beforeTest, ...afterTest, ...execArgv, "test", absolute, ...(opts.argv as string[])]
+    : [
+        process.execPath,
+        ...beforeTest,
+        ...execArgv,
+        "test",
+        ...afterTest,
+        absolute,
+        ...(afterTest.length > 0 ? execArgv : []),
+        ...(opts.argv as string[]),
+      ];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 

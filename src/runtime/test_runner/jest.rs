@@ -588,6 +588,34 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+/// Reached only from `node:test`'s `run()`, once for each file: `[before, after]`,
+/// the flags of the caller that go before `test` and after it in the command
+/// line of the file's `bun test` process. The argument is the `cwd` option of
+/// `run()`.
+pub(crate) fn js_node_test_file_flags(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use crate::cli::arguments;
+
+    let [child_directory] = callframe.arguments_as_array::<1>();
+    let child_directory = child_directory.to_utf8(global)?;
+    let options = &global.bun_vm().transpiler.options.transform_options;
+    let flags = arguments::node_test_file_flags(
+        arguments::NodeTestCaller {
+            no_addons: options.allow_addons == Some(false),
+            no_ffi_cc: options.allow_ffi_cc == Some(false),
+            startup_directory: options.absolute_working_dir.as_deref(),
+        },
+        &child_directory,
+    );
+    JSValue::create_array_from_iter(global, flags.iter(), |side| {
+        JSValue::create_array_from_iter(global, side.iter(), |flag| {
+            bun_string_jsc::create_utf8_for_js(global, flag)
+        })
+    })
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

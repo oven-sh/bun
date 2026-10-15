@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, statSync, symlinkSync, utimesSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join, relative } from "path";
@@ -94,10 +94,8 @@ it.concurrent("should remove existing package", async () => {
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun remove v1."),
       "",
-      `+ pkg2@${pkg2_path.replace(/\\/g, "/")}`,
-      "",
-      "1 package installed",
-      "Removed: 1",
+      "- pkg1",
+      "1 package removed",
       "",
     ]);
     expect(err1.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
@@ -349,11 +347,11 @@ const localBin = (name: string) => ({
   [`${name}/cli.js`]: "#!/usr/bin/env node\n",
 });
 
-async function run(dir: string, ...args: string[]) {
+async function runWithEnv(extraEnv: Record<string, string>, dir: string, ...args: string[]) {
   await using proc = spawn({
     cmd: [bunExe(), ...args],
     cwd: dir,
-    env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -361,9 +359,18 @@ async function run(dir: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+const run = (dir: string, ...args: string[]) => runWithEnv({}, dir, ...args);
+
 const remove = (dir: string, ...names: string[]) => run(dir, "remove", ...names);
 
-const binEntries = (dir: string) => readdirSync(join(dir, "node_modules", ".bin")).sort();
+const binEntries = (dir: string) => {
+  const bin = join(dir, "node_modules", ".bin");
+  return existsSync(bin) ? readdirSync(bin).sort() : [];
+};
+
+// On Windows a bin is a `.bunx` and `.exe` shim pair, not a symlink.
+const binFiles = (...names: string[]) =>
+  (isWindows ? names.flatMap(name => [`${name}.bunx`, `${name}.exe`]) : names).sort();
 
 it.concurrent("bun remove drops every duplicate key of the removed package", async () => {
   using dir = tempDir("bun-remove-dup", {
@@ -432,7 +439,7 @@ it.concurrent(
 );
 
 for (const linker of ["hoisted", "isolated"] as const) {
-  it.concurrent.skipIf(isWindows)(`bun remove unlinks only the removed package's .bin entry (${linker})`, async () => {
+  it.concurrent(`bun remove unlinks only the removed package's .bin entry (${linker})`, async () => {
     using dir = tempDir(`bun-remove-bin-${linker}`, {
       ...localBin("what-bin"),
       ...localBin("other-bin"),
@@ -447,12 +454,12 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     }
-    expect(binEntries(String(dir))).toStrictEqual(["other-bin", "what-bin"]);
+    expect(binEntries(String(dir))).toStrictEqual(binFiles("other-bin", "what-bin"));
 
     const { stderr, exitCode } = await remove(String(dir), "what-bin", "--linker", linker);
     expect(stderr).not.toContain("error:");
-    expect(binEntries(String(dir))).toStrictEqual(["other-bin"]);
-    expect(existsSync(join(String(dir), "node_modules", ".bin", "other-bin"))).toBe(true);
+    expect(binEntries(String(dir))).toStrictEqual(binFiles("other-bin"));
+    expect(existsSync(join(String(dir), "node_modules", ".bin", binFiles("other-bin")[0]))).toBe(true);
     expect(existsSync(join(String(dir), "node_modules", "what-bin"))).toBe(false);
     expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
       name: "root",
@@ -460,7 +467,166 @@ for (const linker of ["hoisted", "isolated"] as const) {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The bin dir of the second row is not beside the global dir, so what leads from it to a package starts with `..`.
+  for (const [where, binParts] of [
+    ["", ["global", "bin"]],
+    [", in a bin dir elsewhere", ["nested", "separate-bin"]],
+  ] as const) {
+    it.concurrent(`bun remove -g removes the bins of the removed package only (${linker}${where})`, async () => {
+      using dir = tempDir(`bun-remove-global-bin-${linker}`, {
+        ...localBin("what-bin"),
+        ...localBin("other-bin"),
+        ...local("linked"),
+      });
+      const bunInstall = join(String(dir), "global");
+      const globalDir = join(bunInstall, "install", "global");
+      const globalBin = join(String(dir), ...binParts);
+      // Every global-dir variable is set so an inherited one can never point the test at the developer's real global folder.
+      const globalEnv = { BUN_INSTALL: bunInstall, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: globalBin };
+      const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
+
+      for (const name of ["what-bin", "other-bin"]) {
+        const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+      expect({ globalBin: readdirSync(globalBin).sort(), bin: binEntries(globalDir) }).toStrictEqual({
+        globalBin: binFiles("other-bin", "what-bin"),
+        bin: [],
+      });
+
+      // The global node_modules is also the `bun link` registry.
+      {
+        const { stderr, exitCode } = await runWithEnv(globalEnv, join(String(dir), "linked"), "link");
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+
+      // The global bin dir can be a folder like ~/.local/bin, where a dead link is somebody else's business.
+      const foreign = isWindows ? [] : ["foreign-absolute", "foreign-relative"];
+      if (!isWindows) {
+        symlinkSync(join(String(dir), "gone", "cli.js"), join(globalBin, "foreign-absolute"));
+        symlinkSync(join("..", "gone", "cli.js"), join(globalBin, "foreign-relative"));
+      }
+
+      const { stderr, exitCode } = await runGlobal("remove", "what-bin");
+      expect(stderr).not.toContain("error:");
+      expect({
+        globalBin: readdirSync(globalBin).sort(),
+        bin: binEntries(globalDir),
+        removed: existsSync(join(globalDir, "node_modules", "what-bin")),
+        linked: existsSync(join(globalDir, "node_modules", "linked", "package.json")),
+      }).toStrictEqual({
+        globalBin: [...foreign, ...binFiles("other-bin")].sort(),
+        bin: [],
+        removed: false,
+        linked: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 }
+
+// https://github.com/oven-sh/bun/issues/9351, https://github.com/oven-sh/bun/issues/7215
+it.concurrent("bun remove keeps the order of the keys that stay", async () => {
+  const manifest = (groups: Record<string, unknown>) =>
+    JSON.stringify(
+      {
+        name: "@neodon/bun-is-awesome",
+        version: "0.1.0",
+        private: true,
+        type: "module",
+        module: "index.ts",
+        scripts: { hello: "echo hello" },
+        ...groups,
+        license: "MIT",
+      },
+      null,
+      2,
+    ) + "\n";
+  const [zz, aa, mm, dev] = ["zz", "aa", "mm", "dev"].map(name => ({ [name]: `file:./${name}` }));
+  using dir = tempDir("bun-remove-key-order", {
+    ...local("zz"),
+    ...local("aa"),
+    ...local("mm"),
+    ...local("dev"),
+    "package.json": manifest({ dependencies: { ...zz, ...aa, ...mm }, devDependencies: dev }),
+  });
+
+  // From the middle of a group that is not sorted, the last of a group between other keys, the last of all.
+  for (const [name, groups] of [
+    ["aa", { dependencies: { ...zz, ...mm }, devDependencies: dev }],
+    ["dev", { dependencies: { ...zz, ...mm } }],
+    ["zz", { dependencies: mm }],
+    ["mm", {}],
+  ] as const) {
+    const { stderr, exitCode } = await remove(String(dir), name);
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(String(dir), "package.json")).text()).toBe(manifest(groups));
+    expect(exitCode).toBe(0);
+  }
+});
+
+it.concurrent("bun remove keeps tabs and a missing final newline", async () => {
+  using dir = tempDir("bun-remove-tabs", {
+    ...local("foo"),
+    "package.json": '{\n\t"type": "module",\n\t"dependencies": {\n\t\t"foo": "file:./foo"\n\t},\n\t"name": "tabs"\n}',
+  });
+
+  const { stderr, exitCode } = await remove(String(dir), "foo");
+  expect(stderr).not.toContain("error:");
+  expect(await file(join(String(dir), "package.json")).text()).toBe('{\n\t"type": "module",\n\t"name": "tabs"\n}');
+  expect(exitCode).toBe(0);
+});
+
+// Printed again, this file would come out with other line ends, escapes and inline objects.
+it.concurrent("bun remove of a package that is not declared does not write package.json", async () => {
+  const text =
+    '{\r\n  "name": "caf\\u00e9",\r\n  "scripts": { "t": "x" },\r\n  "dependencies": { "foo": "file:.\\/foo" }\r\n}\r\n';
+  using dir = tempDir("bun-remove-nothing", { ...local("foo"), "package.json": text });
+  const packageJson = join(String(dir), "package.json");
+  utimesSync(packageJson, 1, 1);
+
+  const { stderr, exitCode } = await remove(String(dir), "bar");
+  expect(stderr).not.toContain("error:");
+  expect(await file(packageJson).text()).toBe(text);
+  expect(statSync(packageJson).mtimeMs).toBe(1000);
+  expect(exitCode).toBe(0);
+});
+
+// A path has no package name. The folder removed for it used to be `node_modules/` + "".
+it.concurrent.each(["../src", "./bar", "file:./bar"])(
+  "bun remove foo %s removes foo and leaves the rest of node_modules alone",
+  async path => {
+    using dir = tempDir("bun-remove-path", {
+      ...local("foo"),
+      ...local("bar"),
+      "src/index.ts": "export {};",
+      "package.json": JSON.stringify({ name: "root", dependencies: { foo: "file:./foo", bar: "file:./bar" } }),
+    });
+    expect((await run(String(dir), "install")).exitCode).toBe(0);
+
+    const { stderr, exitCode } = await remove(String(dir), "foo", path);
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(String(dir), "package.json")).json()).toEqual({
+      name: "root",
+      dependencies: { bar: "file:./bar" },
+    });
+    expect(readdirSync(join(String(dir), "node_modules")).filter(name => !name.startsWith("."))).toEqual(["bar"]);
+    expect(await file(join(String(dir), "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "1.0.0",
+    });
+    expect(
+      readdirSync(String(dir))
+        .filter(name => !name.startsWith("."))
+        .sort(),
+    ).toEqual(["bar", "bun.lock", "foo", "node_modules", "package.json", "src"]);
+    expect(existsSync(join(String(dir), "src", "index.ts"))).toBe(true);
+    expect(exitCode).toBe(0);
+  },
+);
 
 it.concurrent("bun r is an alias of bun remove", async () => {
   using dir = tempDir("bun-r-alias", {
@@ -480,10 +646,8 @@ it.concurrent("bun r is an alias of bun remove", async () => {
   expect(normalizeBunSnapshot(stdout, String(dir))).toMatchInlineSnapshot(`
     "bun remove <version> (<revision>)
 
-    + bar@bar
-
-    1 package installed
-    Removed: 1"
+    - foo
+    1 package removed"
   `);
   expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
     name: "root",
@@ -536,16 +700,80 @@ it.concurrent("bun remove -F edits only the selected workspace", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.concurrent("bun remove --recursive is not a workspace-wide remove: only the current package is edited", async () => {
+it.concurrent("bun remove --recursive is not a workspace-wide remove: the unknown flag is rejected", async () => {
   using dir = monorepo("bun-remove-recursive");
 
   const { stderr, exitCode } = await remove(String(dir), "dep", "--recursive");
-  expect(stderr).not.toContain("error:");
-  expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
-    name: "root",
-    workspaces: ["packages/*"],
-  });
+  expect(stderr).toBe(
+    "error: bun remove has no --recursive flag.\nnote: Run 'bun remove --help' for more information\n",
+  );
+  expect(await file(join(String(dir), "package.json")).text()).toBe(MONOREPO_ROOT);
   expect(await file(join(String(dir), "packages", "api", "package.json")).text()).toBe(WORKSPACE("api"));
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
-  expect(exitCode).toBe(0);
+  expect(exitCode).toBe(1);
 });
+
+// Serves version 1.0.0 of every name; `extra` adds fields to a package's manifest.
+function serveAnyPackage(extra: Record<string, object> = {}) {
+  const registry = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const name = new URL(req.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+      const manifest = { name, version: "1.0.0", ...extra[name] };
+      if (req.url.endsWith(".tgz")) {
+        const files = { "package/package.json": JSON.stringify(manifest) };
+        return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      }
+      const versions = { "1.0.0": { ...manifest, dist: { tarball: `${registry.url}${name}-1.0.0.tgz` } } };
+      return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions });
+    },
+  });
+  return registry;
+}
+
+for (const linker of ["hoisted", "isolated"] as const) {
+  it.concurrent(
+    `bun remove keeps the folder another workspace has under that name for an alias (${linker})`,
+    async () => {
+      await using registry = serveAnyPackage();
+      using dir = tempDir(`bun-remove-alias-${linker}`, {
+        "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { foo: "npm:bar@1" } }),
+        "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { foo: "^1" } }),
+      });
+      // What `import "foo"` in packages/a finds.
+      const fooOfA = async () => {
+        for (const from of [join(String(dir), "packages", "a"), String(dir)]) {
+          const manifest = file(join(from, "node_modules", "foo", "package.json"));
+          if (await manifest.exists()) return (await manifest.json()).name;
+        }
+      };
+      expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+      expect(await fooOfA()).toBe("bar");
+
+      const { stderr, exitCode } = await remove(join(String(dir), "packages", "b"), "foo");
+      expect(stderr).not.toContain("error:");
+      expect(await fooOfA()).toBe("bar");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent(`bun remove deletes the folder of a package that is still an optional peer (${linker})`, async () => {
+    await using registry = serveAnyPackage({
+      ui: { peerDependencies: { react: "*" }, peerDependenciesMeta: { react: { optional: true } } },
+    });
+    using dir = tempDir(`bun-remove-optional-peer-${linker}`, {
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", ui: "1.0.0" } }),
+    });
+    const react = join(String(dir), "node_modules", "react");
+    expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+    expect(existsSync(react)).toBe(true);
+
+    const { stderr, exitCode } = await remove(String(dir), "react");
+    expect(stderr).not.toContain("error:");
+    expect(existsSync(react)).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+}

@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+<style>
+  .some-class a="
+ b 
+"s {
+    color: red;
+  }
+</style>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<style>
+  .some-class a="
+ b 
+"s {
+    color: red;
+  }
+</style>
+
+===================== End =====================

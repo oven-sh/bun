@@ -192,6 +192,8 @@ pub struct ThreadPool {
     /// `Config { max_threads, stack_size }` literals keep compiling; callers
     /// flip it after [`ThreadPool::init`].
     pub(crate) needs_stack_bounds: bool,
+    /// What its threads are called, before their number.
+    name: &'static str,
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
@@ -224,6 +226,7 @@ impl ThreadPool {
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
             needs_stack_bounds: true,
+            name: "Bun Pool",
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -239,6 +242,12 @@ impl ThreadPool {
                 ..PoolStats::default()
             },
         }
+    }
+
+    /// The same pool, whose threads are called `name` and a number. Before any is started.
+    pub fn named(mut self, name: &'static str) -> ThreadPool {
+        self.name = name;
+        self
     }
 
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
@@ -697,6 +706,11 @@ impl ThreadPool {
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);
+    }
+
+    /// False: the OS refused the first worker (or nothing was scheduled), and what is queued never runs.
+    pub fn has_workers(&self) -> bool {
+        self.sync.load(Ordering::Relaxed).spawned() > 0
     }
 
     fn force_spawn(&self) {
@@ -1200,7 +1214,7 @@ impl Thread {
             let len = {
                 let mut cur: &mut [u8] = &mut counter_buf[..99];
                 let before = cur.len();
-                match write!(&mut cur, "Bun Pool {}", int) {
+                match write!(&mut cur, "{} {}", thread_pool.get().name, int) {
                     Ok(()) => before - cur.len(),
                     Err(_) => 0,
                 }

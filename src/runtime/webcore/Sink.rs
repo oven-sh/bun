@@ -371,6 +371,10 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `write()` of an empty chunk, which never reaches the `write_*` methods.
+    fn write_empty(&mut self) -> streams::result::Writable {
+        streams::result::Writable::Temporary(0)
+    }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
@@ -544,7 +548,7 @@ impl<T: JsSinkType> JSSink<T> {
         if let Some(buffer) = arg.as_array_buffer(global) {
             let slice = buffer.slice();
             if slice.is_empty() {
-                return Ok(JSValue::js_number(0.0));
+                return Ok(this.sink.write_empty().to_js(&cx));
             }
             // Borrowed view over GC-kept buffer for the duration of the call.
             let data = bun_ptr::RawSlice::new(slice);
@@ -563,7 +567,7 @@ impl<T: JsSinkType> JSSink<T> {
 
         let view = arg.to_js_string_view(global)?;
         if view.is_empty() {
-            return Ok(JSValue::js_number(0.0));
+            return Ok(this.sink.write_empty().to_js(&cx));
         }
 
         if view.is_utf16() {

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "headers-handwritten.h"
+#include "CodeGenerationFromStrings.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
 #include "JavaScriptCore/Identifier.h"
@@ -910,6 +911,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
     if (pluginContents) {
+        // The engine refuses what it parses as JavaScript. With a loader of data, the text becomes a module without that.
+        THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
         if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice(vm, loader, specifierWtfString))
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         JSValue cached = requireFromIsolatedModuleCache(globalObject, loader, target, specifierWtfString, typeAttribute, pluginContents);
@@ -1235,6 +1238,9 @@ static JSValue fetchESMSourceCode(
     }
 
     if (pluginContents) {
+        // As in fetchCommonJSModuleNonBuiltin.
+        if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, reject(Bun::createCodeGenerationFromStringsError(globalObject)));
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &pluginContents->string, pluginContents->loader, res);
     } else if constexpr (allowPromise) {
         auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});

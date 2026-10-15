@@ -51,7 +51,7 @@ use crate::bindgen::{self, JsHeap};
 
 pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
     a.checked_add(b)
-        .ok_or_else(|| heap.throw(format_args!("Integer overflow while adding")))
+        .ok_or_else(|| heap.error(format_args!("Integer overflow while adding")))
 }
 ```
 
@@ -66,7 +66,7 @@ Rust signature does not match the schema, the generated code does not compile.
 
 To reach the function:
 
-- from `src/js`: `$bindgenFn("bindgen_test.bind.ts", "add")`, which is typed from the schema;
+- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
 ### What a function may do: `capability`
@@ -74,11 +74,11 @@ To reach the function:
 What a function can do to the JS heap is a parameter it is given, so it is
 visible in the schema, in the signature and to the compiler.
 
-| `capability`       | First parameter   | The function can                                                     |
-| ------------------ | ----------------- | -------------------------------------------------------------------- |
-| `"none"` (default) | none              | compute                                                              |
-| `"heap"`           | `&JsHeap<'a>`     | also allocate JS values and describe an error to throw               |
-| `"js"`             | `&mut JsCall<'a>` | also run JavaScript, or anything that can call back into native code |
+| `capability`       | First parameter    | The function can                                                     |
+| ------------------ | ------------------ | -------------------------------------------------------------------- |
+| `"none"` (default) | none               | compute                                                              |
+| `"heap"`           | `&JsHeap<'a>`      | also allocate JS values and describe an error to throw               |
+| `"js"`             | `&mut JsScope<'a>` | also run JavaScript, or anything that can call back into native code |
 
 Ask for the least that works. The less a function can do, the more it is handed
 directly: a function that cannot run JavaScript gets `&[u8]` for a typed array
@@ -86,8 +86,8 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 `throws: true` makes the return type a `Result`. The error is a
-`bindgen::Error<'a>`, made by `heap.throw(..)`, `heap.throw_type_error(..)`,
-`heap.throw_range_error(..)` or `heap.throw_value(value)`, or any type that
+`bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
+`heap.range_error(..)` or `bindgen::Error::from_value(value)`, or any type that
 implements `bindgen::IntoError` (`bun_sys::Error` and `JsError` do), which lets a
 `capability: "none"` function fail too.
 
@@ -119,8 +119,8 @@ arguments from left to right:
    take. So `f(x)` and `f(x, undefined)` are the same call.
 3. A candidate with no argument at that position stays.
 4. If no candidate takes the argument, all of them stay, and the next argument decides.
-5. When the arguments run out, the candidate that requires the most arguments wins, then
-   the one written first. Its conversion reports whatever is wrong.
+5. When the arguments run out, the candidate written first wins. Its conversion reports
+   whatever is wrong. So of two signatures that start the same, the longer one goes first.
 
 Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
 an error when the schema is loaded.
@@ -142,11 +142,11 @@ any other: nothing looks at how many there are.
 | `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
-| `b.bufferSource`                                 | `JsValue<'a, ArrayBuffer>`       | a typed array, `DataView` or `ArrayBuffer` that is not shared |
+| `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
-| `b.any`                                          | `JsValue<'a>`                    | anything                                                      |
+| `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array                                                      |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
@@ -203,7 +203,7 @@ export const BracesOptions = b.dictionary({
 
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
-`{ type, internalName, altNames }` to rename its field or to accept other spellings.
+`{ type, rustName, altNames }` to rename its field or to accept other spellings.
 A dictionary whose members can all be absent implements `Default`.
 
 A member is looked up on the object and its prototype chain, **stopping before
@@ -220,7 +220,6 @@ The second argument of `b.dictionary` takes:
 
 | Key                | What it does                                                                                                                                                                             |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `userFacingName`   | what error messages call it, when that is not its name                                                                                                                                   |
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                      |
 | `nonObjectAsEmpty` | a value whose `typeof` is not `"object"` gives every member its default, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
 | `fromJS`           | also generates `Name::from_js(global, value, \|converted\| ..)`, for a `#[host_fn]` body                                                                                                 |
@@ -274,7 +273,7 @@ JavaScript takes `b.bufferSource` itself and looks the bytes up when it needs th
 
 ```rust
 let before = buffer.with_bytes(&cx.heap, sum);
-callback.call(cx, JsValue::UNDEFINED, &[])?;
+callback.call(cx, JsLocal::UNDEFINED, &[])?;
 let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
@@ -300,17 +299,17 @@ fn set_name<'a>(&mut self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, name: W
 
 ## Values and lifetimes
 
-A JS value in Rust is a `JsValue<'a>`: a `JSValue` tied to the host call it belongs
+A JS value in Rust is a `JsLocal<'a>`: a `JSValue` tied to the host call it belongs
 to. It is `Copy`, one register, and not rooted, because JavaScriptCore scans the
 stack. The lifetime is what stops it from being stored in a struct, captured by a
-task or sent to a thread. `JsValue<'a, T>` is one known to be a `JSString`,
-`JSObject`, `Callable` or `ArrayBuffer`. `value.to_js()` gives the `JSValue`;
-`JsValue::new(heap, value)` goes the other way.
+task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
+`JSObject`, `Callable` or `BufferSource`. `value.to_js()` gives the `JSValue`;
+`JsLocal::new(heap, value)` goes the other way.
 
 What outlives a call:
 
 - one of a class's **`internalFields`** (below), which the GC visits;
-- a `Strong`, made with `value.to_strong(heap)` and read with `JsValue::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
+- a `Strong`, made with `value.to_strong(heap)` and read with `JsLocal::new(heap, strong.get())`. It is made, read and dropped on the JS thread.
 
 A list of values goes in a `MarkedArgumentBuffer`, never a `Vec`: the GC does not
 look inside heap allocations.
@@ -394,7 +393,7 @@ undefined behaviour, so it gets the wrapper instead and borrows the payload for 
 long as nothing else can run:
 
 ```rust
-fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> bindgen::Result<'a, i32> {
+fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
     if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
         listener.call(cx, this.as_value(), &[])?;
     }
@@ -421,4 +420,4 @@ thread when the work completes.
 
 ## Tests
 
-- `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgenFn` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.

@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
+const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
@@ -243,33 +243,33 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
 };
 
 // Only in a build with assertions: `hasBindings` in scripts/build/codegen.ts.
-export const bindgen = $bindgenFn("bindgen_test.bind.ts", "add") && {
-  add: $bindgenFn("bindgen_test.bind.ts", "add"),
-  requiredAndOptionalArg: $bindgenFn("bindgen_test.bind.ts", "requiredAndOptionalArg"),
-  utf8Echo: $bindgenFn("bindgen_test.bind.ts", "utf8Echo"),
-  utf8EchoLoose: $bindgenFn("bindgen_test.bind.ts", "utf8EchoLoose"),
-  utf8Optional: $bindgenFn("bindgen_test.bind.ts", "utf8Optional"),
-  utf8Owned: $bindgenFn("bindgen_test.bind.ts", "utf8Owned"),
-  stringEcho: $bindgenFn("bindgen_test.bind.ts", "stringEcho"),
-  nextColor: $bindgenFn("bindgen_test.bind.ts", "nextColor"),
-  optionsEcho: $bindgenFn("bindgen_test.bind.ts", "optionsEcho"),
-  describeValue: $bindgenFn("bindgen_test.bind.ts", "describeValue"),
-  describeAnything: $bindgenFn("bindgen_test.bind.ts", "describeAnything"),
-  overloaded: $bindgenFn("bindgen_test.bind.ts", "overloaded"),
-  describeDefaults: $bindgenFn("bindgen_test.bind.ts", "describeDefaults"),
-  names: $bindgenFn("bindgen_test.bind.ts", "names"),
-  sumArray: $bindgenFn("bindgen_test.bind.ts", "sumArray"),
-  range: $bindgenFn("bindgen_test.bind.ts", "range"),
-  words: $bindgenFn("bindgen_test.bind.ts", "words"),
-  sumBytes: $bindgenFn("bindgen_test.bind.ts", "sumBytes"),
-  sumBytesOptional: $bindgenFn("bindgen_test.bind.ts", "sumBytesOptional"),
-  sumBytesThenText: $bindgenFn("bindgen_test.bind.ts", "sumBytesThenText"),
-  sumBeforeAndAfterCallback: $bindgenFn("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
-  withValueEcho: $bindgenFn("bindgen_test.bind.ts", "withValueEcho"),
-  fail: $bindgenFn("bindgen_test.bind.ts", "fail"),
-  TestCounter: $bindgenFn("bindgen_test.bind.ts", "TestCounter"),
-  TestHolder: $bindgenFn("bindgen_test.bind.ts", "TestHolder"),
-  makeToken: $bindgenFn("bindgen_test.bind.ts", "makeToken"),
+export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
+  add: $bindgen("bindgen_test.bind.ts", "add"),
+  requiredAndOptionalArg: $bindgen("bindgen_test.bind.ts", "requiredAndOptionalArg"),
+  utf8Echo: $bindgen("bindgen_test.bind.ts", "utf8Echo"),
+  utf8EchoLoose: $bindgen("bindgen_test.bind.ts", "utf8EchoLoose"),
+  utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
+  utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
+  stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
+  optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
+  describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
+  describeAnything: $bindgen("bindgen_test.bind.ts", "describeAnything"),
+  overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
+  describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
+  names: $bindgen("bindgen_test.bind.ts", "names"),
+  sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
+  range: $bindgen("bindgen_test.bind.ts", "range"),
+  words: $bindgen("bindgen_test.bind.ts", "words"),
+  sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
+  sumBytesOptional: $bindgen("bindgen_test.bind.ts", "sumBytesOptional"),
+  sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  withValueEcho: $bindgen("bindgen_test.bind.ts", "withValueEcho"),
+  fail: $bindgen("bindgen_test.bind.ts", "fail"),
+  TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
+  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -605,7 +605,7 @@ export const decodeURIComponentSIMD = $newCppFunction(
   1,
 );
 
-export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",

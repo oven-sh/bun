@@ -10,6 +10,5 @@ export const fmtString = b.fn({
     formatter: Formatter,
   },
   returns: b.string,
-  capability: "heap",
   throws: true,
 });

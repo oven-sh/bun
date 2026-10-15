@@ -129,10 +129,8 @@ export const enums = {
 
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
-/** Schemas this build leaves out (`hasBindings` in scripts/build/codegen.ts). `$bindgenFn` of one is `void 0`, which the minifier folds. */
-const withoutBindings = (process.argv.find(arg => arg.startsWith("--without-bindings=")) ?? "=")
-  .split("=")[1]
-  .split(",");
+/** Schemas this build only takes types from (`isCompiled` in scripts/build/codegen.ts). `$bindgen` of one is `void 0`, which the minifier folds. */
+const typesOnly = (process.argv.find(arg => arg.startsWith("--types-only=")) ?? "=").split("=")[1].split(",");
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
@@ -175,7 +173,7 @@ export const function_replacements = [
   "$isPromiseFulfilled",
   "$isPromiseRejected",
   "$isPromisePending",
-  "$bindgenFn",
+  "$bindgen",
 ];
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
@@ -271,7 +269,7 @@ export function applyReplacements(src: string, length: number) {
         args = `(__intrinsic__peekPromiseStatus${inner.result} === ${status})`;
       }
       return [slice.slice(0, match.index) + args, inner.rest, true];
-    } else if (name === "bindgenFn") {
+    } else if (name === "bindgen") {
       const inner = sliceSourceCode(rest, true);
       let args;
       try {
@@ -290,7 +288,7 @@ export function applyReplacements(src: string, length: number) {
         throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
       }
 
-      if (withoutBindings.includes(args[0])) return [slice.slice(0, match.index) + "void 0", inner.rest, true];
+      if (typesOnly.includes(args[0])) return [slice.slice(0, match.index) + "void 0", inner.rest, true];
 
       const id = registerNativeCall("bind", args[0], args[1], null);
 

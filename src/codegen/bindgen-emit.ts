@@ -338,10 +338,10 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 namespace Bun::Bindgen::Generated {
 struct ${name} {
 ${cppDefaultConstructor(name)}
-${type.members.map(member => `    ${implementationType(member.type)} ${member.internalName};`).join("\n")}
+${type.members.map(member => `    ${implementationType(member.type)} ${member.fieldName};`).join("\n")}
 };
 struct Extern${name} {
-${type.members.map(member => `    ${externType(member.type)} ${member.internalName};`).join("\n")}
+${type.members.map(member => `    ${externType(member.type)} ${member.fieldName};`).join("\n")}
 };
 ${layoutAssert(`Extern${name}`, type)}
 }
@@ -350,14 +350,12 @@ template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
     static ExternType convertToExtern(${type.cpp}&& value)
     {
         return ExternType {
-${type.members
-  .map(member => `            .${member.internalName} = ${toExtern(`value.${member.internalName}`)},`)
-  .join("\n")}
+${type.members.map(member => `            .${member.fieldName} = ${toExtern(`value.${member.fieldName}`)},`).join("\n")}
         };
     }
 };
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("${type.userFacingName}");
+    static constexpr auto humanReadableName = std::to_array("${type.name}");
 };
 template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject&, JSC::JSValue, ${type.cpp}&);
 ${
@@ -422,7 +420,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
     const [first, ...others] = member.names.map(
       () => `members.get(${nameIndex++});\nRETURN_IF_EXCEPTION(scope, void());`,
     );
-    const qualified = `${type.userFacingName}.${member.name}`;
+    const qualified = `${type.name}.${member.name}`;
     const lines = [
       `[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(qualified)} };`,
       `JSC::JSValue value${i} = ${first}`,
@@ -434,7 +432,7 @@ function cppSourceForDictionary(type: DictionaryType): string {
     return;
 }`);
     lines.push(
-      member.type.cppConvertInto(`result.${member.internalName}`, `value${i}`, `ctx${i}`, qualified),
+      member.type.cppConvertInto(`result.${member.fieldName}`, `value${i}`, `ctx${i}`, qualified),
       "RETURN_IF_EXCEPTION(scope, void());",
     );
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
@@ -446,7 +444,7 @@ template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    [[maybe_unused]] auto ctx = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(type.userFacingName)} };
+    [[maybe_unused]] auto ctx = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(type.name)} };
     auto* object = value.getObject();
 ${
   type.nonObjectAsEmpty
@@ -903,7 +901,7 @@ ${array(
 
 // ───────────────────────────── Rust ─────────────────────────────
 
-const jsValueResult = "bindgen::Result<'a, bindgen::JsValue<'a>>";
+const jsValueResult = "bindgen::Result<'a, bindgen::JsLocal<'a>>";
 
 function rustLayoutAssert(rustType: string, type: Type): string {
   const { size, align } = type.layout();
@@ -929,7 +927,7 @@ const rustArguments = (signature: Signature, scope: RustScope) =>
 const capabilityParameter = {
   none: [],
   heap: ["heap: &bindgen::JsHeap<'a>"],
-  js: ["cx: &mut bindgen::JsCall<'a>"],
+  js: ["cx: &mut bindgen::JsScope<'a>"],
 };
 const capabilityArgument = { none: [], heap: ["&cx.heap"], js: ["cx"] };
 
@@ -946,7 +944,7 @@ const rustThunk = (symbol: string, parameters: string[], returns: string, body: 
 pub unsafe extern "C" fn ${symbol}(${["global: *mut JSGlobalObject", ...parameters].join(", ")}) -> ${returns} {
     // SAFETY: called by generated C++, whose frame holds what it passes until this returns.
     unsafe {
-        bindgen::JsCall::with(global, |cx| {
+        bindgen::JsScope::with(global, |cx| {
 ${indent(body, 12)}
         })
     }
@@ -1140,9 +1138,9 @@ function rustForClass(type: ClassType, scope: RustScope): string {
 bindgen::host_fn_return(cx, result, |heap, value| bindgen::to_js::any(heap, bindgen::JsWrapper::create_with_structure(heap, structure, value).as_value()))`,
     );
     declarations.push(`/// The constructor function, \`${name}\` in JavaScript.
-    fn get_constructor<'a>(heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a> {
+    fn get_constructor<'a>(heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a> {
         // SAFETY: cannot throw; makes the class's objects on first use.
-        unsafe { bindgen::JsValue::from_extern(${symbolName(type, "getConstructor")}(heap.global_ptr())) }
+        unsafe { bindgen::JsLocal::from_extern(${symbolName(type, "getConstructor")}(heap.global_ptr())) }
     }`);
   }
 
@@ -1219,20 +1217,20 @@ let result = ${infallible(`<${rustPath} as ${trait}>::${setterName}(${[...receiv
   const fieldDeclarations = type.internalFields
     .map(field => {
       const id = snakeCase(field);
-      return `    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a>;
-    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>);`;
+      return `    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a>;
+    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsLocal<'a, T>);`;
     })
     .join("\n");
   const fieldDefinitions = type.internalFields
     .map((field, index) => {
       const id = snakeCase(field);
       return `    #[inline(always)]
-    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsValue<'a> {
+    fn ${id}_field(self, heap: &bindgen::JsHeap<'a>) -> bindgen::JsLocal<'a> {
         // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
         unsafe { self.internal_field(heap, ${index}) }
     }
     #[inline(always)]
-    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsValue<'a, T>) {
+    fn set_${id}_field<T>(self, heap: &bindgen::JsHeap<'a>, value: bindgen::JsLocal<'a, T>) {
         // SAFETY: internal field ${index} of ${type.numberOfInternalFields}.
         unsafe { self.set_internal_field(heap, ${index}, value) }
     }`;
@@ -1399,7 +1397,7 @@ ${[
   ];
   return `${banner(null)}declare namespace $Bindgen {
 ${declarations.filter(text => text.length > 0).join("\n")}
-  /** What \`$bindgenFn(file, name)\` returns. */
+  /** What \`$bindgen(file, name)\` returns. */
   interface Exports {
 ${files
   .filter(file => exported(file).length > 0)

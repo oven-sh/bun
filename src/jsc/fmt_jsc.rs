@@ -2,21 +2,17 @@
 
 use std::io::Write as _;
 
-use crate::bindgen::{self, JsHeap};
+use crate::JsError;
 use bun_core::fmt;
 use bun_core::{MutableString, String};
 
 pub mod js_bindings {
     use super::*;
 
-    pub use crate::generated_bindgen::fmt_jsc::Formatter;
+    use crate::generated_bindgen::fmt_jsc::Formatter;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmt_string<'a>(
-        heap: &JsHeap<'a>,
-        code: &[u8],
-        formatter_id: Formatter,
-    ) -> bindgen::Result<'a, String> {
+    pub fn fmt_string(code: &[u8], formatter_id: Formatter) -> Result<String, JsError> {
         let mut buffer = MutableString::init_empty();
         let writer = buffer.writer();
 
@@ -30,7 +26,7 @@ pub mod js_bindings {
                         ..Default::default()
                     },
                 );
-                write!(writer, "{}", formatter).map_err(|_| heap.throw_out_of_memory())?;
+                write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;
             }
             Formatter::HighlightJavascriptRedacted => {
                 let formatter = fmt::fmt_javascript(
@@ -41,11 +37,11 @@ pub mod js_bindings {
                         redact_sensitive_information: true,
                     },
                 );
-                write!(writer, "{}", formatter).map_err(|_| heap.throw_out_of_memory())?;
+                write!(writer, "{}", formatter).map_err(|_| JsError::OutOfMemory)?;
             }
             Formatter::EscapePowershell => {
                 write!(writer, "{}", fmt::escape_powershell(code))
-                    .map_err(|_| heap.throw_out_of_memory())?;
+                    .map_err(|_| JsError::OutOfMemory)?;
             }
         }
 

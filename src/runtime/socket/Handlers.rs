@@ -3,8 +3,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use crate::generated_bindgen::socket_config::{
-    SocketConfig as GeneratedSocketConfig, SocketConfigBinaryType as GeneratedBinaryType,
-    SocketConfigHandlers as GeneratedSocketConfigHandlers, SocketConfigTLS as GeneratedTls,
+    SocketHandler, SocketHandlerBinaryType, SocketOptions, SocketOptionsTLS,
 };
 use bun_core::Utf8Bytes;
 use bun_jsc::array_buffer::BinaryType;
@@ -76,11 +75,11 @@ pub(crate) struct ReloadedHandlers {
     pub(crate) binary_type: BinaryType,
 }
 
-fn binary_type_from_generated(binary_type: GeneratedBinaryType) -> BinaryType {
+fn binary_type_from_generated(binary_type: SocketHandlerBinaryType) -> BinaryType {
     match binary_type {
-        GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
-        GeneratedBinaryType::Buffer => BinaryType::Buffer,
-        GeneratedBinaryType::Uint8array => BinaryType::Uint8Array,
+        SocketHandlerBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
+        SocketHandlerBinaryType::Buffer => BinaryType::Buffer,
+        SocketHandlerBinaryType::Uint8array => BinaryType::Uint8Array,
     }
 }
 
@@ -311,14 +310,14 @@ impl Handlers {
         opts: JSValue,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
-        GeneratedSocketConfigHandlers::from_js(global_object, opts, |generated| {
+        SocketHandler::from_js(global_object, opts, |generated| {
             Self::from_generated(global_object, &generated, mode)
         })
     }
 
     pub(crate) fn from_generated(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers<'_>,
+        generated: &SocketHandler<'_>,
         mode: SocketMode,
     ) -> JsResult<Rc<Handlers>> {
         let callbacks = Self::validate_callbacks(global_object, generated)?;
@@ -345,7 +344,7 @@ impl Handlers {
     /// `JSValue::ZERO`. Array order matches `Bun::JSSocketHandlers::Field`.
     fn validate_callbacks(
         global_object: &JSGlobalObject,
-        generated: &GeneratedSocketConfigHandlers<'_>,
+        generated: &SocketHandler<'_>,
     ) -> JsResult<[JSValue; CALLBACK_COUNT]> {
         macro_rules! validated_callback {
             ($field:ident, $name:literal) => {{
@@ -408,7 +407,7 @@ impl Handlers {
         global_object: &JSGlobalObject,
         opts: JSValue,
     ) -> JsResult<ReloadedHandlers> {
-        GeneratedSocketConfigHandlers::from_js(global_object, opts, |generated| {
+        SocketHandler::from_js(global_object, opts, |generated| {
             let callbacks = Self::validate_callbacks(global_object, &generated)?;
             Ok(ReloadedHandlers {
                 callbacks,
@@ -496,20 +495,20 @@ impl SocketConfig {
     pub(crate) fn from_generated(
         vm: &'static VirtualMachine,
         global: &JSGlobalObject,
-        generated: GeneratedSocketConfig<'_>,
+        generated: SocketOptions<'_>,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let mut result: SocketConfig = 'blk: {
             let ssl: Option<SSLConfig> = match &generated.tls {
-                GeneratedTls::None => None,
-                GeneratedTls::Boolean(b) => {
+                SocketOptionsTLS::None => None,
+                SocketOptionsTLS::Boolean(b) => {
                     if *b {
                         Some(super::tls_true_defaults(vm, mode.is_server()))
                     } else {
                         None
                     }
                 }
-                GeneratedTls::Object(ssl) => {
+                SocketOptionsTLS::Object(ssl) => {
                     SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
                 }
             };
@@ -602,7 +601,7 @@ impl SocketConfig {
         global_object: &JSGlobalObject,
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
-        GeneratedSocketConfig::from_js(global_object, opts, |generated| {
+        SocketOptions::from_js(global_object, opts, |generated| {
             Self::from_generated(vm, global_object, generated, mode)
         })
     }

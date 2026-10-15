@@ -126,7 +126,7 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
 
   const resolved = sourceFiles.find(file => file.endsWith(sep + filename));
   if (!resolved) {
-    const fnName = call_type === "bind" ? "bindgenFn" : call_type;
+    const fnName = call_type === "bind" ? "bindgen" : call_type;
     throw new Error(`Could not find file ${filename} in $${fnName} call`);
   }
 

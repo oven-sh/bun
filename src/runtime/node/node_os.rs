@@ -3,7 +3,7 @@ use core::ffi::c_int;
 use core::ffi::{c_char, c_uint, c_void};
 
 use bun_core::String as BunString;
-use bun_jsc::bindgen::JsCall;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -110,7 +110,7 @@ mod _impl {
         }
     }
 
-    pub(crate) fn cpus(cx: &mut JsCall<'_>) -> JsResult<JSValue> {
+    pub(crate) fn cpus(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let result = cpus_impl_linux(global);
@@ -530,7 +530,7 @@ mod _impl {
         safe fn get_process_priority(pid: i32) -> i32;
     }
 
-    pub(crate) fn get_priority(cx: &mut JsCall<'_>, pid: i32) -> JsResult<i32> {
+    pub(crate) fn get_priority(cx: &mut JsScope<'_>, pid: i32) -> JsResult<i32> {
         let global = cx.global();
         let result = get_process_priority(pid);
         if result == i32::MAX {
@@ -549,7 +549,7 @@ mod _impl {
         Ok(result)
     }
 
-    pub(crate) fn homedir(cx: &mut JsCall<'_>) -> JsResult<BunString> {
+    pub(crate) fn homedir(cx: &mut JsScope<'_>) -> JsResult<BunString> {
         let global = cx.global();
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
@@ -653,7 +653,7 @@ mod _impl {
         }
     }
 
-    pub(crate) fn hostname(cx: &mut JsCall<'_>) -> JsResult<JSValue> {
+    pub(crate) fn hostname(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         #[cfg(windows)]
         {
@@ -738,7 +738,7 @@ mod _impl {
     pub(crate) use network_interfaces_windows as network_interfaces;
 
     #[cfg(unix)]
-    pub(crate) fn network_interfaces_posix(cx: &mut JsCall<'_>) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_posix(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
         // getifaddrs sets a pointer to a linked list
         let mut interface_start: *mut libc::ifaddrs = core::ptr::null_mut();
@@ -1032,7 +1032,7 @@ mod _impl {
     }
 
     #[cfg(windows)]
-    pub(crate) fn network_interfaces_windows(cx: &mut JsCall<'_>) -> JsResult<JSValue> {
+    pub(crate) fn network_interfaces_windows(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
         let mut ifaces: *mut libuv::uv_interface_address_t = core::ptr::null_mut();
         let mut count: c_int = 0;
@@ -1266,13 +1266,13 @@ mod _impl {
     }
 
     pub(crate) fn set_priority_of_current_process(
-        cx: &mut JsCall<'_>,
+        cx: &mut JsScope<'_>,
         priority: i32,
     ) -> JsResult<()> {
         set_priority(cx, 0, priority)
     }
 
-    pub(crate) fn set_priority(cx: &mut JsCall<'_>, pid: i32, priority: i32) -> JsResult<()> {
+    pub(crate) fn set_priority(cx: &mut JsScope<'_>, pid: i32, priority: i32) -> JsResult<()> {
         let global = cx.global();
         let errno = set_process_priority_impl(pid, priority);
         if errno == bun_sys::E::SUCCESS {
@@ -1318,7 +1318,7 @@ mod _impl {
         }
     }
 
-    pub(crate) fn uptime(cx: &mut JsCall<'_>) -> JsResult<f64> {
+    pub(crate) fn uptime(cx: &mut JsScope<'_>) -> JsResult<f64> {
         let global = cx.global();
         #[cfg(windows)]
         {
@@ -1357,7 +1357,7 @@ mod _impl {
     }
 
     pub(crate) fn user_info(
-        cx: &mut JsCall<'_>,
+        cx: &mut JsScope<'_>,
         options: crate::generated_bindgen::node_os::UserInfoOptions<'_>,
     ) -> JsResult<JSValue> {
         let _ = options; // TODO:

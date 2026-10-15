@@ -94,7 +94,7 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::BracesOptions;
 use crate::generated_bindgen::glob::GlobClass as _;
-use bun_jsc::bindgen::JsCall;
+use bun_jsc::bindgen::JsScope;
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -387,13 +387,13 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 }
 
 /// `Bun.gc(force)`: heap size after the collection.
-pub(crate) fn gc_from_js(cx: &mut JsCall<'_>, force: bool) -> usize {
+pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
     cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
 }
 
 #[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
-    cx: &mut JsCall<'_>,
+    cx: &mut JsScope<'_>,
     brace_str: BunString,
     opts: BracesOptions,
 ) -> JsResult<JSValue> {
@@ -1745,9 +1745,9 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: a lazy property callback, entered from JSC with no `JsCall` borrowed.
+    // SAFETY: a lazy property callback, entered from JSC with no `JsScope` borrowed.
     unsafe {
-        JsCall::with(global_this.as_mut_ptr(), |cx| {
+        JsScope::with(global_this.as_mut_ptr(), |cx| {
             crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
         })
     }

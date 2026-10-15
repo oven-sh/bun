@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --without-bindings=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
+// Usage: bindgen.ts --sources=<crate>=<a.bind.ts>,.. --types-only=<b.bind.ts>,.. --codegen-path=<dir> --types-path=<dir> (emitBindgen in scripts/build/codegen.ts)
 
 import assert from "node:assert";
 import path from "node:path";
@@ -65,7 +65,7 @@ function sortTypes(file: SchemaFile): void {
   file.types = sorted;
 }
 
-const args = argParse(["sources", "without-bindings", "codegen-path", "types-path"]);
+const args = argParse(["sources", "types-only", "codegen-path", "types-path"]);
 const codegenPath: string = args["codegen-path"];
 const sources = (args.sources as string)
   .split(",")
@@ -75,9 +75,9 @@ const sources = (args.sources as string)
 const allFiles: SchemaFile[] = [];
 for (const source of sources) allFiles.push(await load(source));
 allFiles.forEach(sortTypes);
-const withoutBindings = ((args["without-bindings"] as string | undefined) ?? "").split(",");
+const typesOnly = ((args["types-only"] as string | undefined) ?? "").split(",");
 /** What this build compiles. The types describe every schema. */
-const files = allFiles.filter(file => !withoutBindings.includes(`${file.origin.stem}.bind.ts`));
+const files = allFiles.filter(file => !typesOnly.includes(`${file.origin.stem}.bind.ts`));
 const owners = new Map<string, string>();
 for (const file of files) {
   for (const { name } of file.types) {

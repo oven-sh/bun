@@ -240,7 +240,7 @@ export abstract class Type {
   rustReturnType(scope: RustScope): string {
     return this.rustResultFieldType(scope);
   }
-  /** A Rust expression of type `bindgen::Result<'a, bindgen::JsValue<'a>>` that consumes `value`; `heap` is in scope. */
+  /** A Rust expression of type `bindgen::Result<'a, bindgen::JsLocal<'a>>` that consumes `value`; `heap` is in scope. */
   rustToJS(value: string, scope: RustScope): string {
     throw new TypeError(`${this.tsType} cannot be returned to JavaScript`);
   }
@@ -632,10 +632,10 @@ export class BufferSourceType extends Type {
     return "JSValue";
   }
   rustType(): string {
-    return "bindgen::JsValue<'a, bun_jsc::ArrayBuffer>";
+    return "bindgen::JsLocal<'a, bindgen::BufferSource>";
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::JsValue::from_extern(${expr})`;
+    return `bindgen::JsLocal::from_extern(${expr})`;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
@@ -688,7 +688,7 @@ export class WithValueType extends Type {
     return `bindgen::WithValue<'a, ${this.inner.rustType(scope)}>`;
   }
   rustFromExtern(expr: string, scope: RustScope): string {
-    return `{ let with_value = ${expr}; bindgen::WithValue { converted: ${this.inner.rustFromExtern("with_value.converted", scope)}, value: bindgen::JsValue::from_extern(with_value.value) } }`;
+    return `{ let with_value = ${expr}; bindgen::WithValue { converted: ${this.inner.rustFromExtern("with_value.converted", scope)}, value: bindgen::JsLocal::from_extern(with_value.value) } }`;
   }
 }
 
@@ -706,7 +706,7 @@ export class AnyType extends Type {
     return "JSC::jsUndefined()";
   }
   toRust(): string {
-    return "bindgen::JsValue::UNDEFINED";
+    return "bindgen::JsLocal::UNDEFINED";
   }
   layout(): Layout {
     return { size: 8, align: 8 };
@@ -715,10 +715,10 @@ export class AnyType extends Type {
     return "JSValue";
   }
   rustType(): string {
-    return "bindgen::JsValue<'a>";
+    return "bindgen::JsLocal<'a>";
   }
   rustFromExtern(expr: string): string {
-    return `bindgen::JsValue::from_extern(${expr})`;
+    return `bindgen::JsLocal::from_extern(${expr})`;
   }
   rustToJS(value: string): string {
     return `bindgen::to_js::any(heap, ${value})`;
@@ -862,7 +862,7 @@ export class OptionalType extends Type {
   }
   rustToJS(value: string, scope: RustScope): string {
     const none = this.modifier === "optional" ? "UNDEFINED" : "NULL";
-    return `match ${value} { Some(value) => ${this.inner.rustToJS("value", scope)}, None => Ok(bindgen::JsValue::${none}) }`;
+    return `match ${value} { Some(value) => ${this.inner.rustToJS("value", scope)}, None => Ok(bindgen::JsLocal::${none}) }`;
   }
 }
 
@@ -1085,35 +1085,35 @@ export class EnumerationType extends NamedType {
 
 export interface MemberOptions {
   type: Type;
-  /** Name of the C++ field and, in snake_case, of the Rust one. Defaults to the JS name. */
-  internalName?: string;
+  /** Name of the field in the Rust struct, and in the C++ one that mirrors it. Defaults to the JS name in snake_case. */
+  rustName?: string;
   /** Other JS names, tried in order while the value is `undefined`. */
   altNames?: readonly string[];
 }
 
 export class Member {
   readonly names: readonly string[];
-  readonly internalName: string;
+  /** Of the field in the generated C++ struct and, keywords aside, in the Rust one. */
+  readonly fieldName: string;
   readonly type: Type;
   constructor(name: string, spec: Type | MemberOptions) {
     const options: MemberOptions = spec instanceof Type ? { type: spec } : spec;
     this.names = [name, ...(options.altNames ?? [])];
     for (const name of this.names)
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a member is named by an identifier`);
-    this.internalName = options.internalName ?? name;
+    this.fieldName = options.rustName ?? snakeCase(name);
+    assert(/^[a-z_][a-z0-9_]*$/.test(this.fieldName), `${this.fieldName}: rustName is written in snake_case`);
     this.type = options.type;
   }
   get name(): string {
     return this.names[0];
   }
   get rustName(): string {
-    return rustIdent(snakeCase(this.internalName));
+    return rustIdent(this.fieldName);
   }
 }
 
 export interface DictionaryOptions {
-  /** What error messages call it. Defaults to its name. */
-  userFacingName?: string;
   /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
   fromJS?: boolean;
   /** An array is read like any other object, not refused. */
@@ -1156,9 +1156,6 @@ export class DictionaryType extends NamedType {
   get needsLifetime(): boolean {
     return this.accepted ? super.needsLifetime : this.holdsJSValue;
   }
-  get userFacingName(): string {
-    return this.options.userFacingName ?? this.name;
-  }
   get fromJS(): boolean {
     return !!this.options.fromJS;
   }
@@ -1200,7 +1197,7 @@ export class DictionaryType extends NamedType {
       if (Object.hasOwn(given, member.name)) field = given[member.name];
       else if (member.type instanceof DefaultType) field = member.type.value;
       else assert(member.type.takesUndefined, `missing key: ${member.name}`);
-      return member.type.cppAssign(`${target}.${member.internalName}`, field);
+      return member.type.cppAssign(`${target}.${member.fieldName}`, field);
     });
     return fields.filter(text => text.length > 0).join("\n");
   }
@@ -1308,7 +1305,7 @@ export class UnionType extends NamedType {
 
 // ───────────────────────────── functions ─────────────────────────────
 
-/** What the Rust body is handed: nothing, `&JsHeap` (allocates JS values) or `&mut JsCall` (runs JavaScript). */
+/** What the Rust body is handed: nothing, `&JsHeap` (allocates JS values) or `&mut JsScope` (runs JavaScript). */
 export type Capability = "none" | "heap" | "js";
 
 export interface SignatureOptions {
@@ -1376,7 +1373,7 @@ export class FunctionDefinition {
     this.signatures.forEach((signature, i) =>
       assert(
         chosen.has(signature),
-        `overload ${i + 1} is never chosen: nothing tells it from the others. Give an argument a type of another kind`,
+        `overload ${i + 1} is never chosen: the ones before it take every call it would. Move it earlier or remove it`,
       ),
     );
   }
@@ -1389,7 +1386,7 @@ export class FunctionDefinition {
     const key = `${candidates.map(signature => this.signatures.indexOf(signature))} ${argument}`;
     const existing = nodes.get(key);
     if (existing) return existing;
-    let dispatch: OverloadDispatch = candidates.reduce((a, b) => (b.requiredCount > a.requiredCount ? b : a));
+    let dispatch: OverloadDispatch = candidates[0];
     if (candidates.length > 1 && candidates.some(signature => argument < signature.args.length)) {
       const types = candidates.map(signature => signature.args[argument]?.type);
       const next = (kind: ValueKind | "other") => {

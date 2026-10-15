@@ -1,6 +1,6 @@
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
-use bun_jsc::bindgen::{self, IntoError, JsCall, JsHeap, JsValue, JsWrapper};
+use bun_jsc::bindgen::{self, IntoError, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SysErrorJsc as _,
@@ -30,7 +30,7 @@ impl<'a> IntoError<'a> for ScanError<'a> {
         match self {
             ScanError::Sys(err) => err.into_error(heap),
             ScanError::Runtime(err) => bun_jsc::JsError::from(err).into_error(heap),
-            ScanError::CwdTooLong(fn_name) => heap.throw(format_args!(
+            ScanError::CwdTooLong(fn_name) => heap.error(format_args!(
                 "{fn_name}: invalid `cwd`, longer than {MAX_PATH_BYTES} bytes"
             )),
             ScanError::Js(err) => err,
@@ -262,11 +262,11 @@ impl AnyGlobWalker {
         }
     }
 
-    fn matched_paths_to_js<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsValue<'a>> {
+    fn matched_paths_to_js<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         fn to_js<'a, A: walk::Accessor>(
             walker: &walk::GlobWalker<A, false>,
             heap: &JsHeap<'a>,
-        ) -> bindgen::Result<'a, JsValue<'a>> {
+        ) -> bindgen::Result<'a, JsLocal<'a>> {
             bindgen::to_js::array(heap, walker.matched_paths.keys(), bindgen::to_js::utf8)
         }
         match self {
@@ -331,12 +331,12 @@ impl JobContext for WalkTask {
             promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());
         }
-        let settle = |cx: &mut JsCall<'_>| match this.walker.matched_paths_to_js(&cx.heap) {
+        let settle = |cx: &mut JsScope<'_>| match this.walker.matched_paths_to_js(&cx.heap) {
             Ok(paths) => promise.resolve(global, paths.to_js()),
             Err(err) => promise.reject(global, Err(err.into_js_error(global))),
         };
-        // SAFETY: a job's completion, entered from the event loop with no `JsCall` borrowed.
-        unsafe { JsCall::with(global.as_mut_ptr(), settle) }
+        // SAFETY: a job's completion, entered from the event loop with no `JsScope` borrowed.
+        unsafe { JsScope::with(global.as_mut_ptr(), settle) }
     }
 }
 
@@ -428,9 +428,9 @@ impl GlobClass for Glob {
 
     fn scan<'a>(
         this: JsWrapper<'a, Self>,
-        cx: &mut JsCall<'a>,
+        cx: &mut JsScope<'a>,
         options: Option<GlobScanArgument<'a>>,
-    ) -> Result<JsValue<'a>, ScanError<'a>> {
+    ) -> Result<JsLocal<'a>, ScanError<'a>> {
         let walker = this.with(&cx.payloads, |glob| glob.make_glob_walker(options, "scan"))?;
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
@@ -439,14 +439,14 @@ impl GlobClass for Glob {
             WalkTask { walker, err: None },
             WalkJs { promise },
         );
-        Ok(JsValue::new(&cx.heap, value))
+        Ok(JsLocal::new(&cx.heap, value))
     }
 
     fn scan_sync<'a>(
         &self,
         heap: &JsHeap<'a>,
         options: Option<GlobScanArgument<'a>>,
-    ) -> Result<JsValue<'a>, ScanError<'a>> {
+    ) -> Result<JsLocal<'a>, ScanError<'a>> {
         let mut walker = self.make_glob_walker(options, "scanSync")?;
         walker
             .walk()

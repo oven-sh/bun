@@ -198,28 +198,29 @@ describe("strings", () => {
   });
 
   it("keeps the characters of a substring while its base is swapped for an atom", () => {
-    const fill = (length: number, char: string) => Buffer.alloc(length, char).toString("latin1");
-    const overwriteStack = (depth: number): number => (depth > 0 ? overwriteStack(depth - 1) + depth : 0);
+    const flat = (text: string) => Buffer.from(text).toString("latin1");
     const keys: Record<string, number> = {};
-    const strings = { base: fill(300, "q"), equal: fill(300, "q") };
-    keys[strings.equal] = 1;
-    const options = {
-      name: strings.base.substring(10, 290),
-      // Read after `name` is converted.
-      get renamed() {
-        // The base takes the atom's characters; two more lookups push its own out of the VM's last-atomized slot.
-        keys[strings.base];
-        keys[fill(33, "q")];
-        keys[fill(34, "q")];
-        overwriteStack(200);
-        Bun.gc(true);
-        const reuse = Array.from({ length: 5000 }, () => fill(300, "Z"));
-        Bun.gc(true);
-        return reuse.length ? 1 : 0;
-      },
-    };
-    overwriteStack(300);
-    expect(bindgen.optionsEcho(options).name).toBe(fill(280, "q"));
+    // Whether a collection frees the base's old characters depends on more than this test controls, so it tries many.
+    for (let round = 0; round < 20; round++) {
+      const text = `${round}`.padStart(4, "0") + Buffer.alloc(296, "q").toString();
+      const strings = { base: flat(text), equal: flat(text) };
+      keys[strings.equal] = 1;
+      const options = {
+        name: strings.base.substring(10, 290),
+        // Read after `name` is converted.
+        get renamed() {
+          // The base takes the atom's characters; two more lookups push its own out of the VM's last-atomized slot.
+          keys[strings.base];
+          keys[flat(`${round} a`)];
+          keys[flat(`${round} b`)];
+          Bun.gc(true);
+          const reuse = Array.from({ length: 2000 }, () => Buffer.alloc(300, "Z").toString("latin1"));
+          Bun.gc(true);
+          return reuse.length ? 1 : 0;
+        },
+      };
+      expect(bindgen.optionsEcho(options).name).toBe(text.substring(10, 290));
+    }
   });
 });
 
@@ -671,11 +672,11 @@ describe("overloads", () => {
     expect(bindgen.overloaded([1], 5)).toBe("list [1.0]");
   });
 
-  it("what fits none is reported by the one that requires the most arguments", () => {
+  it("what fits none is reported by the first signature still in the running", () => {
     expect(() => bindgen.overloaded()).toThrow("text must be a string");
     expect(() => bindgen.overloaded({})).toThrow("text must be a string");
-    expect(() => bindgen.overloaded(null, 1)).toThrow("a must be a number");
-    expect(() => bindgen.overloaded("ab", "x")).toThrow("upper must be a boolean");
+    expect(() => bindgen.overloaded(null, 1)).toThrow("text must be a string");
+    expect(() => bindgen.overloaded("ab", "x")).toThrow("times must be a number");
   });
 
   itAlways("a signature that cannot be chosen is an error in the schema", () => {
@@ -688,15 +689,11 @@ describe("overloads", () => {
     expect(() => b.overloads({ args: { a: b.i32, b: b.bool } }, { args: { a: b.f64, b: b.bool } })).toThrow(
       "overload 2 is never chosen",
     );
-    // The first takes an undefined second argument, and the last takes everything else.
-    expect(() =>
-      b.overloads(
-        { args: { a: b.string, b: b.f64.optional } },
-        { args: { a: b.string, b: b.string.optional } },
-        { args: { a: b.string, b: b.string.loose } },
-      ),
-    ).toThrow("overload 2 is never chosen");
-    b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } });
+    // The shorter one ignores a second argument, so written first it takes every call.
+    expect(() => b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } })).toThrow(
+      "overload 2 is never chosen",
+    );
+    b.overloads({ args: { a: b.string, b: b.bool } }, { args: { a: b.string } });
     b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });
   });

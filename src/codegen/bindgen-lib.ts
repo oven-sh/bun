@@ -38,10 +38,10 @@ export const f64 = new DoubleType();
 /** An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. */
 export const string = new StringType();
 
-/** The JS value itself, as a `JsValue<'a>`. */
+/** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
 
-/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsValue<'a, ArrayBuffer>`. `.bytes`, `.arrayBuffer`. */
+/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, ArrayBuffer>`. `.bytes`, `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
 /** The native `Blob` behind a JS `Blob`. */

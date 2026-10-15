@@ -133,7 +133,7 @@ pub(crate) trait SSLConfigFromJs: Sized {
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        generated: &generated::SSLConfig,
+        generated: &generated::TLSOptions,
         is_server: bool,
     ) -> JsResult<Option<Self>>;
 }
@@ -145,7 +145,7 @@ impl SSLConfigFromJs for SSLConfig {
         value: JSValue,
         is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
-        generated::SSLConfig::from_js(global, value, |generated| {
+        generated::TLSOptions::from_js(global, value, |generated| {
             Self::from_generated(vm, global, &generated, is_server)
         })
     }
@@ -153,7 +153,7 @@ impl SSLConfigFromJs for SSLConfig {
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
-        generated: &generated::SSLConfig,
+        generated: &generated::TLSOptions,
         is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
@@ -368,7 +368,7 @@ fn handle_path(
 fn handle_file_for_field(
     global: &JSGlobalObject,
     field: &'static str,
-    file: &generated::SSLConfigFile,
+    file: &generated::TLSOptionsFile,
 ) -> JsResult<CStrSlice> {
     match handle_file(global, file) {
         Ok(v) => Ok(v),
@@ -387,22 +387,22 @@ fn handle_file_for_field(
 
 fn handle_file(
     global: &JSGlobalObject,
-    file: &generated::SSLConfigFile,
+    file: &generated::TLSOptionsFile,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     let single = handle_single_file(
         global,
         match file {
-            generated::SSLConfigFile::None => return Ok(None),
-            generated::SSLConfigFile::String(val) => SingleFile::String(val),
-            generated::SSLConfigFile::Buffer(val) => {
+            generated::TLSOptionsFile::None => return Ok(None),
+            generated::TLSOptionsFile::String(val) => SingleFile::String(val),
+            generated::TLSOptionsFile::Buffer(val) => {
                 // SAFETY: `file` holds a ref on the buffer, and nothing else borrows it here.
                 SingleFile::Buffer(unsafe { &mut *val.get() })
             }
-            generated::SSLConfigFile::File(val) => {
+            generated::TLSOptionsFile::File(val) => {
                 // SAFETY: as above, for the `Blob`.
                 SingleFile::File(unsafe { &mut *val.get() })
             }
-            generated::SSLConfigFile::Array(list) => {
+            generated::TLSOptionsFile::Array(list) => {
                 return handle_file_array(global, list);
             }
         },
@@ -414,7 +414,7 @@ fn handle_file(
 
 fn handle_file_array(
     global: &JSGlobalObject,
-    elements: &[generated::SSLConfigSingleFile],
+    elements: &[generated::TLSOptionsSingleFile],
 ) -> Result<CStrSlice, ReadFromBlobError> {
     if elements.is_empty() {
         return Ok(None);
@@ -432,12 +432,12 @@ fn handle_file_array(
         guard.push(handle_single_file(
             global,
             match elem {
-                generated::SSLConfigSingleFile::String(val) => SingleFile::String(val),
-                generated::SSLConfigSingleFile::Buffer(val) => {
+                generated::TLSOptionsSingleFile::String(val) => SingleFile::String(val),
+                generated::TLSOptionsSingleFile::Buffer(val) => {
                     // SAFETY: see `handle_file`.
                     SingleFile::Buffer(unsafe { &mut *val.get() })
                 }
-                generated::SSLConfigSingleFile::File(val) => {
+                generated::TLSOptionsSingleFile::File(val) => {
                     // SAFETY: see `handle_file`.
                     SingleFile::File(unsafe { &mut *val.get() })
                 }

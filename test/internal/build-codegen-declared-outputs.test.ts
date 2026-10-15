@@ -202,7 +202,7 @@ describe("emitBindgen", () => {
       const schemas = n
         .toString()
         .replaceAll("$:", ":")
-        .match(/--(sources|without-bindings)=[^\s'"]*/g)!;
+        .match(/--(sources|types-only)=[^\s'"]*/g)!;
       expect(
         await bunRun([
           "run",

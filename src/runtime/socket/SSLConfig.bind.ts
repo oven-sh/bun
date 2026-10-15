@@ -1,17 +1,17 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-export const SSLConfigSingleFile = b.union({
+export const TLSOptionsSingleFile = b.union({
   string: b.string,
   buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
 });
 
-export const SSLConfigFile = b.union({
+export const TLSOptionsFile = b.union({
   none: b.null,
   string: b.string,
   buffer: b.bufferSource.arrayBuffer,
   file: b.blob,
-  array: b.array(SSLConfigSingleFile),
+  array: b.array(TLSOptionsSingleFile),
 });
 
 export const ALPNProtocols = b.union({
@@ -20,7 +20,7 @@ export const ALPNProtocols = b.union({
   buffer: b.bufferSource.arrayBuffer,
 });
 
-export const SSLConfig = b.dictionary(
+export const TLSOptions = b.dictionary(
   {
     passphrase: b.string.nullable,
     dhParamsFile: b.string.nullable,
@@ -28,27 +28,24 @@ export const SSLConfig = b.dictionary(
     lowMemoryMode: b.bool.default(false),
     rejectUnauthorized: b.bool.nullable,
     requestCert: b.bool.default(false),
-    ca: SSLConfigFile,
-    cert: SSLConfigFile,
-    key: SSLConfigFile,
+    ca: TLSOptionsFile,
+    cert: TLSOptionsFile,
+    key: TLSOptionsFile,
     secureOptions: b.u32.default(0),
-    minVersion: { type: b.i32.default(0), internalName: "ssl_min_version" },
-    maxVersion: { type: b.i32.default(0), internalName: "ssl_max_version" },
+    minVersion: { type: b.i32.default(0), rustName: "ssl_min_version" },
+    maxVersion: { type: b.i32.default(0), rustName: "ssl_max_version" },
     keyFile: b.string.nullable,
     certFile: b.string.nullable,
     caFile: b.string.nullable,
-    ALPNProtocols: { type: ALPNProtocols, internalName: "alpn_protocols" },
+    ALPNProtocols: { type: ALPNProtocols, rustName: "alpn_protocols" },
     ciphers: b.string.nullable,
     clientRenegotiationLimit: b.u32.default(0),
     clientRenegotiationWindow: b.u32.default(0),
-    crl: SSLConfigFile,
+    crl: TLSOptionsFile,
     allowPartialTrustChain: b.bool.default(false),
     sessionTimeout: b.i32.default(0),
     sigalgs: b.string.nullable,
     ecdhCurve: b.string.nullable,
   },
-  {
-    userFacingName: "TLSOptions",
-    fromJS: true,
-  },
+  { fromJS: true },
 );

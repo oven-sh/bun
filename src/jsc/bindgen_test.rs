@@ -2,10 +2,9 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::ArrayBuffer;
 use crate::bindgen::{
-    self, IntoError as _, JsCall, JsHeap, JsPayload as _, JsValue, JsWrapper, JsWrapperStrong,
-    WithValue,
+    self, BufferSource, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper,
+    JsWrapperStrong, WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
     TestAnything, TestChoice, TestColor, TestCounterClass, TestCounterInternalFields as _,
@@ -16,7 +15,7 @@ use crate::generated_bindgen::bindgen_test::{
 // This example should be kept in sync with bindgen's documentation
 pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
     a.checked_add(b)
-        .ok_or_else(|| heap.throw(format_args!("Integer overflow while adding")))
+        .ok_or_else(|| heap.error(format_args!("Integer overflow while adding")))
 }
 
 pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8>) -> i32 {
@@ -86,7 +85,7 @@ pub fn describe_value(value: TestValue<'_>) -> Vec<u8> {
     }
 }
 
-pub fn describe_anything<'a>(cx: &mut JsCall<'a>, value: TestAnything<'a>) -> Vec<u8> {
+pub fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> Vec<u8> {
     match value {
         TestAnything::Nothing => b"nothing".to_vec(),
         TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
@@ -94,7 +93,7 @@ pub fn describe_anything<'a>(cx: &mut JsCall<'a>, value: TestAnything<'a>) -> Ve
         TestAnything::Text(text) => format!("text {text}").into_bytes(),
         TestAnything::Bytes(buffer) => {
             // SAFETY: `buffer` holds a ref on it, and nothing else borrows it here.
-            let buffer: ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
+            let buffer: crate::ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),
@@ -157,7 +156,10 @@ pub fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
     format!("list {:?}", list.into_boxed_slice()).into_bytes()
 }
 
-pub fn overloaded_counter<'a>(cx: &mut JsCall<'a>, counter: JsWrapper<'a, TestCounter>) -> Vec<u8> {
+pub fn overloaded_counter<'a>(
+    cx: &mut JsScope<'a>,
+    counter: JsWrapper<'a, TestCounter>,
+) -> Vec<u8> {
     let count = counter.with(&cx.payloads, |counter| counter.count);
     format!("counter {count}").into_bytes()
 }
@@ -202,23 +204,23 @@ pub fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
 }
 
 pub fn sum_before_and_after_callback<'a>(
-    cx: &mut JsCall<'a>,
-    buffer: JsValue<'a, ArrayBuffer>,
-    callback: JsValue<'a>,
+    cx: &mut JsScope<'a>,
+    buffer: JsLocal<'a, BufferSource>,
+    callback: JsLocal<'a>,
 ) -> bindgen::Result<'a, [u32; 2]> {
     let before = buffer.with_bytes(&cx.heap, sum);
     let Some(callback) = callback.as_callable() else {
         return Err(cx
             .heap
-            .throw_type_error(format_args!("callback must be a function")));
+            .type_error(format_args!("callback must be a function")));
     };
-    callback.call(cx, JsValue::UNDEFINED, &[])?;
+    callback.call(cx, JsLocal::UNDEFINED, &[])?;
     Ok([before, buffer.with_bytes(&cx.heap, sum)])
 }
 
-pub fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsValue<'a> {
+pub fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
     if text.converted.is_empty() {
-        return JsValue::UNDEFINED;
+        return JsLocal::UNDEFINED;
     }
     text.value
 }
@@ -226,16 +228,16 @@ pub fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsV
 pub fn fail<'a>(
     heap: &JsHeap<'a>,
     how: TestFailure,
-    value: JsValue<'a>,
+    value: JsLocal<'a>,
 ) -> bindgen::Result<'a, ()> {
     Err(match how {
-        TestFailure::Type => heap.throw_type_error(format_args!("a type error")),
-        TestFailure::Range => heap.throw_range_error(format_args!("a range error")),
-        TestFailure::Plain => heap.throw(format_args!("an error")),
+        TestFailure::Type => heap.type_error(format_args!("a type error")),
+        TestFailure::Range => heap.range_error(format_args!("a range error")),
+        TestFailure::Plain => heap.error(format_args!("an error")),
         TestFailure::Syscall => {
             bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open).into_error(heap)
         }
-        TestFailure::Value => heap.throw_value(value),
+        TestFailure::Value => bindgen::Error::from_value(value),
     })
 }
 
@@ -267,7 +269,7 @@ impl TestCounterClass for TestCounter {
 
     fn constructor<'a>(heap: &JsHeap<'a>, start: i32) -> bindgen::Result<'a, Self> {
         if start < 0 {
-            return Err(heap.throw_range_error(format_args!("start must not be negative")));
+            return Err(heap.range_error(format_args!("start must not be negative")));
         }
         Ok(Self::new(start))
     }
@@ -284,7 +286,7 @@ impl TestCounterClass for TestCounter {
         self.label = value.to_vec();
     }
 
-    fn tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsValue<'a>> {
+    fn tag<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         bindgen::to_js::array(heap, [self.count], bindgen::to_js::i32)
     }
 
@@ -293,18 +295,22 @@ impl TestCounterClass for TestCounter {
         self.count
     }
 
-    fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsValue<'a>) {
+    fn listen<'a>(&self, this: JsWrapper<'a, Self>, heap: &JsHeap<'a>, listener: JsLocal<'a>) {
         this.set_listener_field(heap, listener);
     }
 
-    fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> bindgen::Result<'a, i32> {
+    fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
         if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
             listener.call(cx, this.as_value(), &[])?;
         }
         Ok(this.with(&cx.payloads, |counter| counter.count))
     }
 
-    fn plus<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>, other: JsWrapper<'a, Self>) -> i32 {
+    fn plus<'a>(
+        this: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        other: JsWrapper<'a, Self>,
+    ) -> i32 {
         let other = other.with(&cx.payloads, |counter| counter.count);
         this.with(&cx.payloads, |counter| counter.count.wrapping_add(other))
     }
@@ -333,7 +339,7 @@ impl TestHolderClass for TestHolder {
         self.counter.get(heap)
     }
 
-    fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsCall<'a>) -> i32 {
+    fn increment_counter<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> i32 {
         let counter = this.with(&cx.payloads, |holder| holder.counter.get(&cx.heap));
         counter.with_mut(&mut cx.payloads, |counter| counter.increment(1))
     }

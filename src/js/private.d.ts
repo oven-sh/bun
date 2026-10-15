@@ -278,11 +278,11 @@ declare function $newRustFunction<T = (...args: any) => any>(
  * [bindgen's documentation](https://bun.com/docs/project/bindgen).
  * `undefined` for a `*_test.bind.ts` file in a build without assertions.
  * @param filename - The basename of the `.bind.ts` file.
- * @param symbol - The name of the export.
+ * @param name - The name of the export.
  */
-declare function $bindgenFn<File extends keyof $Bindgen.Exports, Name extends keyof $Bindgen.Exports[File]>(
+declare function $bindgen<File extends keyof $Bindgen.Exports, Name extends keyof $Bindgen.Exports[File]>(
   filename: File,
-  symbol: Name,
+  name: Name,
 ): $Bindgen.Exports[File][Name];
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 

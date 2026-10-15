@@ -61,7 +61,7 @@ fn entity_name_to_string(name: &[Name<'_>]) -> Vec<u8> {
     parts.join(&b'.')
 }
 
-impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     // ───────────────────────────── helpers ─────────────────────────────
 
     fn name_atom(&mut self, name: &Name<'_>) -> Atom {

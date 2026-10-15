@@ -466,6 +466,7 @@ impl Clone for DependencyVersion {
 }
 
 impl Drop for DependencyVersion {
+    #[inline(never)]
     fn drop(&mut self) {
         if self.tag == DependencyVersionTag::Npm {
             // SAFETY: tag == Npm, so `npm` is the active arm.
@@ -542,18 +543,6 @@ impl Dependency {
     /// Lives here so the lockfile
     /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
     /// `bun_install` edge or an extension trait.
-    pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
-        let behavior = lhs.behavior.cmp(rhs.behavior);
-        if behavior != Ordering::Equal {
-            return behavior == Ordering::Less;
-        }
-        let lhs_name = lhs.name.slice(string_buf);
-        let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
-    }
-
-    /// Total-order comparator for `slice::sort_by`. Same key as
-    /// [`is_less_than`](Self::is_less_than).
     pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -692,7 +681,7 @@ impl<T: NegatableEnum> Negatable<T> {
     }
 
     /// writes to a one line json array with a trailing comma and space, or writes a string
-    pub fn to_json(field: T, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    pub fn to_json(field: T, writer: &mut dyn core::fmt::Write) -> core::fmt::Result {
         if field == T::NONE {
             // [] means everything, so unrecognized value
             return writer.write_str(r#""none""#);
@@ -864,6 +853,7 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Unlike `os`/`cpu`, zero is "not declared": such a package installs on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -877,11 +867,39 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// The musl build is a separate binary, so the build target is the host libc.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
+    #[cfg(not(target_os = "linux"))]
+    pub const CURRENT: Self = Self::ALL;
 
+    /// `self` is the package's declaration, `target` the libc being installed for.
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        self.0 == 0 || (self.0 & target.0) != 0
+    }
+
+    /// `self` is the target libc (`--libc`), which filters only optional dependencies.
+    #[inline]
+    pub fn for_dependency(self, behavior: Behavior) -> Self {
+        if behavior.is_optional() {
+            self
+        } else {
+            Self::ALL
+        }
+    }
     #[inline]
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
+    }
+    /// `"glibc"` / `"musl"` when the package is restricted to exactly one.
+    pub fn single_name(self) -> Option<&'static [u8]> {
+        Self::NAME_MAP_KVS
+            .iter()
+            .find(|(_, bit)| *bit == self.0)
+            .map(|(name, _)| *name)
     }
 }
 
@@ -1177,12 +1195,15 @@ pub struct Features {
     pub dev_dependencies: bool,
     pub is_main: bool,
     pub is_workspace: bool,
+    pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
     pub workspaces: bool,
     pub patched_dependencies: bool,
     pub check_for_duplicate_dependencies: bool,
+    /// The members' versions are not known to this parse, so a `workspace:` range counts as satisfied.
+    pub unchecked_workspace_ranges: bool,
 }
 impl Default for Features {
     fn default() -> Self {
@@ -1191,12 +1212,14 @@ impl Default for Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 }
@@ -1213,12 +1236,14 @@ impl Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
             workspaces: false,
             patched_dependencies: false,
             check_for_duplicate_dependencies: false,
+            unchecked_workspace_ranges: false,
         }
     }
 
@@ -1235,6 +1260,7 @@ impl Features {
 
     pub const FOLDER: Self = Self {
         dev_dependencies: true,
+        is_folder: true,
         optional_dependencies: true,
         ..Self::base()
     };
@@ -1264,45 +1290,17 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
-/// `handler`'s second parameter (`*PackageManager`) is erased to
-/// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
+/// What the runtime installs to nudge the JS event loop when a network task completes.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
+// installed; the fn-ptr is POD.
 #[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
-}
+pub struct WakeHandler(pub Option<WakeTarget>);
 
-impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
-    }
-
-    #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
-    }
+/// `handler`'s second parameter is a `*PackageManager`, which lives in a higher tier.
+#[derive(Copy, Clone)]
+pub struct WakeTarget {
+    pub context: NonNull<c_void>,
+    pub handler: fn(*mut c_void, *mut c_void),
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
@@ -1419,7 +1417,13 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
+    /// `version_buf` holds the strings `version` was parsed against.
+    fn lockfile_resolve(
+        &self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+    ) -> Option<PackageID>;
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,
@@ -1452,13 +1456,7 @@ pub trait AutoInstaller {
         package_id: PackageID,
         resolution: &Resolution,
         ctx: TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
     ) -> core::result::Result<(), bun_core::Error>;
-    fn resolve_from_disk_cache(
-        &mut self,
-        name: &[u8],
-        version: &DependencyVersion,
-    ) -> Option<PackageID>;
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],
@@ -1468,9 +1466,7 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
+    // `&mut self`: the manager records an `npm:` alias.
     fn parse_dependency(
         &mut self,
         name: SemverString,
@@ -1479,8 +1475,9 @@ pub trait AutoInstaller {
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
+    /// A package's own `version`: records nothing.
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],

@@ -1,8 +1,7 @@
 use bun_lint_oxlint::ast_util::parent_node;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
-use std::collections::hash_map::Entry;
+use bun_lint::types::IdMap;
 use smallvec::SmallVec;
 
 /// Prefer `import.meta.{dirname,filename}` over legacy techniques for getting file paths.
@@ -36,8 +35,9 @@ impl Function {
     }
 }
 
-/// Whether a variable is the function (`false`) or its module (`true`).
-type Known<'a> = FxHashMap<(Symbol<'a>, Function, bool), bool>;
+/// Whether a variable is the function (`false`) or its module (`true`): by the function, then by which of the
+/// two is asked.
+type Known<'a> = [[IdMap<Symbol<'a>, bool>; 2]; 2];
 
 /// The call that `e` is directly the first argument of.
 fn call_with_first_argument(e: Expr<'_>) -> Option<Expr<'_>> {
@@ -69,7 +69,8 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
         return false;
     }
     // The variables that stand for the same as the callee.
-    let mut visited: SmallVec<[(Symbol<'a>, Function, bool); 4]> = SmallVec::new();
+    let known = &mut known[function as usize];
+    let mut visited: SmallVec<[(Symbol<'a>, bool); 4]> = SmallVec::new();
     let (mut node, mut is_module) = (call.callee(), false);
     let answer = loop {
         if node.is_parenthesized() || node.is_chain_root() {
@@ -84,15 +85,16 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
                 let Some(symbol) = node.symbol() else {
                     break false;
                 };
-                let key = (symbol, function, is_module);
                 // While it is being looked at it is not the function: `const path = path`.
-                match known.entry(key) {
-                    Entry::Occupied(answer) => break *answer.get(),
-                    Entry::Vacant(entry) => {
-                        entry.insert(false);
-                        visited.push(key);
-                    }
+                let mut is_new = false;
+                let answer = *known[is_module as usize].get_or_insert_with(symbol, || {
+                    is_new = true;
+                    false
+                });
+                if !is_new {
+                    break answer;
                 }
+                visited.push((symbol, is_module));
                 match symbol.declarations().next() {
                     Some(Declaration::ImportSpec(specifier)) => {
                         break !is_module
@@ -114,8 +116,8 @@ fn is_node_builtin_module_function_call<'a>(call: Expr<'a>, function: Function, 
             _ => break false,
         }
     };
-    for key in visited {
-        known.insert(key, answer);
+    for (symbol, of_module) in visited {
+        known[of_module as usize].insert(symbol, answer);
     }
     answer
 }

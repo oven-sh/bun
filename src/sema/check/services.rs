@@ -558,6 +558,18 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
+    /// `checker.getAccessedPropertyName(node)`: of a property access the name as it is written, of
+    /// an element access what `tryGetElementAccessExpressionName` finds for its key.
+    pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
+        let e = self.expr_of(node)?;
+        let name = match self.c.hir(node.file)[e].kind {
+            hir::ExprKind::Dot { name, .. } => name,
+            hir::ExprKind::Index { index, .. } => self.c.literal_key(node.file, index)?,
+            _ => return None,
+        };
+        Some(crate::atom::written_name(self.c.atoms().bytes(name)))
+    }
+
     /// The text of the file from the first token of `node` to the end of its last.
     pub fn node_source_text(&mut self, node: NodeRef) -> &'p [u8] {
         let (start, end) = self.node_span(node);

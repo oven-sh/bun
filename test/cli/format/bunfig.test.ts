@@ -1,5 +1,5 @@
 // Tests for the `[fmt]` keys that go beyond Prettier's options, and their flags: `sortImports`, `sortTailwindcss`,
-// `sortPackageJson`, `jsdoc`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
+// `sortPackageJson`, `jsdoc`, `svelte`, `insertFinalNewline` and `overrides`. Also covers TOML, which needs no key.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -20,7 +20,8 @@ async function format(files: Record<string, string>, args: string[] = ["."]) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const read = (name: string) => readFileSync(join(String(dir), name), "utf8");
-  return { stdout, stderr, exitCode, files: Object.fromEntries(Object.keys(files).map(name => [name, read(name)])) };
+  const after = Object.fromEntries(Object.keys(files).map(name => [name, read(name)]));
+  return { stdout, stderr, exitCode, files: after, cwd: String(dir) };
 }
 
 const bunfig = (text: string) => ({ "bunfig.toml": `[fmt]\n${text}\n` });
@@ -264,6 +265,43 @@ preserveDuplicates = true
     expect(result.exitCode).toBe(0);
   });
 
+  test("a path starts where it is written: at bunfig.toml, or at the .oxfmtrc.json", async () => {
+    const files = { ...tailwind, "packages/app/a.jsx": `${sorted}cn("m-2 p-4");\nother("m-2 p-4");\n` };
+    const reversed = `${input}cn("p-4 m-2");\nother("m-2 p-4");\n`;
+    const results = await Promise.all([
+      format({
+        ...files,
+        "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+        "styles/app.css": "/* reversed */\n",
+        "packages/app/.oxfmtrc.json": "{}\n",
+      }),
+      format({
+        ...files,
+        "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "stylesheet": "./styles/app.css", "functions": ["cn"] } }\n`,
+        "packages/app/styles/app.css": "/* reversed */\n",
+      }),
+      // Each has a part of it.
+      format({
+        ...files,
+        "bunfig.toml": `[fmt.sortTailwindcss]\nfunctions = ["cn"]\n`,
+        "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "stylesheet": "./styles/app.css" } }\n`,
+        "packages/app/styles/app.css": "/* reversed */\n",
+      }),
+      format(
+        {
+          ...files,
+          "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+          "styles/app.css": "/* reversed */\n",
+          "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "functions": ["cn"] } }\n`,
+        },
+        ["--config-precedence=file-override", "."],
+      ),
+    ]);
+    for (const result of results) {
+      expect(result).toMatchObject({ stderr: "", files: { "packages/app/a.jsx": reversed }, exitCode: 0 });
+    }
+  });
+
   test("sorts classes in clsx, cn, cva and similar calls by default, unless `functions` is set", async () => {
     const calls = ["clsx", "cn", "cva", "cx", "classNames", "classnames", "twMerge", "twJoin", "tv", "other"];
     const code = (classes: (name: string) => string) => calls.map(name => `${name}("${classes(name)}");\n`).join("");
@@ -415,6 +453,328 @@ export function add(a, b) {}
   });
 });
 
+describe.concurrent("svelte", () => {
+  const input = `<style>p{color:red}</style>
+<p a={a}>hi</p>
+<script>let a=1</script>
+`;
+  const formatted = `<script>
+  let a = 1;
+</script>
+
+<p {a}>hi</p>
+
+<style>
+  p {
+    color: red;
+  }
+</style>
+`;
+  const table = `[fmt.svelte]
+sortOrder = "styles-markup-scripts-options"
+allowShorthand = false
+indentScriptAndStyle = false
+`;
+  const byTable = `<style>
+p {
+  color: red;
+}
+</style>
+
+<p a={a}>hi</p>
+
+<script>
+let a = 1;
+</script>
+`;
+  const installed = (version: string) => ({
+    "node_modules/prettier-plugin-svelte/package.json": JSON.stringify({ name: "prettier-plugin-svelte", version }),
+  });
+  const withPlugin = { ".prettierrc": `{ "plugins": ["prettier-plugin-svelte"] }\n` };
+
+  test("is on by default, and works as a key, a flag and a table", async () => {
+    const files = { "a.svelte": input };
+    const [plain, on, off, flag, over, options, under, kept] = await Promise.all([
+      format(files),
+      format({ ...bunfig("svelte = true"), ...files }),
+      format({ ...bunfig("svelte = false"), ...files }),
+      format(files, ["--no-svelte", "."]),
+      format({ ...bunfig("svelte = false"), ...files }, ["--svelte", "."]),
+      format({ "bunfig.toml": table, ...files }),
+      format({ "bunfig.toml": table, ...files }, ["--no-svelte", "."]),
+      format({ "bunfig.toml": table, ...files }, ["--svelte", "."]),
+    ]);
+    const results = [plain, on, off, flag, over, options, under, kept];
+    expect(results.map(it => it.files["a.svelte"])).toEqual([
+      formatted,
+      formatted,
+      input,
+      input,
+      formatted,
+      byTable,
+      input,
+      byTable,
+    ]);
+    expect(results.map(it => [it.stderr, it.exitCode])).toEqual(results.map(() => ["", 0]));
+  });
+
+  test("a file that is passed by name is in no known language while it is off", async () => {
+    const result = await format({ ...bunfig("svelte = false"), "a.svelte": input }, ["a.svelte"]);
+    expect(result.stderr).toBe(`error: No parser could be inferred for file "${join(result.cwd, "a.svelte")}".\n`);
+    expect(result.files["a.svelte"]).toBe(input);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("leaves the files alone next to the `parser` that the plugin's README has for them", async () => {
+    const overrides = [{ files: "*.svelte", options: { parser: "svelte" } }];
+    const files = {
+      ".prettierrc": JSON.stringify({ plugins: ["prettier-plugin-svelte"], overrides }) + "\n",
+      ...bunfig("svelte = false"),
+      "src/a.svelte": input,
+      "src/b.js": "b;\n",
+    };
+    const untouched = { files: { "src/a.svelte": input, "src/b.js": "b;\n" } };
+    const [written, checked, named] = await Promise.all([
+      format(files, ["src"]),
+      format(files, ["--check", "src"]),
+      format(files, ["src/a.svelte"]),
+    ]);
+    expect(written).toMatchObject({ stdout: "", stderr: "", ...untouched, exitCode: 0 });
+    expect(checked).toMatchObject({ stdout: "", stderr: "", ...untouched, exitCode: 0 });
+    // As without the `parser`.
+    const noParser = (cwd: string) =>
+      `error: No parser could be inferred for file "${join(cwd, "src", "a.svelte")}".\n`;
+    expect(named).toMatchObject({ stderr: noParser(named.cwd), ...untouched, exitCode: 2 });
+
+    using dir = tempDir("bun-format-bunfig", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "fmt", "--stdin-filepath", "src/a.svelte"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: noParser(String(dir)), exitCode: 2 });
+  });
+
+  test("--parser svelte is refused while it is off", async () => {
+    const message =
+      "error: Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).\n";
+    const [flags, key, on] = await Promise.all([
+      format({ "a.svelte": input }, ["--no-svelte", "--parser=svelte", "a.svelte"]),
+      format({ ...bunfig("svelte = false"), "a.svelte": input }, ["--parser=svelte", "a.svelte"]),
+      format({ ...bunfig("svelte = false"), "a.svelte": input }, ["--svelte", "--parser=svelte", "a.svelte"]),
+    ]);
+    for (const result of [flags, key]) {
+      expect(result).toMatchObject({ stderr: message, stdout: "", files: { "a.svelte": input }, exitCode: 2 });
+    }
+    expect(on).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+    // It is not off where the config file counts for more.
+    for (const precedence of ["file-override", "prefer-file"]) {
+      const files = { ...withPlugin, ...bunfig("svelte = false"), "a.svelte": input };
+      const flags = [`--config-precedence=${precedence}`, "--parser=svelte", "a.svelte"];
+      expect(await format(files, flags)).toMatchObject({ stderr: "", files: { "a.svelte": formatted }, exitCode: 0 });
+    }
+    // For the files of an override it is said of each.
+    const config = '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n';
+    const some = await format({ "bunfig.toml": config, "a.svelte": input, "old/b.svelte": input }, [
+      "--parser=svelte",
+      "a.svelte",
+      "old/b.svelte",
+    ]);
+    expect(some).toMatchObject({
+      stderr: `error: Cannot use --parser svelte, because Svelte is off for "${join(some.cwd, "old", "b.svelte")}".\n`,
+      files: { "a.svelte": formatted, "old/b.svelte": input },
+      exitCode: 2,
+    });
+  });
+
+  test("allowShorthand = false writes out a name only if it can be a variable", async () => {
+    const config = { "bunfig.toml": "[fmt.svelte]\nallowShorthand = false\n" };
+    const before = "<p {b} class:c style:d class:e-f style:--g class:if class:static>y</p>\n<input bind:value />\n";
+    const after =
+      "<p b={b} class:c={c} style:d={d} class:e-f style:--g class:if class:static>y</p>\n<input bind:value={value} />\n";
+    const once = await format({ ...config, "a.svelte": before });
+    expect(once).toMatchObject({ stderr: "", files: { "a.svelte": after }, exitCode: 0 });
+    expect(await format({ ...config, "a.svelte": after })).toMatchObject({ stderr: "", files: { "a.svelte": after } });
+  });
+
+  test("so are the code blocks in Markdown", async () => {
+    const block = (code: string) => "```svelte\n" + code + "```\n";
+    const [plain, off] = await Promise.all([
+      format({ "a.md": block("<p   >hi</p>\n") }),
+      format({ ...bunfig("svelte = false"), "a.md": block("<p   >hi</p>\n") }),
+    ]);
+    expect(plain.files["a.md"]).toBe(block("<p>hi</p>\n"));
+    expect(off.files["a.md"]).toBe(block("<p   >hi</p>\n"));
+    expect([off.stderr, off.exitCode]).toEqual(["", 0]);
+  });
+
+  test("counts for more than a .prettierrc, like every key", async () => {
+    const files = { "a.svelte": input };
+    const [without, on, named, off, other, byBun] = await Promise.all([
+      format({ ".prettierrc": "{}\n", ...files }),
+      format({ ".prettierrc": "{}\n", ...bunfig("svelte = true"), ...files }),
+      format({ ...withPlugin, ...files }),
+      format({ ...withPlugin, ...bunfig("svelte = false"), ...files }),
+      // Another version than the one that is built in. Nothing can format the file, since Prettier isn't installed.
+      format({ ...withPlugin, ...installed("3.4.0"), ...files }, ["--allow-unsupported", "."]),
+      format({ ...withPlugin, ...installed("3.4.0"), ...bunfig("svelte = true"), ...files }),
+    ]);
+    expect([without, on, named, off, other, byBun].map(it => it.files["a.svelte"])).toEqual([
+      input,
+      formatted,
+      formatted,
+      input,
+      input,
+      formatted,
+    ]);
+    expect([without, on, named, off, byBun].map(it => [it.stderr, it.exitCode])).toEqual(Array(5).fill(["", 0]));
+    // In the file itself it is still an unknown option.
+    const inFile = await format({ ".prettierrc": `{ "svelte": true }`, ...files, "a.js": "a  ;\n" });
+    expect(inFile.stderr).toBe("warn: Ignored unknown option { svelte: true }.\n");
+    expect(inFile.files).toMatchObject({ "a.svelte": input, "a.js": "a;\n" });
+  });
+
+  test("counts for more than an .oxfmtrc.json, like every key", async () => {
+    const files = { "a.svelte": input };
+    const oxfmt = (svelte: unknown) => ({ ".oxfmtrc.json": JSON.stringify({ svelte }) + "\n" });
+    const order = { sortOrder: "markup-scripts-styles-options" };
+    const [without, on, inFile, off, both] = await Promise.all([
+      format({ ".oxfmtrc.json": "{}\n", ...files }),
+      format({ ".oxfmtrc.json": "{}\n", ...bunfig("svelte = true"), ...files }),
+      format({ ...oxfmt(true), ...files }),
+      format({ ...oxfmt(true), ...bunfig("svelte = false"), ...files }),
+      format({ ...oxfmt(order), "bunfig.toml": table, ...files }),
+    ]);
+    expect([without, on, inFile, off, both].map(it => it.files["a.svelte"])).toEqual([
+      input,
+      formatted,
+      formatted,
+      input,
+      byTable,
+    ]);
+  });
+
+  test("--config-precedence decides between the key and the config file, as for every option", async () => {
+    const files = { "a.svelte": input };
+    const inFile = { ".oxfmtrc.json": `{ "svelte": { "indentScriptAndStyle": false } }\n` };
+    const notIndented = formatted.replace(/^  /gm, "");
+    const run = (precedence: string, config: Record<string, string>) =>
+      format({ ...config, ...bunfig("svelte = false"), ...files }, [`--config-precedence=${precedence}`, "."]);
+    const results = await Promise.all([
+      run("cli-override", inFile),
+      run("file-override", inFile),
+      run("prefer-file", inFile),
+      run("file-override", withPlugin),
+      // The file says nothing about Svelte, so the key is all there is.
+      run("file-override", { ".oxfmtrc.json": "{}\n" }),
+      run("file-override", {}),
+      run("prefer-file", {}),
+    ]);
+    expect(results.map(it => it.files["a.svelte"])).toEqual([
+      input,
+      notIndented,
+      notIndented,
+      formatted,
+      input,
+      input,
+      input,
+    ]);
+  });
+
+  test("with --config-precedence=prefer-file an .editorconfig counts for the files that it says something about", async () => {
+    const run = (section: string) =>
+      format(
+        {
+          ...bunfig("svelte = false\nsemi = false"),
+          ".editorconfig": `root = true\n[${section}]\nindent_size = 4\n`,
+          "a.svelte": input,
+          "b.js": "let b = 1\n",
+        },
+        ["--config-precedence=prefer-file", "."],
+      );
+    const [forOthers, forAll] = await Promise.all([run("*.ts"), run("*")]);
+    expect(forOthers).toMatchObject({ stderr: "", files: { "a.svelte": input, "b.js": "let b = 1\n" }, exitCode: 0 });
+    const wider = formatted.replace(/^ +/gm, it => it + it);
+    expect(forAll).toMatchObject({ stderr: "", files: { "a.svelte": wider, "b.js": "let b = 1;\n" }, exitCode: 0 });
+  });
+
+  test("the plugin's own options in a .prettierrc still count, and the table counts for more", async () => {
+    const config = { plugins: ["prettier-plugin-svelte"], svelteSortOrder: "markup-scripts-styles-options" };
+    const files = { ".prettierrc": JSON.stringify(config) + "\n", "a.svelte": input };
+    const [ofPlugin, both] = await Promise.all([format(files), format({ "bunfig.toml": table, ...files })]);
+    expect(ofPlugin.files["a.svelte"]).toBe(`<p {a}>hi</p>
+
+<script>
+  let a = 1;
+</script>
+
+<style>
+  p {
+    color: red;
+  }
+</style>
+`);
+    expect(both.files["a.svelte"]).toBe(byTable);
+  });
+
+  test("can be turned on, off and set for some files", async () => {
+    const files = { "a.svelte": input, "src/b.svelte": input, "src/old/c.svelte": input };
+    const config = `[fmt]
+svelte = false
+
+[[fmt.overrides]]
+files = "src/**"
+options = { svelte = { indentScriptAndStyle = false } }
+
+[[fmt.overrides]]
+files = "src/old/**"
+options = { svelte = false }
+`;
+    const [some, none, all] = await Promise.all([
+      format({ "bunfig.toml": config, ...files }),
+      format({ "bunfig.toml": config, ...files }, ["--no-svelte", "."]),
+      format({ "bunfig.toml": config, ...files }, ["--svelte", "."]),
+    ]);
+    const notIndented = formatted.replace(/^  /gm, "");
+    expect(some.files).toMatchObject({ "a.svelte": input, "src/b.svelte": notIndented, "src/old/c.svelte": input });
+    expect(none.files).toMatchObject(files);
+    // The flag turns it on everywhere, and an override keeps its options.
+    expect(all.files).toMatchObject({
+      "a.svelte": formatted,
+      "src/b.svelte": notIndented,
+      "src/old/c.svelte": notIndented,
+    });
+  });
+
+  const at = (line: string, column: number, message: string) =>
+    `2 | ${line}\n${" ".repeat(3 + column)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`;
+  const options = (text: string) => `overrides = [{ files = "a", options = { ${text} } }]`;
+  test.each([
+    [`svelte = "no"`, 10, "expected boolean or object but received string"],
+    ["svelte = { order = 1 }", 12, `Unknown key "order" in [fmt.svelte]`],
+    ["svelte = { sortorder = 1 }", 12, `Unknown key "sortorder" in [fmt.svelte]\n  Did you mean "sortOrder"?`],
+    ["svelte = { sortOrder = 1 }", 24, "expected string but received number"],
+    [
+      `svelte = { sortOrder = "scripts-markup" }`,
+      24,
+      `Invalid svelte.sortOrder value: scripts-markup.\n  Use "none", or all four parts in the order you want: "options-scripts-markup-styles"`,
+    ],
+    [`svelte = { allowShorthand = "no" }`, 29, "expected boolean but received string"],
+    ["svelte = { indentScriptAndStyle = 0 }", 35, "expected boolean but received number"],
+    [options("svelte = 1"), 50, "expected boolean or object but received number"],
+    [options("svelte = { indent = true }"), 52, `Unknown key "indent" in [fmt.svelte]`],
+  ])("rejects %s", async (line, column, message) => {
+    const result = await format({ ...bunfig(line), "a.svelte": input });
+    expect(result.stderr).toBe(at(line, column, message));
+    expect(result.files["a.svelte"]).toBe(input);
+    expect(result.exitCode).toBe(2);
+  });
+});
+
 describe.concurrent("insertFinalNewline", () => {
   test("works as a key and a flag", async () => {
     const files = { "a.js": "a  ;\n", "a.css": "a {\n}\n", "a.md": "a\n" };
@@ -481,7 +841,9 @@ describe.concurrent("TOML", () => {
 
   test("reports a syntax error for invalid TOML", async () => {
     const result = await format({ "a.toml": "a = \n", "b.toml": input });
-    expect(result.stderr).toContain("a.toml: SyntaxError:");
+    expect(result.stderr).toContain(
+      "1 | a =\n        ^\nerror: Missing value after '='; values must be on the same line\n    at a.toml:1:5\n",
+    );
     expect(result.files).toEqual({ "a.toml": "a = \n", "b.toml": formatted });
     expect(result.exitCode).toBe(2);
   });
@@ -691,5 +1053,154 @@ describe.concurrent(".oxfmtrc.json next to a Prettier config", () => {
     const { ".oxfmtrc.json": __, ...prettier } = both;
     const results = await Promise.all([format(oxfmt), format(prettier), format(both, ["--log-level=error", "."])]);
     expect(results.map(it => it.stderr)).toEqual(["", "", ""]);
+  });
+});
+
+describe.concurrent("a bunfig.toml above the working directory", () => {
+  /** Runs `bun fmt ...args` in `cwd`, a directory of `files`. Returns the files that it changed, by their paths from the root. */
+  async function formatIn(cwd: string, files: Record<string, string>, args: string[], before: string[] = []) {
+    using dir = tempDir("bun-format-bunfig", files);
+    await using proc = spawn({
+      cmd: [bunExe(), ...before, "fmt", "--log-level=warn", ...args],
+      env: bunEnv,
+      cwd: join(String(dir), cwd),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const after = Object.keys(files).map(name => [name, readFileSync(join(String(dir), name), "utf8")]);
+    return {
+      stdout,
+      stderr,
+      exitCode,
+      changed: Object.fromEntries(after.filter(([name, text]) => text !== files[name])),
+    };
+  }
+
+  const code = `a("b");\n`;
+  const project = {
+    "bunfig.toml": `[fmt]
+semi = false
+ignorePatterns = ["packages/app/vendor/", "**/gen/**", "packages/*/out/"]
+
+[[fmt.overrides]]
+files = ["packages/app/test/**"]
+excludeFiles = ["packages/app/test/keep/**"]
+options = { singleQuote = true }
+`,
+    "packages/app/src/a.js": code,
+    "packages/app/src/gen/b.js": code,
+    "packages/app/vendor/c.js": code,
+    "packages/app/out/d.js": code,
+    "packages/app/test/e.js": code,
+    "packages/app/test/keep/f.js": code,
+  };
+  const expected = {
+    "packages/app/src/a.js": `a("b")\n`,
+    "packages/app/test/e.js": `a('b')\n`,
+    "packages/app/test/keep/f.js": `a("b")\n`,
+  };
+
+  test.each([
+    [".", ["packages/app"]],
+    ["packages/app", ["."]],
+    ["packages/app", []],
+    ["packages/app/src", [".."]],
+    ["packages/app/test/keep", ["../.."]],
+    ["packages/app/vendor", ["../../../packages"]],
+  ])("the same is written from %s with %j", async (cwd, args) => {
+    expect(await formatIn(cwd, project, args)).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
+  });
+
+  test("the patterns of a file that --config names start in the working directory", async () => {
+    const { "bunfig.toml": bunfig, ...rest } = project;
+    const files = { ...rest, "tools/bunfig.toml": bunfig };
+    const result = await formatIn(".", files, ["packages/app"], ["--config=tools/bunfig.toml"]);
+    expect(result).toEqual({ stdout: "", stderr: "", exitCode: 0, changed: expected });
+  });
+
+  test("--ignore-pattern starts in the working directory", async () => {
+    const { changed } = await formatIn("packages/app", project, [".", "--ignore-pattern", "test/"]);
+    expect(changed).toEqual({ "packages/app/src/a.js": `a("b")\n` });
+  });
+
+  test("ignorePath and config start where bunfig.toml is", async () => {
+    const files = {
+      ...project,
+      "bunfig.toml": `[fmt]\nignorePath = ["tools/ignored"]\nconfig = "tools/style.json"\n`,
+      "tools/ignored": "../packages/app/test/\nvendor\ngen\nout\n",
+      "tools/style.json": `{ "semi": false }`,
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["."]],
+      ["packages/app/src", [".."]],
+    ] as const) {
+      const result = await formatIn(cwd, files, [...args]);
+      expect(result).toMatchObject({ stderr: "", exitCode: 0, changed: { "packages/app/src/a.js": `a("b")\n` } });
+    }
+  });
+
+  test("the stylesheet of sortTailwindcss starts where bunfig.toml is", async () => {
+    const files = {
+      "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+      "styles/app.css": "/* reversed */\n",
+      // Not this one.
+      "packages/app/styles/app.css": "",
+      "node_modules/tailwindcss/package.json": `{ "name": "tailwindcss", "version": "4.0.0", "main": "index.js" }`,
+      "node_modules/tailwindcss/theme.css": "",
+      "node_modules/tailwindcss/index.js": `const order = ["m-2", "flex", "p-4"];
+exports.__unstable__loadDesignSystem = async css => {
+  const sign = css.includes("reversed") ? -1 : 1;
+  return { getClassOrder: classes => classes.map(name => [name, BigInt(sign * order.indexOf(name))]) };
+};
+`,
+      "packages/app/a.jsx": `<a className="flex p-4 m-2" />;\n`,
+    };
+    for (const [cwd, args] of [
+      [".", ["packages"]],
+      ["packages/app", ["a.jsx"]],
+    ] as const) {
+      const result = await formatIn(cwd, files, [...args]);
+      expect(result).toMatchObject({
+        stderr: "",
+        changed: { "packages/app/a.jsx": `<a className="p-4 flex m-2" />;\n` },
+      });
+    }
+  });
+
+  test("the nearest that has a [fmt] section counts", async () => {
+    const files = {
+      "bunfig.toml": `[fmt]\nsemi = false\n`,
+      "packages/bunfig.toml": `[lint.rules]\n"no-console" = "error"\n`,
+      "packages/app/bunfig.toml": `[test]\ncoverage = true\n`,
+      "packages/app/a.js": code,
+      "packages/own/bunfig.toml": `[fmt]\nsingleQuote = true\n`,
+      "packages/own/src/a.js": code,
+    };
+    expect((await formatIn("packages/app", files, ["."])).changed).toEqual({ "packages/app/a.js": `a("b")\n` });
+    expect((await formatIn("packages/own/src", files, ["."])).changed).toEqual({
+      "packages/own/src/a.js": `a('b');\n`,
+    });
+  });
+
+  test.each([
+    [`[fmt]\nsem = false\n`, `error: Unknown key "sem" in [fmt]\n  Did you mean "semi"?\n    at ../../bunfig.toml:2:1`],
+    [`[fmt]\nprintWidth = "wide"\n`, `    at ../../bunfig.toml:2:14`],
+  ])("a mistake is shown with the path of the file: %j", async (bunfig, message) => {
+    const result = await formatIn("packages/app", { "bunfig.toml": bunfig, "packages/app/a.js": code }, ["."]);
+    expect(result.stderr).toContain(message);
+    expect(result).toMatchObject({ exitCode: 2, changed: {} });
+  });
+
+  test("--init says that there is one, and writes nothing", async () => {
+    const files = { "bunfig.toml": `[fmt]\nsemi = false\n`, "packages/app/a.js": code };
+    const result = await formatIn("packages/app", files, ["--init"]);
+    expect(result).toEqual({
+      stdout: "../../bunfig.toml already has a [fmt] section\n",
+      stderr: "",
+      exitCode: 0,
+      changed: {},
+    });
   });
 });

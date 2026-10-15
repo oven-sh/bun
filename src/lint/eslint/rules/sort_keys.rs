@@ -1,7 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::tokens::next_token;
-use rustc_hash::FxHashMap;
+use bun_lint::types::IdMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -100,7 +100,7 @@ fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: 
 type ObjectFix = Option<(Span, Vec<u8>)>;
 
 /// [`ObjectFix`] for each object literal that was asked about.
-type Fixes<'a> = FxHashMap<Expr<'a>, ObjectFix>;
+type Fixes<'a> = IdMap<Expr<'a>, ObjectFix>;
 
 /// oxlint's `FixableProperty`.
 struct FixableProperty<'a, 'k> {
@@ -213,7 +213,7 @@ impl SortKeys {
             found.push(FixableProperty {
                 key: get_property_name(key, true)?,
                 span,
-                nested: value.and_then(|it| known.get(&it)?.as_ref()),
+                nested: value.and_then(|it| known.get(it)?.as_ref()),
                 has_comma: span.end > prop.span().end,
             });
         }
@@ -266,14 +266,14 @@ impl SortKeys {
     #[inline(never)]
     fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> ObjectFix {
         let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
-        if !known.contains_key(&root) {
+        if !known.contains_key(root) {
             pending.push(root);
         }
         while let Some(&object) = pending.last() {
             let count = pending.len();
             if let Some(props) = object.as_object() {
                 for value in props.iter().filter_map(Prop::value) {
-                    if value.tag() == ExprTag::Object && !value.is_parenthesized() && !known.contains_key(&value) {
+                    if value.tag() == ExprTag::Object && !value.is_parenthesized() && !known.contains_key(value) {
                         pending.push(value);
                     }
                 }
@@ -284,7 +284,7 @@ impl SortKeys {
                 known.insert(object, fix);
             }
         }
-        known.get(&root)?.clone()
+        known.get(root)?.clone()
     }
 
     fn is_valid_order(&self, a: &[u8], b: &[u8], is_oxlint: bool) -> bool {

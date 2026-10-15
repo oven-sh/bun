@@ -6,7 +6,8 @@ use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
 use super::command::{ContextData, Tag};
-use super::lint_command::{defaults_of_bunfig, run_and_exit, usage_error};
+use super::lint_command::{read_bunfigs, run_and_exit, usage_error};
+use bun_bunfig::Above;
 
 pub(crate) struct FormatCommand;
 
@@ -32,6 +33,48 @@ impl FormatCommand {
 
     /// `args`: what follows `format`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+        // `--debug-check-svelte <before> <after> ..`, for `test/cli/format/svelte/svelte.test.ts`: a line for each pair.
+        if HAS_TEST_RUNNER
+            && let [flag, pairs @ ..] = args
+            && flag.as_bytes() == b"--debug-check-svelte"
+        {
+            let read = |path: &ZStr| bun_format_conformance::read_file(path.as_bytes());
+            for [before, after] in pairs.as_chunks::<2>().0 {
+                let is_same = matches!((read(before), read(after)), (Some(before), Some(after))
+                    if bun_lint_driver::fmt::is_same_svelte_for_tests(&before, &after));
+                bun_format_conformance::output_line!(
+                    "{}",
+                    if is_same { "same" } else { "different" }
+                );
+            }
+            Global::exit(0);
+        }
+        // `--debug-comments <directory> <file> ..`, for the tests: writes which node owns each comment of a file into
+        // `<directory>/<file>.txt`. `--debug-unprinted-comments`: the comments that no printer has printed. With `-oxfmt` at the
+        // end: in the flavor of oxfmt.
+        if HAS_TEST_RUNNER
+            && let [flag, directory, files @ ..] = args
+            && matches!(
+                flag.as_bytes(),
+                b"--debug-comments"
+                    | b"--debug-comments-oxfmt"
+                    | b"--debug-unprinted-comments"
+                    | b"--debug-unprinted-comments-oxfmt"
+            )
+        {
+            let only_unprinted = flag.as_bytes().starts_with(b"--debug-unprinted-comments");
+            let is_oxfmt = flag.as_bytes().ends_with(b"-oxfmt");
+            for file in files {
+                let path = file.as_bytes();
+                let listed = bun_format_conformance::read_file(path).and_then(|text| {
+                    bun_lint_driver::fmt::debug_comments(path, &text, only_unprinted, is_oxfmt)
+                });
+                let listed = listed.unwrap_or_else(|| b"REFUSED\n".to_vec());
+                let out = [directory.as_bytes(), b"/", path, b".txt"].concat();
+                bun_format_conformance::write_file(&out, &listed);
+            }
+            Global::exit(0);
+        }
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args
             && let Some(run) = test_runner(first.as_bytes())
@@ -66,8 +109,20 @@ impl FormatCommand {
         }
         let cwd = options.cwd.clone();
         run_and_exit(b"fmt", cwd.as_deref(), |environment| {
-            let read = bun_lint_driver::bunfig::format;
-            let defaults = defaults_of_bunfig(ctx, Tag::FormatCommand, b"fmt", read);
+            let mut defaults = None;
+            read_bunfigs(
+                ctx,
+                Tag::FormatCommand,
+                b"fmt",
+                &mut |file, path, is_named| {
+                    let section = bun_lint_driver::bunfig::format(file)?;
+                    defaults = section.map(|it| it.of_bunfig_at(path, is_named));
+                    Ok(match defaults {
+                        Some(_) => Above::Unwanted,
+                        None => Above::Needed,
+                    })
+                },
+            );
             let options = match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => options,
                 Some(Ok(options)) => options,

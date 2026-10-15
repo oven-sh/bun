@@ -164,6 +164,8 @@ fn format_embedded(
     let mut file_of_oxfmt: &[u8] = b"";
     let parser: &[u8] = match language {
         _ if is_mdx_jsx || language == MDX_ES_SYNTAX => b"babel",
+        // The language of a plugin, which oxfmt has too.
+        b"svelte" if options.svelte.is_on => b"svelte",
         _ if options.flavor.is_oxfmt() => {
             let parser;
             (parser, file_of_oxfmt) = parser_of_oxfmt(language)?;
@@ -230,6 +232,10 @@ fn format_embedded(
             }
             b"yaml" => {
                 crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok()
+            }
+            b"svelte" => {
+                let scratch = &mut Default::default();
+                crate::svelte::format(b"", code, &options, None, scratch, &mut out).is_ok()
             }
             b"markdown" | b"mdx" => {
                 let mode = Mode {

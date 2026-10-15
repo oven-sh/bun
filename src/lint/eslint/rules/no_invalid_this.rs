@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Disallow use of `this` in contexts where the value of `this` is `undefined`.
 pub struct NoInvalidThis {
@@ -28,7 +28,7 @@ pub struct Known<'a> {
     /// Whether a `this` at a node is something else than `undefined`.
     at: AncestorMemo<'a, bool>,
     /// The same directly in a function that is not a method.
-    in_function: FxHashMap<Func<'a>, bool>,
+    in_function: IdMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
 }
 
@@ -44,7 +44,7 @@ fn is_valid<'a>(
         Node::Func(func) if !func.is_arrow() && func.has_body() => Some(
             // A method is never called with the default `this`.
             matches!(func.owner(), Node::Member(_))
-                || *in_function.entry(func).or_insert_with(|| {
+                || *in_function.get_or_insert_with(func, || {
                     is_value_of_accessor(func)
                         || !ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
                         || !func.scope().is_some_and(Scope::is_strict)

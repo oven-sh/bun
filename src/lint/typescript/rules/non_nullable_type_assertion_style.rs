@@ -70,15 +70,21 @@ impl Rule for NonNullableTypeAssertionStyle {
         }
         cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
             let precedence = get_operator_precedence(ts_syntax_kind(expr), SyntaxKind::Unknown, false);
-            // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`.
+            // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`: it only changes what follows the operand.
             if fixer.file().language().is_oxlint {
-                let (outer, is_simple) = (expr.outer_span(), expr.is_parenthesized());
-                let before = fixer.file().slice(Span::new(node.span().start, outer.start));
-                let text = fixer.file().slice(outer);
-                return fixer.replace(node, match is_simple || precedence > OperatorPrecedence::Unary {
-                    true => [before, text, b"!"].concat(),
-                    false => [before, b"(", text, b")!"].concat(),
-                });
+                let file = fixer.file();
+                let outer = expr.outer_span();
+                let end = node.span().end.max(outer.end);
+                // `a as B===c` is not to become `a!===c`, which is `a !== =c`.
+                let next = end;
+                let after: &[u8] = match file.slice(Span::new(next, next.saturating_add(1))) == b"=" {
+                    true => b"! ",
+                    false => b"!",
+                };
+                if expr.is_parenthesized() || precedence > OperatorPrecedence::Unary {
+                    return fixer.replace(Span::new(outer.end, end), after);
+                }
+                return fixer.replace(Span::new(outer.start, end), [&b"("[..], file.slice(outer), b")", after].concat());
             }
             let text = match precedence > OperatorPrecedence::Unary {
                 true => [expr.text(), b"!"].concat(),

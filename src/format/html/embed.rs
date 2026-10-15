@@ -16,7 +16,7 @@ use crate::{FormatError, FormatOptions};
 use bun_core::strings;
 
 /// `inferParserByTypeAttribute`
-fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn infer_parser_by_type_attribute(kind: &[u8]) -> Option<&'static [u8]> {
     Some(match kind {
         b"module"
         | b"text/javascript"

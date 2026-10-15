@@ -17,6 +17,7 @@ use crate::util_ast::{find_return_statement, get_key_value, get_property_name, n
 use crate::util_components_list::{Children, DeclaredPropType, DeclaredPropTypes, PropTypeKind};
 use crate::util_props::is_required_prop_type;
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -101,7 +102,7 @@ struct ReactDeclarationTypes<'a, 'b> {
     root_node: Option<Node<'a>>,
     custom_validators: &'b [Box<[u8]>],
     /// The values that `build` is looking at.
-    on_the_way: FxHashSet<Expr<'a>>,
+    on_the_way: IdSet<Expr<'a>>,
     /// It has come to one of these again, where upstream goes round until its stack is full, or the stack is full here:
     /// nothing more is looked at.
     has_given_up: bool,
@@ -140,7 +141,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
         }
         let built = self.build_declaration_types(value, parent_name);
         if let Some(it) = value {
-            self.on_the_way.remove(&it);
+            self.on_the_way.remove(it);
         }
         built
     }
@@ -262,7 +263,7 @@ pub(crate) fn build_react_declaration_types<'a>(
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
-        on_the_way: FxHashSet::default(),
+        on_the_way: IdSet::new(),
         has_given_up: false,
     };
     let built = types.build(value, parent_name);

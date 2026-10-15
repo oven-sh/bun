@@ -6,8 +6,8 @@ use crate::jsx::{as_jsx_element, get_jsx_attribute_name, get_prop_value};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
 /// Prevent JSX elements, arrays, functions or objects that are local to the current method from being used as values of JSX
@@ -45,7 +45,7 @@ pub struct State<'a> {
     /// For [`is_in_root_scope`].
     in_root_scope: AncestorMemo<'a, ()>,
     /// Where a variable is declared, if that is with a violation.
-    declared_with_violation: FxHashMap<Symbol<'a>, Option<(Span, Option<Span>)>>,
+    declared_with_violation: IdMap<Symbol<'a>, Option<(Span, Option<Span>)>>,
 }
 
 impl<const WHAT: usize> Rule for JsxNoNewAsProp<WHAT> {
@@ -161,7 +161,7 @@ impl<const WHAT: usize> JsxNoNewAsProp<WHAT> {
             return;
         };
         let known = &mut cx.state.declared_with_violation;
-        let Some((decl_span, init_span)) = *known.entry(symbol).or_insert_with(|| Self::declaration_with_violation(symbol))
+        let Some((decl_span, init_span)) = *known.get_or_insert_with(symbol, || Self::declaration_with_violation(symbol))
         else {
             return;
         };

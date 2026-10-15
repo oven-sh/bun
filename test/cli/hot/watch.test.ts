@@ -50,14 +50,17 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 });
 
 describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import", () => {
-  test.each([
+  test.concurrent.each([
     ["./a.js", "a.js"],
     // The resolver looks a name up without regard to ASCII case.
     ["./Dep.js", "dep.js"],
+    ["./a", "a.ts"],
+    ["./a.js", "a.ts"],
+    ["<absolute>/abs.js", "abs.js"],
   ])("bun --watch reruns when the missing %s is created as %s", async (specifier, created) => {
-    await using dir = tempDir("watch-missing-import", {
-      "entry.js": `import { a } from "${specifier}"; console.log("RUN", a);`,
-    });
+    await using dir = tempDir("watch-missing-import", {});
+    const from = specifier.replace("<absolute>", String(dir));
+    await writeFile(join(String(dir), "entry.js"), `import { a } from ${JSON.stringify(from)}; console.log("RUN", a);`);
     await using proc = spawn({
       cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
       cwd: String(dir),
@@ -79,7 +82,7 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await proc.exited;
   });
 
-  test("a directory import that resolves does not rerun on a sibling file", async () => {
+  test.concurrent("a directory import that resolves does not rerun on a sibling file", async () => {
     // `./lib` misses as a file before it resolves as `lib/index.js`. A file the
     // program writes next to it must not count as the missing file appearing.
     await using dir = tempDir("watch-dir-import", {
@@ -107,6 +110,36 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
 
     await writeFile(join(String(dir), "lib", "index.js"), "export const v = 2;");
     expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 2");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
+  test.concurrent("a caught miss does not rerun on a sibling that cannot satisfy it", async () => {
+    // `./db` is probed and not found. The resolver never tries `db.sqlite-journal` for it.
+    await using dir = tempDir("watch-probed-import", {
+      "entry.js": `
+        import { writeFileSync } from "node:fs";
+        let db = "none";
+        try { db = require("./db"); } catch {}
+        console.log("RUN", db);
+        writeFileSync("db.sqlite-journal", String(Date.now()));
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = new LineReader(proc.stdout);
+
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN none");
+    // Same bounded window as above: a correct build prints nothing here.
+    expect(await stdout.within(2000)).toEqual([]);
+
+    await writeFile(join(String(dir), "db.js"), `module.exports = "found";`);
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN found");
 
     proc.kill("SIGKILL");
     await proc.exited;

@@ -72,7 +72,17 @@ pub struct AnyResolveWatcher {
     // closure-style invariant upheld by this struct), and the body discharges
     // its own type-recovery `unsafe` internally.
     pub(crate) callback: fn(*mut (), dir_path: &[u8], dir_fd: Fd),
-    pub(crate) on_unresolved: fn(*mut (), dir_path: &[u8], base: &[u8]),
+    pub(crate) on_unresolved: fn(*mut (), lookup: &UnresolvedLookup<'_>),
+}
+
+/// A relative or absolute import that resolved to nothing, with the names the resolver tried in `dir`.
+pub struct UnresolvedLookup<'a> {
+    pub dir: &'a [u8],
+    pub base: &'a [u8],
+    /// Each was tried appended to `base`.
+    pub extensions: [&'a [Box<[u8]>]; 2],
+    /// Each was tried in place of the extension of `base`.
+    pub replaced_extensions: &'a [&'a [u8]],
 }
 
 impl AnyResolveWatcher {
@@ -81,40 +91,44 @@ impl AnyResolveWatcher {
         (self.callback)(self.context, dir_path, dir_fd)
     }
 
-    /// A relative or absolute import of `base` in `dir_path` resolved to nothing.
     #[inline]
-    pub fn unresolved(self, dir_path: &[u8], base: &[u8]) {
-        (self.on_unresolved)(self.context, dir_path, base)
+    pub fn unresolved(self, lookup: &UnresolvedLookup<'_>) {
+        (self.on_unresolved)(self.context, lookup)
     }
 }
 
-/// An import the resolver could not find: the directory and the name stem (`a` for `a.js`).
+/// An import the resolver could not find: its directory and the entry names that would satisfy it.
 struct UnresolvedImport {
     dir_hash: HashType,
-    stem: Box<[u8]>,
-    /// Entries that matched the stem when the import failed. They cannot satisfy it.
+    candidates: Vec<Box<[u8]>>,
+    /// Candidates that were in the directory when the import failed. They cannot satisfy it.
     present: Vec<Box<[u8]>>,
 }
 
 impl UnresolvedImport {
-    fn stem_of(base: &[u8]) -> &[u8] {
-        if base.len() < 2 {
-            return base;
+    fn candidates_of(lookup: &UnresolvedLookup<'_>) -> Vec<Box<[u8]>> {
+        let base = lookup.base;
+        let mut names: Vec<Box<[u8]>> = vec![base.into()];
+        for ext in lookup.extensions.iter().flat_map(|exts| exts.iter()) {
+            names.push([base, &**ext].concat().into_boxed_slice());
         }
-        match strings::index_of_char_usize(&base[1..], b'.') {
-            Some(i) => &base[..i + 1],
-            None => base,
+        if let Some(dot) = strings::last_index_of_char(base, b'.') {
+            for ext in lookup.replaced_extensions {
+                names.push([&base[..dot], *ext].concat().into_boxed_slice());
+            }
         }
+        names
     }
 
     /// ASCII case is ignored, as in the resolver's directory lookup.
-    fn stem_matches(stem: &[u8], name: &[u8]) -> bool {
-        strings::starts_with_case_insensitive_ascii(name, stem)
-            && (name.len() == stem.len() || name[stem.len()] == b'.')
+    fn is_candidate(candidates: &[Box<[u8]>], name: &[u8]) -> bool {
+        candidates
+            .iter()
+            .any(|candidate| strings::eql_case_insensitive_ascii(candidate, name, true))
     }
 
     fn matches(&self, name: &[u8]) -> bool {
-        Self::stem_matches(&self.stem, name) && !self.present.iter().any(|p| &**p == name)
+        Self::is_candidate(&self.candidates, name) && !self.present.iter().any(|p| &**p == name)
     }
 }
 
@@ -1004,9 +1018,9 @@ impl Watcher {
             // `&mut Watcher` is scoped to this call.
             unsafe { (*ctx.cast::<Watcher>()).on_maybe_watch_directory(dir_path, dir_fd) }
         }
-        fn wrap_unresolved(ctx: *mut (), dir_path: &[u8], base: &[u8]) {
+        fn wrap_unresolved(ctx: *mut (), lookup: &UnresolvedLookup<'_>) {
             // SAFETY: see `wrap`.
-            unsafe { (*ctx.cast::<Watcher>()).on_unresolved_import(dir_path, base) }
+            unsafe { (*ctx.cast::<Watcher>()).on_unresolved_import(lookup) }
         }
         AnyResolveWatcher {
             context: std::ptr::from_mut::<Self>(self).cast::<()>(),
@@ -1035,28 +1049,28 @@ impl Watcher {
     }
 
     /// Called once the whole resolution missed, not on every `load_as_file` miss.
-    pub(crate) fn on_unresolved_import(&mut self, dir_path: &[u8], base: &[u8]) {
-        if !self.track_unresolved_imports || !self.is_watchable_directory(dir_path) {
+    pub(crate) fn on_unresolved_import(&mut self, lookup: &UnresolvedLookup<'_>) {
+        if !self.track_unresolved_imports
+            || lookup.base.is_empty()
+            || !self.is_watchable_directory(lookup.dir)
+        {
             return;
         }
-        let stem = UnresolvedImport::stem_of(base);
-        if stem.is_empty() {
-            return;
-        }
-        let dir_hash = Self::unresolved_dir_hash(dir_path);
+        let dir_hash = Self::unresolved_dir_hash(lookup.dir);
         {
             let _guard = self.mutex.lock_guard();
             if self
                 .unresolved_imports
                 .iter()
-                .any(|u| u.dir_hash == dir_hash && &*u.stem == stem)
+                .any(|u| u.dir_hash == dir_hash && *u.candidates[0] == *lookup.base)
             {
                 return;
             }
         }
+        let candidates = UnresolvedImport::candidates_of(lookup);
         let mut present: Vec<Box<[u8]>> = Vec::new();
-        for_each_dir_entry(dir_path, |name| {
-            if UnresolvedImport::stem_matches(stem, name) {
+        for_each_dir_entry(lookup.dir, |name| {
+            if UnresolvedImport::is_candidate(&candidates, name) {
                 present.push(name.into());
             }
             false
@@ -1064,7 +1078,7 @@ impl Watcher {
         let _guard = self.mutex.lock_guard();
         self.unresolved_imports.push(UnresolvedImport {
             dir_hash,
-            stem: stem.into(),
+            candidates,
             present,
         });
     }
@@ -1082,20 +1096,20 @@ impl Watcher {
             return false;
         }
         let dir_hash = Self::unresolved_dir_hash(dir_path);
-        let mut candidates = self
+        let mut records = self
             .unresolved_imports
             .iter()
             .filter(|u| u.dir_hash == dir_hash)
             .peekable();
-        if candidates.peek().is_none() {
+        if records.peek().is_none() {
             return false;
         }
         if let Some(name) = name {
-            return candidates.any(|u| u.matches(name));
+            return records.any(|u| u.matches(name));
         }
-        let candidates: Vec<&UnresolvedImport> = candidates.collect();
+        let records: Vec<&UnresolvedImport> = records.collect();
         for_each_dir_entry(dir_path, |entry_name| {
-            candidates.iter().any(|u| u.matches(entry_name))
+            records.iter().any(|u| u.matches(entry_name))
         })
     }
 

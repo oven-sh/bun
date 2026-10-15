@@ -1865,6 +1865,7 @@ impl<'a> Resolver<'a> {
                 });
             }
 
+            self.report_unresolved(normalizer.resolve(source_dir, import_path));
             return ResultUnion::NotFound;
         }
 
@@ -2208,16 +2209,37 @@ impl<'a> Resolver<'a> {
                 ..Default::default()
             })
         } else {
-            if FeatureFlags::WATCH_DIRECTORIES
-                && let Some(watcher) = self.watcher.as_ref()
-                && let Some(dir) = bun_paths::dirname(abs_path)
-            {
-                watcher.unresolved(dir, bun_paths::basename(abs_path));
-            }
+            self.report_unresolved(abs_path);
             ResultUnion::NotFound
         };
         self.extension_order = prev_extension_order;
         ret
+    }
+
+    /// Tells the watcher which names `load_as_file` tried for a relative or absolute import that resolved to nothing.
+    fn report_unresolved(&self, abs_path: &[u8]) {
+        if !FeatureFlags::WATCH_DIRECTORIES {
+            return;
+        }
+        let (Some(watcher), Some(dir)) = (self.watcher, bun_paths::dirname(abs_path)) else {
+            return;
+        };
+        let base = bun_paths::basename(abs_path);
+        let replaced_extensions = match strings::last_index_of_char(base, b'.') {
+            Some(dot) => rewritten_file_extensions(&base[dot..], || {
+                strings::path_contains_node_modules_folder(abs_path)
+            }),
+            None => &[],
+        };
+        watcher.unresolved(&bun_watcher::UnresolvedLookup {
+            dir,
+            base,
+            extensions: [
+                self.opts.ext_order_slice(self.extension_order),
+                &self.opts.extra_cjs_extensions,
+            ],
+            replaced_extensions,
+        });
     }
 
     pub(crate) fn check_package_path(

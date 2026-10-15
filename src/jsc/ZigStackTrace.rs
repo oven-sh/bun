@@ -20,6 +20,8 @@ pub struct ZigStackTrace {
     pub(crate) frames_ptr: *mut ZigStackFrame,
     pub frames_len: u8,
     pub(crate) frames_cap: u8,
+    /// The frames index the `JSC::Exception`'s stack, not the thrown Error's own.
+    pub(crate) frames_from_throw_site: bool,
 
     /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
     /// If so, then .deref must be called on it to release the memory.
@@ -48,6 +50,7 @@ impl ZigStackTrace {
             frames_ptr: frames_slice.as_mut_ptr(),
             frames_len: frames_slice.len().min(usize::from(u8::MAX)) as u8,
             frames_cap: frames_slice.len().min(usize::from(u8::MAX)) as u8,
+            frames_from_throw_site: false,
 
             referenced_source_provider: None,
         }

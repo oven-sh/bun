@@ -351,6 +351,7 @@ fn with_tree<'h, R>(
         how.atoms.of_this_thread(),
         options.experimental_decorators,
         options.every_file_is_a_module,
+        true,
         // The names are the file's own.
         |summary, atoms| then(summary, atoms, &language),
     )
@@ -922,11 +923,20 @@ fn print<'a>(
         && out != file.text()
     {
         let is_same = with_tree(how, &out, |after, atoms, _| {
-            let after = match &after {
-                Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),
-                Summary::InArena(hir) => Program::new(&**hir, &out, atoms),
+            // The parser goes on after an error, and the tree can be the same: `a\n=> b`.
+            let (has_parse_errors, after) = match &after {
+                Summary::InPlace(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
+                Summary::InArena(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
             };
-            bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
+            !has_parse_errors
+                && bun_format::verify::compare(file, program, &after, options, &mut scratch.verify)
+                    .is_ok()
         });
         if !is_same {
             return Err(Failure::Changed(
@@ -997,6 +1007,28 @@ pub fn format_for_tests(
         Failure::Syntax(_) | Failure::Unread(_) => Refusal::Syntax,
         Failure::Bug | Failure::Changed(_) => Refusal::Bug,
     })
+}
+
+/// A line for each comment of the file at `path`: the node that owns it, or with `only_unprinted` the comments that no
+/// printer has printed. `None` if the file has a syntax error.
+pub fn debug_comments(
+    path: &[u8],
+    text: &[u8],
+    only_unprinted: bool,
+    is_oxfmt: bool,
+) -> Option<Vec<u8>> {
+    let options = FormatOptions {
+        flavor: match is_oxfmt {
+            true => bun_format::options::Flavor::Oxfmt,
+            false => bun_format::options::Flavor::Prettier,
+        },
+        debug_comments: match only_unprinted {
+            true => bun_format::options::DebugComments::Unprinted,
+            false => bun_format::options::DebugComments::Owners,
+        },
+        ..FormatOptions::default()
+    };
+    Some(format_for_tests(path, text, &options).ok()?.0)
 }
 
 /// What `--debug-check` says about the Svelte component `before` if `after` is what it is formatted to: whether both say the

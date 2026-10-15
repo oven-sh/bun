@@ -60,7 +60,11 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
         return;
     }
 
-    let mut signature = FunctionSignature::create(node);
+    // tsgolint has a `functionSignature` of its own, with another rest type.
+    let mut signature = match cx.language().is_oxlint {
+        true => FunctionSignature::new_function_signature(node),
+        false => FunctionSignature::create(node),
+    };
     if node.tag() == ExprTag::TaggedTemplate {
         // The first parameter is the `TemplateStringsArray`.
         signature.get_next_parameter_type();
@@ -73,7 +77,12 @@ fn check_unsafe_arguments<'a>(node: Expr<'a>, cx: &Cx<'a, NoUnsafeArgument>) {
             };
             let argument_type = argument.ty();
             if is_unsafe_assignment(argument_type, parameter_type, argument).is_some() {
-                cx.report(argument, UNSAFE_ARGUMENT)
+                // tsgolint has a node for the parentheses around an argument, and reports that.
+                let report = match cx.language().is_oxlint {
+                    true => cx.report(argument.outer_span(), UNSAFE_ARGUMENT),
+                    false => cx.report(argument, UNSAFE_ARGUMENT),
+                };
+                report
                     .data("receiver", describe_type(parameter_type, cx))
                     .data("sender", describe_type(argument_type, cx));
             }

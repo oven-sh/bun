@@ -751,7 +751,11 @@ pub(crate) fn lint(
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
-                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
+                // A file that oxc refuses keeps what tsgolint fixes in it.
+                if !was_refused
+                    && !context.parses(file.path, &fixed.output, file.config)
+                    && context.parses(file.path, text, file.config)
+                {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),

@@ -15,6 +15,7 @@ use crate::linter::syntax::oxc::{closest, private_name_as_operand};
 use crate::linter::syntax::{Stage, SyntaxError};
 use crate::regex;
 use crate::tokens::skip_trivia;
+use crate::types::IdMap;
 use crate::utils::ancestor_memo::AncestorMemo;
 use bun_core::strings;
 use bun_sema::bind::Parent;
@@ -1584,7 +1585,7 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
-        let mut names_of: FxHashMap<Class<'a>, FxHashSet<&'a [u8]>> = FxHashMap::default();
+        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
@@ -1602,8 +1603,9 @@ impl<'a> Checks<'a, '_> {
                             _ => None,
                         };
                         names_of
-                            .entry(class)
-                            .or_insert_with(|| class.members().iter().filter_map(private).collect())
+                            .get_or_insert_with(class, || {
+                                class.members().iter().filter_map(private).collect()
+                            })
                             .contains(name)
                     }
                     _ => false,

@@ -18,6 +18,13 @@ impl<'a> ObjectLike<'a> {
         }
     }
 
+    fn node(&self) -> AstNodes<'a> {
+        match self {
+            ObjectLike::ObjectExpression(e, _) => e.as_ast_nodes(),
+            ObjectLike::TSTypeLiteral(ty, _) => ty.as_ast_nodes(),
+        }
+    }
+
     /// It is the type of the only parameter of a function:
     /// `const fn = ({ foo }: { foo: string }) => {}`.
     pub(crate) fn should_hug(&self, f: &Formatter<'a>) -> bool {
@@ -46,7 +53,7 @@ impl<'a> ObjectLike<'a> {
         if f.options().flavor.is_oxfmt() || f.is_quiet() {
             return false;
         }
-        let comments = f.comments().comments_before_end_of(self.span());
+        let comments = f.comments().of_node(self.node()).dangling;
         !comments.is_empty()
             && comments.iter().all(|comment| !comment.is_line())
             && self.should_hug(f)
@@ -91,12 +98,9 @@ impl<'a> Format<'a> for ObjectLike<'a> {
                 false => write!(f, group(&inner).should_expand(should_expand)),
             }
         } else if self.breaks_with_pattern(f) {
-            write!(f, soft_block_indent(&format_dangling_comments(self.span())));
+            write!(f, soft_block_indent(&dangling_comments(self.node())));
         } else {
-            write!(
-                f,
-                format_dangling_comments(self.span()).with_soft_block_indent()
-            );
+            write!(f, dangling_comments(self.node()).with_soft_block_indent());
         }
         write!(f, "}");
     }

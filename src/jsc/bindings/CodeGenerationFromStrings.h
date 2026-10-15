@@ -20,9 +20,9 @@ enum class CodeGenerationFromStrings : uint8_t {
     // As Node.js: eval and the Function constructors throw. JSGlobalObject::evalEnabled() of
     // every global object but a node:vm context's, which keeps its own `codeGeneration.strings`.
     DisallowedLikeNode = 1,
-    // "=strict": nothing turns a string into script. evalEnabled() of every global object, and
-    // what Bun compiles from a string itself asks mayNotMakeScriptFromStrings().
-    Disallowed = 2,
+    // "=strict": nothing turns a string into script. The engine runs static code only (JSC::SourceProvenance,
+    // JSC::Options::disallowNonStaticCode). What asks isCodeGenerationFromStringsStrict() only throws earlier than that.
+    Strict = 2,
 };
 
 // A build configured with codeGenerationFromStrings off (scripts/build/config.ts) has the
@@ -31,7 +31,7 @@ enum class CodeGenerationFromStrings : uint8_t {
 #if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 constexpr CodeGenerationFromStrings codeGenerationFromStrings()
 {
-    return CodeGenerationFromStrings::Disallowed;
+    return CodeGenerationFromStrings::Strict;
 }
 #else
 inline CodeGenerationFromStrings codeGenerationFromStrings()
@@ -42,9 +42,9 @@ inline CodeGenerationFromStrings codeGenerationFromStrings()
 
 inline constexpr ASCIILiteral codeGenerationFromStringsDisallowedMessage = "Code generation from strings disallowed for this context"_s;
 
-inline bool mayNotMakeScriptFromStrings()
+inline bool isCodeGenerationFromStringsStrict()
 {
-    return codeGenerationFromStrings() == CodeGenerationFromStrings::Disallowed;
+    return codeGenerationFromStrings() == CodeGenerationFromStrings::Strict;
 }
 
 inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* globalObject)
@@ -54,9 +54,9 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
 
 // Throws and returns the rest when nothing may make script from a string. Where the level is a
 // constant the return is unconditional, so an optimized build drops the code after it.
-#define RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, ...)                                   \
+#define THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, ...)                   \
     do {                                                                                                       \
-        if (Bun::mayNotMakeScriptFromStrings()) [[unlikely]] {                                                 \
+        if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]] {                                           \
             JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject)); \
             return __VA_ARGS__;                                                                                \
         }                                                                                                      \

@@ -505,6 +505,12 @@ impl PartialEq for Segment<'_> {
     }
 }
 impl Eq for Segment<'_> {}
+impl crate::types::Indexed for Segment<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id
+    }
+}
 impl std::hash::Hash for Segment<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

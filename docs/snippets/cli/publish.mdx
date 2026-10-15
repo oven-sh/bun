@@ -57,6 +57,26 @@ bun publish --dry-run
   `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
 </ParamField>
 
+<ParamField path="--recursive" type="boolean">
+Publish the root package and every workspace package, dependencies before their dependents. Alias: <code>-r</code>
+
+A package is skipped when it is `"private"` or when its version is already on the registry. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+```
+
+</ParamField>
+
+<ParamField path="--filter" type="string">
+Like `--recursive`, for the workspace packages that match the pattern only. Can be repeated. Alias: <code>-F</code>
+
+```sh terminal icon="terminal"
+bun publish --filter "@acme/*"
+```
+
+</ParamField>
+
 <ParamField path="--gzip-level" type="string" default="9">
   Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball
   path argument. Values range from `0` to `9` (default is `9`).
@@ -102,6 +122,16 @@ bun publish --otp 123456
 
 ```bash
 bun publish --registry https://my-private-registry.com
+```
+
+A package can pin the registry it is published to with `publishConfig.registry` in its `package.json` (`--registry` still overrides it). Like npm, this replaces the default registry only; a registry configured for the package's scope takes precedence unless `publishConfig` also sets `@scope:registry`.
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "registry": "https://my-private-registry.com" // [!code ++]
+  }
+}
 ```
 
 #### SSL Certificates
@@ -177,7 +207,7 @@ bun publish --cafile ./ca-cert.pem
   `copyfile`
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
+<ParamField path="--network-concurrency" type="number" default="64">
   Maximum concurrent network requests
 </ParamField>
 

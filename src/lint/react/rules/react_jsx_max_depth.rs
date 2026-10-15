@@ -2,6 +2,7 @@ use crate::react::is_jsx;
 use crate::util_variable::variable_from_context;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
@@ -25,7 +26,7 @@ pub struct State<'a> {
     /// The depth of each element and fragment around what comes next, the innermost last.
     depths: Vec<u32>,
     /// `calculate_variable_jsx_depth`. 0 while it is being found out.
-    variables: FxHashMap<Symbol<'a>, u32>,
+    variables: IdMap<Symbol<'a>, u32>,
     /// The identifiers in braces, each with the `getDepth` of the braces.
     containers: Vec<(Expr<'a>, u32)>,
     /// Whether an element with elements in it may be what a variable is given.
@@ -275,15 +276,19 @@ impl<'a> Parts<'a> {
 
     /// Each variable is looked at once in a file. oxlint looks at each once for every element that it starts from, so
     /// that a variable which it gets to on two ways counts on the first only.
-    fn depth(self, known: &mut FxHashMap<Symbol<'a>, u32>) -> u32 {
+    fn depth(self, known: &mut IdMap<Symbol<'a>, u32>) -> u32 {
         // With the variable that each but the first is of.
         let mut stack: Vec<(Option<Symbol<'a>>, Parts<'a>)> = vec![(None, self)];
         let mut depth = 0;
         while let Some((_, parts)) = stack.last_mut() {
             if let Some(&(variable, _)) = parts.variables.get(parts.known) {
                 parts.known += 1;
-                if let Entry::Vacant(entry) = known.entry(variable) {
-                    entry.insert(0);
+                let mut is_new = false;
+                known.get_or_insert_with(variable, || {
+                    is_new = true;
+                    0
+                });
+                if is_new {
                     stack.push((Some(variable), Parts::of_variable(variable)));
                 }
                 continue;
@@ -293,7 +298,7 @@ impl<'a> Parts<'a> {
                     .variables
                     .iter()
                     .fold(parts.elements_depth, |depth, (variable, level)| {
-                        let of_variable = known.get(variable).copied().unwrap_or(0);
+                        let of_variable = known.get(*variable).copied().unwrap_or(0);
                         depth.max(match level {
                             Some(level) if of_variable > 0 => level + of_variable + 1,
                             Some(_) => 0,

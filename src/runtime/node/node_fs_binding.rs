@@ -448,3 +448,37 @@ pub(crate) fn create_memfd_for_testing(
         }
     }
 }
+
+/// Test-only (`bun:internal-for-testing`): finish `fs.writevSync(fd, buffers, position)` as if its first write(2) had taken `amt` bytes.
+pub(crate) fn write_rest_for_testing(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<f64> {
+    let global = cx.global();
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
+    let args = args::Writev::from_js(global, &mut slice)?;
+    let amt = super::util::validators::validate_integer(
+        global,
+        slice.next_eat().unwrap_or(JSValue::UNDEFINED),
+        "amt",
+        Some(0),
+        None,
+    )?;
+
+    #[cfg(not(unix))]
+    {
+        let _ = (args, amt);
+        return Err(global.throw(format_args!(
+            "a short write is not continued on this platform"
+        )));
+    }
+
+    #[cfg(unix)]
+    {
+        let written = fs::write_rest(
+            args.fd,
+            &args.buffers.buffers,
+            amt as usize,
+            args.position.map(|position| position as i64),
+        );
+        Ok(written as f64)
+    }
+}

@@ -98,3 +98,11 @@ export const createMemfdForTesting = b.fn({
   throws: true,
   length: 1,
 });
+/** `(fd, buffers, position, amt)`. The first three are parsed as `fs.writev` parses them. */
+export const writeRestForTesting = b.fn({
+  args: { args: b.any.variadic },
+  returns: b.f64,
+  capability: "js",
+  throws: true,
+  length: 4,
+});

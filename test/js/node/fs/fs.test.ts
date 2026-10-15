@@ -1,3 +1,4 @@
+import * as internalForTesting from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -2440,6 +2441,28 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
     expect(out.subarray(4).equals(expectedBytes)).toBe(true);
   });
 
+  // Three batches: the second and the third land at the position plus all bytes so far.
+  it("writevSync with position writes every batch at its offset", () => {
+    using dir = tempDir("pwritev-iovmax-batches", {});
+    const file = join(String(dir), "out");
+    const count = 2500;
+    const bytes = Buffer.from(Array.from({ length: count }, (_, i) => i & 0xff));
+    const fd = openSync(file, "w");
+    try {
+      writeSync(fd, Buffer.from("head"), 0, 4, 0);
+      expect(
+        writevSync(
+          fd,
+          Array.from({ length: count }, (_, i) => bytes.subarray(i, i + 1)),
+          4,
+        ),
+      ).toBe(count);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(Buffer.concat([Buffer.from("head"), bytes]))).toBe(true);
+  });
+
   it("fs.writev (callback) writes every buffer", async () => {
     using dir = tempDir("writev-iovmax-cb", {});
     const file = join(String(dir), "out");
@@ -2511,6 +2534,295 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
     } finally {
       await fh.close();
     }
+  });
+});
+
+// One write(2) can take less than it was given: a signal arrives while a
+// blocking pipe is full, the fd is non-blocking, or the request is over the
+// kernel's cap for one call. Node's libuv (uv__fs_write_all) then writes the
+// rest, and stops with the count when a write returns 0 or fails.
+// Skipped on Windows: it has no fifos and no signals, and libuv does not continue there.
+describe.concurrent.skipIf(isWindows)("a write that the kernel cuts short", () => {
+  const fixture = join(import.meta.dir, "fs-write-short-fixture.ts");
+  // The same bytes as `data` in the fixture. 251 does not divide a page, so
+  // bytes that land a whole number of pages away from their place differ.
+  const size = 4 * 1024 * 1024;
+  const payload = Buffer.alloc(size, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+
+  // Resolves when the writer opens its end. A writer that exits without that
+  // would leave the open blocked on a pool thread, so open the other end for it.
+  async function openReader(fifo: string, writer: { exited: Promise<number> }) {
+    let pending = true;
+    void writer.exited.then(async () => {
+      if (pending) await (await _promises.open(fifo, "w")).close();
+    });
+    try {
+      return await _promises.open(fifo, "r");
+    } finally {
+      pending = false;
+    }
+  }
+
+  type Writer = { exited: Promise<number>; kill(signal: NodeJS.Signals): void };
+
+  // Runs one call of the fixture with a fifo as its fd. `interrupt` reads what
+  // it wants from the fifo and returns how much. Then the rest is read to the end.
+  async function writeToFifo(
+    mode: "signal" | "nonblocking",
+    call: string,
+    interrupt: (reader: FileHandle, received: Buffer, writer: Writer) => Promise<number>,
+  ) {
+    using dir = tempDir("fs-write-short", {});
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo);
+    await using writer = Bun.spawn({
+      cmd: [bunExe(), fixture, mode, call, fifo],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await using reader = await openReader(fifo, writer);
+    const received = Buffer.alloc(size + 1);
+    let length = await interrupt(reader, received, writer);
+    for (let n; (n = (await reader.read(received, length, received.length - length, null)).bytesRead) > 0;) length += n;
+
+    const [stdout, stderr, exitCode] = await Promise.all([writer.stdout.text(), writer.stderr.text(), writer.exited]);
+    return {
+      stdout: stdout.trim(),
+      stderr,
+      exitCode,
+      received: length,
+      intact: received.subarray(0, length).equals(payload.subarray(0, length)),
+    };
+  }
+
+  it.each([
+    "writeSync(fd, buffer)",
+    "writeSync(fd, buffer, offset, length)",
+    "writeSync(fd, string)",
+    "writevSync(fd, buffers)",
+    "writevSync(fd, more than IOV_MAX buffers)",
+    "writevSync(fd, many small buffers)",
+  ])("continues after a signal: %s", async call => {
+    const result = await writeToFifo("signal", call, async (reader, received, writer) => {
+      // Once bytes arrive, the writer is inside write(2) with a part of the
+      // payload taken, and it stays there: the pipe is full and nothing reads.
+      const { bytesRead } = await reader.read(received, 0, 65536, null);
+      writer.kill("SIGUSR2");
+      return bytesRead;
+    });
+    expect(result).toEqual({ stdout: String(size), stderr: "", exitCode: 0, received: size, intact: true });
+  });
+
+  // libuv's own case, fs_partial_write in test/test-fs.c: the reader takes 1000
+  // bytes and signals, again and again, so the cuts land inside small buffers.
+  it.each([
+    ["writevSync(fd, 54321 buffers of 13 bytes)", 54321 * 13],
+    ["writevSync(fd, buffers of 4099 bytes)", size],
+  ])("continues after every signal of a burst: %s", async (call, bytes) => {
+    const result = await writeToFifo("signal", call, async (reader, received, writer) => {
+      let length = 0;
+      for (let i = 0; i < 100; i++) {
+        const { bytesRead } = await reader.read(received, length, 1000, null);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+        writer.kill("SIGUSR2");
+      }
+      return length;
+    });
+    expect(result).toEqual({ stdout: String(bytes), stderr: "", exitCode: 0, received: bytes, intact: true });
+  });
+
+  // A short count and then EAGAIN is a partial write, not an error and not a
+  // reason to wait. process.stdout makes fd 1 non-blocking, so this is common.
+  it.each(["writeSync(fd, buffer)", "writevSync(fd, buffers)", "writevSync(fd, many small buffers)"])(
+    "returns the count when a non-blocking fd is full: %s",
+    async call => {
+      // Nothing reads the fifo until the writer is done, so it stays full.
+      const { stdout, ...result } = await writeToFifo("nonblocking", call, async (_reader, _received, writer) => {
+        await writer.exited;
+        return 0;
+      });
+      const { first, second } = JSON.parse(stdout || "{}");
+      expect({ second, ...result }).toEqual({
+        second: "EAGAIN",
+        stderr: "",
+        exitCode: 0,
+        received: first,
+        intact: true,
+      });
+      expect(first).toBeWithin(1, size);
+    },
+  );
+
+  // Only Linux caps one write(2), at 0x7ffff000 bytes, so only there does
+  // this request come back short.
+  it.skipIf(!isLinux)("continues past the cap of one write(2)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, "cap"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const all = 2 ** 31 - 1;
+    expect({ stderr, exitCode, ...JSON.parse(stdout || "{}") }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      "writeSync": all,
+      "writeSync, position": all,
+      "writevSync": all,
+      "writevSync, position": all,
+      "writevSync, two buffers": all,
+      "writevSync, 21 buffers": all,
+      "writevSync, 21 buffers, position": all,
+      "write": all,
+      "write, position": all,
+      "writev": all,
+      "writev, position": all,
+      "FileHandle.write": all,
+      "FileHandle.write, position": all,
+      "FileHandle.writev": all,
+      "FileHandle.writev, position": all,
+    });
+  });
+
+  // The file size limit cuts the first write short and fails the next one with
+  // EFBIG. That next write has to aim at the position plus the bytes so far:
+  // one that aimed lower would succeed and overwrite. Linux-only: that is
+  // where this split of the write at the limit was observed.
+  it.skipIf(!isLinux).each(["writeSync(fd, buffer, offset, length, position)", "writevSync(fd, buffers, position)"])(
+    "stops at the file size limit: %s",
+    async call => {
+      using dir = tempDir("fs-write-short-limit", {});
+      const file = join(String(dir), "out");
+      writeFileSync(file, "head");
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -f 16; exec "$0" "$@"`, bunExe(), fixture, "limit", call, file],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = readFileSync(file);
+      // `ulimit -f` counts blocks of 512 or of 1024 bytes, so assert the invariant.
+      expect({
+        stderr,
+        written: stdout.trim(),
+        head: out.subarray(0, 4).toString(),
+        intact: out.subarray(4).equals(payload.subarray(0, out.length - 4)),
+        exitCode,
+      }).toEqual({ stderr: "", written: String(out.length - 4), head: "head", intact: true, exitCode: 0 });
+      expect(out.length - 4).toBeWithin(1, size);
+    },
+  );
+
+  // `fsWriteRest` continues a request whose first write took a chosen number of
+  // bytes, so the cut can be put on every byte of a real file. It is read from
+  // the namespace so that a build without it fails this test and not the file.
+  it("continues from every cut point, like a model of libuv's loop", () => {
+    // uv__fs_write_all after a first write of `amt` bytes, when every later write is whole.
+    function libuvTotal(lengths: number[], amt: number) {
+      const left = [...lengths];
+      let index = 0;
+      let total = 0;
+      for (let result = amt; result > 0;) {
+        total += result;
+        while (result > 0 && left[index] <= result) result -= left[index++];
+        if (result > 0) left[index] -= result;
+        result = left.slice(index, index + 1024).reduce((sum, length) => sum + length, 0);
+      }
+      return total;
+    }
+    const repeat = (count: number, length: number) => Array.from({ length: count }, () => length);
+    const everyCut = (lengths: number[]) => Array.from({ length: lengths.reduce((a, b) => a + b) }, (_, i) => i + 1);
+    const shapes: [lengths: number[], cuts: number[]][] = [
+      [[5, 7, 3], everyCut([5, 7, 3])],
+      [[0, 5, 0, 0, 7, 0, 3, 0], everyCut([5, 7, 3])],
+      [repeat(12, 1), everyCut(repeat(12, 1))],
+      // More than IOV_MAX buffers: the first write covers 1024 of them.
+      [repeat(1030, 3), [1, 2, 3, 4, 3070, 3071, 3072]],
+      // A run of IOV_MAX empty buffers ends the request, one buffer less does not.
+      [
+        [4, ...repeat(1024, 0), 4],
+        [1, 3, 4],
+      ],
+      [
+        [4, ...repeat(1023, 0), 4],
+        [1, 3, 4],
+      ],
+      [
+        [...repeat(1024, 1), ...repeat(1024, 0), 4],
+        [1, 1023, 1024],
+      ],
+    ];
+
+    using dir = tempDir("fs-write-rest", {});
+    const file = join(String(dir), "out");
+    const failures: unknown[] = [];
+    for (const [lengths, cuts] of shapes) {
+      let offset = 0;
+      const buffers = lengths.map(length => payload.subarray(offset, (offset += length)));
+      for (const amt of cuts) {
+        for (const position of [4, null]) {
+          const fd = openSync(file, "w+");
+          try {
+            writeSync(fd, Buffer.concat([Buffer.from("head"), payload.subarray(0, amt)]));
+            const total = internalForTesting.fsWriteRest(fd, buffers, position, amt);
+            const expected = libuvTotal(lengths, amt);
+            if (
+              total !== expected ||
+              !readFileSync(file).equals(Buffer.concat([Buffer.from("head"), payload.subarray(0, expected)]))
+            ) {
+              failures.push({ buffers: lengths.length, amt, position, total, expected, size: fstatSync(fd).size });
+            }
+          } finally {
+            closeSync(fd);
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  // Node's counts. A batch of only empty buffers writes nothing, and libuv ends the request there.
+  it("ends the request at a batch of empty buffers, like libuv", () => {
+    const data = Buffer.from("abcd");
+    const repeat = (count: number, buffer: Buffer) => Array.from({ length: count }, () => buffer);
+    const empty = (count: number) => repeat(count, Buffer.alloc(0));
+    const fd = openSync("/dev/null", "w");
+    try {
+      const counts = (buffers: Buffer[]) => [writevSync(fd, buffers), writevSync(fd, buffers, 0)];
+      expect({
+        "4 bytes, 1023 empty, 4 bytes": counts([data, ...empty(1023), data]),
+        "4 bytes, 1024 empty, 4 bytes": counts([data, ...empty(1024), data]),
+        "4 bytes, 2048 empty, 4 bytes": counts([data, ...empty(2048), data]),
+        "1023 empty, 4 bytes, 1024 empty, 4 bytes": counts([...empty(1023), data, ...empty(1024), data]),
+        "1024 of 1 byte, 1023 empty, 4 bytes": counts([...repeat(1024, data.subarray(0, 1)), ...empty(1023), data]),
+        "1024 of 1 byte, 1024 empty, 4 bytes": counts([...repeat(1024, data.subarray(0, 1)), ...empty(1024), data]),
+        "1024 empty, 4 bytes": counts([...empty(1024), data]),
+      }).toEqual({
+        "4 bytes, 1023 empty, 4 bytes": [8, 8],
+        "4 bytes, 1024 empty, 4 bytes": [4, 4],
+        "4 bytes, 2048 empty, 4 bytes": [4, 4],
+        "1023 empty, 4 bytes, 1024 empty, 4 bytes": [4, 4],
+        "1024 of 1 byte, 1023 empty, 4 bytes": [1028, 1028],
+        "1024 of 1 byte, 1024 empty, 4 bytes": [1024, 1024],
+        "1024 empty, 4 bytes": [0, 0],
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("still makes the syscall for an empty write", () => {
+    const closed = 2147483647; // max int32 is a valid fd number that is never open
+    expect(() => writeSync(closed, "")).toThrow(expect.objectContaining({ code: "EBADF" }));
+    expect(() => writeSync(closed, Buffer.alloc(0), 0, 0, 0)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    expect(() => writevSync(closed, [Buffer.alloc(0)])).toThrow(expect.objectContaining({ code: "EBADF" }));
+    expect(() => writevSync(closed, [Buffer.alloc(0)], 0)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    // No buffers is no request, as in Node.
+    expect(writevSync(closed, [])).toBe(0);
   });
 });
 

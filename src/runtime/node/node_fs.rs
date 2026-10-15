@@ -4747,6 +4747,82 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'stati
     }
 }
 
+fn iovecs_const(bufs: &[sys::PlatformIoVec]) -> &[sys::PlatformIoVecConst] {
+    // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`. A
+    // write never stores through the base pointer.
+    unsafe { core::slice::from_raw_parts(bufs.as_ptr().cast(), bufs.len()) }
+}
+
+#[cfg(unix)]
+fn iovecs_len(bufs: &[sys::PlatformIoVec]) -> usize {
+    bufs.iter().map(sys::platform_iovec_len).sum()
+}
+
+#[cfg(unix)]
+fn iovec(buf: &[u8]) -> sys::PlatformIoVec {
+    sys::PlatformIoVec {
+        iov_base: buf.as_ptr().cast_mut().cast(),
+        iov_len: buf.len(),
+    }
+}
+
+/// libuv `uv__fs_write_all` after its first write took `amt` bytes; a 0 or an error after progress ends the request with the count: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c#L1621-L1678
+#[cfg(unix)]
+#[cold]
+#[inline(never)]
+pub(crate) fn write_rest(
+    fd: FD,
+    mut bufs: &[sys::PlatformIoVec],
+    amt: usize,
+    position: Option<i64>,
+) -> usize {
+    let mut total: usize = 0;
+    // Bytes of `bufs[0]` that are written.
+    let mut done: usize = 0;
+    // Buffers in the last write, when it started at `bufs[0]`.
+    let mut batch = bufs.len().min(IOV_MAX);
+    let mut result = Ok(amt);
+    while let Ok(amt @ 1..) = result {
+        total += amt;
+        if done == 0 && amt == iovecs_len(&bufs[..batch]) {
+            // A whole batch is written: the result of the walk below, without walking the batch.
+            if let Some(last) = bufs[..batch].iter().rposition(|buf| buf.iov_len > 0) {
+                bufs = &bufs[last + 1..];
+            }
+        } else {
+            // libuv `uv__fs_buf_offset`: drop the buffers up to the last written byte.
+            done += amt;
+            while done > 0
+                && let Some(first) = bufs.first()
+                && done >= first.iov_len
+            {
+                done -= first.iov_len;
+                bufs = &bufs[1..];
+            }
+        }
+        let Some(first) = bufs.first() else { break };
+        let rest;
+        let chunk = if done > 0 {
+            // `bufs` is borrowed, so the rest of a partly written buffer goes out alone.
+            rest = [sys::PlatformIoVec {
+                iov_base: first.iov_base.wrapping_byte_add(done),
+                iov_len: first.iov_len - done,
+            }];
+            &rest[..]
+        } else {
+            batch = bufs.len().min(IOV_MAX);
+            &bufs[..batch]
+        };
+        result = match position {
+            Some(position) => {
+                sys::pwritev(fd, iovecs_const(chunk), position.wrapping_add(total as i64))
+            }
+            None => sys::writev(fd, chunk),
+        };
+    }
+    total
+}
+
 impl NodeFS {
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         if let Some(graph) = standalone_module_graph() {
@@ -6253,6 +6329,10 @@ impl NodeFS {
         buf = &buf[..l];
         match Syscall::write(args.fd, buf) {
             Err(err) => Err(err),
+            #[cfg(unix)]
+            Ok(amt) if amt < buf.len() => Ok(ret::Write {
+                bytes_written: write_rest(args.fd, &[iovec(buf)], amt, None) as u64,
+            }),
             Ok(amt) => Ok(ret::Write {
                 bytes_written: amt as u64,
             }),
@@ -6272,6 +6352,10 @@ impl NodeFS {
                 fd: args.fd,
                 syscall: sys::Tag::write,
                 ..Default::default()
+            }),
+            #[cfg(unix)]
+            Ok(amt) if amt < buf.len() => Ok(ret::Write {
+                bytes_written: write_rest(args.fd, &[iovec(buf)], amt, Some(position)) as u64,
             }),
             Ok(amt) => Ok(ret::Write {
                 bytes_written: amt as u64,
@@ -6305,78 +6389,36 @@ impl NodeFS {
     }
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        let mut position = args.position.unwrap() as i64;
-        // `PlatformIoVec`
-        // and `PlatformIoVecConst` are layout-identical (`{ *void, usize }`); the
-        // kernel never writes through `iov_base` for pwritev(2).
-        // SAFETY: layout-compatible reinterpretation, asserted in `bun_sys`.
-        let vecs: &[sys::PlatformIoVecConst] = unsafe {
-            core::slice::from_raw_parts(
-                args.buffers
-                    .buffers
-                    .as_ptr()
-                    .cast::<sys::PlatformIoVecConst>(),
-                args.buffers.buffers.len(),
-            )
-        };
-        // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
-        // buffer is written; an error after the first batch returns the
-        // accumulated total instead of the error.
-        let mut remaining = vecs;
-        let mut total: u64 = 0;
-        while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(IOV_MAX);
-            let chunk = &remaining[..chunk_len];
-            match Syscall::pwritev(args.fd, chunk, position) {
-                Err(err) if total == 0 => return Err(err),
-                Err(_) => break,
-                Ok(0) => break,
-                Ok(amt) => {
-                    total += amt as u64;
-                    position = position.wrapping_add(amt as i64);
-                    let chunk_capacity: usize = chunk.iter().map(|b| b.len as usize).sum();
-                    if amt < chunk_capacity {
-                        break;
-                    }
-                    remaining = &remaining[chunk_len..];
-                }
-            }
+        let position = args.position.unwrap() as i64;
+        let bufs = args.buffers.buffers.as_slice();
+        // libuv `uv__fs_write_all`: one syscall takes at most IOV_MAX buffers.
+        let chunk = &bufs[..bufs.len().min(IOV_MAX)];
+        match Syscall::pwritev(args.fd, iovecs_const(chunk), position) {
+            Err(err) => Err(err),
+            #[cfg(unix)]
+            Ok(amt) if chunk.len() < bufs.len() || amt < iovecs_len(chunk) => Ok(ret::Write {
+                bytes_written: write_rest(args.fd, bufs, amt, Some(position)) as u64,
+            }),
+            Ok(amt) => Ok(ret::Write {
+                bytes_written: amt as u64,
+            }),
         }
-        Ok(ret::Write {
-            bytes_written: total,
-        })
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        // The mutable iovec slice doubles as `iovec_const` for writev(2); the kernel
-        // never writes through `iov_base`. `PlatformIoVec` and
-        // `PlatformIoVecConst` are layout-identical (`{ *void, usize }`), so
-        // pass the slice through `Syscall::writev` as-is.
-        // libuv `uv__fs_write_all`: loop IOV_MAX-sized batches until every
-        // buffer is written; an error after the first batch returns the
-        // accumulated total instead of the error.
-        let mut remaining = args.buffers.buffers.as_slice();
-        let mut total: u64 = 0;
-        while !remaining.is_empty() {
-            let chunk_len = remaining.len().min(IOV_MAX);
-            let chunk = &remaining[..chunk_len];
-            match Syscall::writev(args.fd, chunk) {
-                Err(err) if total == 0 => return Err(err),
-                Err(_) => break,
-                Ok(0) => break,
-                Ok(amt) => {
-                    total += amt as u64;
-                    let chunk_capacity: usize = chunk.iter().map(sys::platform_iovec_len).sum();
-                    if amt < chunk_capacity {
-                        break;
-                    }
-                    remaining = &remaining[chunk_len..];
-                }
-            }
+        let bufs = args.buffers.buffers.as_slice();
+        // libuv `uv__fs_write_all`: one syscall takes at most IOV_MAX buffers.
+        let chunk = &bufs[..bufs.len().min(IOV_MAX)];
+        match Syscall::writev(args.fd, chunk) {
+            Err(err) => Err(err),
+            #[cfg(unix)]
+            Ok(amt) if chunk.len() < bufs.len() || amt < iovecs_len(chunk) => Ok(ret::Write {
+                bytes_written: write_rest(args.fd, bufs, amt, None) as u64,
+            }),
+            Ok(amt) => Ok(ret::Write {
+                bytes_written: amt as u64,
+            }),
         }
-        Ok(ret::Write {
-            bytes_written: total,
-        })
     }
 
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {

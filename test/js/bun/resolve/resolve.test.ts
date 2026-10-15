@@ -2463,6 +2463,19 @@ long syscall(long nr, ...) {
       bundled: ["// src/index.ts", "// entry.ts"],
     },
     {
+      // The target of "exports" is looked up in the listing of its directory.
+      name: 'a package with "exports"',
+      files: {
+        "entry.ts": `import dep from "dep";\nconsole.log(dep);\n`,
+        "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", exports: "./lib/index.js" }),
+        "node_modules/dep/lib/index.js": `export default "dep";\n`,
+      },
+      faultDir: "node_modules/dep/lib",
+      hide: "index.js",
+      specifier: "dep",
+      bundled: ["// node_modules/dep/lib/index.js", "// entry.ts"],
+    },
+    {
       // A package that is not found here is looked for in the parent directories.
       name: "a package that a parent directory also has",
       cwd: "outer/project",

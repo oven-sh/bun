@@ -426,7 +426,7 @@ impl OutdatedCommand {
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                 let dep = declared.dependency(&item.dep);
-                // An optional peer has two of the bits.
+                // An optional peer has both the `PEER` and `OPTIONAL` bits. Print it only once.
                 let first_group = groups.into_iter().find(|&g| dep.behavior.includes(g));
                 if first_group != Some(group_behavior) {
                     continue;
@@ -479,7 +479,7 @@ impl OutdatedCommand {
                     let filtered = found.latest_is_filtered();
                     let mut version_len = if let Some(found) = found.unwrap() {
                         let (version, buf) = (found.version, &*manifest.string_buf);
-                        // A `latest` behind the installed release line is nothing to move to.
+                        // A `latest` that is older than the installed version is not an update.
                         if column == 3 && version.order(current_version, buf, string_buf).is_lt() {
                             bun_core::pretty!("<d>{}<r>", version.fmt(buf));
                         } else {

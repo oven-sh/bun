@@ -530,7 +530,7 @@ impl TarballStream {
                 let head: &[u8] = &(*this).reading;
                 let gzip = head.starts_with(&[0x1f, 0x8b]);
                 if head.len() < 2 {
-                    // One byte does not tell gzip from tar: wait, unless it is the whole body.
+                    // Telling gzip from tar takes two bytes. Wait for more unless the body ended.
                     (*this).mutex.lock();
                     let closed = (*this).closed;
                     (*this).mutex.unlock();
@@ -558,7 +558,8 @@ impl TarballStream {
                             lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
-                                // The tar reader skips every block of a body that is not an archive.
+                                // A body that is not an archive also ends here, because the tar
+                                // reader skips every block that is not a valid header.
                                 if (*this).entry_count == 0 {
                                     (*this).fail_detail = b"the archive holds no files".to_vec();
                                     return Err(crate::Error::Fail);
@@ -612,9 +613,10 @@ impl TarballStream {
     /// requirement.
     unsafe fn open_archive(this: *mut Self, gzip: bool, npm: bool) -> crate::Result<()> {
         let archive = lib::ReadArchive::new();
-        // Bypass bidding entirely: it reads ahead further than a short first
-        // chunk reaches. `gzip` is what the first two bytes of the body say: a
-        // .tgz sent with `Content-Encoding: gzip` gets here as a plain tar.
+        // Bypass bidding entirely, because it reads ahead further than a short
+        // first chunk reaches. `gzip` is whether the body starts with the gzip
+        // magic bytes. A .tgz sent with `Content-Encoding: gzip` does not: the
+        // HTTP client has already decompressed it to a plain tar.
         // With patches/libarchive/select-registered-only.patch,
         // archive_read_append_filter / archive_read_set_format only select a
         // filter/format that was already registered, so register gzip and tar
@@ -632,7 +634,7 @@ impl TarballStream {
             }
         }
         let _ = archive.read_support_format_tar();
-        // `npm`: see patches/libarchive/tar-npm-compat.patch.
+        // patches/libarchive/tar-npm-compat.patch adds the `npm` option.
         let _ = archive.read_set_options(if npm {
             c"npm"
         } else {
@@ -757,7 +759,7 @@ impl TarballStream {
 
         if self.want_first_dirname {
             self.want_first_dirname = false;
-            // GitHub sends `repo-sha/` first; a mirror may start with `repo-sha/file`.
+            // GitHub's first entry is the folder `repo-sha/`. A mirror's may be `repo-sha/file`.
             let root = bun_libarchive::first_path_component(&pathname[..]);
             #[cfg(windows)]
             {
@@ -1376,7 +1378,8 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 // Skips any leading `/` delimiters, then returns everything after the first
 // path component, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// `npm`: what is in front of a leading `/` is the first component, as it is for npm.
+// With `npm`, leading `/` delimiters are not skipped. As in npm, the empty name before them is the
+// first component, so for `"/package/index.js"` the result is `"package/index.js"`.
 fn tokenize_rest_after_first(s: &[OSPathChar], npm: bool) -> &[OSPathChar] {
     let mut i = 0;
     while !npm && i < s.len() && s[i] == ('/' as OSPathChar) {

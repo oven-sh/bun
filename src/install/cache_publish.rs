@@ -59,7 +59,7 @@ impl<'a> StagedEntry<'a> {
             // Nothing below can remove a published folder, even one that appears meanwhile.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
-                // Why the folder could not be emptied says more than that it is in the way.
+                // Prefer the error from emptying the folder: it says why the rename kept failing.
                 _ if attempts == MAX_ATTEMPTS => {
                     return Err(emptying_err.map_or(err, RenameError::from));
                 }

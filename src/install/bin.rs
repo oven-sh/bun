@@ -778,12 +778,14 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     path_climbs_out(target)
 }
 
-/// An absolute path, or a relative one that leads above the directory it starts in.
+/// Returns true if `target` is absolute, or if its `..` components lead above the directory it
+/// starts in.
 pub(crate) fn path_climbs_out(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
-    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
+    // The OS stops reading a path at a NUL byte, so `..\0x` would open `..` even though the loop
+    // below counts it as an ordinary name.
     if strings::contains_char(target, 0) {
         return true;
     }
@@ -846,8 +848,9 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
-    /// See `LinkedNodeModules`: a file or a directory of a bin's name stays, and the link fails.
-    /// `None`: `node_modules_path` is looked at when it matters.
+    /// Whether `node_modules_path` is a symlink (see `LinkedNodeModules`). If it is, a file or
+    /// directory that already has a bin's name is kept, and linking that bin fails.
+    /// `None` means not checked yet: the linker checks the first time it needs to know.
     pub is_behind_link: Option<bool>,
 
     pub err: Option<Error>,
@@ -1851,7 +1854,8 @@ impl<'a> Linker<'a> {
     }
 }
 
-/// The installers link what the command names or installs. This links the bins of the other global packages, under free names only.
+/// The installers only link the bins of packages that the command names or installs. This links
+/// the bins of the remaining global packages, skipping any name that is already taken.
 pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
     let pkgs = lockfile.packages.slice();
     let (Some(dependencies), Some(resolutions)) = (
@@ -1869,7 +1873,8 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
     link_free_bins(lockfile, b"node_modules", Some(global_bin_path), &placed);
 }
 
-/// The linker skips a seen destination, so what is in the folder stays as it is.
+/// Adds every entry of the `bin_path` folder to `seen`. The linker skips destinations in `seen`,
+/// so it leaves those entries untouched.
 fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()> {
     let bin_path = strings::without_trailing_slash(bin_path);
     let bin_dir = sys::Dir::open(bin_path)?;
@@ -1885,21 +1890,23 @@ fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()>
     Ok(())
 }
 
-/// `see_names_in` the `.bin` of `node_modules`. Without a `.bin` no name is taken.
+/// Calls `see_names_in` on the `.bin` folder of `node_modules`. A missing `.bin` adds nothing.
 pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>) {
     let node_modules = strings::without_trailing_slash(node_modules);
     let _ = see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
 }
 
-/// Links the bins of `placed`, packages of `node_modules` (from the top-level dir) by folder, in
-/// that order and under free names only. Without a `global_bin_path`, into its `.bin`.
+/// Links the bins of the packages in `placed`, in order, skipping names that are already taken.
+/// `placed` pairs each package with its folder name in `node_modules`, a path relative to the
+/// top-level dir. Links go into `global_bin_path` or, without one, into `node_modules/.bin`.
 pub(crate) fn link_free_bins(
     lockfile: &Lockfile,
     node_modules: &[u8],
     global_bin_path: Option<&ZStr>,
     placed: &[(&[u8], crate::PackageID)],
 ) {
-    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
+    // Two copies of the same path: the linker reads `target_node_modules_path` while it holds
+    // `node_modules_path` by `&mut`, so they cannot be one value.
     let abs_node_modules = || -> AbsPath {
         let mut dir = AbsPath::init_top_level_dir();
         let _ = dir.append(node_modules);
@@ -1910,7 +1917,7 @@ pub(crate) fn link_free_bins(
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {
-        // The linker makes a `.bin`, and no global folder.
+        // The linker creates a missing `.bin`, but never a missing global bin folder.
         Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,
         Some(_) => {}
         None => see_linked_names(node_modules_path.slice(), &mut seen),

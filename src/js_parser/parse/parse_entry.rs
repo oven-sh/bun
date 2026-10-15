@@ -113,8 +113,8 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
-    /// Every directive stays in the tree where and as it was written: `"use strict"`, which is otherwise only
-    /// recorded on its scope, and under `minify_syntax` the others too.
+    /// Keeps every directive in the AST, in its original position and with its original text.
+    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,

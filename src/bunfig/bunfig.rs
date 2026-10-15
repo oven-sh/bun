@@ -163,7 +163,7 @@ pub(crate) enum Counts {
     Everything,
     /// `[lint]` and `[fmt]`: the file is above the working directory.
     OnlyForTheTool,
-    /// What `[install]` has for the package manager.
+    /// Only the `[install]` section, which holds the package manager's settings.
     OnlyInstall,
 }
 
@@ -1234,9 +1234,10 @@ impl Bunfig {
         parser.parse(cmd)
     }
 
-    /// Whether the file sets `[install.security] scanner`. Applies none of its settings.
+    /// Checks whether the file sets `[install.security] scanner` without applying any settings.
     pub(crate) fn has_security_scanner(source: &bun_ast::Source) -> crate::Result<bool> {
-        // Not reset afterwards: the caller may be in the middle of a module.
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
         let bump = Bump::borrowing_default();
         let file = TOML::parse(source, &mut bun_ast::Log::init(), &bump, true)?;
@@ -1244,11 +1245,12 @@ impl Bunfig {
         Ok(security.is_some_and(|it| it.get(b"scanner").is_some()))
     }
 
-    /// What the file's `[install]` has for the package manager. Applies none of its settings.
+    /// Returns the settings in the file's `[install]` section without applying them.
     pub(crate) fn parse_install_section(
         source: &bun_ast::Source,
     ) -> crate::Result<Option<Box<api::BunInstall>>> {
-        // Not reset afterwards: the caller may be in the middle of a module.
+        // The AST store is not reset afterwards, because the caller may be in the middle of
+        // parsing a module whose nodes live in the same store.
         bun_ast::initialize_store();
         let mut log = bun_ast::Log::init();
         let mut ctx = ContextData {
@@ -1321,7 +1323,7 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// A relative path in `[install]` starts at the file.
+    /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
     fn install_path(&self, path: &[u8]) -> Box<[u8]> {
         let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
         api::BunInstall::resolve_path(dir, path)
@@ -1558,7 +1560,8 @@ impl<'a> Parser<'a, '_> {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
                     install.security_scanner = scanner.as_string(self.bump).map(|name| {
-                        // The scanner's process starts in the project, next to the project's own file.
+                        // The scanner process runs in the project directory, so a relative path
+                        // from the project's own bunfig.toml already resolves correctly.
                         if self.is_project_file || bun_paths::is_package_path(name) {
                             return name.into();
                         }

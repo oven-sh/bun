@@ -723,7 +723,8 @@ pub(crate) mod command {
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                // `bunx` runs its own executable again for the install, in the directory it installs into.
+                // To install a package, `bunx` runs its own executable again as `bunx add`, with
+                // the directory it installs into as the working directory.
                 if next_bytes == b"add" {
                     use bun_install::package_manager_real::run_tasks::is_bunx_tree;
                     let mut cwd = bun_paths::path_buffer_pool::get();
@@ -731,7 +732,8 @@ pub(crate) mod command {
                         return Tag::AddCommand;
                     }
                 }
-                // That install does so for a lifecycle script where there is no POSIX shell: `ScriptArgv`.
+                // Without a POSIX shell, that install runs each lifecycle script by running this
+                // executable again as `bunx exec --no-env-file`. See `ScriptArgv`.
                 if next_bytes == b"exec"
                     && (argv.get(2)).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {

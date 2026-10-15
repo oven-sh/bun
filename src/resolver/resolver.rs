@@ -841,8 +841,8 @@ impl<'a> Resolver<'a> {
         self.get_package_manager_for(top_level_dir)
     }
 
-    /// The process's first call decides which project's registries, credentials and lockfile count:
-    /// that of `importer_dir`, the directory of the importing file.
+    /// The package manager is created once per process, by the first call. It uses the registries,
+    /// credentials and lockfile of the project of `importer_dir`, the importing file's directory.
     fn get_package_manager_for(
         &mut self,
         importer_dir: &[u8],
@@ -899,7 +899,8 @@ impl<'a> Resolver<'a> {
         version: &[u8],
         sliced: &Semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
-        // The manager records the `npm:` aliases of the project. Any other is for its own package.
+        // The package manager only records the `npm:` aliases of the project's own package.json
+        // files. An alias that an installed package declares applies to that package alone.
         is_project: bool,
     ) -> Option<Dependency::Version> {
         match self.auto_installer().filter(|_| is_project) {
@@ -2856,7 +2857,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // A package in the global cache has no parent: the folders seen came in its tarball.
+            // The walk ended at a package in the global cache, which has no parent directory info.
+            // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
             if dir_info.package_json().is_some_and(|package_json| {
                 package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
             }) {
@@ -2975,14 +2977,17 @@ impl<'a> Resolver<'a> {
                 let mut dependency_behavior = Dependency::Behavior::PROD;
                 let installed_buf: Vec<u8>;
                 let mut string_buf: &[u8] = esm.version;
-                // Of the package.json of the project that lists the package: its paths start there.
+                // The directory of the project's package.json that lists the package. A relative
+                // path in the dependency's version, as in `file:../foo`, is resolved from here.
                 let mut package_json_dir: Option<&[u8]> = None;
 
                 // const initial_pending_tasks = manager.pending_tasks;
                 let mut resolved_package_id: Install::PackageID = 'brk: {
-                    // A version written in the import wins over package.json and the lockfile.
+                    // A version in the import specifier takes priority over package.json and the
+                    // lockfile.
                     let mut listing_dir = esm_ref.version.is_empty().then_some(dir_info);
-                    // The nearest package.json that lists the package, from the source directory up.
+                    // Walk up from the source directory to the nearest package.json that lists the
+                    // package.
                     while let Some(dir) = listing_dir
                         && let Some(package_json) = dir.package_json_for_dependencies()
                     {
@@ -3081,7 +3086,8 @@ impl<'a> Resolver<'a> {
                 // Even after resolution, we might still need to download the package
                 // There are two steps here! Two steps!
                 let package_dir_info = 'package_dir_info: {
-                    // A folder of the project is read where it is: nothing to resolve or download.
+                    // A workspace, a `file:` folder or a `link:` target is loaded from where it is
+                    // on disk, so there is nothing to resolve or download.
                     if resolved_package_id == Install::INVALID_PACKAGE_ID
                         && esm_ref.version.is_empty()
                         && let Some(folder) = manager!().project_folder(
@@ -3155,7 +3161,8 @@ impl<'a> Resolver<'a> {
                                 }
                                 return MatchStatus::Pending(pending);
                             }
-                            // The registry has no such package or version, or the install failed: the log says why.
+                            // The registry has no such package or version, or the install failed.
+                            // The reason is already in the log.
                             DependencyToResolve::NotFound => {
                                 if let Some(d) = self.debug_logs.as_mut() {
                                     d.decrease_indent();
@@ -3172,7 +3179,8 @@ impl<'a> Resolver<'a> {
                     ) {
                         Ok(p) => p,
                         Err(err) => {
-                            // `path_for_resolution` downloads what is missing, except a disabled package.
+                            // `path_for_resolution` downloads a missing package itself. One that is
+                            // `Done` and still has no folder is disabled (not for this platform).
                             if err == bun_core::Error::FileNotFound
                                 && manager!().get_preinstall_state(resolved_package_id)
                                     == Install::PreinstallState::Done
@@ -3198,7 +3206,7 @@ impl<'a> Resolver<'a> {
                                 return MatchStatus::Success;
                             }
 
-                            // The log says why.
+                            // The reason is already in the log.
                             if let Some(d) = self.debug_logs.as_mut() {
                                 d.decrease_indent();
                             }
@@ -3206,7 +3214,8 @@ impl<'a> Resolver<'a> {
                         }
                     };
 
-                    // No folder in the cache: a git checkout, say. On Windows "" would open the cwd.
+                    // The path is empty for a resolution that has no folder in the cache, such as a
+                    // git checkout. On Windows, opening "" would open the cwd.
                     if dir_path_for_resolution.is_empty() {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
@@ -6381,7 +6390,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
-                    // A package in the global cache keeps its id beside a `node_modules` it shipped.
+                    // A package in the global cache has a `package_id`, and keeps it even if its
+                    // tarball shipped a `node_modules` folder.
                     info.package_json = if self.use_package_manager()
                         && (package_id.is_some() || !info.has_node_modules())
                         && !info.is_node_modules()

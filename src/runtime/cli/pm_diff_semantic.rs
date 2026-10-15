@@ -21,7 +21,8 @@ pub(crate) struct Op<'a> {
     pub text: &'a [u8],
     /// An unchanged line whose canonical form nevertheless changed (it moved into or out of dead code).
     pub affected: bool,
-    /// A line of brackets right under the `+` lines it came in with: drawn unmarked, yet no line of the old side.
+    /// A line of closing brackets directly below the `+` lines that it was added with. It is shown
+    /// as an unchanged line, but it is not part of the old side.
     pub came_along: bool,
 }
 
@@ -32,9 +33,10 @@ pub(crate) struct Projection<'a> {
 }
 
 impl Projection<'_> {
-    /// Whether the folds stand, on the parser's and the printer's word rather than line by line: what is shown as
-    /// the old side (every line but the `+` ones: `old` with the folded lines as `new` has them) has to be the same
-    /// program as `old`. `same_key`: that is already known of `old` and `new`.
+    /// Checks all folded lines at once by parsing and printing, instead of line by line. The old
+    /// side that the diff shows is every line except the `+` lines, which is `old` with the folded
+    /// lines in `new`'s text. It has to be the same program as `old`. `same_key` says whether `old`
+    /// and `new` are already known to be the same program.
     pub(crate) fn holds(&self, path: &[u8], old: &[u8], new: &[u8], same_key: bool) -> bool {
         let mut shown = Vec::with_capacity(old.len());
         let mut removed = Vec::new();
@@ -371,8 +373,8 @@ pub(crate) fn project<'a>(
                                 && code_only(n, &sn, nl, d, &so, d.old_no - 1)
                         }))
             };
-            // Where the run starts with folded lines on both sides, those of the new side stand for those of the old
-            // one, ahead of the first `-` line.
+            // If the run starts with folded lines on both sides, the new side's folded lines are
+            // shown as unchanged lines in place of the old side's, before the first `-` line.
             let lead = match dels.first() {
                 Some(d) if fold_old(d) => ins.iter().take_while(|n| fold_new(n)).count(),
                 _ => 0,
@@ -382,7 +384,7 @@ pub(crate) fn project<'a>(
                 kind: Operation::Equal,
                 ..*n
             }));
-            // The brackets that close a block go, or come, with the lines of it right above them.
+            // Closing brackets are removed or added together with the lines directly above them.
             let closes = |text: &[u8]| {
                 trivial(text) && bun_core::strings::index_of_any(text, b"(){}[]").is_some()
             };

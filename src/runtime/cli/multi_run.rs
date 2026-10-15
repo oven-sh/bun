@@ -737,7 +737,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         Box::from(raw_name)
     };
-    // Only printed.
+    // The label is only ever printed, never used to look up a script, so escaping it is safe.
     let label: Box<[u8]> = bun_core::fmt::escape_control_chars(&label)
         .to_string()
         .into_bytes()

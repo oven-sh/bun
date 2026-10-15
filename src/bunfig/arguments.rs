@@ -48,7 +48,7 @@ fn join_config_path<'buf>(
     Some(ZStr::from_buf(&buf[..], len))
 }
 
-/// An `$XDG_CONFIG_HOME` that is empty or relative is ignored, as its specification says.
+/// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let dir = [env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()]
         .into_iter()
@@ -65,7 +65,8 @@ fn unreadable_config(
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
-        // A directory in its place holds no settings: worth the warning, and nothing to stop for.
+        // A directory with the config file's name gets the warning, but it has no settings to lose,
+        // so it is not recorded as an unreadable config and does not block an install.
         let is_file = err.is_unreadable_file(config_path);
         if (is_file || err.is_directory())
             && !ctx.debug.silent
@@ -124,7 +125,8 @@ fn load_bunfig(
     counts: Counts,
 ) -> Result<(), crate::Error> {
     let auto_loaded = file != ConfigFile::Named;
-    // Also for a file that cannot be read: the later stages of `bun run` that ask would read it, and warn, again.
+    // Set this even if the read fails. Otherwise the later stages of `bun run` that check the flag
+    // would try to load the file again and print the warning twice.
     ctx.debug.loaded_bunfig = true;
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
@@ -171,8 +173,9 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
     }
 }
 
-/// Whether `[install.security] scanner` is set in the user's own file or in a bunfig.toml from `dir` up to `root`.
-/// `Err`: the path of one that is there and cannot be read or parsed.
+/// Whether `[install.security] scanner` is set in the user's global `.bunfig.toml` or in any
+/// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of a config file that exists but
+/// cannot be read or parsed.
 pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf)
@@ -187,7 +190,7 @@ pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> 
         {
             return Ok(true);
         }
-        // A `dir` outside `root` is the only one read.
+        // Stop at `root`. If `dir` is outside `root`, only `dir` itself is read, not its parents.
         next_dir = match resolve_path::is_parent_or_equal(root, dir) {
             resolve_path::ParentEqual::Parent => bun_core::dirname(dir),
             _ => None,
@@ -205,8 +208,8 @@ fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
     }
 }
 
-/// What `[install]` of the bunfig.toml in `dir` has for the package manager, as `bun install` in `dir` reads it.
-/// `Err`: the path of the file, which is there and cannot be read or parsed.
+/// Reads the `[install]` section of the `bunfig.toml` in `dir`, the way `bun install` run in `dir`
+/// would. `Err` holds the path of the file when it exists but cannot be read or parsed.
 pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     match join_config_path(dir, b"bunfig.toml", &mut config_buf) {
@@ -215,7 +218,7 @@ pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, 
     }
 }
 
-/// [`load_install_section`] of the user's own file.
+/// Like [`load_install_section`], but reads the user's global `.bunfig.toml`.
 pub fn load_user_install_section() -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     match get_home_config_path(&mut config_buf) {

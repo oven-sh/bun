@@ -36,7 +36,7 @@ fn remove_link_in(package_dir: &[u8], name: &[u8]) {
     let mut path = AutoAbsPathChecked::init_top_level_dir();
     if path.append(package_dir).is_err()
         || path.append(b"node_modules").is_err()
-        // See `LinkedNodeModules`.
+        // Nothing is removed from a `node_modules` that is a symlink. See `LinkedNodeModules`.
         || is_link(path.slice_z()) == Some(true)
         || path.append(name).is_err()
     {

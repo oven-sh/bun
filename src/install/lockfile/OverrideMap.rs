@@ -135,7 +135,7 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// The one field that is read: `"resolutions"` counts only without `"overrides"`.
+    /// Only one of the two fields is read: `"resolutions"` is ignored if `"overrides"` exists.
     pub(crate) fn of(root: &Expr) -> Option<(Field, bun_ast::expr::Query)> {
         [Field::Overrides, Field::Resolutions]
             .into_iter()
@@ -167,7 +167,8 @@ impl Field {
 struct Ambiguous;
 
 /// Scoped rules must not redirect every edge of the target name, so their `npm:` values are never registered as known aliases.
-/// Nor are the rows `clean` copies: the project's were registered when its package.json files were parsed.
+/// The dependencies that `clean_with_logger` copies are not registered again either: the project's
+/// aliases were already registered when its package.json files were parsed.
 pub(crate) struct NoAliases;
 
 impl NpmAliasRegistry for NoAliases {
@@ -400,7 +401,8 @@ impl OverrideMap {
         }
     }
 
-    /// A `catalog:` rule without an entry leaves what it selects with no version to resolve.
+    /// Warns about each `catalog:` rule whose package is not in the catalog, because the
+    /// dependencies that the rule applies to then have no version to resolve.
     pub(crate) fn warn_missing_catalog_entries(
         &self,
         catalogs: &CatalogMap,
@@ -732,7 +734,6 @@ impl OverrideMap {
         }
     }
 
-    /// The map must be empty.
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -1003,7 +1004,8 @@ impl OverrideMap {
     }
 }
 
-/// Where the root package.json has the plain rule for `name`, or else the field with the rules.
+/// The location of the top-level rule for `name` in the root package.json. If there is none, the
+/// location of the `"overrides"` or `"resolutions"` field.
 fn rule_loc(root: &Expr, name: &[u8]) -> bun_ast::Loc {
     Field::of(root).map_or(bun_ast::Loc::EMPTY, |(_, rules)| {
         (rules.expr.as_property(name)).map_or(rules.loc, |rule| rule.loc)

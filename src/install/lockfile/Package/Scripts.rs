@@ -316,7 +316,7 @@ impl Scripts {
     ) -> Result<Option<List>, crate::Error> {
         if !self.has_any() && !self.filled {
             let list = self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
-            // The directory of a `link:` dependency needs no package.json.
+            // A `link:` dependency may point to a directory without a package.json.
             if resolution.tag == ResolutionTag::Symlink
                 && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
             {

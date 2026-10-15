@@ -624,7 +624,8 @@ impl PmPkgCommand {
         }
     }
 
-    /// The parser also reads JavaScript literals: `010` (as 8), `0x10`, `1_000`, `.5`, `5.`, `'text'`.
+    /// The JSON parser also accepts JavaScript literals that are not valid JSON, which this
+    /// rejects: `010` (parsed as 8), `0x10`, `1_000`, `.5`, `5.`, `'text'`.
     fn has_only_json_literals(root: Expr, source: &[u8]) -> bool {
         let mut pending = vec![root];
         while let Some(expr) = pending.pop() {

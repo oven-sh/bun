@@ -12,7 +12,8 @@ use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
 // Length-checked: the walker opens each directory from its parent, so entry paths are unbounded.
 type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
-// `ANY`: the walker joins with the native separator, and on POSIX a `\` is part of a file's name.
+// `PathSeparators::ANY` appends the walker's paths unchanged. They already use the native
+// separator, and `AUTO` would rewrite a `\` that is part of a file name on POSIX.
 type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::ANY }, { CheckLength::CHECK }>;
 
 pub(crate) struct Hardlinker {

@@ -326,7 +326,7 @@ impl Comparator {
         match order {
             Ordering::Equal => matches!(self.op, Op::Lte | Op::Gte | Op::Eql),
             Ordering::Greater => matches!(self.op, Op::Gt | Op::Gte),
-            // node-semver reads `>=0.0.0` as any version, so `0.0.0-a` passes it.
+            // node-semver treats `>=0.0.0` as matching any version, so `0.0.0-a` satisfies it.
             Ordering::Less => match self.op {
                 Op::Gte => self.version.is_zero() && !self.version.tag.has_pre(),
                 op => matches!(op, Op::Lt | Op::Lte),

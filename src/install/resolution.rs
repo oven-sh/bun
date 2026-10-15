@@ -283,7 +283,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 owner: string_buf.append(user)?,
                 repo: string_buf.append(repo)?,
                 committish,
-                // Names the cache folder. The whole commit, as from a package-lock.json.
+                // `resolved` names the cache folder. As in the package-lock.json migration, it is
+                // the full commit hash.
                 resolved: committish,
                 ..Default::default()
             })));

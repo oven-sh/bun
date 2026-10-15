@@ -75,7 +75,7 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
         }
         version.literal.slice(string_buf)
     };
-    // yarn finds the entry of an `npm:` alias by the name in package.json, not the package's own.
+    // Yarn looks up an `npm:` alias by its name in package.json, not by the package's real name.
     let requested_name = |dependency_id: DependencyID| -> &[u8] {
         let name = if requested_as(dependency_id).starts_with(b"npm:") {
             &dependencies_buffer[dependency_id as usize].name

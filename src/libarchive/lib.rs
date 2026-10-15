@@ -848,7 +848,7 @@ pub mod lib {
     pub struct GrowingBuffer<'a> {
         pub(crate) list: Vec<u8>,
         pub(crate) had_error: bool,
-        /// Takes each write in place of `list`, which then stays empty.
+        /// When set, every write goes to this callback instead of `list`, so `list` stays empty.
         pub(crate) forward_to: Option<&'a mut dyn FnMut(&[u8])>,
     }
 
@@ -978,7 +978,8 @@ impl BufferReadStream {
         unsafe { &*self.buf }
     }
 
-    /// `npm`: see patches/libarchive/tar-npm-compat.patch.
+    /// `npm` makes libarchive read the tarball the way npm's own tar reader does. See
+    /// patches/libarchive/tar-npm-compat.patch.
     pub(crate) fn open_read(&mut self, npm: bool) -> lib::Result {
         let archive = self.archive();
 
@@ -1026,9 +1027,9 @@ pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
     mode
 }
 
-/// Where node-tar puts an entry of an npm tarball, given its name without `package/`.
-/// Empty for a name with a `..` part: node-tar skips those.
-/// On POSIX only `/` separates, so `a\b.js` is the name of one file.
+/// Returns the path where node-tar would extract an npm tarball entry. `path` is the entry's name
+/// without the leading `package/`. The result is empty if `path` has a `..` component, because
+/// node-tar skips those entries. On POSIX only `/` is a separator, so `a\b.js` names a single file.
 pub fn normalize_npm_entry_path<'a>(
     path: &[OSPathChar],
     buf: &'a mut [OSPathChar],
@@ -1047,7 +1048,7 @@ pub fn normalize_npm_entry_path<'a>(
     })
 }
 
-/// The root folder of an archive, from the path of any of its entries.
+/// Returns the first component of an entry's path, which is the archive's root folder.
 pub fn first_path_component(path: &[OSPathChar]) -> &[OSPathChar] {
     let sep = b'/' as OSPathChar;
     let start = path.iter().take_while(|c| **c == sep).count();
@@ -1587,7 +1588,7 @@ impl Archiver {
                         let sep: OSPathChar = b'/' as OSPathChar;
                         let mut i = 0usize;
                         while i < options.depth_to_skip {
-                            // For npm what is in front of a leading `/` is a part too.
+                            // npm counts the empty name before a leading `/` as a component.
                             while let [first, rest @ ..] = remaining {
                                 if *first == sep && !options.npm {
                                     remaining = rest;

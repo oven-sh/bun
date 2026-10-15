@@ -3986,7 +3986,8 @@ mod windows_impl {
             Ok(target) => return Ok(target.len()),
             Err(err) => err,
         };
-        // libuv hands the path to the system as it is. From 260 characters on that takes `\\?\`.
+        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
+        // works with the `\\?\` prefix, so retry with it.
         let bytes = path.as_bytes();
         if err.get_errno() != E::ENOENT
             || bytes.len() < 248

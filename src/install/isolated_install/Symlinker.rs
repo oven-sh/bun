@@ -7,12 +7,15 @@ pub(crate) struct Symlinker {
     pub(crate) target: bun_paths::RelPath,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
-    /// After `real_len`: `dest[..node_modules_len]` is the `node_modules` of a workspace. A link there
-    /// stays, and `ensure_symlink` fails with `ELOOP` before it writes. See `LinkedNodeModules`.
+    /// When greater than `real_len`, `dest[..node_modules_len]` is a workspace's `node_modules`.
+    /// If that folder is a symlink (see `LinkedNodeModules`), it is kept, and `ensure_symlink`
+    /// fails with `ELOOP` before writing anything.
     pub(crate) node_modules_len: usize,
-    /// See `LinkedNodeModules`: a directory or a file in the way of `dest` stays, and the link fails.
+    /// True if `dest` is inside a symlinked `node_modules` (see `LinkedNodeModules`). A file or
+    /// directory that is already at `dest` is then kept, and linking fails.
     pub(crate) is_behind_link: bool,
-    /// Windows: the link's text is `fallback_junction_target`. See `LinkedNodeModules::resolve`.
+    /// Windows only: the link points to the absolute `fallback_junction_target` instead of the
+    /// relative `target`. `LinkedNodeModules::resolve` explains why.
     pub(crate) is_absolute: bool,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
@@ -67,7 +70,8 @@ impl Symlinker {
         self.ensure(strategy, true)
     }
 
-    /// `may_retry`: a name that `readlink` finds free and `symlink` finds taken is looked at again.
+    /// If `may_retry` is set and `symlink` fails with `EEXIST` right after `readlink` found nothing
+    /// at `dest`, this runs once more to check what appeared there.
     fn ensure(&mut self, strategy: Strategy, may_retry: bool) -> bun_sys::Result<bool> {
         match strategy {
             Strategy::ExpectMissing => {

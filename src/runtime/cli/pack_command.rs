@@ -266,11 +266,13 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     // (b"config.gypi", false),
     (b".env.production", true),
     (b"bunfig.toml", true),
-    // `open_tarball`'s temporary file: of a pack that runs at the same time, or one that was killed.
+    // The temporary file that `open_tarball` creates. It can belong to a pack that is running at
+    // the same time, or be left over from one that was killed.
     (b".bun-pack.*.tmp", false),
 ];
 
-/// Before `FileSystem::tmpname`, which starts with a `.` and here ends in `.tmp`.
+/// The start of the temporary tarball's filename. The rest comes from `FileSystem::tmpname`, which
+/// starts with a `.` and, as called here, ends in `.tmp`.
 const UNFINISHED_TARBALL_PREFIX: &[u8] = b".bun-pack";
 
 struct PackListEntry {
@@ -481,7 +483,7 @@ fn print_ignored(
     Output::flush();
 }
 
-/// The path names nothing. ELOOP: a link that leads back to itself.
+/// Whether `errno` means nothing exists at the path. `ELOOP` comes from a cycle of symlinks.
 fn is_absent(errno: bun_sys::E) -> bool {
     matches!(
         errno,
@@ -569,35 +571,40 @@ fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocErr
     ))
 }
 
-/// A package in one of the tarball's `node_modules`.
+/// A package that is packed into one of the tarball's `node_modules` folders.
 struct BundledPackage {
-    /// `node_modules/a`, or `node_modules/a/node_modules/b` where `a` must not find the `b` further up.
+    /// Its path in the tarball: `node_modules/a`, or `node_modules/a/node_modules/b` when `a` needs
+    /// its own copy of `b`.
     subpath: Box<[u8]>,
-    /// Where the package's name starts in `subpath`.
+    /// The offset in `subpath` where the package's name starts.
     name_start: usize,
-    /// The folder it is read from, links resolved.
+    /// The folder on disk that its files are read from, with symlinks resolved.
     real_path: Box<[u8]>,
-    /// The bundled package whose `node_modules` it is in. `None`: that of the packed package.
+    /// The index of the bundled package whose `node_modules` contains it. `None` means the
+    /// `node_modules` of the package being packed.
     parent: Option<usize>,
 }
 
-/// `path` in the tarball gets the bytes of the file `source`.
+/// A file to archive at `path` in the tarball, with the contents of the file `source` on disk.
 struct BundledFile {
     path: ZBox,
     source: ZBox,
-    /// In place of its bytes: the package.json of a workspace, edited as for its own tarball.
+    /// If set, archived instead of the contents of `source`. It is a workspace's package.json,
+    /// edited the same way as for the workspace's own tarball.
     edited: Option<Box<[u8]>>,
 }
 
 #[derive(Default)]
 struct Bundle {
     packages: Vec<BundledPackage>,
-    /// `BundledPackage::subpath` to its index in `packages`.
+    /// Maps a `BundledPackage::subpath` to the package's index in `packages`.
     placed: StringHashMap<usize>,
-    /// Placed, and neither its files nor its dependencies are looked at yet.
+    /// Indexes of transitive dependencies that have a place in the tarball, but whose files and
+    /// dependencies have not been collected yet.
     pending: Vec<usize>,
     files: Vec<BundledFile>,
-    /// The workspace root, or the packed package where it is in no workspace. Links resolved.
+    /// The workspace root, or the folder of the package being packed if it is not in a workspace,
+    /// with symlinks resolved.
     project_path: Box<[u8]>,
 }
 
@@ -627,7 +634,8 @@ impl Bundle {
         Ok(index)
     }
 
-    /// What `require(name)` in the package `from` finds once the tarball is unpacked.
+    /// The package that `require(name)` in the bundled package `from` resolves to once the tarball
+    /// is unpacked.
     fn visible_from(&self, from: usize, name: &[u8]) -> Option<&BundledPackage> {
         let mut level = Some(from);
         loop {
@@ -639,10 +647,9 @@ impl Bundle {
     }
 }
 
-/// What `require(name)` finds from the folder `from`: the closest `node_modules/<name>`, links resolved.
-/// The flag: it is in the `node_modules` of `from` itself.
-/// Nothing above `project` counts as installed. A linked folder or the global store is outside of it: there,
-/// nothing above the `node_modules` that `from` is in.
+/// The folder that `require(name)` resolves to from `from`, with symlinks resolved, and whether it
+/// is in `from`'s own `node_modules`. The search stops at `project` or, if `from` is outside
+/// `project` (a linked folder, the global store), at the outermost `node_modules` in its path.
 fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
     let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
@@ -669,10 +676,12 @@ fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u
     None
 }
 
-/// The files of the bundled dependencies and of everything they depend on, in the order of their paths in the tarball.
+/// Returns the files of the bundled dependencies and of everything they depend on, sorted by their
+/// path in the tarball.
 fn iterate_bundled_deps(
     bundled_deps: &mut Vec<BundledDep>,
-    // Of the packed package. By value: the cache entry it is from moves when the manifests are loaded.
+    // The package.json of the package being packed. It is passed by value because the cache entry
+    // it comes from can move when the workspace manifests are loaded.
     package_json: Expr,
     stats: &mut Stats,
     manager: &mut PackageManager,
@@ -703,18 +712,19 @@ fn iterate_bundled_deps(
         (package_json.get(group)).is_some_and(|dependencies| dependencies.get(name).is_some())
     };
 
-    // All of these first: what one of them depends on must not take the place of another.
+    // Place every listed dependency at the top level first, so that a dependency of one of them
+    // cannot take the place of another.
     for dep in core::mem::take(bundled_deps) {
         let found = bun_install::package_installer::alias_is_safe_install_target(&dep.name)
             .then(|| resolve_installed(&bundle.project_path, root_path, &dep.name))
             .flatten();
         let Some((real_path, _)) = found else {
-            // Like npm, what an install may leave out is left out: an optional dependency for another platform,
-            // a peer, a devDependency, a name in no group.
+            // Like npm, skip a missing package that an install may omit: an optional dependency for
+            // another platform, a peer, a devDependency, or a name in no dependency group.
             if !is_in(b"dependencies", &dep.name) || is_in(b"optionalDependencies", &dep.name) {
                 continue;
             }
-            // The tarball's package.json tells whoever installs it that the package is inside.
+            // The tarball's package.json tells installers that this package is inside the tarball.
             Output::err_generic(
                 "bundled dependency \"{}\" is not installed",
                 format_args!("{}", bstr::BStr::new(&dep.name)),
@@ -756,7 +766,8 @@ fn iterate_bundled_deps(
     Ok(bundle.files)
 }
 
-/// Places the dependencies of the package `index`, and queues its files.
+/// Adds the files of the bundled package `index` to `bundle.files`, and gives its dependencies a
+/// place in the tarball.
 fn add_bundled_dep(
     bundle: &mut Bundle,
     index: usize,
@@ -794,11 +805,12 @@ fn add_bundled_dep(
     };
     let mut json = parse();
 
-    // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball.
+    // A folder that is not inside a `node_modules` is a workspace or a linked folder, not an
+    // installed copy. It contributes the same files that its own tarball would contain.
     let below_project = (real_path.strip_prefix(&*bundle.project_path)).unwrap_or(&real_path);
     let is_own_package = !strings::contains(below_project, path::NODE_MODULES_NEEDLE);
     if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
-        // Reading the other workspaces resets the `Store` that `json` is in.
+        // Loading the workspace manifests resets the `Store` that holds `json`, so parse it again.
         *manifests = Some(WorkspaceManifests::load(manager));
         json = parse();
     }
@@ -836,7 +848,7 @@ fn add_bundled_dep(
         }
     }
 
-    // Any depth but 1, the project root's, means the same to `is_excluded`.
+    // `is_excluded` only treats depth 1, the project root, specially. Any other depth works.
     const PACKAGE_DEPTH: usize = 2;
     let mut dirs = vec![DirInfo(dir, subpath.clone(), PACKAGE_DEPTH)];
 
@@ -882,8 +894,9 @@ fn add_bundled_dep(
     Ok(())
 }
 
-/// Places each dependency of the bundled package `index` where that package finds, in the unpacked
-/// tarball, the folder that it finds on disk. `json` is its package.json.
+/// Gives each dependency of the bundled package `index` a place in the tarball, chosen so that the
+/// unpacked package resolves the same copy of the dependency as it does on disk. `json` is the
+/// package.json of `index`.
 fn find_dependencies_to_bundle(
     bundle: &mut Bundle,
     index: usize,
@@ -916,7 +929,7 @@ fn find_dependencies_to_bundle(
             else {
                 continue;
             };
-            // A workspace can depend on the package that bundles it.
+            // A bundled workspace can depend on the package being packed. That one is not bundled.
             if *real_path == *root_path {
                 continue;
             }
@@ -928,11 +941,13 @@ fn find_dependencies_to_bundle(
             let parent = match bundle.visible_from(index, dep_name) {
                 Some(visible) if visible.real_path == real_path => continue,
                 Some(_) => Some(index),
-                // Nested as on disk. Or the packed package finds another one by this name, and has to still.
+                // Nest it if it is nested on disk, or if hoisting it would change which copy the
+                // package being packed resolves this name to.
                 None if is_nested || other_at_the_top() => Some(index),
                 None => None,
             };
-            // In a ring through two versions of two packages each copy needs the next one inside it, without end.
+            // In a dependency cycle through two versions of two packages, each copy needs the next
+            // one nested inside it, which would never end.
             let copies_above =
                 core::iter::successors(parent, |&above| bundle.packages[above].parent)
                     .filter(|&above| bundle.packages[above].real_path == real_path)
@@ -1501,14 +1516,14 @@ pub(crate) fn package_json_entry<'a>(
     }
 }
 
-/// Of the properties of an object that have the same key, `JSON.parse` keeps the last. So does this, in
-/// place: what is packed and sent then reads the same to everyone.
+/// When an object has several properties with the same key, `JSON.parse` keeps the last one. This
+/// removes the earlier ones in place, so that all readers of the package.json agree.
 pub(crate) fn drop_shadowed_properties(json: Expr) {
     let ExprData::EObject(mut object) = json.data else {
         return;
     };
     let mut seen: StringHashMap<()> = StringHashMap::default();
-    // Last property first, so that `pop` hands these out from the first property on.
+    // Built from the last property to the first, so that `pop` returns the flags in property order.
     let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
         .map(|property| {
             let key = property.key.as_ref().and_then(Expr::as_utf8_string_literal);
@@ -1523,7 +1538,8 @@ pub(crate) fn drop_shadowed_properties(json: Expr) {
     }
 }
 
-/// Takes the `publishConfig` of `package_json`, and refuses what `bun publish` does not send.
+/// Applies the `publishConfig` of `package_json`, then rejects what `bun publish` cannot publish: a
+/// provenance request, a restricted package without a scope, or a private package.
 fn apply_publish_config(
     manager: &mut PackageManager,
     package_json: &Expr,
@@ -1606,7 +1622,7 @@ pub(crate) fn pack(
     let mut json = package_json_entry(ctx.manager, abs_package_json_path);
 
     let (mut package_name, mut package_version) = name_and_version(&json.root)?;
-    // What the command line and the config files say, without any `publishConfig`.
+    // The target from the command line and config files, before `publishConfig` is applied.
     let target_before = for_publish.then(|| ctx.manager.options.publish_target(package_name));
     if for_publish {
         apply_publish_config(ctx.manager, &json.root, package_name)?;
@@ -1741,9 +1757,11 @@ pub(crate) fn pack(
         log_level,
     )?;
 
-    // A bundled workspace loads the manifests too, which also resets the `Store`: the copy comes after.
+    // Bundling a workspace can load the manifests too, which resets the `Store`, so fetch the entry
+    // again before copying it.
     json = package_json_entry(ctx.manager, abs_package_json_path);
-    // A copy: the edits add `Store` nodes, and the next workspace of `bun publish -r` reads the cached tree.
+    // Edit a copy. The edits add `Store` nodes, and the next workspace of `bun publish -r` still
+    // reads the cached tree.
     let root = json.root.deep_clone(bump);
     let mut root = root.map_err(|_| PackError::OutOfMemory)?;
     let edited_package_json = edit_root_package_json(
@@ -1896,7 +1914,8 @@ pub(crate) fn pack(
         }
     };
     let mut tarball_buffer = GrowingBuffer::forward_to(&mut write_tarball);
-    // Declared last, so dropped first: its close (also run by its Drop) writes into `tarball_buffer`.
+    // Rebound here so that it is dropped before `tarball_buffer`. Closing the archive, which its
+    // `Drop` also does, writes into that buffer.
     let archive = archive;
 
     if archive_write_open2(
@@ -2011,7 +2030,6 @@ pub(crate) fn pack(
 
     ArchiveEntry::opaque_ref(entry).free();
 
-    // Flushes the compressor and the end-of-archive blocks.
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             archive_write_failed(&archive);
@@ -2239,7 +2257,8 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// `open_tarball`'s temporary file. A failed pack exits from many places, so an exit callback removes it.
+/// The temporary file that `open_tarball` created. A failed pack can exit from many places, so an
+/// exit callback removes the file.
 static UNFINISHED_TARBALL: bun_core::Mutex<Option<(Fd, ZBox)>> = bun_core::Mutex::new(None);
 
 extern "C" fn remove_unfinished_tarball() {
@@ -2250,9 +2269,10 @@ extern "C" fn remove_unfinished_tarball() {
     }
 }
 
-/// A temporary file next to the destination, which `finish_tarball` renames to it. `None`: the destination
-/// is not one to replace, or no file can be made next to it. The tarball then stays in memory until
-/// `write_tarball_in_place`. Either way the destination changes only once the tarball is whole.
+/// Creates a temporary file next to the destination, which `finish_tarball` renames over the
+/// destination. Returns `None` if the destination must not be replaced or no file can be created
+/// next to it. The tarball then stays in memory until `write_tarball_in_place`. Either way, the
+/// destination only changes once the tarball is complete.
 fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File> {
     let mode: bun_sys::Mode = match bun_sys::lstat(abs_tarball_dest) {
         Err(_) => 0o666,
@@ -2262,9 +2282,10 @@ fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File
             {
                 stat.st_mode as bun_sys::Mode & 0o777
             }
-            // Replaced under the name that bun gives the tarball. `--filename` may name a link to it.
+            // A symlink at the name Bun chose for the tarball is replaced. A symlink that
+            // `--filename` names is written through instead.
             bun_sys::FileKind::SymLink if !is_typed_filename => 0o666,
-            // A FIFO, a device, a read-only file.
+            // Anything else, such as a FIFO, a device or a read-only file, is not replaced.
             _ => return None,
         },
     };
@@ -2300,7 +2321,8 @@ fn finish_tarball(file: File, abs_tarball_dest: &ZStr, is_typed_filename: bool) 
     if bun_sys::rename(&tmp, abs_tarball_dest).is_ok() {
         return;
     }
-    // A file that is a mount point, or somebody else's in a sticky directory, can be written but not replaced.
+    // A file that is a mount point, or another user's file in a sticky directory, cannot be
+    // replaced but can still be written to.
     let tarball_bytes = File::read_from(Fd::cwd(), tmp.as_bytes());
     let _ = bun_sys::unlink(&tmp);
     match tarball_bytes {
@@ -2426,7 +2448,7 @@ fn add_archive_entry(
     archive: &Archive,
     entry: *mut ArchiveEntry,
     bins: &[BinInfo],
-    // Archived in place of the bytes of `file`.
+    // If set, these bytes are archived instead of the contents of `file`.
     edited: Option<&[u8]>,
 ) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
@@ -2485,7 +2507,8 @@ fn add_archive_entry(
     }
     ctx.stats.unpacked_size += written;
 
-    // libarchive leaves out what is past the size in the header, and fills up with zeroes what is missing.
+    // libarchive drops bytes past the size in the header, and pads an entry that is too short with
+    // zeros, so a file that shrank has to be caught here.
     if (written as i64) < stat.st_size as i64 {
         Output::err_generic(
             "file got shorter while it was packed: \"{}\"",
@@ -2558,7 +2581,8 @@ impl<'a> Substitution<'a> {
                 let spec = manifests
                     .catalog_version(catalog_name, dependency_name)
                     .ok_or_else(|| ("catalog", "no matching catalog dependency".to_owned()))?;
-                // `bun install` links a `workspace:` entry and refuses a `catalog:` one.
+                // As in `bun install`, a catalog entry may be a `workspace:` spec but not another
+                // `catalog:` spec.
                 match Substitution::for_spec(spec) {
                     None => Ok(spec.to_vec()),
                     Some(Substitution::Catalog(_)) => Err((
@@ -2692,8 +2716,8 @@ fn publish_workspace(
     }
 }
 
-/// Edits `root` in place (`bun publish` sends that tree to the registry) and returns it printed.
-/// `root` was parsed from `source`.
+/// Replaces the `workspace:` and `catalog:` specs in `root`, which was parsed from `source`, and
+/// returns the printed JSON. `bun publish` sends the edited tree to the registry.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
     package_dir: &[u8],

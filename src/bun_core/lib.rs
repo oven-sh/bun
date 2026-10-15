@@ -2132,8 +2132,8 @@ pub(crate) mod strings_impl {
         None
     }
 
-    /// `(offset, len)` of the userinfo that is not to be printed, or None.
-    /// `s` must start with a URL (`https://`, `git+ssh://`, ...).
+    /// Returns the `(offset, len)` of the URL's userinfo (`user:password`) that must be redacted
+    /// before printing, or None. `s` must start with a URL (`https://`, `git+ssh://`, ...).
     pub(crate) fn find_url_userinfo(s: &[u8]) -> Option<(usize, usize)> {
         // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
         if !s.first().is_some_and(u8::is_ascii_alphabetic) {
@@ -2152,10 +2152,10 @@ pub(crate) mod strings_impl {
         b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
     }
 
-    /// [`find_url_userinfo`] for what follows `scheme://`; userinfo ends at the last '@'.
-    /// All of it, user name included. Only the ssh account `git` is printed.
+    /// Same as [`find_url_userinfo`], but `rest` starts right after `scheme://`. The userinfo ends
+    /// at the last '@'. All of it is redacted, user name included, unless it is the ssh user `git`.
     pub(crate) fn find_authority_userinfo(mut rest: &[u8]) -> Option<(usize, usize)> {
-        // Whitespace is no part of a URL: the rest of a message can hold a `name@version`.
+        // The URL ends at whitespace, so a `name@version` later in the message is not part of it.
         if let Some(end) = crate::strings::index_of_any(rest, b"/?# \t\r\n") {
             rest = &rest[..end];
         }
@@ -2163,7 +2163,8 @@ pub(crate) mod strings_impl {
         (at > 0 && &rest[..at] != b"git").then_some((0, at))
     }
 
-    /// [`find_url_userinfo`] for the first URL at or after `from` that has one; offset into `s`.
+    /// Runs [`find_url_userinfo`] on each URL at or after `from` and returns the first match. The
+    /// returned offset is relative to the start of `s`.
     pub(crate) fn next_url_userinfo(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
         while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
             let separator = from + separator;

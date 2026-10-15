@@ -107,7 +107,7 @@ impl<T> ExternalSlice<T> {
         id >= self.off && (id as u64) < self.len as u64 + self.off as u64
     }
 
-    /// For an offset and a length read from a file, before anything calls `get`.
+    /// Checks an offset and length that were read from a file. Call it before calling `get`.
     #[inline]
     pub fn is_within(self, in_: &[T]) -> bool {
         self.off as usize + self.len as usize <= in_.len()
@@ -1411,10 +1411,10 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
-    /// The folder on disk that `bun install` would link `name` to: a workspace member (by
-    /// `workspace:`, by a range its version satisfies, or, for an `Uninitialized` version, by name
-    /// alone) or the target of `file:` / `link:`. Only a package.json of the project may name a
-    /// path, which is relative to its directory, `package_json_dir`.
+    /// Returns the folder on disk that `bun install` would link `name` to. It is either a workspace
+    /// member (matched by `workspace:`, by a range that its version satisfies, or by name alone for
+    /// an `Uninitialized` version) or the target of `file:` / `link:`. Those paths are relative to
+    /// `package_json_dir`, which is `None` unless the package.json belongs to the project.
     fn project_folder<'b>(
         &mut self,
         name: &[u8],
@@ -1423,7 +1423,8 @@ pub trait AutoInstaller {
         package_json_dir: Option<&[u8]>,
         buf: &'b mut [u8],
     ) -> Option<&'b [u8]>;
-    /// The package's folder in the cache. Downloads it first if it is not there, and blocks.
+    /// Returns the package's folder in the cache. An npm package that is not cached yet is
+    /// downloaded first, and the call blocks until that finishes.
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,
@@ -1431,7 +1432,8 @@ pub trait AutoInstaller {
         buf: &'b mut [u8],
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
-    /// `package_json_dir`: as for `project_folder`, here for the path of a `file:` tarball.
+    /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is
+    /// relative to it.
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],

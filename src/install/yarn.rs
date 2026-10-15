@@ -24,7 +24,7 @@ use bun_semver::{self as Semver, String as SemverString};
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// The key that `consolidate_and_append_entry` builds -> index in `entries`.
+    /// Maps the key that `consolidate_and_append_entry` builds to an index in `entries`.
     entry_by_name_version: StringHashMap<usize>,
 }
 
@@ -43,7 +43,8 @@ pub struct Entry<'a> {
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
     pub(crate) file: Option<&'a [u8]>,
-    /// The directory of a `link:` spec. yarn writes it relative to yarn.lock, also for a workspace.
+    /// The directory that a `link:` spec points to. yarn writes it relative to yarn.lock, even when
+    /// the dependency is declared in a workspace.
     pub(crate) link: Option<Cow<'a, [u8]>>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
@@ -152,12 +153,12 @@ impl<'a> Entry<'a> {
         strings::split_once_char(resolved, b'#').map_or(resolved, |(url, _)| url)
     }
 
-    /// The `integrity` line; without one, the sha1 that ends a tarball's `resolved`.
+    /// The `integrity` line or, without one, the sha1 after the `#` in a tarball's `resolved`.
     fn tarball_integrity(&self) -> Integrity {
         let integrity = self
             .integrity
             .map_or_else(Integrity::default, Integrity::parse);
-        // A git entry's `#` is followed by a commit.
+        // In a git entry, the `#` in `resolved` is followed by a commit, not by the tarball's sha1.
         if integrity.tag.is_supported() || self.commit.is_some() {
             return integrity;
         }
@@ -293,7 +294,7 @@ impl<'a> YarnLock<'a> {
                         new_entry.link = Some(dependency::link_path_for_lockfile(path));
                         break;
                     }
-                    // To yarn a bare path is a `file:` one.
+                    // yarn treats a bare relative path the same as a `file:` path.
                     if range.starts_with(b"file:")
                         || range.starts_with(b"./")
                         || range.starts_with(b"../")
@@ -385,9 +386,9 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        // Every `link:` entry has version 0.0.0.
+        // Every `link:` entry has version 0.0.0, so the key needs the path to tell them apart.
         let link = new_entry.link.as_deref().unwrap_or(b"");
-        // Off the registry, a name and a version do not say which package it is.
+        // A name and a version only identify a package when it comes from a registry.
         let (file, resolved, commit) = if new_entry.is_registry_entry() {
             Default::default()
         } else {
@@ -500,7 +501,8 @@ fn bind_importer_dependency(
         )
         .or_else(newest);
     }
-    // yarn keys a path by where it is from yarn.lock: the parsed value, not a workspace's literal.
+    // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
+    // that; the literal in a workspace's package.json is relative to the workspace.
     let (protocol, range) = match dep.version.tag {
         dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
         dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
@@ -546,7 +548,8 @@ fn bind_importer_dependencies(
                 workspace_id_by_path,
                 &mut spec,
             );
-            // yarn.lock never lists a project's own peers, so a frozen install goes without this one.
+            // yarn.lock never lists the project's own peer dependencies, so a frozen install leaves
+            // this one unresolved.
             let unbound = (frozen && dep.behavior.is_peer()).then_some(install::INVALID_PACKAGE_ID);
             let Some(resolution) = bound.or(unbound) else {
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
@@ -611,7 +614,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
     let importer_count = this.packages.len();
 
-    // An entry whose resolution cannot be built stays invalid: its specs count as having no entry.
+    // An entry whose resolution cannot be built keeps `INVALID_PACKAGE_ID`. Its specs are then
+    // treated as if yarn.lock had no entry for them.
     let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
     let silent = manager.options.log_level.is_silent();
 
@@ -675,7 +679,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     resolved: SemverString::default(),
                     package_name: sbuf!(this).append(package_name)?,
                 };
-                // The cache folder, and a git checkout, go by `resolved`.
+                // `resolved` names the cache folder, and is the commit that a git checkout uses.
                 let value = if is_github {
                     if let Some(tag) = github_tarball_tag(owner_str, repo_str, commit) {
                         repository.resolved = sbuf!(this).append(&tag)?;
@@ -687,7 +691,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 };
                 break 'blk Resolution::init(value(repository));
             } else {
-                // yarn locks `owner/repo` and the like to the host's archive of the commit.
+                // yarn locks a spec like `owner/repo` to the host's tarball URL for the commit.
                 let is_registry_entry = entry.is_registry_entry();
                 match resolved_url {
                     Some(resolved) if is_direct_url_dep || !is_registry_entry => {
@@ -780,7 +784,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             bin: Bin::init(),
             scripts: Default::default(),
         };
-        // yarn.lock records no bins. A folder of the project has its package.json at hand.
+        // yarn.lock does not record bins. For a `file:` folder or a `link:`, they are read from the
+        // package.json on disk.
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
@@ -807,7 +812,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         for spec in entry.specs.iter() {
             spec_to_package_id.put(spec, package_id)?;
         }
-        // yarn keeps the `./` of package.json; `bind_importer_dependency` asks in one spelling.
+        // yarn.lock spells the path as package.json does, with or without `./`.
+        // `bind_importer_dependency` looks it up in normalized form, so that form is added too.
         if let Some(file) = entry.file {
             spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
         } else if let Some(link) = entry.link.as_deref() {
@@ -860,7 +866,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 key.push(b'@');
                 key.extend_from_slice(dep_version_literal);
                 let locked = spec_to_package_id.get(key.as_slice()).copied();
-                // yarn links a workspace that the range accepts, and writes no entry for it.
+                // When a workspace's version satisfies the range, yarn links the workspace and
+                // writes no yarn.lock entry for it.
                 let resolution = locked.or_else(|| {
                     let npm = parsed_version.try_npm().filter(|_| !behavior.is_peer())?;
                     let path = lockfile::linked_workspace_path(

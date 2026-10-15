@@ -15,7 +15,7 @@ pub(crate) fn exec(
 ) -> crate::Result<()> {
     // Off under `--silent` and `--no-summary`; `fetch` clears the flag it reads.
     let print_summary = pm.options.should_print_command_name();
-    // `fetch` sets it for its own use.
+    // Read before calling `fetch`, which sets `dry_run` for its own use.
     let dry_run = pm.options.dry_run;
 
     if print_summary {

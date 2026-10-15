@@ -45,14 +45,16 @@ struct OutdatedPackage {
     current_version: Box<[u8]>,
     latest_version: Box<[u8]>,
     update_version: Box<[u8]>,
-    /// package.json resolves to `update_version`. Otherwise nothing matches it and `update_version` is the latest.
+    /// True if `update_version` is in the range that package.json declares. If no version is in
+    /// that range, this is false and `update_version` is the latest version.
     update_in_range: bool,
     workspace_pkg_id: PackageID,
     dependency_type: &'static [u8],
     workspace_name: Box<[u8]>,
     behavior: Behavior,
     use_latest: bool,
-    /// An older `latest` is shown, but no key and no flag picks it: `bun update` does not downgrade to it.
+    /// A `latest` that is older than the installed version is shown, but no key or flag can select
+    /// it, because `bun update` does not downgrade.
     latest_is_newer: bool,
     /// Both the default scope and the scope of `name` are the npm registry, so the name links to npmjs.org.
     uses_default_registry: bool,
@@ -73,7 +75,7 @@ impl OutdatedPackage {
         }
     }
 
-    /// An install picks the chosen version from what package.json says now.
+    /// True if an install would pick the chosen version from the range package.json declares now.
     fn target_in_range(&self) -> bool {
         self.update_in_range && strings::eql(self.target_version(), &self.update_version)
     }
@@ -399,7 +401,8 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    /// `catalog_updates`: `name` or `name:catalog` -> the new version and `target_in_range`. Catalogs are defined in the root package.json.
+    /// `catalog_updates` maps `name` or `name:catalog` to the new version and `target_in_range`.
+    /// Catalogs are defined in the root package.json.
     fn update_catalog_definitions(
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<(Box<[u8]>, bool)>,
@@ -490,7 +493,7 @@ impl UpdateInteractiveCommand {
 
         let selected = Self::prompt_for_updates(&mut outdated_packages);
 
-        // `OutdatedPackage::catalog_key` -> the new version and `target_in_range`
+        // Maps `OutdatedPackage::catalog_key` to the new version and its `target_in_range`.
         let mut catalog_updates: StringHashMap<(Box<[u8]>, bool)> = StringHashMap::default();
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
 
@@ -576,7 +579,8 @@ impl UpdateInteractiveCommand {
         // Show the install time instead of the total command time
         ctx.start_time = bun_core::time::nano_timestamp();
 
-        // package.json already resolves to the chosen versions; the flag would re-pin every selection to `latest`, ignoring per-package `l` toggles.
+        // package.json already resolves to the chosen versions. With `--latest` still set, the
+        // install would re-pin every selection to `latest` and ignore the per-package `l` toggles.
         manager.options.do_.remove(Do::UPDATE_TO_LATEST);
         manager.options.positionals = crate::cli::cli_arena().alloc_slice_copy(&positionals);
         update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
@@ -1462,7 +1466,8 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     }
 }
 
-/// Rewrites the catalog entry the row was read from. The new node must outlive install's `initialize_store()` reset.
+/// Rewrites the catalog entry that the row was read from. The new node is allocated in the CLI
+/// arena, because it must outlive the `initialize_store()` reset that the install does.
 fn update_catalog(
     package_json: &Expr,
     catalog_name: &[u8],
@@ -1486,7 +1491,9 @@ fn update_catalog(
     Ok(())
 }
 
-/// What `bun update` writes over `declared`, or `bun update --latest` when `declared` does not resolve to `chosen`. `None`: it stays.
+/// Returns the text that replaces `declared` in package.json: what `bun update` would write, or
+/// what `bun update --latest` would write if `declared` does not resolve to `chosen`. `None` means
+/// `declared` is kept as written.
 fn chosen_version_literal(declared: &[u8], chosen: &[u8], in_range: bool) -> Option<Vec<u8>> {
     updated_version_literal(declared, min_of_valid(chosen)?, chosen, false, !in_range)
 }

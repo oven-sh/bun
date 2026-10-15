@@ -3612,8 +3612,8 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-/// Spells out C0/C1 controls, DEL, U+2028-U+202E and U+2066-U+2069 (line separators, bidirectional
-/// overrides and isolates), so text somebody else authored cannot repaint our output.
+/// Escapes C0/C1 control characters, DEL, U+2028-U+202E (line separators, bidirectional overrides)
+/// and U+2066-U+2069 (bidirectional isolates), so that untrusted text cannot alter our output.
 pub struct EscapeControlChars<T>(pub T);
 
 /// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
@@ -3644,7 +3644,8 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 pub(crate) struct EscapeControlCharsWriter<'a>(pub(crate) &'a mut dyn fmt::Write, pub(crate) bool);
 
 impl fmt::Write for EscapeControlCharsWriter<'_> {
-    /// `Raw` and `write_bytes` pass bytes nobody checked off as a `str`, and this is the writer that decodes it.
+    /// `Raw` and `write_bytes` pass unvalidated bytes as a `str`, so `s` is validated here before
+    /// it is decoded. Invalid UTF-8 is written as U+FFFD.
     fn write_str(&mut self, s: &str) -> fmt::Result {
         s.as_bytes().utf8_chunks().try_for_each(|chunk| {
             self.write_valid(chunk.valid())?;

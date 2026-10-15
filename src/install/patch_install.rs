@@ -76,7 +76,6 @@ pub struct CalcPatchHash {
     pub(crate) state: Option<EnqueueAfterState>,
 
     pub(crate) result: Option<u64>,
-    /// There is no file at `patchfile_path`.
     pub(crate) not_found: bool,
 
     pub(crate) logger: Log,
@@ -113,7 +112,7 @@ pub struct InstallContext {
     pub(crate) path: Vec<u8>,
 }
 
-/// A path in `patchedDependencies` starts at the project, unless it is absolute.
+/// A relative path in `patchedDependencies` is resolved against the project directory.
 fn resolve_patchfile_path<'a>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
@@ -132,7 +131,8 @@ fn resolve_patchfile_path<'a>(
     )
 }
 
-/// `None` after an error. `log` copies what it shows of `source`, so it may outlive it.
+/// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
+/// `log` may outlive `source`.
 pub(crate) fn parse_patch_source<'a>(
     source: &'a Source,
     log: &mut Log,
@@ -182,7 +182,7 @@ pub(crate) fn parse_patch_source<'a>(
     Some(patchfile)
 }
 
-/// The first 8 bytes of the SHA-1: it names the cache entry of the patched package.
+/// The first 8 bytes of the patch file's SHA-1, used in the patched package's cache folder name.
 pub(crate) fn hash_patch(contents: &[u8]) -> u64 {
     let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
     hasher.update(contents);
@@ -191,14 +191,16 @@ pub(crate) fn hash_patch(contents: &[u8]) -> u64 {
     u64::from_le_bytes(digest[0..8].try_into().unwrap())
 }
 
-/// No linker runs without the file: the patched folder in node_modules may be the last copy of it.
+/// Exits before any linker runs when a patch file is missing, because the patched package in
+/// node_modules may hold the only remaining copy of those changes.
 #[cold]
 fn crash_on_missing_patch(
     manager: &mut PackageManager,
     patch: &CalcPatchHash,
     log_level: LogLevel,
 ) -> Result<(), crate::Error> {
-    // It stops the install, not the commit of another package's patch: both files may be lost.
+    // A `bun patch --commit` of another package still writes its patch file before the exit.
+    // Otherwise that patch could be lost too.
     let committed = package_manager::patch_package::write_pending_patch(manager)?;
     if committed.is_some() {
         package_manager::package_json_write_back::flush(manager)?;

@@ -253,7 +253,8 @@ pub(crate) fn install_hoisted_packages(
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
-    // Behind a link the store stays, so every run finds it: none of them starts over.
+    // If `node_modules` is a symlink, nothing behind it is cleared, so every install finds `.bun`
+    // again. Warn instead of treating each install as a switch away from the isolated linker.
     let is_linked = has_isolated_store
         && LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true);
     let replacing_isolated_node_modules = has_isolated_store && !is_linked;
@@ -585,7 +586,7 @@ pub(crate) fn install_hoisted_packages(
             this.sleep();
         }
         installer.link_bins_after_scripts();
-        // Bin linking reads `successfully_installed`, so the summary takes it after.
+        // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));
 

@@ -567,8 +567,8 @@ macro_rules! zstr {
     }};
 }
 
-/// The name of the null device, as a literal for `concat!`. For what a child process reads as a
-/// path: on Windows `/dev/null` is a path like any other to most of them.
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
 #[cfg(not(windows))]
 #[macro_export]
 macro_rules! null_device {

@@ -210,7 +210,7 @@ pub(crate) fn perform_security_scan_after_resolution(
         return Ok(None);
     };
 
-    // The one way out, whatever the command: this run places nothing in node_modules.
+    // No command skips a configured scanner unless the run installs nothing into `node_modules`.
     if manager.options.dry_run || !manager.options.do_.contains(Do::INSTALL_PACKAGES) {
         return Ok(None);
     }
@@ -219,8 +219,8 @@ pub(crate) fn perform_security_scan_after_resolution(
         let _entries_lock = FileSystem::instance().fs.entries_mutex.lock_guard();
         manager.root_dir.has_comptime_query(b"node_modules")
     };
-    // Only a command that names what it adds or updates sends just that, and what moved with it.
-    // The rest was sent by the install that left the lockfile and node_modules.
+    // A command that names the packages it adds or updates scans only those packages and `seeds`.
+    // The install that wrote the lockfile and `node_modules` already scanned everything else.
     let scan_all = manager.update_requests.is_empty()
         || !loaded_lockfile
         || !has_node_modules
@@ -738,7 +738,7 @@ fn attempt_security_scan(
         b"false"
     };
     let code = replace_first(SCANNER_ENTRY_SOURCE, b"__SUPPRESS_ERROR__", suppress);
-    // Last: no placeholder is looked for in the value.
+    // The scanner's name is substituted last, so a placeholder inside the name is never replaced.
     let mut quoted: Vec<u8> = Vec::new();
     write!(
         &mut quoted,

@@ -34,7 +34,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
-/// For a boolean variable that is also read from a `.env` file, which the accessors below do not see.
+/// Parses the value of a boolean variable that can also be set in a `.env` file. The accessors
+/// below only read the process environment.
 pub use kind::boolean::string_is_truthy;
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -184,7 +185,8 @@ new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
 new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
-// Set by `bunx` for the `bun add` it spawns: the directory it installs into. It means nothing to a command elsewhere.
+// Set by `bunx` for the `bun add` it spawns, to the directory that `bun add` installs into.
+// A command that inherits it but runs in any other directory ignores it.
 new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 // Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
 // name is running. In those, `bun check` is the type checker and not the script again.

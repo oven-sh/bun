@@ -1839,7 +1839,7 @@ fn substitute_template(
                 j += 1;
             }
             if j < t.len() {
-                // consume placeholder; the colours of a message are in its template, never in a value
+                // Only the template colors a message, so control characters in a value are escaped.
                 let mut value = crate::fmt::EscapeControlCharsWriter(&mut *f, true);
                 let filled = args.write_nth(argi, &mut value)?;
                 debug_assert!(

@@ -104,13 +104,15 @@ impl Blocked {
     }
 
     fn find_all(pm: &mut PackageManager, linker: NodeLinker) -> crate::Result<Vec<Blocked>> {
-        // Without a store another tool laid out node_modules: look where a package resolves from.
+        // If there is no `node_modules/.bun`, another tool created `node_modules`. In that case,
+        // look for each package where it resolves from.
         let mut store = AutoAbsPath::init_top_level_dir();
         let _ = store.append(b"node_modules/.bun");
         if linker == NodeLinker::Isolated && bun_sys::exists(store.slice()) {
             return Self::find_in_store(pm);
         }
-        // The saved tree also has what packages ship inside themselves, which no install runs.
+        // The tree saved in the lockfile also has the dependencies that packages bundle, and no
+        // install runs the scripts of those. The install tree leaves them out.
         bun_install::prune::with_install_tree(pm, Self::find_in_tree)?
     }
 
@@ -218,7 +220,8 @@ impl Blocked {
         (alias, trusted_name)
     }
 
-    /// Whether the installers run it once its name is listed. `bun pm trust` runs nothing else.
+    /// Whether an install runs the package's scripts once its name is in `trustedDependencies`.
+    /// `bun pm trust` does not run the scripts of any other package.
     fn can_trust(&self, lockfile: &Lockfile) -> bool {
         lockfile.can_trust_by_name(
             self.names(lockfile).0,

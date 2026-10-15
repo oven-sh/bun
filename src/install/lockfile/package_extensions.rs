@@ -480,11 +480,12 @@ impl Lockfile {
             return Ok(false);
         }
 
-        // The rows move to the end of the buffer; `clean_with_logger` drops the old ones.
+        // The rows are rewritten at the end of the buffer. `clean_with_logger` drops the old ones.
         let dependencies = &mut self.buffers.dependencies;
         let resolutions = &mut self.buffers.resolutions;
         debug_assert_eq!(dependencies.len(), resolutions.len());
-        // Without records every row stays, so the loaded trees and slices still point at theirs.
+        // Rows at the end are overwritten in place only if no rule was applied before. Then every
+        // old row keeps its index, so the trees and slices loaded from the lockfile stay valid.
         if applied.is_empty() && off + len == dependencies.len() {
             dependencies.truncate(off);
             resolutions.truncate(off);
@@ -542,8 +543,9 @@ impl Lockfile {
         Ok(*self.packages.get(id as usize))
     }
 
-    /// For a loaded lockfile, once package.json is read. `Some`: changed, with the rows to resolve
-    /// and, as `(package_extension_key, name)`, the ones that no rule adds now.
+    /// Applies the rules to a lockfile loaded from disk, once package.json has been read. Returns
+    /// `Some` if anything changed: the dependency rows that need to be resolved, and the rows that
+    /// no rule adds anymore as `(package_extension_key, name hash)`.
     #[cold]
     #[inline(never)]
     pub(crate) fn reconcile_package_extensions(
@@ -604,7 +606,7 @@ impl Lockfile {
             if !applied.iter().any(|applied| applied.0 == package) {
                 continue;
             }
-            // `packages` in bun.lock lists only what is in a tree.
+            // bun.lock's `packages` only lists packages that are in an install tree.
             if !hoisted
                 .iter()
                 .any(|&row| resolutions[row as usize] as usize == id)

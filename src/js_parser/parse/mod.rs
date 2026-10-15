@@ -1507,8 +1507,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        // A kept directive is kept to the letter: `("use strict")` is none, and one spelled with an
-                        // escape is another one.
+                        // With `keep_directives`, `("use strict")` is not a directive, and the text
+                        // is kept as written because an escape makes it a different directive.
                         let keep = p.options.keep_directives;
                         if !str_.prefer_template
                             && (!keep || expr.value.loc.start == stmt.loc.start)

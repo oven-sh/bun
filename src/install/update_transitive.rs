@@ -130,8 +130,8 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // A peer only shared the package of its owner's or the root's own dependency,
-                    // which keeps it (`bind_served_peers`).
+                    // A peer only shared `old` with a regular dependency of its owner or of the
+                    // root (`bind_served_peers`). Nothing moved if that still resolves to `old`.
                     || (dep.behavior.is_peer()
                         && [owner, 0].into_iter().any(|holder| {
                             (dep_slices[holder].get(deps).iter())
@@ -705,17 +705,17 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// The root package.json and its `patchedDependencies`.
+/// Returns the source of the root package.json and its `patchedDependencies` object.
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
-    // `PackageManager::root_dir`
     root_dir: &[u8],
 ) -> Option<(&'a bun_ast::Source, bun_ast::Expr)> {
     // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
     let mut path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
     let mut path_buf = bun_paths::path_buffer_pool::get();
-    // Auto-install does not go through `init`: the one beside the lockfile it loaded.
+    // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
+    // lockfile that it loaded.
     if path.is_empty() {
         path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
             root_dir,
@@ -734,7 +734,8 @@ fn root_patched_dependencies<'a>(
     Some((&entry.source, patched))
 }
 
-/// The `patchedDependencies` keys of the root package.json: the lockfile has only their hashes.
+/// The `patchedDependencies` keys, read from the root package.json because the lockfile only stores
+/// their hashes.
 pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
     let log = manager.log_mut();
     let root_dir = manager.root_dir.dir;
@@ -748,7 +749,7 @@ pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[
     keys
 }
 
-/// A key without a version names no package, so its patch is never applied.
+/// A `patchedDependencies` key without a version matches no package, so its patch is never applied.
 #[cold]
 fn warn_patch_key_without_version(
     log: &mut bun_ast::Log,
@@ -807,7 +808,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     for (key, key_loc) in keys {
-        // The first one after a scope's: a URL in place of the version can hold more.
+        // Split at the first `@` after the scope's. A URL in place of the version can contain more.
         let Some(at) = strings::index_of_char_pos(&key, b'@', 1) else {
             warn_patch_key_without_version(log, source, key_loc, &key, lockfile);
             continue;
@@ -823,7 +824,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             .package_index
             .get(&Semver::string::Builder::string_hash(name))
             .map_or(&[], PackageIndexEntry::as_slice);
-        // A folder, a link and a workspace are never patched.
+        // `file:` folders, `link:` dependencies and workspaces are never patched.
         if installed
             .iter()
             .any(|&id| !pkg_res[id as usize].can_enqueue_install_task())

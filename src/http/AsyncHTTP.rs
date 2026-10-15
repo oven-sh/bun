@@ -625,7 +625,7 @@ impl<'a> AsyncHTTP<'a> {
         self.send_sync_for_result(response_buffer)?.into_metadata()
     }
 
-    /// `send_sync` for a caller that may send `self` again: the whole result says how the attempt ended.
+    /// Like `send_sync`, but returns the whole result so the caller can decide whether to retry.
     pub fn send_sync_for_result(
         &mut self,
         response_buffer: &mut MutableString,
@@ -757,7 +757,8 @@ impl<'a> AsyncHTTP<'a> {
                     client.url = original_url;
                     client.connected_url = URL::default();
                     client.method = original_method;
-                    // Every hop also spends one redirect and looks the proxy up again.
+                    // Each redirect also decrements the redirect count and picks a proxy for the
+                    // new URL, so restore both from the original.
                     client.remaining_redirect_count = original_client.remaining_redirect_count;
                     client.http_proxy = original_client.http_proxy.clone();
                     // Clone-owned (allocated after `ptr::read`).

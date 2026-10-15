@@ -530,7 +530,8 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
-        /// False for an offset and a length, read from a file, that `slice` would turn into "".
+        /// Returns false if the offset and length, which may come from a file, reach past the end
+        /// of `buf`. `slice` returns "" for such a string.
         #[inline]
         pub fn is_within(self, buf: &[u8]) -> bool {
             let ptr_ = self.ptr();

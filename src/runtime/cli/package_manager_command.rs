@@ -80,7 +80,8 @@ impl InstalledFilter {
             ResolutionTag::Root | ResolutionTag::Symlink => return true,
             // A pruned checkout (`turbo prune`, a Docker layer) lacks some of the lockfile's workspaces.
             ResolutionTag::Workspace => {
-                // Not `append`: Windows takes a `..` in an absolute path literally.
+                // `join` resolves a `..` in the workspace's path, which `append` does not. Windows
+                // treats a `..` that is left in an absolute path as a literal name.
                 let mut member = AutoAbsPath::init_top_level_dir();
                 let _ = member.join(&[resolution.workspace().slice(buf)]);
                 return bun_sys::exists(member.slice());
@@ -394,7 +395,8 @@ impl PackageManagerCommand {
             }
 
             let deletes = matches!(action, b"rm" | b"prune");
-            // `rm` and `prune` work on the whole cache: `rm <package>` must not read as `rm`.
+            // `rm` and `prune` always act on the whole cache, so an extra argument is an error.
+            // Otherwise `rm <package>` would clear everything.
             if let Some(&word) = positionals.get(if deletes { 2 } else { 1 }) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> unexpected argument \"{}\"\n<d>usage:<r> bun pm cache [rm | prune | pack \\<file\\> | unpack \\<file\\>]",
@@ -463,7 +465,8 @@ impl PackageManagerCommand {
                 } else if prune {
                     had_err = PmCachePruneCommand::exec(rm_path, cache_max_age_days, dry_run);
                 } else {
-                    // The directory itself stays: it may be a mount point, what a symlink points to, or in a read-only parent.
+                    // Only the directory's contents are deleted. The directory itself may be a
+                    // mount point, the target of a symlink, or inside a read-only parent.
                     if dry_run {
                         bun_core::prettyln!(
                             "<r><d>dry run:<r> would delete 'bun install' cache at {}",
@@ -585,7 +588,8 @@ impl PackageManagerCommand {
                 Global::exit(1);
             }
             let names: &[&[u8]] = positionals.get(1..).unwrap_or(&[]);
-            // As in `npm ls`: a name is looked for among all installed packages, and `--depth` wins over `--all`.
+            // As in `npm ls`, a package name is searched for among all installed packages, and
+            // `--depth` takes precedence over `--all`.
             let all = pm.options.depth.is_none() && (!names.is_empty() || cli.all);
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             // Before the first `bun add -g`, and after the last package was removed.
@@ -618,7 +622,8 @@ impl PackageManagerCommand {
             };
 
             let resolutions = lockfile.buffers.resolutions.as_slice();
-            // `--production` / `--omit` leave out a group and what only that group needs.
+            // `--production` and `--omit` exclude a dependency group, along with every package that
+            // only that group needs.
             let wanted = reachable::packages(
                 lockfile,
                 resolutions,
@@ -674,7 +679,8 @@ impl PackageManagerCommand {
 
             let found = if all {
                 if trusted_only || !names.is_empty() {
-                    // Both select by package name, not tree position: a flat list, so that a selected package under another parent is shown.
+                    // `--trusted` and package names select by name, not by position in the tree. A
+                    // flat list shows a selected package even when its parent is not selected.
                     print_selected_dependencies_flat(
                         &first_directory,
                         &directories,
@@ -711,7 +717,8 @@ impl PackageManagerCommand {
                 index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| {
                     cmp_dependency_names(lockfile, a, b)
                 });
-                // A member whose name the root gives to another package is listed next to that package.
+                // If the root uses a workspace member's name for a different package, both the
+                // member and that package are listed.
                 let resolutions = lockfile.buffers.resolutions.as_slice();
                 let is_member_row = |dep_id: DependencyID| {
                     lockfile.buffers.dependencies[dep_id as usize]
@@ -963,7 +970,7 @@ fn print_node_modules_folder_structure(
     }
 }
 
-/// Returns whether it listed a package.
+/// Returns whether any package was listed.
 fn print_selected_dependencies_flat(
     first_directory: &NodeModulesFolder,
     directories: &[NodeModulesFolder],

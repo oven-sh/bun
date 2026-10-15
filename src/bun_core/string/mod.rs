@@ -1149,7 +1149,8 @@ impl core::fmt::Display for StringView<'_> {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // `borrow_utf8` takes any bytes (a file name, say) and `to_utf8` hands them back as they are.
+        // The bytes may be invalid UTF-8: `borrow_utf8` accepts any bytes, such as a file name, and
+        // `to_utf8` returns them unchanged.
         write!(f, "{}", bstr::BStr::new(self.to_utf8().slice()))
     }
 }

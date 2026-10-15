@@ -842,7 +842,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
         }
 
-        // Every peer gets the copy the root itself depends on, whatever its range (`hoist_dependency`).
+        // If the root package.json depends on this package, every peer dependency on it uses the
+        // root's copy, whatever range the peer declares (see `hoist_dependency`).
         let root_target = inst
             .edges
             .iter()
@@ -854,7 +855,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             inst.edges
                 .iter()
                 .zip(&target)
-                // While that copy stays, a peer that moves changes nothing.
+                // If the root's copy cannot be upgraded, upgrading a peer dependency has no effect.
                 .filter(|(edge, _)| !(edge.peer && matches!(root_target, Some(None))))
                 .filter_map(|(_, t)| t.map(|t| t.candidate))
                 .collect()
@@ -952,7 +953,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             expected_gone.push((inst.name_hash, inst.from));
             continue;
         }
-        // When that copy moves, the old version goes although these peers reject the new one.
+        // If the root's copy is upgraded, the vulnerable version is removed even though these peer
+        // dependencies' ranges reject the new version.
         if !(matches!(root_target, Some(Some(_))) && blockers.iter().all(|blocker| blocker.peer)) {
             for &a in &inst.advisories {
                 advisory_still_present.set(a);

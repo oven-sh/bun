@@ -150,7 +150,8 @@ pub(crate) fn normalize_key_pair(
     key_pair(path, old, new, Options::KEY).map(|(o, n, _)| (o, n))
 }
 
-/// With the keys, sorted: every name in them that is as written in the file (a global's, an export's).
+/// Returns the two comparison keys and a sorted list of every name in them that was not renamed,
+/// such as the names of globals and exports.
 fn key_pair(
     path: &[u8],
     old: &[u8],
@@ -194,11 +195,13 @@ fn key_pair(
     Some((o, n, as_written))
 }
 
-/// Two JS files with one comparison key are one program, whatever their layout and the names of their locals.
+/// Whether `old` and `shown` have the same comparison key, which makes them the same program apart
+/// from layout and the names of locals.
 ///
-/// `shown` is `old` with some lines as a later version has them. The lines of it in `removed` (0-based, ascending)
-/// are `old`'s own, and may name a local that `shown` declares under its later name: there the name is free in
-/// `shown`, prints as written, and is let through.
+/// `shown` is `old` with some lines replaced by the new version's. `removed` lists the lines of
+/// `shown` (0-based, ascending) that the diff marks as removed, which are `old`'s text. Such a line
+/// may use a local's old name while `shown` declares it under its new name. The old name is then
+/// unbound in `shown` and prints as written, so a mismatch at that name is accepted.
 pub(crate) fn same_program(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32]) -> bool {
     same_key(path, old, shown, removed, Options::KEY)
 }
@@ -212,7 +215,7 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     let name_end =
         |text: &[u8], at: usize| at + text[at..].iter().take_while(|c| in_name(**c)).count();
     let (mut i, mut j) = (0, 0);
-    // Where `j` is in `b`.
+    // The line of `b` that `j` is on, and the offset in `b` where that line starts.
     let (mut line, mut line_start) = (0u32, 0);
     loop {
         let same_from = j;
@@ -227,7 +230,7 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
         if i == a.len() && j == b.len() {
             return true;
         }
-        // The two part inside a word: back to where it starts.
+        // If the texts diverge in the middle of a name, back up to where the name starts.
         while j > same_from && in_name(b[j - 1]) {
             i -= 1;
             j -= 1;
@@ -242,7 +245,7 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
         let let_through = a_end > i
             && b_end > j
             && as_written.binary_search_by(|name| name.as_slice().cmp(&b[j..b_end])).is_ok()
-            // The map counts columns in UTF-16 units.
+            // The map counts columns in UTF-16 units, which only equal bytes after ASCII text.
             && b[line_start..j].is_ascii()
             && from.peek().is_some()
             && from.all(|m| removed.binary_search(&m.orig_line).is_ok());
@@ -253,8 +256,9 @@ fn same_key(path: &[u8], old: &[u8], shown: &[u8], removed: &[u32], options: Opt
     }
 }
 
-/// Whether `shown`, a re-print under `options` put on screen in place of the file `raw`, is the same file to the
-/// parser: printed once more under them, the two are one text. `renamed`: but for the names of locals.
+/// Whether `shown`, a re-print of the file `raw` that is displayed in its place, still parses as
+/// the same file: printing both again with `options` must give the same text. If `renamed` is set,
+/// the names of locals may differ.
 pub(crate) fn stands_for(
     path: &[u8],
     raw: &[u8],
@@ -269,7 +273,7 @@ pub(crate) fn stands_for(
     matches!((print(raw), print(shown)), (Some(a), Some(b)) if a.text == b.text)
 }
 
-/// The name a module exports something under is its interface, not a local's name: it is never changed.
+/// Keeps exported symbols from being renamed. An export's name is part of the module's interface.
 fn pin_exports(ast: &mut bun_ast::Ast<'_>) {
     for export in ast.named_exports.values() {
         let symbol = Namer::root(ast.symbols.as_slice(), export.ref_.inner_index() as usize);
@@ -320,10 +324,10 @@ fn parse_js<'a>(
     opts.features.no_macros = true;
     opts.features.trim_unused_imports = false;
     opts.features.minify_syntax = options.minify_syntax;
-    // A call marked `@__PURE__` runs like any other unless a bundler drops it.
+    // A call marked `@__PURE__` still runs unless a bundler removes it, so it is not dead code.
     opts.ignore_dce_annotations = true;
     opts.keep_directives = true;
-    // What the runtime takes.
+    // Accept the same syntax as the runtime.
     opts.features.top_level_await = true;
     opts.features.standard_decorators = !loader.is_typescript();
     opts.transform_only = true;
@@ -337,9 +341,9 @@ fn parse_js<'a>(
     (log.errors == 0).then_some(ast)
 }
 
-/// A source map counts lines as JavaScript does: a lone `\r`, U+2028 and U+2029 end one too. Everything here cuts at
-/// `\n`. For each of the map's lines of `text`: the `\n` line it starts on, and after how many bytes of that line.
-/// `None`: the two counts are one.
+/// A source map counts lines like JavaScript does: a lone `\r`, U+2028 and U+2029 also end a line.
+/// The rest of this module splits at `\n` only. For each source-map line of `text`, this returns
+/// the `\n` line it starts on and its byte offset in that line. `None` means both counts agree.
 fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
     use bun_core::strings;
     if !strings::contains_char(text, b'\r') && !strings::contains(text, b"\xe2\x80") {
@@ -456,7 +460,8 @@ fn print_js<'a>(
             }
         }
     }
-    // The printer leaves the hashbang to its caller. It says what runs the file, so it is the print's first line.
+    // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
+    // is kept as the first line of the output.
     let hashbang = ast.hashbang.slice();
     if !hashbang.is_empty() {
         text = [hashbang, b"\n".as_slice(), text.as_slice()].concat();
@@ -490,9 +495,11 @@ struct Namer<'s> {
     arenas: [&'s Arena; 2],
     symbols: [&'s mut [bun_ast::Symbol]; 2],
     renamed: [Vec<bool>; 2],
-    /// Every name that stays as written (a global's, a long local's), sorted; never handed out.
+    /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
+    /// never given one of these names.
     taken: Vec<Vec<u8>>,
-    /// Some scope was left with its own names, which the names handed out around it were not checked against.
+    /// A scope was nested too deep to be renamed. Its original names were not checked against the
+    /// new names given to the scopes around it, so the renaming cannot be used.
     too_deep: bool,
     scratch: Vec<u8>,
     /// Subtree member counts, computed once per scope.
@@ -660,7 +667,8 @@ impl<'s> Namer<'s> {
         depth: usize,
         level: usize,
     ) {
-        // One frame per nesting level; past this the input is pathological and is compared under its own names.
+        // `plan` recurses once per nesting level. Input nested deeper than this is pathological, so
+        // the callers give up on renaming it.
         if level > 256 {
             self.too_deep = true;
             return;

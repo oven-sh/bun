@@ -37,7 +37,7 @@ pub(crate) struct ReadmeInfo {
     pub contents: Vec<u8>,
 }
 
-/// Where the files are that `"bin"` and `"directories.bin"` name.
+/// Where to look for the files that `"bin"` and `"directories.bin"` refer to.
 #[derive(Clone, Copy)]
 pub(crate) enum PackageFiles<'a> {
     /// The folder that was packed.
@@ -114,9 +114,10 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-/// A thread blocked on stdin cannot be stopped, so with `-r` the next login reuses one that still waits.
+/// A thread that is blocked reading stdin cannot be stopped. When `--recursive` needs another
+/// login, it reuses the thread that is still waiting for ENTER instead of starting a second one.
 struct WebLogin {
-    /// What ENTER opens, until this login is over.
+    /// The URL that pressing ENTER opens. `None` once the login has finished.
     auth_url: Option<&'static [u8]>,
     waits_for_enter: bool,
 }
@@ -356,7 +357,7 @@ impl Context {
 }
 
 impl PublishCommand {
-    /// Publishing without the provenance statement that was asked for would look like success.
+    /// Fails if provenance was requested. Publishing without the statement would look like success.
     pub(crate) fn refuse_provenance(manager: &PackageManager, package_json: &Expr) {
         let options = &manager.options;
         if let Some(asked_by) = options.provenance_asked_by(package_json, manager.env_mut()) {
@@ -368,7 +369,8 @@ impl PublishCommand {
         }
     }
 
-    /// What `npm publish` refuses too, after `--tag` and `publishConfig.tag` are applied.
+    /// Rejects the tags that `npm publish` rejects. Call this after `--tag` and `publishConfig.tag`
+    /// have been applied.
     pub(crate) fn refuse_tag(manager: &PackageManager, package_version: &[u8]) {
         let tag = manager.options.publish_config.tag;
         if dependency::Tag::infer(tag) == dependency::Tag::Npm {
@@ -863,7 +865,7 @@ impl PublishCommand {
                 ..Default::default()
             });
 
-        // `Output::buffered_stdin()` belongs to the main thread.
+        // This runs on its own thread, and `Output::buffered_stdin()` is for the main thread only.
         let mut input = [0u8; 1024];
         loop {
             match bun_sys::read(Fd::stdin(), &mut input) {
@@ -909,7 +911,7 @@ impl PublishCommand {
             let auth_url_str: &'static [u8] = cli_dupe(auth_url_str);
             let auth_url = URL::parse(auth_url_str);
             let shown_auth_url = bun_fmt::escape_control_chars(auth_url_str).to_string();
-            // ENTER opens only what the box shows.
+            // ENTER only opens a URL that the box shows exactly as it is, with nothing escaped.
             let auth_url_is_web = (auth_url.is_http() || auth_url.is_https())
                 && shown_auth_url.as_bytes() == auth_url_str;
 

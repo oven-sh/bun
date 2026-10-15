@@ -45,7 +45,8 @@ impl PackageManager {
     pub(crate) fn start_git_tasks(&mut self) {
         let max = u32::from(bun_core::get_thread_count());
         while self.running_git_tasks.load(Ordering::Relaxed) < max {
-            // The first task settles the environment of them all; the others wait here for that.
+            // The first task works out the environment that every git task shares. No other task
+            // starts until that is done.
             if !self.has_git_env() && self.running_git_tasks.load(Ordering::Relaxed) > 0 {
                 break;
             }
@@ -67,7 +68,7 @@ impl PackageManager {
 
 /// The command the running child is.
 enum Step {
-    /// `GitEnv::CONFIG_QUERY`, ahead of the first task's own commands.
+    /// `git` with `GitEnv::CONFIG_QUERY`. The first task runs it before its own commands.
     Config,
     /// `git fetch <url>` in this cached bare repository (clone task).
     Fetch {
@@ -75,15 +76,16 @@ enum Step {
         url: Vec<u8>,
         is_retry: bool,
     },
-    /// `git clone --bare <url> <tmp>` (clone task). `replaces`: the cache has a clone that git
-    /// cannot use.
+    /// `git clone --bare <url> <tmp>` (clone task). `replaces` is true when the new clone takes
+    /// the place of a cached clone that git cannot use.
     Clone { url: Vec<u8>, replaces: bool },
     /// `git log -1 <committish>` (commit task).
     Log,
-    /// `git <this --git-dir=> ls-tree -r <resolved>` in the bare repository (checkout task).
+    /// `git ls-tree -r -z <resolved>` in the bare repository (checkout task). Holds the
+    /// `--git-dir=<path>` argument that names that repository.
     ListTree(Vec<u8>),
     /// `git restore --source=<resolved>` from the bare repository into `<tmp>` (checkout task).
-    /// Holds what `ListTree` printed.
+    /// Holds the output of the `ListTree` step.
     Checkout(Vec<u8>),
 }
 
@@ -91,14 +93,14 @@ enum Step {
 pub(crate) enum Finalize {
     /// The bare repository exists (a cache hit, or `git fetch` refreshed it).
     Repo(Fd),
-    /// A fresh bare clone of this URL, to move into the cache, and `Step::Clone::replaces`.
+    /// A fresh bare clone to move into the cache, its URL, and the `replaces` of `Step::Clone`.
     PublishRepo(CacheStaging, Vec<u8>, bool),
-    /// A checkout the cache already has, and what `read_package_json_in` returned for it.
+    /// A checkout that is already in the cache, and the result of `read_package_json_in` for it.
     CachedCheckout(bun_sys::Dir, bun_sys::Maybe<Vec<u8>>),
     /// A fresh checkout, to strip and move into the cache.
     PublishCheckout(
         CacheStaging,
-        /* what `git ls-tree -r -z` printed */ Vec<u8>,
+        /* the output of `git ls-tree -r -z` */ Vec<u8>,
     ),
     Failed {
         staging: Option<CacheStaging>,
@@ -224,9 +226,10 @@ fn finish_checkout(
     read_package_json(task, package_dir, json)
 }
 
-/// A link to a file of the repository becomes a copy of that file. Any other link is left out.
-/// In place of each, git wrote a file that holds its target. `tree` is what `git ls-tree -r -z`
-/// printed, `<mode> <type> <object>\t<path>`: where a link leads is looked up there, not on disk.
+/// git was told not to create symlinks, so each one is checked out as a plain file that holds its
+/// target. This replaces that file with a copy of the target if the target is a file in the
+/// repository, and removes it otherwise. Targets are resolved against `tree`, the output of
+/// `git ls-tree -r -z` (`<mode> <type> <object>\t<path>` entries), never against the disk.
 fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()> {
     use bun_sys::{E, O};
     const LINK: &[u8] = b"120000";
@@ -240,8 +243,8 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
         .collect();
     entries.sort_unstable();
 
-    // All are read before any is replaced: a link can lead to a link. `None`: not a link that
-    // git wrote a file for.
+    // Read every symlink's target before replacing any, because a symlink can point to another
+    // symlink. `None` marks an entry that is not a symlink, or one that git wrote no file for.
     let mut targets: Vec<Option<Vec<u8>>> = Vec::with_capacity(entries.len());
     for &(path, mode) in &entries {
         if mode != LINK || !stays_in_checkout(path) {
@@ -272,7 +275,7 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
             continue;
         };
         let (from, mode) = entries[file];
-        // The modes that git creates its files with.
+        // git itself creates executable and regular files with these modes, before the umask.
         let mode = match mode {
             b"100755" => 0o777,
             b"100644" => 0o666,
@@ -282,7 +285,7 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
             continue;
         }
         let from = match checkout.open_file(from, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0) {
-            // Not every listed file is on disk: `.bun-tag` is not.
+            // A listed file can be missing: `finish_checkout` deletes a checked-in `.bun-tag`.
             Err(err) if err.get_errno() == E::ENOENT => continue,
             from => from?,
         };
@@ -292,8 +295,8 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
     Ok(())
 }
 
-/// Whether a path that git lists stays below the folder it is opened from. git writes no file
-/// for one that does not.
+/// Returns whether a path from git's listing stays inside the folder it is opened from. git
+/// writes no file for a path that does not.
 fn stays_in_checkout(path: &[u8]) -> bool {
     if cfg!(windows) {
         return bun_patch::is_safe_patch_path(path);
@@ -306,20 +309,21 @@ fn stays_in_checkout(path: &[u8]) -> bool {
 
 enum LinkEnd {
     Unknown,
-    /// On the way to it. A walk that meets it again is in a loop.
+    /// Being resolved right now. Reaching this link again means that the links form a loop.
     Walking,
-    /// The path from the root of the repository, no part of it a link. `None`: not in there.
+    /// The final path, relative to the repository root, with every symlink in it resolved.
+    /// `None` if the link leaves the repository or is part of a loop.
     At(Option<Vec<u8>>),
 }
 
-/// Where each link of `entries` (sorted; `targets` has its text) leads, also through other links,
-/// worked out from the text alone. Each link is walked once.
+/// Works out where each symlink in `entries` finally leads, following links through other links.
+/// It uses only the target text in `targets`, never the disk. `entries` must be sorted by path.
 fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<LinkEnd> {
     struct Walk<'a> {
         link: usize,
-        /// The path so far.
+        /// The path resolved so far.
         at: Vec<u8>,
-        /// The parts still to go, the next one last.
+        /// The path components still to resolve, in reverse order: the next one is the last.
         rest: Vec<&'a [u8]>,
     }
     let walk_of = |link: usize| {
@@ -343,7 +347,7 @@ fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<Lin
             _ => LinkEnd::At(None),
         })
         .collect();
-    // A stack, not recursion: a chain of links can be long.
+    // An explicit stack instead of recursion, because a chain of links can be arbitrarily long.
     let mut walks: Vec<Walk<'_>> = Vec::new();
     for first in 0..ends.len() {
         if !matches!(ends[first], LinkEnd::Unknown) {
@@ -381,7 +385,7 @@ fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<Lin
                         }
                         LinkEnd::At(None) | LinkEnd::Walking => None,
                         LinkEnd::Unknown => {
-                            // This part is walked again once that link's end is known.
+                            // Resolve that link first, then process this component again.
                             walk.at.truncate(parent);
                             walk.rest.push(part);
                             ends[next] = LinkEnd::Walking;
@@ -398,9 +402,10 @@ fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<Lin
     ends
 }
 
-/// As npm and pnpm do. A package that bundles dependencies keeps it.
+/// Removes a checked-in `node_modules`, as npm and pnpm do, unless the package bundles
+/// dependencies.
 fn strip_node_modules(checkout: &bun_sys::Dir) -> bun_sys::Maybe<()> {
-    // Most repositories commit nothing here; this also removes a file.
+    // Most repositories have no `node_modules`, and this call also removes one that is a file.
     match checkout.delete_file_z(bun_core::zstr!("node_modules")) {
         Ok(()) => return Ok(()),
         Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(()),
@@ -423,7 +428,7 @@ fn bundles_dependencies(checkout: &bun_sys::Dir) -> bool {
         .is_ok_and(|parsed| parsed.root.has_any_property_named(KEYS))
 }
 
-/// The file of that name in the folder of a package. No link is followed.
+/// Reads the `package.json` in a package's folder, without following a symlink.
 pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
     use bun_sys::O;
     package_dir
@@ -431,7 +436,7 @@ pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe
         .read_to_end()
 }
 
-/// `json` is what `read_package_json_in` returned for `package_dir`, which this closes.
+/// `json` is the result of `read_package_json_in(&package_dir)`. This closes `package_dir`.
 fn read_package_json(
     task: &mut Task::Task<'_>,
     package_dir: bun_sys::Dir,
@@ -580,8 +585,8 @@ fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
     bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
 }
 
-/// Of what `read_package_json_in` returned. Only a checkout made by an older version has a link:
-/// it is not used, and the commit is checked out again in its place.
+/// Returns whether `read_package_json_in` failed because `package.json` is a symlink. Only older
+/// versions of Bun cached such a checkout. It is not used: the commit is checked out again.
 fn is_link(json: &bun_sys::Maybe<Vec<u8>>) -> bool {
     matches!(json, Err(err) if err.get_errno() == bun_sys::E::ELOOP)
 }
@@ -590,21 +595,22 @@ fn is_usable_checkout(dir: &bun_sys::Dir) -> bool {
     is_tagged_checkout(dir) && !is_link(&read_package_json_in(dir))
 }
 
-/// The forms of `url` to clone from, last first (https before ssh).
+/// Returns the forms of `url` to clone from. The last one is tried first, so https before ssh.
 fn clone_urls(url: &[u8]) -> Vec<Vec<u8>> {
     let mut urls: Vec<Vec<u8>> = Vec::new();
     urls.extend(Repository::try_ssh(url));
     urls.extend(Repository::try_https(url));
-    // git reads anything that is not a URL as a path relative to the project.
+    // Any other `url` is passed to git unchanged, but only if it has a scheme. git would read
+    // anything else as a path relative to the project.
     if urls.is_empty() && strings::contains(url, b"://") {
         urls.push(url.to_vec());
     }
     urls
 }
 
-/// All that the `config` of a clone in the cache says. `url` is the form that could be cloned.
-/// How git stores the objects and the refs is kept from `old`, what it said before: with the
-/// wrong answer git cannot read them, and no more.
+/// Builds the whole `config` file of a cached clone. `url` is the URL form that could be cloned.
+/// From `old`, the previous `config`, it keeps only the object and ref storage formats, which git
+/// needs to read the repository.
 fn clone_config(url: &[u8], old: &[u8]) -> Vec<u8> {
     let mut quoted: Vec<u8> = Vec::with_capacity(url.len());
     for &byte in url {
@@ -639,7 +645,7 @@ fn clone_config(url: &[u8], old: &[u8]) -> Vec<u8> {
     .concat()
 }
 
-/// Empty if there is none.
+/// Reads the clone's `config` file. Returns an empty buffer if it is missing or is a symlink.
 fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
     use bun_sys::{E, O};
     match repo
@@ -651,14 +657,14 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
     }
 }
 
-/// Makes `clone_config` the `config` of the clone in `repo`, whatever that said before.
+/// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`.
 fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     let old = read_clone_config(repo)?;
     let config = clone_config(url, &old);
     if config == old {
         return Ok(());
     }
-    // Another install can be reading it, so it is never half written.
+    // Write a temporary file and rename it, so another install never reads a half-written `config`.
     let mut tmp_name_buf = [0u8; 64];
     let tmp_name =
         Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
@@ -667,7 +673,7 @@ fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     bun_sys::renameat(repo.fd(), tmp_name, repo.fd(), bun_core::zstr!("config"))
 }
 
-/// Puts the form that the `config` of the clone in `repo` names where it is tried first.
+/// Moves the URL that the clone's `config` records to the end of `urls`, so it is tried first.
 fn try_last_url_first(repo: &bun_sys::Dir, urls: &mut Vec<Vec<u8>>) {
     let config = read_clone_config(repo).unwrap_or_default();
     let last = urls
@@ -679,11 +685,12 @@ fn try_last_url_first(repo: &bun_sys::Dir, urls: &mut Vec<Vec<u8>>) {
     }
 }
 
-/// Whether git, under `clone_config`, takes nothing from the folder `repo` but its own refs and
-/// objects.
+/// Returns whether `repo` is a self-contained bare clone. Given the `config` from `clone_config`,
+/// git then reads only the refs and objects stored in this folder.
 fn is_own_clone(repo: &bun_sys::Dir) -> bool {
     let has = |name: &bun_core::ZStr| bun_sys::exists_at_type(repo.fd(), name).is_ok();
-    // The first three are git's own test: a tool that copies no empty folder drops `refs`.
+    // git itself requires the first three before it accepts a folder as a repository. `refs` can
+    // be missing if the cache was copied by a tool that skips empty folders.
     has(bun_core::zstr!("HEAD"))
         && has(bun_core::zstr!("objects"))
         && has(bun_core::zstr!("refs"))
@@ -695,10 +702,12 @@ fn is_own_clone(repo: &bun_sys::Dir) -> bool {
         && has_no_links(repo)
 }
 
-/// `dir` is a handle that nothing was listed through: a listing goes on where the last one stopped.
+/// Returns whether `dir` contains no symlink at any depth. `dir` must be a handle that has not
+/// been listed before, because a listing continues where the previous one on the handle stopped.
 fn has_no_links(dir: &bun_sys::Dir) -> bool {
     use bun_sys::{EntryKind, O};
-    // The folders still to list, as paths from `dir`. A list, not recursion: they can be nested deep.
+    // The folders still to list, as paths relative to `dir`. This is a work list instead of
+    // recursion because folders can be nested arbitrarily deep.
     let mut folders: Vec<Vec<u8>> = vec![Vec::new()];
     while let Some(folder) = folders.pop() {
         let opened = if folder.is_empty() {
@@ -706,7 +715,7 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
         } else {
             match dir.open_at_with(&folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(opened) => Some(opened),
-                // The git of another install removes folders that it has emptied.
+                // Another install's git may be running here, and git removes folders it empties.
                 Err(err) if err.get_errno() == bun_sys::E::ENOENT => continue,
                 Err(_) => return false,
             }
@@ -740,8 +749,8 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
     true
 }
 
-/// Moves the clone of `url` in `staging` into the cache. One that is there already stays, unless
-/// this one `replaces` it.
+/// Moves the clone of `url` from `staging` into the cache. A usable clone that is already in the
+/// cache is kept instead, unless `replaces` is set.
 fn finish_clone(
     task: &mut Task::Task<'_>,
     staging: CacheStaging,
@@ -794,7 +803,7 @@ pub(crate) struct GitSubprocess {
     step: JsCell<Step>,
     /// Clone URLs still to try, last first (https before ssh).
     urls: JsCell<Vec<Vec<u8>>>,
-    /// Each clone URL tried, with what git said of it. Printed once the last one has failed.
+    /// Every URL tried so far, each with git's stderr. Printed only after the last URL has failed.
     clone_output: JsCell<Vec<u8>>,
     /// Moves into the task's `Finalize`; `Drop` discards it otherwise.
     staging: JsCell<Option<CacheStaging>>,
@@ -911,7 +920,7 @@ impl GitSubprocess {
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
         let folder_name = bare_repo_folder_name(this.task().id);
-        // `publish` replaces whatever else has the name.
+        // If anything other than a usable clone has this name, clone again: `publish` replaces it.
         match bun_sys::Dir::borrow(&this.cache_dir)
             .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
         {
@@ -945,7 +954,7 @@ impl GitSubprocess {
         Self::spawn_clone(this, false)
     }
 
-    /// Takes the next of `urls`, which is not empty, and notes it in `clone_output`.
+    /// Pops the next URL off `urls`, which must not be empty, and records it in `clone_output`.
     fn next_url(&self, command: &str) -> Vec<u8> {
         let url = self
             .urls
@@ -957,7 +966,7 @@ impl GitSubprocess {
         url
     }
 
-    /// What git said of the URL that `next_url` returned.
+    /// Appends git's stderr for the URL that `next_url` last returned to `clone_output`.
     fn hold_output(&self, stderr: &[u8]) {
         self.clone_output.with_mut(|output| {
             output.extend_from_slice(stderr);
@@ -970,12 +979,13 @@ impl GitSubprocess {
     /// `urls` is not empty. May free `this` on `Ok`.
     fn fetch_next(this: ThisPtr<Self>, repo: bun_sys::Dir) -> Result<(), Error> {
         let url = this.next_url("fetch");
-        // The form that works is the one that stays in there.
+        // Each attempt records its URL in `config`, so the URL that works is the one that remains.
         write_clone_config(&repo, &url)?;
         Self::spawn_fetch(this, repo, &url, false)
     }
 
-    /// With `-C` instead, git looks for a repository above a folder that is none.
+    /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for
+    /// a repository if this folder turned out not to be one.
     fn git_dir_arg(&self, clone_id: Task::Id) -> Vec<u8> {
         [
             b"--git-dir=".as_slice(),
@@ -1000,7 +1010,7 @@ impl GitSubprocess {
             url: url.to_vec(),
             is_retry,
         });
-        // --prune clears refs renamed upstream.
+        // `--prune` removes refs that were renamed or deleted upstream.
         Self::spawn(
             this,
             &[
@@ -1013,7 +1023,8 @@ impl GitSubprocess {
                 b"--no-recurse-submodules",
                 b"--",
                 url,
-                // A pattern may match nothing: the HEAD of a remote can name no branch.
+                // A glob, unlike a plain `HEAD`, is allowed to match nothing. That matters when
+                // the remote's HEAD does not name an existing branch.
                 b"+HEAD*:refs/remotes/origin/HEAD*",
                 b"+refs/heads/*:refs/heads/*",
                 b"+refs/tags/*:refs/tags/*",
@@ -1054,7 +1065,8 @@ impl GitSubprocess {
         let git_dir = this.git_dir_arg(req.clone_id);
         this.step.set(Step::Log);
         if committish.is_empty() || committish == b"HEAD" {
-            // The first that resolves. No fetch moves the clone's own HEAD, the second.
+            // Prints the first of the two refs that resolves. The fetched `origin/HEAD` comes first
+            // because a fetch never updates the clone's own `HEAD`.
             Self::spawn(
                 this,
                 &[
@@ -1119,23 +1131,24 @@ impl GitSubprocess {
         let repo_path = bun_sys::get_fd_path(repo_dir, &mut repo_path_buf)?;
         let git_dir = [b"--git-dir=".as_slice(), repo_path].concat();
         this.step.set(Step::ListTree(git_dir.clone()));
-        // `is_safe_resolved_tag` rejected a leading `-`: not a git option.
+        // `is_safe_resolved_tag` rejects a leading `-`, so git cannot read `resolved` as an option.
         Self::spawn(this, &[&git_dir, b"ls-tree", b"-r", b"-z", &resolved])
     }
 
-    /// `tree` is what `git ls-tree -r -z` printed. May free `this` on `Ok`.
+    /// `tree` is the output of `git ls-tree -r -z`. May free `this` on `Ok`.
     fn spawn_checkout(this: ThisPtr<Self>, git_dir: &[u8], tree: Vec<u8>) -> Result<(), Error> {
         let tmp_path = this.new_staging()?;
         let staging = this.staging.get().as_ref();
         staging.expect("`new_staging` has set it").create()?;
-        // git refuses to restore where no path matches.
+        // `git restore` fails when no path matches, so an empty tree skips it.
         if tree.is_empty() {
             let staging = this.staging.take().expect("`new_staging` has set it");
             Self::finish_on_pool(this, Finalize::PublishCheckout(staging, tree));
             return Ok(());
         }
 
-        // git writes no index here, it only locks one: each checkout of a repository its own.
+        // This `git restore` never writes an index file, but it does lock one. Each checkout gets
+        // its own index path, so parallel checkouts of one repository do not contend for the lock.
         let index = [b"GIT_INDEX_FILE=".as_slice(), &tmp_path, b".index"].concat();
         let index = CString::new(index).map_err(|_| Error::InvalidCharacter)?;
         let work_tree = [b"--work-tree=".as_slice(), &tmp_path].concat();
@@ -1149,7 +1162,8 @@ impl GitSubprocess {
                 &work_tree,
                 b"-c",
                 b"core.longpaths=true",
-                // git makes no link: it writes a file in its place, for `copy_linked_files`.
+                // git writes each symlink as a plain file that holds its target, and
+                // `copy_linked_files` processes those files afterwards.
                 b"-c",
                 b"core.symlinks=false",
                 b"restore",
@@ -1171,7 +1185,7 @@ impl GitSubprocess {
         Self::spawn_with(this, args, None)
     }
 
-    /// `variable` is one more `KEY=VALUE`, for this child alone.
+    /// `variable` is an extra `KEY=VALUE` environment entry for this child only.
     fn spawn_with(
         this: ThisPtr<Self>,
         args: &[&[u8]],
@@ -1188,7 +1202,7 @@ impl GitSubprocess {
         };
         let mut argv: Vec<CString> = Vec::with_capacity(args.len() + 5);
         argv.push(CString::new(git.as_bytes()).map_err(|_| Error::InvalidCharacter)?);
-        // No git of the install runs a hook, or goes on into a submodule.
+        // No git command that an install runs executes hooks or recurses into submodules.
         for arg in [
             b"-c".as_slice(),
             concat!("core.hooksPath=", bun_core::null_device!()).as_bytes(),
@@ -1250,7 +1264,8 @@ impl GitSubprocess {
                     unreachable!();
                 }
             };
-        // The exit handler, which may run below, replaces the environment after `Step::Config`.
+        // `envp` borrows from `git_env`. The exit handler, which may run below, replaces `git_env`
+        // after `Step::Config`.
         drop(envp);
         #[cfg(windows)]
         let mut spawned = spawned;
@@ -1372,7 +1387,8 @@ impl GitSubprocess {
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
                 || strings::contains(stderr, b"does not exist"));
-        // Exit code 1: another install wrote a ref first. The next fetch finds nothing to write.
+        // `git fetch` exits with 1 when another install updated a ref first. A second fetch finds
+        // that ref already up to date, so it has nothing to write.
         let lost_a_ref = matches!(
             step,
             Step::Fetch {
@@ -1380,14 +1396,15 @@ impl GitSubprocess {
                 ..
             }
         ) && matches!(status, Status::Exited(exit) if exit.code == 1);
-        // The others hold what git said until the last URL has failed.
+        // `Fetch` and `Clone` report later: they hold git's output until the last URL has failed.
         if !ok && matches!(step, Step::Log | Step::ListTree(_) | Step::Checkout(_)) {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
         match step {
             Step::Config => {
-                // Exit code 1: neither has a value. The defaults also follow any other failure.
+                // Exit code 1 means that neither setting is configured. Any other failure is
+                // treated the same way.
                 let configured: &[u8] = if ok { stdout } else { b"" };
                 let env = GitEnv::new(Some(configured));
                 this.manager().git_env.set(Some(env));
@@ -1405,8 +1422,8 @@ impl GitSubprocess {
                 if !lost_a_ref {
                     this.hold_output(stderr);
                 }
-                // 128 is what git ends with when it cannot reach the remote. Another code, or the
-                // name of the clone's own folder in what it says: the fault is in there.
+                // git exits with 128 when it cannot reach the remote. Any other code, or an error
+                // message that names the clone's own folder, means the cached clone is damaged.
                 let is_damaged = matches!(status, Status::Exited(exit) if !matches!(exit.code, 0 | 128))
                     || strings::contains(stderr, &bare_repo_folder_name(this.task().id));
                 let next = if lost_a_ref {
@@ -1434,8 +1451,8 @@ impl GitSubprocess {
                 }
                 this.hold_output(stderr);
                 if !this.urls.get().is_empty() {
-                    // The next URL form (ssh after https). "not found" is also what a host says
-                    // of a private repository to a login without access.
+                    // Try the next URL form (ssh after https), even after "not found": hosts also
+                    // say that about a private repository that the login cannot access.
                     this.staging
                         .take()
                         .expect("clone has a staging folder")
@@ -1459,7 +1476,7 @@ impl GitSubprocess {
             }
             Step::Log => {
                 let commit = strings::trim(stdout, b" \t\r\n");
-                // `--ignore-missing` prints nothing, and exits with 0, when no HEAD resolves.
+                // With `--ignore-missing`, git prints nothing and exits with 0 if no HEAD resolves.
                 let result = if ok && !commit.is_empty() {
                     Ok(commit.to_vec())
                 } else {
@@ -1483,7 +1500,7 @@ impl GitSubprocess {
                     let staging = this.staging.take().expect("checkout has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishCheckout(staging, tree));
                 } else {
-                    // "git: 'restore' is not a git command."
+                    // An older git prints "git: 'restore' is not a git command."
                     if strings::contains(stderr, b"'restore'") {
                         bun_core::note!("git dependencies need git 2.24 or newer");
                     }

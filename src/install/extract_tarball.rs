@@ -326,7 +326,8 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            // libdeflate stops at the end of the first gzip member.
+                            // libdeflate only reads the first gzip member, so a tarball with more
+                            // than one member is left to libarchive.
                             if result.status == libdeflate::Status::Success
                                 && result.read == tgz_bytes.len()
                             {

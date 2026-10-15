@@ -528,12 +528,12 @@ impl<'a> HTTPClientResult<'a> {
         self.fail.is_none()
     }
 
-    /// The response head of a terminal result, or why there is none.
+    /// Returns the response's status and headers, or the error that made the request fail.
     pub fn into_metadata(self) -> crate::Result<HTTPResponseMetadata> {
         if let Some(err) = self.fail {
             return Err(err);
         }
-        // Neither error nor response head: a network error, not a panic on network-driven state.
+        // Having neither an error nor a response is reported as a closed connection, not a panic.
         self.metadata.ok_or(crate::Error::ConnectionClosed)
     }
 

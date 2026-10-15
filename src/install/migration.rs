@@ -167,7 +167,7 @@ pub fn detect_and_load_other_lockfile<'a>(
     }
 
     for (i, &(name, name_z, ref file, ref data)) in found.iter().enumerate() {
-        // Tried when this one cannot be migrated.
+        // The name of the lockfile to try if this one cannot be migrated.
         let next = found.get(i + 1).map(|next| next.0);
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let migrate_result = match name {
@@ -191,7 +191,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
             Err(err) => err,
         };
-        // Left in `log`, the reasons would fail the install that goes on without this lockfile.
+        // The install can continue without this lockfile, and errors left in `log` would fail it.
         print_errors_and_reset(manager, log);
         let Some(next) = next else {
             return LoadResult::Err(err);
@@ -254,7 +254,7 @@ fn migrating_error(err: Error, lockfile_name: &'static ZStr) -> LoadResultErr {
     }
 }
 
-/// `Ok`: what `LoadResultOk` holds next to the lockfile.
+/// On success, returns the `migrated` and `format` fields for the caller's `LoadResultOk`.
 fn finish_migration(
     migrate_result: Result<LoadResult<'_>, Error>,
     manager: &mut PackageManager,
@@ -352,7 +352,7 @@ fn report_unsupported_lockfile_version(
     lockfile_name: &str,
     version: &dyn core::fmt::Display,
     upgrade_command: &str,
-    // The lockfile that is tried instead.
+    // The name of the lockfile that is tried next, if there is one.
     next: Option<&str>,
 ) {
     if manager.options.log_level.is_silent() {

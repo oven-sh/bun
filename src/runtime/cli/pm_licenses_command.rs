@@ -208,7 +208,8 @@ impl PmLicensesCommand {
         let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
-        // Installed at their place in the tree, listed under the version in their own package.json.
+        // Packages whose installed copy is not the version in bun.lock. They are listed under the
+        // version in the installed package.json.
         let mut other_versions: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
         let mut checked: usize = 0;
@@ -305,7 +306,8 @@ impl PmLicensesCommand {
             });
         }
 
-        // The copy on disk may already be listed for the package in bun.lock that has its version.
+        // A copy on disk that is already listed, for the bun.lock package it matches, is not listed
+        // twice. The package it was found for counts as missing.
         for entry in other_versions {
             if entries.iter().any(|listed| listed.path == entry.path) {
                 missing += 1;

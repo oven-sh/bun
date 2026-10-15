@@ -44,7 +44,7 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
-    /// The path of the first bunfig.toml or .npmrc that is there and could not be read.
+    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
     pub unreadable_config: Option<Box<[u8]>>,
 }
 

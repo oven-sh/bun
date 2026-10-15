@@ -289,7 +289,8 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    /// Name to store when the package.json has none, or one that bun.lock cannot hold.
+    /// Name to store when the package.json has no name, or has one that is not safe to use as a
+    /// bun.lock `packages` key.
     fn fallback_name(&self) -> Option<Vec<u8>> {
         None
     }
@@ -733,7 +734,8 @@ impl Package<u64> {
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            // An alias in a manifest is for its own row.
+                            // An `npm:` alias in a registry manifest applies to this dependency
+                            // only, so it is not registered as one of the project's aliases.
                             None,
                         )
                         .unwrap_or_default(),
@@ -803,7 +805,8 @@ impl Package<u64> {
 
 pub(crate) struct Diff;
 
-/// The `package.json` of `owner` no longer has `name`, which was `package`. Of the lockfile as loaded.
+/// A dependency that was removed from a package.json: `owner` no longer depends on `name`, which
+/// had resolved to `package`. All three fields refer to the lockfile as it was loaded.
 pub(crate) struct DroppedRow {
     pub(crate) owner: PackageID,
     pub(crate) name: String,
@@ -814,7 +817,7 @@ pub(crate) struct DroppedRow {
 pub struct DiffSummary {
     pub(crate) add: u32,
     pub(crate) remove: u32,
-    /// Of the root and the members.
+    /// The dependencies removed from the package.json of the root and of each workspace.
     pub(crate) dropped_rows: Vec<DroppedRow>,
     pub(crate) update: u32,
     /// Of `update`: the ones that leave every dependency as it is.
@@ -823,7 +826,8 @@ pub struct DiffSummary {
     pub(crate) catalogs_changed: bool,
     /// Set after the differ, by `Lockfile::reconcile_package_extensions`.
     pub(crate) package_extensions_changed: bool,
-    /// Likewise: `(Lockfile::package_extension_key, name)` of the rows that no rule adds now.
+    /// Also set by `Lockfile::reconcile_package_extensions`: the dependencies that no
+    /// `packageExtensions` rule adds anymore, as `(Lockfile::package_extension_key, name hash)`.
     pub(crate) removed_extension_rows: Vec<(u64, PackageNameHash)>,
 
     /// Trusted now, not when the lockfile was saved: an installed package's blocked scripts run.
@@ -836,8 +840,9 @@ pub struct DiffSummary {
     pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
-    /// Not in `add`: rows of the new root for members that a lockfile of Bun 1.4 or older has no
-    /// entry for, because the root asks the registry for another version of their name.
+    /// Indexes into the new root's dependencies of the workspaces that a lockfile from Bun 1.4 or
+    /// older has no entry for, because the root also depends on a registry version of the same
+    /// name. They are not counted in `add`.
     pub(crate) members_left_out: Vec<u32>,
 }
 
@@ -1078,7 +1083,8 @@ impl Diff {
                 if !removed_names.contains(&from_dep.name_hash) {
                     removed_names.push(from_dep.name_hash);
                 }
-                // The root's row for a member from "workspaces" links nothing.
+                // The root's implicit dependency on a workspace listed in "workspaces" is skipped:
+                // the isolated linker creates no link for it, so there is none to remove.
                 if !from_dep.behavior.is_workspace()
                     && !to_deps!().iter().any(|to_dep| {
                         to_dep.name_hash == from_dep.name_hash && !to_dep.behavior.is_workspace()
@@ -1106,7 +1112,9 @@ impl Diff {
             let retyped = same
                 && !from_dep.behavior.is_workspace()
                 && !(to_version.literal).eql(from_dep.version.literal, to_buf!(), from_buf!());
-            // The parser links by the range alone: a peer's provider or a rule binds it elsewhere.
+            // Parsing package.json links a dependency to a workspace whenever its range matches.
+            // The lockfile can record something else for a peer or for a name with an override,
+            // because those can resolve elsewhere, so this difference changes no dependency.
             let range_link = !same
                 && to_version.tag == dependency::version::Tag::Workspace
                 && (from_dep.behavior.is_peer()
@@ -1324,8 +1332,9 @@ impl Diff {
         if is_root {
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
-                    // What took the member's row then: a registry range under its name and on it, that its
-                    // version does not satisfy. One that it satisfies is no range here.
+                    // Bun 1.4 and older replaced the root's entry for a workspace with the root's
+                    // own dependency of that name if it was a registry range that the workspace's
+                    // version does not satisfy. A range that it satisfies is a workspace link here.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)
@@ -1813,7 +1822,8 @@ impl Package<u64> {
             tag,
             &sliced,
             Some(&mut *log),
-            // Any other package's alias is for its own row.
+            // Only the project's own `npm:` aliases are registered. An alias that another package
+            // declares applies to that dependency only.
             (features.is_main || features.is_workspace).then_some(&mut *pm),
         )
         .unwrap_or_default();
@@ -1923,7 +1933,8 @@ impl Package<u64> {
                     dependency_version.value.workspace = path;
                 }
             }
-            // It also wins over a tag of its own name: only the registry knows which version that is.
+            // The workspace also wins over a dist-tag of its own name, such as `"foo": "latest"`,
+            // because only the registry knows which version a tag refers to.
             dependency::version::Tag::DistTag => {
                 if let Some(path) = workspace_path
                     && (dependency_version.dist_tag().name).eql(external_alias.value, buf, buf)
@@ -1962,7 +1973,8 @@ impl Package<u64> {
                 }
             }
             dependency::version::Tag::Workspace => 'workspace: {
-                // The root package by its name. It is no member: nothing to register.
+                // The dependency names the root package. The root is not a workspace member, so it
+                // is not added to `workspace_paths`.
                 let mut version_buf: &[u8] = buf;
                 if workspace_path.is_none()
                     && (features.is_main || features.is_workspace)
@@ -1985,7 +1997,8 @@ impl Package<u64> {
                             }
                         }
 
-                        // `foo@      `, `foo@^`, `foo@~` and `../foo` name no version: they link any, like `^`.
+                        // `foo@      `, `foo@^`, `foo@~` and `../foo` do not name a version, so
+                        // they link the workspace whatever its version is, like `workspace:^`.
                         // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
                         // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
@@ -2047,7 +2060,8 @@ impl Package<u64> {
                         break 'workspace;
                     }
 
-                    // The caller knows about a path from "workspaces".
+                    // With a `tag`, the path comes from "workspaces", and the caller has already
+                    // checked whether that path goes through a symlink.
                     if tag.is_none() && relative != b"*" {
                         linked_members.look_at(relative);
                     }

@@ -221,14 +221,16 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     }
 }
 
-/// What the literals `edit_after_resolve` wrote changed in the lockfile.
+/// How the version strings that `edit_after_resolve` wrote to package.json changed the lockfile.
 #[derive(Default)]
 pub(crate) struct Synced {
-    /// A row the registry resolved got a range that links a workspace, and is bound to it now.
+    /// A dependency that had resolved to a registry package now has a version range that matches a
+    /// workspace, so it was resolved to that workspace instead.
     pub(crate) links: bool,
 }
 
-/// Phase 1, before bun.lock is saved.
+/// Phase 1, before bun.lock is saved: puts the resolved versions into the in-memory copies of the
+/// edited package.json files, which `flush` writes later, and into the lockfile.
 #[inline]
 pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<Synced> {
     if manager.pending_filtered_write.is_none()
@@ -445,7 +447,8 @@ fn parse_edited(
     Ok(parsed)
 }
 
-/// So that the next install's differ sees no change.
+/// Copies the edited package.json files' dependency versions, overrides and catalogs into the
+/// lockfile, so that the next install finds no difference between the two.
 fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],

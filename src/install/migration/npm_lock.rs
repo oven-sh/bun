@@ -155,15 +155,17 @@ struct Migrator<'a> {
     probe: Vec<u8>,
     url: Vec<u8>,
     patched: String,
-    /// Entries without an integrity whose tarball is on a host bun is not configured with.
+    /// Indexes of the entries that have no integrity and whose tarball URL is under neither the
+    /// configured registry nor the default one.
     unverifiable: Vec<u32>,
     silent: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
 }
 
-/// The packages that no entry gave an integrity, out of those that the `unverifiable` entries became
-/// (one that joined a bundled copy's row has that copy's URL) and every registry row without a URL.
+/// Returns the packages that still have no integrity. It checks every npm package with an empty
+/// URL, plus the packages built from `unverifiable` entries, because an entry that was merged into
+/// a bundled copy's package has that copy's URL instead of an empty one.
 fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
     let packages = migrator.this.packages.slice();
     let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
@@ -239,7 +241,7 @@ pub(super) fn migrate_packages(
 
     migrator.warn_unreachable();
 
-    // The registry that these rows now come from says what its tarballs have to be.
+    // These packages now come from the configured registry, so use the integrity in its manifests.
     let unverified = unverified_packages(&migrator);
     if !unverified.is_empty() {
         (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
@@ -447,7 +449,8 @@ impl<'a> Migrator<'a> {
                 )
                 && !meta.integrity.tag.is_supported()
             {
-                // Nothing checks what that host sends. Empty: the configured registry's tarball.
+                // A tarball from that host could not be verified. With an empty URL, the package is
+                // downloaded from the configured registry instead.
                 res.npm_mut().url = SemverString::default();
                 self.unverifiable.push(j);
             }
@@ -858,7 +861,8 @@ impl<'a> Migrator<'a> {
                         }
                         None => self.build_or_get(t, through_link, version_tag)?,
                     },
-                    // `bun install` resolves it like a dependency added later; a frozen one does not.
+                    // Left out of the lockfile, so `bun install` resolves it like a newly added
+                    // dependency. `--frozen-lockfile` resolves nothing new, so it keeps the edge.
                     None if is_local
                         && behavior.is_peer()
                         && !behavior.is_optional_peer()

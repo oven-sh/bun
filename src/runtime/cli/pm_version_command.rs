@@ -52,7 +52,8 @@ impl VersionType {
     }
 }
 
-/// A version as node-semver holds it: the prerelease split at its dots, no build metadata.
+/// A version as node-semver stores it: the prerelease is split at its dots, and the build metadata
+/// is dropped.
 struct Version {
     major: u64,
     minor: u64,
@@ -61,10 +62,11 @@ struct Version {
 }
 
 impl Version {
-    /// node-semver's limit: https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    /// The largest major, minor, or patch number that node-semver accepts:
+    /// https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
     const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
-    /// `semver.parse(semver.clean(text), { loose: true })`
+    /// Does what node-semver's `semver.parse(semver.clean(text), { loose: true })` does.
     fn parse(text: &[u8]) -> Option<Version> {
         let version = Semver::Version::parse_exact(Semver::SlicedString::init(text, text))?;
         if version.major.max(version.minor).max(version.patch) > Self::MAX_SAFE_INTEGER {
@@ -81,7 +83,8 @@ impl Version {
         })
     }
 
-    /// The parts of a prerelease. `None` if one is empty or has a character that semver does not allow.
+    /// Splits a prerelease into its dot-separated identifiers. Returns `None` if one of them is
+    /// empty or has a character that semver does not allow.
     fn identifiers(prerelease: &[u8]) -> Option<Vec<Vec<u8>>> {
         strings::split(prerelease, b".")
             .map(|identifier| {
@@ -96,16 +99,18 @@ impl Version {
             .collect()
     }
 
-    /// node-semver reads digits as a number only below `Number.MAX_SAFE_INTEGER`, else as a name.
+    /// Like node-semver, treats an identifier made of digits as a number only if it is below
+    /// `Number.MAX_SAFE_INTEGER`. A larger one is treated as a string.
     fn number(identifier: &[u8]) -> Option<u64> {
         bun_core::parse_unsigned::<u64>(identifier, 10)
             .ok()
             .filter(|number| *number < Self::MAX_SAFE_INTEGER)
     }
 
-    /// `semver.inc(self, release, preid)`. `None` if `preid` cannot be part of a version.
+    /// Does what node-semver's `semver.inc(self, release, preid)` does. Returns `None` if `preid`
+    /// is not a valid prerelease.
     fn increment(mut self, release: VersionType, preid: &[u8]) -> Option<Version> {
-        // A prerelease of x.0.0, x.y.0 or x.y.z becomes that release, not the one after it.
+        // Bumping a prerelease of x.0.0, x.y.0, or x.y.z gives that release, not the one after it.
         let is_release = self.prerelease.is_empty();
         match release {
             VersionType::Major | VersionType::Premajor => {
@@ -148,7 +153,8 @@ impl Version {
         }
         if !preid.is_empty() {
             Self::identifiers(preid)?;
-            // Only the current version is read loosely, where `01` is 1.
+            // `preid` is parsed strictly, so `01` is invalid. Only the current version is parsed
+            // loosely, where `01` means 1.
             if strings::split(preid, b".")
                 .any(|it| it.len() > 1 && it[0] == b'0' && it.iter().all(u8::is_ascii_digit))
             {
@@ -193,7 +199,8 @@ impl PmVersionCommand {
 
         let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
 
-        // Bun's shell gives the scripts this loop's environment. Only the first call sets it: on Windows, a git spawn.
+        // Bun's shell runs the scripts with the global `MiniEventLoop`'s environment, which only
+        // the first `init_global` call sets. On Windows, spawning git would otherwise be that call.
         bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()), Some(&package_json_dir));
 
         Self::verify_git(&package_json_dir, pm);
@@ -293,7 +300,7 @@ impl PmVersionCommand {
             return Ok(());
         }
 
-        // What `npm version` gives the three scripts.
+        // `npm version` sets these variables for `preversion`, `version`, and `postversion`.
         let name = json
             .get(b"name")
             .and_then(|name| name.as_string(&json_bump));
@@ -598,7 +605,7 @@ impl PmVersionCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_path = Self::find_git(&mut path_buf, cwd, "from-git");
 
-        // As `npm version from-git`: a tag such as `nightly` is passed over.
+        // Like `npm version from-git`, `--match` skips tags that are not versions, like `nightly`.
         let argv: [&[u8]; 5] = [
             git_path,
             b"describe",
@@ -630,7 +637,7 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        // `v1.2.3`, `name@1.2.3`
+        // The version can follow a prefix, as in `v1.2.3` or `name@1.2.3`.
         let tag = strings::trim(&result.stdout, b" \n\r\t");
         let prefix = tag.iter().take_while(|c| !c.is_ascii_digit()).count();
         let Some(version) = Version::parse(&tag[prefix..]) else {

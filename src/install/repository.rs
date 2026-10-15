@@ -19,19 +19,19 @@ use crate::resolution::fmt_store_url;
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-/// The environment every `git` the install spawns runs with.
+/// The environment of every `git` process that `bun install` spawns.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     /// `git` resolved on the env's `PATH`. `None` when git is not installed.
     pub(crate) git: Option<ZBox>,
-    /// False for the one that `CONFIG_QUERY` itself runs with.
+    /// False for the provisional environment that only `CONFIG_QUERY` itself runs in.
     pub(crate) is_settled: bool,
 }
 
 impl GitEnv {
-    /// Prints `core.askpass` and `core.sshcommand`, each if it has a value in any file, include or
-    /// variable that git reads. Not in the project's own repository: no clone reads its config.
+    /// Prints `core.askpass` and `core.sshcommand`, each only if a file, include, or variable that
+    /// git reads sets it. `--git-dir` excludes the project's own config, which no clone reads.
     pub(crate) const CONFIG_QUERY: &'static [&'static [u8]] = &[
         concat!("--git-dir=", bun_core::null_device!()).as_bytes(),
         b"config",
@@ -40,23 +40,25 @@ impl GitEnv {
         br"^core\.(askpass|sshcommand)$",
     ];
 
-    /// `configured` is what `CONFIG_QUERY` printed.
+    /// `configured` is the output of `CONFIG_QUERY`, or `None` for the environment that runs it.
     pub(crate) fn new(configured: Option<&[u8]>) -> GitEnv {
         let mut map = bun_core::handle_oom(bun_dotenv::Map::for_git_child());
-        // From `bunx`, for this command alone: git runs the user's hooks.
+        // `bunx` sets these for its own install only. Git runs the user's hooks, which must not
+        // inherit them.
         map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
         map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
-        // A commit holds what its hash names.
+        // Git ignores `refs/replace`, so a commit hash always gives the content that it names.
         bun_core::handle_oom(map.put(b"GIT_NO_REPLACE_OBJECTS", b"1"));
 
         if let Some(configured) = configured {
-            // No prompts by default: the install's own output would hide them.
+            // Prompts are off by default, because the install's own output would hide them.
             if map.get(b"GIT_ASKPASS").is_none() && !strings::contains(configured, b"core.askpass")
             {
                 bun_core::handle_oom(map.put(b"GIT_ASKPASS", b"echo"));
             }
 
-            // The variable outranks the user's own `core.sshCommand` and `GIT_SSH`.
+            // `GIT_SSH_COMMAND` overrides `core.sshCommand` and `GIT_SSH`, so it is only set when
+            // the user has set neither.
             if map.get(b"GIT_SSH_COMMAND").is_none()
                 && map.get(b"GIT_SSH").is_none()
                 && !strings::contains(configured, b"core.sshcommand")
@@ -81,13 +83,13 @@ impl GitEnv {
     }
 }
 
-/// `gitlab.com` for the `gitlab` of `gitlab:user/repo`.
+/// The domain of a shorthand host: `gitlab.com` for the `gitlab` in `gitlab:user/repo`.
 fn shorthand_domain(host: &[u8]) -> Option<&'static [u8]> {
     hosted_git_info::HostProvider::from_shortcut(host, false).map(|provider| provider.domain())
 }
 
-/// The `repo` a lockfile records for `host:path`: what bun.lock's `git+ssh://host:path` reads back as.
-/// For a shorthand (`gitlab:user/repo`), a URL that names the host.
+/// The `repo` to record in the lockfile for `host:path`: `ssh://host:path`, which is what reading
+/// bun.lock's `git+ssh://host:path` gives back. A shorthand (`gitlab:user/repo`) becomes a URL.
 pub(crate) fn locked_scp_like(repo: &[u8]) -> Option<Vec<u8>> {
     if !Dependency::is_scp_like_path(repo) {
         return None;
@@ -115,7 +117,8 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-/// The root folder of GitHub's tarball of `commit`: what a fresh install records as `resolved`.
+/// The name of the root folder in GitHub's tarball of `commit`. A fresh install records that name
+/// as `resolved`.
 pub(crate) fn github_tarball_tag(owner: &[u8], repo: &[u8], commit: &[u8]) -> Option<Vec<u8>> {
     let tag = [owner, b"-", repo, b"-", &commit[..commit.len().min(7)]].concat();
     is_safe_resolved_tag(&tag).then_some(tag)
@@ -268,7 +271,7 @@ impl RepositoryExt for Repository {
         }
 
         let rest = url.strip_prefix(b"ssh://")?;
-        // On the hosts of the shorthands, `git` is the ssh account and not an https user.
+        // On the hosts that have a shorthand, `git@` is only the ssh account, so https drops it.
         let hosted = rest.strip_prefix(b"git@").filter(|hosted| {
             let host_end = strings::index_of_char_usize(hosted, b'/').unwrap_or(hosted.len());
             hosted_git_info::HostProvider::from_domain(&hosted[..host_end]).is_some()
@@ -277,7 +280,8 @@ impl RepositoryExt for Repository {
     }
 }
 
-/// `host:path`, which bun.lock spells `ssh://host:path`. The colon of a URL that parses is a port.
+/// Returns the `host:path` in `url`, which bun.lock writes as `ssh://host:path`. An `ssh://` URL
+/// that parses is a real URL instead: its colon comes before a port.
 fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
     let path = match url.strip_prefix(b"ssh://") {
         Some(_) if bun_url::whatwg::Parsed::from_utf8(url).is_some() => return None,
@@ -287,9 +291,9 @@ fn scp_like_path(url: &[u8]) -> Option<&[u8]> {
     Dependency::is_scp_like_path(path).then_some(path)
 }
 
-/// `host:path` → `<prefix>host/path`; a shorthand host becomes its domain (`github` → `github.com`).
+/// Turns `host:path` into `<prefix>host/path`. A shorthand host like `github` becomes its domain.
 fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
-    // The colons of a bracketed host (`git@[::1]:path`) do not end it.
+    // The colons inside a bracketed host (`git@[::1]:path`) are part of the host.
     let bracket = match strings::index_of_any(url, b"[:") {
         Some(at) if url[at] == b'[' => strings::index_of_char_usize(url, b']').unwrap_or(0),
         _ => 0,

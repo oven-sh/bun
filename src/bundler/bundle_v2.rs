@@ -4368,7 +4368,8 @@ pub mod bv2_impl {
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
-                // A package imports itself by its own name. The resolver has read this directory.
+                // A package may import itself by name, which is not a dependency to install. The
+                // resolver already read this directory while bundling, so this is a cache hit.
                 let own_name: &[u8] = self
                     .transpiler
                     .resolver
@@ -4382,12 +4383,13 @@ pub mod bv2_impl {
                         && record.tag == bun_ast::ImportRecordTag::None
                     {
                         let path: &[u8] = record.path.text;
-                        // External dependency: `lodash/debounce` comes with `lodash`.
+                        // Record the package name only: `lodash/debounce` is part of `lodash`.
                         if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
                             && name != own_name
                             && !is_builtin(path)
                             && !is_builtin(name)
-                            // `@/x` is a tsconfig `paths` alias that matched nothing: no scope is empty.
+                            // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
+                            // alias that matched nothing.
                             && !name.starts_with(b"@/")
                             && strings::is_npm_package_name_ignore_length(name)
                         {

@@ -943,7 +943,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     );
-                    // Among dependencies, only a git checkout runs these.
+                    // Git dependencies are the only dependencies whose `prepare` scripts run.
                     if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
                         bun_core::note!(
                             "Bun does not install the devDependencies of a git dependency before its prepare scripts"

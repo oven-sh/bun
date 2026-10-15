@@ -133,7 +133,8 @@ fn missing_package_entry(
 }
 
 type StringMap = StringArrayHashMap<Box<[u8]>>;
-/// A pnpm `patchedDependencies` key (`d`, `d@^1.0.0`, `d@1.0.0`) -> bun's key of each package it patches.
+/// Maps each pnpm `patchedDependencies` key (`d`, `d@^1.0.0`, `d@1.0.0`) to Bun's
+/// `patchedDependencies` keys, one for every package that the pnpm key patches.
 type FoundPatches = StringArrayHashMap<Vec<Box<[u8]>>>;
 
 fn collect_strings(obj: &Expr, out: &mut StringMap) -> Result<(), AllocError> {
@@ -264,7 +265,7 @@ fn resolution_from_package_entry(
             return Ok(Resolution::init(TaggedValue::Git(Repository {
                 repo: string_buf.append(strings::without_prefix(repo, b"git+"))?,
                 committish: commit,
-                // The checkout and its cache folder go by `resolved`.
+                // `resolved` is the commit that gets checked out, and it names the cache folder.
                 resolved: commit,
                 ..Default::default()
             })));
@@ -1084,7 +1085,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
             let Some(version_maybe_alias) = importer_versions.get(dep_name) else {
                 if dep.behavior.is_peer() {
-                    // A frozen install takes pnpm-lock.yaml as it is.
+                    // `--frozen-lockfile` must not resolve anything that pnpm-lock.yaml left out.
                     if !dep.behavior.is_optional_peer()
                         && !manager.options.enable.frozen_lockfile()
                         && lockfile.packages_named(dep.name_hash).is_empty()
@@ -1132,7 +1133,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             lockfile.buffers.resolutions[dep_id as usize] = *res_pkg_id;
         }
 
-        // `bun install` resolves them, like dependencies added after pnpm-lock.yaml was written.
+        // Drop these peers from the lockfile so that `bun install` resolves them, the same way it
+        // resolves dependencies that were added to package.json after pnpm-lock.yaml was written.
         for &row in unlocked_peers.iter().rev() {
             lockfile.buffers.dependencies[row..deps.end() as usize].rotate_left(1);
             lockfile.buffers.resolutions[row..deps.end() as usize].rotate_left(1);
@@ -1666,7 +1668,8 @@ fn parse_append_importer_dependencies(
 }
 
 /// pnpm's allow-list of packages that may run lifecycle scripts, i.e. bun's `trustedDependencies`.
-/// True for a list, also an empty one, for which `as_array` has nothing: it allows no package.
+/// Returns whether `list` is an array. An empty array counts, because it means that no package may
+/// run scripts, even though `as_array` returns `None` for it.
 fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) -> bool {
     let Some(mut items) = list.as_array() else {
         return list.is_array();

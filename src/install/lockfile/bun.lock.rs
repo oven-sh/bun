@@ -299,7 +299,8 @@ impl Stringifier {
 
         let mut optional_peers_buf: Vec<String> = Vec::new();
 
-        // The optional dependencies that did not resolve while something in the tree has their name.
+        // Optional dependencies that did not resolve, although the tree has a package of the same
+        // name. They are written as "unresolved" so that loading does not resolve them to it.
         let placed_rows = lockfile.buffers.hoisted_dependencies.as_slice();
         let any_unresolved = (resolution_buf.iter().zip(deps_buf))
             .any(|(&id, dep)| id == invalid_package_id && dep.behavior.is_optional());
@@ -334,8 +335,8 @@ impl Stringifier {
         let mut path_buf = bun_paths::path_buffer_pool::get();
 
         // if we loaded from a binary lockfile or pnpm-lock.yaml and we're migrating it to a text lockfile, ensure
-        // peer dependencies have resolutions, and mark them optional if they don't. Not in "workspaces":
-        // the next install compares those with package.json.
+        // peer dependencies have resolutions, and mark them optional if they don't. This leaves the
+        // "workspaces" section alone, because the next install compares it with package.json.
         if load_result.loaded_from_binary_lockfile() || load_result.migrated_from_pnpm() {
             while let Some(node) = pkgs_iter.next(None) {
                 for &dep_id in node.dependencies {
@@ -1520,17 +1521,20 @@ pub(crate) enum ResolveError {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 enum RowEvidence {
     Unbound,
-    /// The root's own dependency: the hoister gives it to a peer whatever the peer is bound to.
+    /// The walk found the root's own dependency. This says little about a peer, because the hoister
+    /// gives a peer the root's dependency no matter which package the peer resolves to.
     RootDependency,
-    /// Found by walking up.
+    /// The walk found the package at a path between this row and the root.
     Walked,
     /// The root's copy, which may be this edge's own binding, placed there from this row.
     WalkedToRoot,
-    /// A copy an optional peer's range refuses: bound to another, it would have its own here.
+    /// The walk found a copy that is outside an optional peer's range. If the peer resolved to any
+    /// other package, that package would be printed in this row's own path.
     Refused,
     /// The copy printed in the package's own path, only there for the package's own edge.
     OwnEntry,
-    /// Nothing up this path: a bound optional peer has a copy above every place of its package.
+    /// The walk found nothing, so the optional peer is unresolved. A resolved one has a copy above
+    /// every path that its package is printed at.
     Unprovided,
 }
 
@@ -2734,7 +2738,9 @@ pub(crate) fn parse_into_binary_lockfile(
             }
 
             let entry = pkg_map.get_or_put(pkg_path)?;
-            // A dependency of the root, unless a folder, takes the key of the member of that name.
+            // Each workspace was registered under its name above. A root dependency of the same
+            // name replaces it at that key, unless it is a folder. Any other repeated key is an
+            // error.
             if entry.found_existing
                 && !(res.tag != ResolutionTag::Folder
                     && (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len)
@@ -2777,7 +2783,8 @@ pub(crate) fn parse_into_binary_lockfile(
             manager.is_none_or(|manager| manager.options.link_workspace_packages);
         let workspace_paths = &lockfile.workspace_paths;
         let workspace_versions = &lockfile.workspace_versions;
-        // `Package::parse` makes a peer of the project a link when its range links a member.
+        // Returns the workspace that a peer's range matches. `Package::parse` turns such a peer of
+        // the root or of a workspace into a workspace link, so the loader resolves it the same way.
         let linked_member = |dep: &Dependency| {
             let (range, name_hash) =
                 version_based_peer_range(dep, catalogs, overrides, string_buf)?;
@@ -2810,7 +2817,8 @@ pub(crate) fn parse_into_binary_lockfile(
                 let dep = &dependencies[dep_id as usize];
 
                 let named = pkg_map.get(dep.name.slice(string_buf)).copied();
-                // The root's own dependency can have the key of the member of that name.
+                // The key with a workspace's name can belong to a root dependency of the same name.
+                // The workspace is then found by name among the workspace packages.
                 let bound = if dep.behavior.is_workspace()
                     && !named.is_some_and(|id| members.contains(&id))
                 {
@@ -2845,7 +2853,8 @@ pub(crate) fn parse_into_binary_lockfile(
             for pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
-                // A dependency of the root has its key: see `Tree::is_unlinked_member`.
+                // If a root dependency of the same name has this workspace's key, the workspace's
+                // dependencies are printed under `./<name>`. See `Tree::is_unlinked_member`.
                 let unlinked = pkg_map.get(workspace_name) != Some(&pkg_id);
                 let prefix: &[u8] = if unlinked { b"./" } else { b"" };
                 let name_end = prefix.len() + workspace_name.len();
@@ -2883,7 +2892,8 @@ pub(crate) fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        // An older bun.lock has it only below a row of the member: those bind next.
+                        // A bun.lock from an older Bun only has this dependency below a `packages`
+                        // row of the workspace. The loop over `pkg_rows` below resolves it.
                         if unlinked || may_stay_unresolved(dep) {
                             continue;
                         }
@@ -2921,7 +2931,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 || (res.tag == ResolutionTag::Workspace
                     && pkg_map.get(pkg_names[pkg_id as usize].slice(string_buf)) == Some(&pkg_id))
             {
-                // we've already resolved the root's and the workspace dependencies above
+                // The dependencies of the root and of this workspace were already resolved above.
                 continue;
             }
 
@@ -2935,8 +2945,9 @@ pub(crate) fn parse_into_binary_lockfile(
                     continue 'deps;
                 }
 
-                // A published copy in range comes first for a registry package: its dependent may
-                // use that one next to the member, and the hoist finds out.
+                // A registry package's peer prefers a published version in range over a workspace
+                // of that name, because its dependent may use the published one even though the
+                // workspace exists. The hoister makes the final choice.
                 let by_version = if res.tag == ResolutionTag::Workspace {
                     own_peer(dep)
                 } else {
@@ -3006,7 +3017,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        // The install that saved the file left these unresolved, whatever has their name.
+        // The install that wrote bun.lock did not resolve these, so they stay unresolved even if
+        // the loops above found a package of the same name.
         for &dep_id in &unresolved_rows {
             resolutions[dep_id as usize] = invalid_package_id;
         }
@@ -3039,12 +3051,14 @@ pub(crate) fn parse_into_binary_lockfile(
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
-/// The fresh resolver binds a peer whose range links a workspace to it before any deferral. For a
-/// peer of the project so does the loader (`linked_member`). A registry package's gets here, in
-/// the loader and in the hoist, and keeps the workspace when no published copy is in range.
+/// If a peer's range matches a workspace, the fresh resolver binds the peer to that workspace
+/// right away, before peers are deferred. The loader does the same for a peer of the root or of a
+/// workspace (`linked_member`). A registry package's peer goes through this scan instead, in the
+/// loader and in the hoister, and stays on the workspace if no published version is in range.
 ///
-/// The hoist only starts from this binding: an edge that finds the root's dependency of that name,
-/// or its package's own, in range ends on that package (`tree::bind_served_peers`).
+/// For the hoister this result is only a starting point. If the root's dependency of that name, or
+/// the package's own regular dependency of that name, is in range, the peer ends up resolved to
+/// that package (`tree::bind_served_peers`).
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,
@@ -3250,7 +3264,7 @@ fn parse_append_dependencies(
     unresolved_rows: &mut Vec<DependencyID>,
     // For an entry of `packages`: its path, and the paths that are marked bundled.
     bundled: Option<(&[u8], &PkgPathSet)>,
-    // For the root.
+    // Only for the root: the workspaces, each of which is added as a workspace dependency.
     member_rows: Option<&[&JSON::E::PropertyJSON]>,
     catalogs_apply: bool,
 ) -> Result<(u32, u32), ParseError> {
@@ -3423,7 +3437,7 @@ fn parse_append_dependencies(
         });
     }
 
-    // After the sort, which decides the ids.
+    // This has to come after the sort, because the sort decides each dependency's id.
     if !unresolved_names.is_empty() {
         unresolved_rows.extend((off..end).filter_map(|id| {
             let dep = &lockfile.buffers.dependencies[id];

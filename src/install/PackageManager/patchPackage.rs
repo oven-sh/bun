@@ -66,7 +66,8 @@ pub struct PatchCommitResult {
     pub(crate) patch_key: Box<[u8]>,
     pub(crate) patchfile_path: Box<[u8]>,
     pub(crate) not_in_workspace_root: bool,
-    /// The folder is the unpatched package again, and `patchfile_path` is what the lockfile names.
+    /// The folder has no edits left, so this commit removes the package's existing patch.
+    /// `patchfile_path` is then the path of that patch as recorded in the lockfile.
     removes_patch: bool,
 }
 
@@ -83,7 +84,8 @@ impl PatchCommitResult {
         edit_patched_dependencies(manager, package_json, &self.patch_key, &self.patchfile_path)
     }
 
-    /// Once package.json and the lockfile no longer name the patch file for this package.
+    /// Deletes the file of a removed patch. Call this once package.json and the lockfile no longer
+    /// refer to the file for this package.
     pub(crate) fn delete_removed_patch(&self, manager: &PackageManager) {
         if !self.removes_patch || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
             return;
@@ -111,11 +113,12 @@ impl PatchCommitResult {
     }
 }
 
-/// What `bun patch --commit` does to the disk once no check can refuse its install any more.
+/// The file system changes of `bun patch --commit`. They are deferred until its install has passed
+/// every check that can abort it.
 #[derive(Default)]
 pub(crate) struct PendingCommit {
     new_patch: Option<NewPatch>,
-    /// The install lays the package again in the place of this folder.
+    /// A folder to delete so that the install creates the package there again.
     stale_folder: Option<Vec<u8>>,
 }
 
@@ -126,7 +129,8 @@ struct NewPatch {
 }
 
 impl PendingCommit {
-    /// An install hashes the patch files before its checks, when this one is not written yet.
+    /// The hash of the pending patch. An install hashes the patch files before it runs its checks,
+    /// when this one is not on disk yet.
     pub(crate) fn patch_hash(&self, name_and_version_hash: u64) -> Option<u64> {
         (self.new_patch.as_ref())
             .filter(|patch| patch.name_and_version_hash == name_and_version_hash)
@@ -134,7 +138,7 @@ impl PendingCommit {
     }
 }
 
-/// The path of the file, if this run has one to write.
+/// Writes the pending patch file, if there is one, and returns its path.
 pub(crate) fn write_pending_patch(
     manager: &mut PackageManager,
 ) -> Result<Option<ZBox>, crate::Error> {
@@ -175,14 +179,16 @@ pub(crate) fn write_pending_patch(
     Ok(Some(patch.path))
 }
 
-/// Right before the linker runs. The patch file holds the edits of the folder by now.
+/// Called right before the linker runs. The patch file has been written by then, so the edits in
+/// the folder are not lost.
 pub(crate) fn remove_stale_folder(manager: &mut PackageManager) {
     if let Some(folder) = manager.pending_patch_commit.stale_folder.take() {
         let _ = Fd::cwd().delete_tree(&folder);
     }
 }
 
-/// The repository names the path: a regular file, which no `..`, root or link puts outside of it.
+/// Whether `path`, which comes from the repository's lockfile, is a regular file in the project.
+/// A path that leaves the project through `..`, an absolute path or a symlink does not qualify.
 fn is_file_of_the_project(path: &ZStr) -> bool {
     use resolve_path::{ParentEqual, is_parent_or_equal};
     if bin::bin_target_escapes_package_dir(path.as_bytes()) {
@@ -319,7 +325,8 @@ fn path_argument_from_root(
 }
 
 fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    // `folder` is as long as the user typed it: opening what does not fit a path buffer fails.
+    // `folder` is user input of any length, so the join can spill to the heap. A path that is too
+    // long then simply fails to open.
     let mut spill = Vec::new();
     let package_json_path =
         resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[folder, b"package.json"]);
@@ -443,9 +450,9 @@ fn folder_lookup_error(
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
 /// - Update "patchedDependencies" in package.json
 /// - Run install to install newly patched pkg
-/// - Once its checks have passed, it writes $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
+/// - Once the install's checks have passed, it writes $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
 ///
-/// This function changes nothing in the project: the install may still refuse to run.
+/// This function itself changes nothing in the project, because the install may still abort.
 pub fn do_patch_commit(
     manager: &mut PackageManager,
     log_level: LogLevel,
@@ -524,7 +531,7 @@ pub fn do_patch_commit(
     };
 
     if patchfile_contents.is_empty() {
-        // Taking every edit back is how a patch is removed.
+        // Undoing every edit and committing is how a user removes a patch.
         let patched = &manager.lockfile.patched_dependencies;
         if let Some(registered) = patched.get(&string_hash(&patch_key)) {
             let patchfile_path = Box::<[u8]>::from(manager.lockfile.str(&registered.path));
@@ -564,14 +571,16 @@ pub fn do_patch_commit(
             );
         }
         Output::flush();
-        // The copy has no edit to keep and lacks what the scripts write. The install lays it again.
+        // The copy has no edits to keep, and it lacks the files that the package's scripts create.
+        // Delete it so that the install creates the package again and runs its scripts.
         if !manager.options.dry_run && has_trusted_scripts(manager, &pkg, &name, &new_folder) {
             manager.pending_patch_commit.stale_folder = Some(new_folder);
         }
         return Ok(None);
     }
 
-    // Such a line has no content: an install leaves the change out and warns.
+    // A "Binary files ... differ" line does not contain the change itself, so an install would skip
+    // it with a warning.
     let mut binary_files = strings::split(&patchfile_contents, b"\n")
         .filter(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"))
         .peekable();
@@ -587,13 +596,15 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // A file name is printed and committed, so a URL in the key goes in as in a store folder's name.
+    // The file name is printed and committed to the repository, so a URL in the key loses its
+    // credentials, as it does in the name of a store folder.
     let mut patch_filename = Vec::new();
     append_without_url_credentials(&mut patch_filename, &patch_key);
     patch_filename.extend_from_slice(b".patch");
     let patch_filename = escape_patch_filename(&patch_filename);
 
-    // Before anything is written: a patch that no install can apply fails every later install.
+    // Try the patch before writing anything. A patch that does not apply would make every later
+    // install fail.
     if !patch_applies(
         cache_dir,
         &cache_dir_subpath,
@@ -614,7 +625,7 @@ pub fn do_patch_commit(
         _ => unreachable!("patch_features must be Commit in doPatchCommit"),
     };
 
-    // First: what follows takes what fits a path buffer.
+    // Check the length first, because the path functions below need input that fits a path buffer.
     if typed_patches_dir.len() >= bun_paths::MAX_PATH_BYTES {
         Output::err(
             sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::mkdir),
@@ -624,7 +635,8 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    // One spelling from here on. On Windows a `\` is a `/`, which other systems read too.
+    // Paths use `/` from here on. On Windows this replaces each `\`, so that the path written to
+    // package.json also works on other systems.
     let with_slashes = |path: &[u8]| {
         let mut path = path.to_vec();
         resolve_path::platform_to_posix_in_place(&mut path[..]);
@@ -632,7 +644,8 @@ pub fn do_patch_commit(
     };
     let mut patches_dir = with_slashes(typed_patches_dir);
 
-    // package.json goes to other machines: a directory inside the project is written from its root.
+    // package.json is shared with other machines, so an absolute path to a directory inside the
+    // project is written relative to the project root.
     let project = with_slashes(FileSystem::instance().top_level_dir());
     if bun_paths::is_absolute(&patches_dir)
         && resolve_path::is_parent_or_equal(&project, &patches_dir)
@@ -641,7 +654,8 @@ pub fn do_patch_commit(
         patches_dir = with_slashes(resolve_path::relative(&project, &patches_dir));
     }
 
-    // Owned: `join` hands out the thread's one buffer, and every later `join` writes to it.
+    // Copy the result: `join_spill` usually returns the thread-local buffer that every later join
+    // overwrites.
     let path_in_patches_dir = ZBox::from_bytes(resolve_path::join_spill::<platform::Posix>(
         &mut Vec::new(),
         &[&patches_dir, &patch_filename],
@@ -675,12 +689,14 @@ pub fn do_patch_commit(
     }))
 }
 
-/// An install leaves the copy that `bun patch` made in place of a link alone.
+/// Returns `folder` if it is a copy that `bun patch` made where the isolated linker puts a symlink.
+/// An install does not replace such a copy, so it has to be deleted first.
 fn copy_at_link_position(linker: NodeLinker, folder: Vec<u8>) -> Option<Vec<u8>> {
     (linker == NodeLinker::Isolated && is_link_position(&folder)).then_some(folder)
 }
 
-/// What an install does with the patch, on a scratch copy. `false` after a printed error.
+/// Applies the patch to a scratch copy of the package, the way an install would. On failure, prints
+/// an error and returns `false`.
 fn patch_applies(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
@@ -690,7 +706,8 @@ fn patch_applies(
     let mut log = bun_ast::Log::init();
     let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-    // An install only warns about what it leaves out, for the patch files older versions wrote.
+    // An install only warns about the sections it skips, because older versions of Bun wrote patch
+    // files that have them. A new patch must not have any.
     let Some(patchfile) = patchfile.filter(|patchfile| patchfile.skipped.is_empty()) else {
         return false;
     };
@@ -752,8 +769,9 @@ fn diff_against_cache(
         }
     };
 
-    // git quotes a path with a `"`, a `\` or a control character in it; Windows has no such path.
-    // No path inside the package has a `/./`, so what strips the folders cannot match in one.
+    // git quotes a path that has a `"`, a `\` or a control character, so `from_cwd` keeps the
+    // project's own path out of the diff. Its `./` also puts a `/./` in the folder prefixes that
+    // are stripped from the diff afterwards, which no path inside the package can match.
     let paths = bun_patch::git_diff_preprocess_paths(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
@@ -989,7 +1007,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &target.folder,
         true,
     );
-    // Only a package of the global store that no package.json of the project names has no folder.
+    // The folder is only missing for a package in the global store that no package.json in the
+    // project depends on directly.
     let is_loaded = sys::exists(&folder);
 
     make_bins_executable(
@@ -1053,7 +1072,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Whether an install ran scripts in the folder that the copy replaced: what they wrote is gone.
+/// Whether an install runs lifecycle scripts for this package. The files they created are lost when
+/// `bun patch` replaces the folder with a copy from the cache.
 fn has_trusted_scripts(
     manager: &PackageManager,
     pkg: &Package,
@@ -1068,7 +1088,7 @@ fn has_trusted_scripts(
     let Ok(mut folder_path) = bun_paths::AutoAbsPath::from(folder) else {
         return false;
     };
-    // bun.lock does not record the scripts of a dependency, so they come from its package.json.
+    // bun.lock does not record a dependency's scripts, so they are read from its package.json.
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
         &mut bun_ast::Log::init(),
@@ -1081,7 +1101,8 @@ fn has_trusted_scripts(
     matches!(list, Ok(Some(list)) if list.total > 0)
 }
 
-/// node_modules outlives the cache after `bun pm cache rm`, and on a CI that keeps only the former.
+/// A package can be installed but no longer cached, for example after `bun pm cache rm` or on a CI
+/// that only preserves node_modules.
 fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
     let name = manager.lockfile.str(&pkg.name).to_vec();
     let is_cached = |manager: &mut PackageManager| {
@@ -1111,8 +1132,9 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
     }
 }
 
-/// An install makes the `bin` targets executable in node_modules, and only a hard link takes that
-/// to the cache entry. Without it the copy's commands do not run, or `--commit` records the mode.
+/// Makes the package's `bin` targets executable in its cache entry. An install does that in
+/// node_modules, which only reaches the cache entry if the files are hardlinks. Otherwise the
+/// commands of a copy of the entry do not run, or `--commit` records the mode change in the patch.
 fn make_bins_executable(
     lockfile: &Lockfile,
     pkg: &Package,
@@ -1123,7 +1145,8 @@ fn make_bins_executable(
     if cfg!(windows) || pkg.bin.tag == bin::Tag::None {
         return;
     }
-    // The linker sets the mode of what it links to. The links themselves are thrown away.
+    // `bin::Linker` sets the mode of the files it links to. The links themselves are not needed, so
+    // they go in a temporary folder.
     let links = TempTree(temp_sibling(folder));
     let (Ok(cache_path), Ok(mut links_path)) = (
         <AbsPath>::init_fd_path(cache_dir),
@@ -1155,7 +1178,8 @@ fn make_bins_executable(
     .link(false);
 }
 
-/// An install that finds the patched package in node_modules does not make its cache entry again.
+/// The patched package's cache entry can be missing, because an install that finds the patched
+/// package in node_modules does not create the entry again.
 fn apply_patch_if_not_cached(
     manager: &mut PackageManager,
     pkg_id: PackageID,
@@ -1332,7 +1356,8 @@ fn replace_with_cache_copy(
         Err(e) if e.get_errno() == sys::E::ENOENT => false,
         Err(e) => return Err(e.into()),
     };
-    // Only now: after an error it has what could not be moved back.
+    // `old_path` is only marked for deletion now. After a failed `move_aside` it can hold entries
+    // that could not be moved back.
     let old = TempTree(old_path);
 
     if let Err(e) = rename_staging_into_place(cwd, &staging_z, &folder_z) {
@@ -1347,7 +1372,8 @@ fn replace_with_cache_copy(
     }
 
     if has_old {
-        // Behind a link is the global store, which is not the project's to move or delete.
+        // If the old folder was a symlink, it points into the global store, which other projects
+        // share, so only the symlink itself is removed.
         if is_link(&old.0) {
             if let Err(e) = link_store_siblings(&old.0, folder) {
                 bun_core::warn!(
@@ -1368,14 +1394,16 @@ fn replace_with_cache_copy(
     Ok(())
 }
 
-/// A rename. Windows refuses it while a file below `folder` is open, and overlayfs (Docker) for a
-/// folder from a lower layer: then the entries move one by one. After an error `folder` is whole.
+/// Renames `folder` to `aside`. Windows refuses that while a file inside `folder` is open, and
+/// overlayfs (Docker) refuses it for a folder from a lower layer. The entries are then moved one by
+/// one, and moved back if that fails.
 fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     let cwd = Dir::cwd();
     let Err(refused) = sys::renameat(cwd.fd, folder, cwd.fd, aside) else {
         return Ok(());
     };
-    // Behind a link is the global store, which is not the project's to move.
+    // If `folder` is a symlink, it points into the global store, which other projects share, so
+    // nothing is moved out of it.
     if refused.get_errno() == sys::E::ENOENT || is_link(folder.as_bytes()) {
         return Err(refused);
     }
@@ -1396,7 +1424,7 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     })
 }
 
-/// Every entry of `from` goes to `to`: a folder that the system does not rename, entry by entry.
+/// Moves every entry of `from` into `to`, descending into a subfolder that cannot be renamed.
 fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
     let mut iter = sys::iterate_dir(from.fd);
     while let Some(entry) = iter.next()? {
@@ -1417,8 +1445,8 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
     Ok(())
 }
 
-/// In the global store the links to a package's dependencies stand next to it. The copy gets them
-/// in its own node_modules, where `--commit` hides what the package does not bundle.
+/// In the global store, the symlinks to a package's dependencies are siblings of the package. The
+/// copy in `folder` gets them in its own node_modules, where `--commit` keeps them out of the diff.
 fn link_store_siblings(link: &[u8], folder: &[u8]) -> sys::Result<()> {
     let package = resolve_links(link)?;
     let mut siblings = resolve_path::dirname::<platform::Auto>(&package);
@@ -1429,7 +1457,8 @@ fn link_store_siblings(link: &[u8], folder: &[u8]) -> sys::Result<()> {
     link_entries(siblings, &node_modules, &package)
 }
 
-/// A link in `to` to each entry of `from`, one level down for an `@scope`.
+/// Creates a symlink in `to` for each entry of `from` other than `except`. The entries of an
+/// `@scope` folder are linked one by one.
 fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
     let dir = Dir::cwd().open_dir(from, ITERATE)?;
     let mut iter = sys::iterate_dir(dir.fd);
@@ -1450,7 +1479,7 @@ fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
         #[cfg(not(windows))]
         let linked = sys::symlink(&target, &link);
         match linked {
-            // What the package bundles comes first, as it does in the store.
+            // A dependency that the package bundles already exists and wins, as in the store.
             Err(e) if e.get_errno() != sys::E::EEXIST => return Err(e),
             _ => {}
         }
@@ -1458,29 +1487,33 @@ fn link_entries(from: &[u8], to: &[u8], except: &[u8]) -> sys::Result<()> {
     Ok(())
 }
 
-/// `./` and the way from `cwd` on POSIX, where the path of the project can have a `\` or a `"`.
+/// On POSIX, returns `path` relative to `cwd` with a leading `./`, because the project's own path
+/// can contain a `\` or a `"` there. On Windows, returns `path` unchanged.
 fn from_cwd(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     if cfg!(windows) {
         return path.to_vec();
     }
-    // Both are absolute and normalized. `relative` would normalize them, which splits at a `\` too.
+    // Both paths are already absolute and normalized. `relative` would normalize them again, and
+    // that treats a `\` as a separator.
     let relative = resolve_path::relative_normalized::<platform::Auto, false>(cwd, path);
     [&b"./"[..], relative].concat()
 }
 
-/// All of it: `--commit` records whatever the cache entry has and the copy lacks as deleted.
+/// Copies the whole cache entry to `to`. Nothing is skipped, because `--commit` records any file
+/// that the cache entry has and the copy lacks as deleted.
 fn copy_cache_entry(
     cache_dir: Fd,
     cache_dir_subpath: &[u8],
     to: &[u8],
 ) -> Result<(), crate::Error> {
-    // Before anything is touched: the cache entry may be gone.
+    // Open the cache entry before changing anything, because it may no longer exist.
     let cached_package_folder = Dir::borrow(&cache_dir).open_dir(cache_dir_subpath, ITERATE)?;
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
     // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // is required so `/` is normalized to `\` on Windows. On POSIX it turns a `\` into a `/`.
+    // is required so `/` is normalized to `\` on Windows. On POSIX it turns a `\` into a `/`, so
+    // `from_cwd` keeps the project's own path, which may contain a `\`, out of `to`.
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let to = from_cwd(sys::getcwd_z(&mut cwd_buf)?.as_bytes(), to);
     let dest_subpath = bun_paths::Path::<
@@ -1686,7 +1719,8 @@ fn pkg_info_for_name_and_version(
         if let Some(v) = version {
             let resolution = &pkg_resolutions[pkg_id as usize];
             let label = print_resolution_label(&mut resolution_label, resolution, strbuf);
-            // Also as the list below prints it, which asks for a copy.
+            // Also accept the redacted label, which is what the list of versions below prints for
+            // the user to copy.
             if label != v
                 && bun_fmt::redacted(bstr::BStr::new(label))
                     .to_string()

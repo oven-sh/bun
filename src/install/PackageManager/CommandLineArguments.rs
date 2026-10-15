@@ -334,7 +334,8 @@ pub(crate) static PM_PARAMS: ParamTable = &[
     ],
 ];
 
-/// The flags of `PM_PARAMS` that only some `bun pm` sub-commands take: `parse` refuses them for the others.
+/// Flags in `PM_PARAMS` that only some `bun pm` subcommands accept. `parse` rejects them for every
+/// other subcommand.
 const PM_SUBCOMMAND_FLAGS: &[(&[u8], &[&[u8]])] = &[
     (b"cache", &[b"--max-age"]),
     (
@@ -371,19 +372,20 @@ const PM_SUBCOMMAND_FLAGS: &[(&[u8], &[&[u8]])] = &[
     (b"why", &[b"--top", b"--depth"]),
 ];
 
-/// What a flag of npm, yarn or pnpm is to `bun install`, `add`, `remove` and `update`.
+/// How `bun install`, `add`, `remove` and `update` treat a flag that belongs to npm, yarn or pnpm.
 #[derive(Clone, Copy)]
 enum ForeignFlag {
-    /// The same thing under bun's name.
+    /// Means the same as this Bun flag, so it is rewritten to it.
     AliasOf(&'static [u8]),
-    /// Asks for what bun does whatever its settings say: dropped.
+    /// Asks for something Bun always does, whatever its configuration, so the flag is ignored.
     Satisfied,
-    /// Not the same thing: the flag stays an error, which names this one.
+    /// Similar to this Bun flag but not equivalent. It stays an error that suggests this flag.
     Near(&'static [u8]),
 }
 use ForeignFlag::{AliasOf, Near, Satisfied};
 
-/// `--name=value` also stands for `--name value`. A flag that is not here and that bun does not have is an error.
+/// An entry written as `--name=value` also matches `--name value`. A flag that is neither listed
+/// here nor one of Bun's own is an error.
 const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--save-dev", AliasOf(b"--dev")),
     (b"--save-exact", AliasOf(b"--exact")),
@@ -391,7 +393,7 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--save-peer", AliasOf(b"--peer")),
     (b"--no-optional", AliasOf(b"--omit=optional")),
     (b"--ignore-optional", AliasOf(b"--omit=optional")),
-    // Not `--production`, which also freezes the lockfile.
+    // Not `--production`, because `--production` also freezes the lockfile.
     (b"--only=prod", AliasOf(b"--omit=dev")),
     (b"--only=production", AliasOf(b"--omit=dev")),
     (b"--production=true", AliasOf(b"--production")),
@@ -407,20 +409,21 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--loglevel=info", Satisfied),
     (b"--loglevel=verbose", AliasOf(b"--verbose")),
     (b"--loglevel=silly", AliasOf(b"--verbose")),
-    // An install has no audit, no funding line and no update check.
+    // `bun install` never audits, prints funding messages, or checks for a newer version of itself.
     (b"--no-audit", Satisfied),
     (b"--audit=false", Satisfied),
     (b"--no-fund", Satisfied),
     (b"--fund=false", Satisfied),
     (b"--no-update-notifier", Satisfied),
     (b"--update-notifier=false", Satisfied),
-    // Peers that conflict are a warning, `engines` is not checked, scripts run as the user, nothing asks.
+    // Bun only warns about conflicting peer dependencies, does not check `engines`, runs scripts as
+    // the current user, and never prompts.
     (b"--legacy-peer-deps", Satisfied),
     (b"--ignore-engines", Satisfied),
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),
     (b"--prefer-frozen-lockfile", Satisfied),
-    // `--no-save` also leaves package.json as it is, and it still reads bun.lock.
+    // Not an alias: `--no-save` also leaves package.json unchanged, and it still reads bun.lock.
     (b"--no-package-lock", Near(b"--no-save")),
     (b"--no-lockfile", Near(b"--no-save")),
     (b"--pure-lockfile", Near(b"--no-save")),
@@ -431,7 +434,8 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--node-linker", Near(b"--linker")),
 ];
 
-/// `bun update` has these too, but there they choose what is updated, which no flag above asks for.
+/// `bun update` accepts these flags too, but there they select which dependencies to update, so no
+/// entry in `FOREIGN_FLAGS` is rewritten to them for `bun update`.
 const UPDATE_FILTERS: &[&[u8]] = &[b"--dev", b"--production"];
 
 pub(crate) static ADD_PARAMS: ParamTable = &[
@@ -1352,7 +1356,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
             _ => &[],
         };
-        // A flag of the command itself comes first, and an alias needs the flag that it stands for.
+        // A foreign flag is skipped if the command has its own flag of that name, and an alias only
+        // applies if the command accepts the Bun flag it maps to.
         let rewrites: Vec<(&'static [u8], &'static [u8])> = (foreign_flags.iter())
             .filter(|(flag, _)| !has(&flag[2..]))
             .filter_map(|&(flag, kind)| match kind {
@@ -1363,7 +1368,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     if has(&own[2..name_end]) && !is_filter {
                         Some((flag, own))
                     } else {
-                        // Where a new dependency is saved: nothing to a command that saves none.
+                        // `--save-*` only picks the group a new dependency is saved to, so a
+                        // command that adds no dependency ignores it.
                         flag.starts_with(b"--save-")
                             .then_some((flag, b"".as_slice()))
                     }
@@ -1724,11 +1730,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
         }
 
-        // The first call wins: `initial_top_level_dir()` is where the command was typed. `init` leaves it.
+        // `FileSystem::init` only takes effect once, so `initial_top_level_dir()` stays the
+        // directory the command was run in, even after `PackageManager::init` changes directory.
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd(&mut cwd_buf)?.as_bytes();
         let start_dir = bun_paths::fs::FileSystem::init(cwd).initial_top_level_dir();
-        // Every parse sees the arguments of `PARSED_ARGS`, so these are the same each time.
+        // Every `parse` call reads the same `PARSED_ARGS`, so these paths are resolved only once.
         static TYPED_PATHS: OnceLock<[Box<[u8]>; 3]> = OnceLock::new();
         let [config, cache_dir, ca_file_name] = TYPED_PATHS.get_or_init(|| {
             [cli.config, cli.cache_dir, Some(cli.ca_file_name)]

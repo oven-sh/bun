@@ -617,7 +617,8 @@ impl<T: VersionInt> VersionType<T> {
                     break;
                 }
                 c @ (b'-' | b'+') => {
-                    // A tag needs a version before it. `1-2` is left to the range parser, which reads `1 - 2`.
+                    // A tag must follow a version number. A `-` needs two numbers before it, so
+                    // that `1-2` is left to the range parser, which reads it as `1 - 2`.
                     let fewest_parts = if c == b'+' { 1 } else { 2 };
                     if part_i < fewest_parts && result.wildcard == Wildcard::None {
                         result.valid = false;

@@ -265,7 +265,8 @@ impl AuditCommand {
             Global::exit(1);
         }
 
-        // What the next `bun audit` reads: the copy in memory can hold a package that was not saved.
+        // Audit the saved lockfile, which is what the next `bun audit` reads. The copy in memory
+        // can contain a package that was not saved.
         pm.load_lockfile_from_cwd_or_exit("nothing to audit");
         let reaudit = audit_for_fix(pm, audit_level, ignore_list, false)?;
         if json_output {
@@ -677,7 +678,7 @@ fn send_audit_request(
     );
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
-    // The POST changes nothing on the registry.
+    // This POST is safe to retry, because it changes nothing on the registry.
     let reason = match pm.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {
@@ -897,7 +898,8 @@ fn collect_vulnerabilities(
     ignore_list: &[&[u8]],
     stats: &mut AuditStats,
 ) -> Result<Result<Vec<VulnerabilityInfo>, SkipReason>, bun_alloc::AllocError> {
-    // No answer (also a 204 or 304) is not "no advisories", though the parser reads it as `{}`.
+    // An empty body (also from a 204 or 304) does not mean "no advisories", even though the parser
+    // would read it as `{}`.
     if response_text.trim_ascii().is_empty() {
         return Ok(Err(SkipReason::Empty));
     }

@@ -94,8 +94,9 @@ pub struct PackageJSON {
 
     pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
-    /// Of a package in node_modules, in place of `dependencies`: the rows of each of
-    /// `INSTALLED_DEPENDENCY_GROUPS` on `json_tape`. Auto-install parses the one it asks for.
+    /// Used instead of `dependencies` for a package in node_modules: where the rows of each group
+    /// in `INSTALLED_DEPENDENCY_GROUPS` are in `json_tape`. Auto-install only parses the row it
+    /// looks up.
     pub(crate) installed_dependency_rows:
         [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
 
@@ -175,12 +176,12 @@ pub enum IncludeDependencies {
 
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
-/// The last group that has a name wins, as in an install.
+/// If a name is in several groups, the last group wins, as it does in `bun install`.
 const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
-    /// Whether auto-install can find the version of an import here.
+    /// Whether auto-install can look up the version of an imported package in this package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {
         self.dependencies.map.count() > 0
             || self.package_manager_package_id != INVALID_PACKAGE_ID
@@ -190,7 +191,7 @@ impl PackageJSON {
                 .any(|rows| !rows.is_empty())
     }
 
-    /// What a package in node_modules has for `name`, the row that wins first.
+    /// The versions that a package in node_modules declares for `name`, highest precedence first.
     pub(crate) fn installed_dependency_versions<'a>(
         &'a self,
         name: &'a [u8],
@@ -847,7 +848,7 @@ impl PackageJSON {
                         }
                     }
                 }
-                // The last group that has a name wins, as in an install.
+                // If a name is in several groups, the last group wins, as it does in `bun install`.
                 let dependency_groups: &[DependencyGroup] =
                     if INCLUDE_DEPENDENCIES == IncludeDependencies::Main {
                         &[
@@ -856,7 +857,8 @@ impl PackageJSON {
                             DependencyGroup::OPTIONAL,
                         ]
                     } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
-                        // The project's own package.json. One from the cache has a `package_id`.
+                        // One of the project's own package.json files. A package.json in the cache
+                        // has a `package_id`, which is handled above.
                         &[
                             DependencyGroup::PEER,
                             DependencyGroup::DEPENDENCIES,
@@ -864,7 +866,8 @@ impl PackageJSON {
                             DependencyGroup::OPTIONAL,
                         ]
                     } else {
-                        // Every package that is loaded from node_modules comes here.
+                        // This runs for every package loaded from node_modules, so it only records
+                        // where the rows are and parses nothing.
                         for (group, rows) in INSTALLED_DEPENDENCY_GROUPS
                             .iter()
                             .zip(&mut package_json.installed_dependency_rows)

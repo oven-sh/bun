@@ -59,7 +59,8 @@ struct Tree {
     files: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Permission bits per path (0o755…), when the source records them.
     modes: BTreeMap<Vec<u8>, u32>,
-    /// What the registry's document says about this version, as JSON, when the side came from a registry.
+    /// The registry manifest's entry for this version, as JSON. `None` unless this side came from a
+    /// registry.
     registry_entry: Option<Vec<u8>>,
 }
 
@@ -290,15 +291,16 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
         },
         [a, b] => {
             let mut left = classify(a);
-            // `name 2`: as with one argument, a name alone on the left is the installed version, if there is one.
+            // `name 2`: as with a single argument, a bare name on the left means the installed
+            // version of that package, if there is one.
             if let Spec::Registry { name, version } = &mut left
                 && version.is_empty()
                 && let Some(installed) = installed_version(pm, name)
             {
                 (*name, *version) = installed;
             }
-            // `2`, `^2`, `>=2 <4`, `latest`: what package.json would read as a version or range, not a name or
-            // any other dist-tag (`next` is a package too).
+            // Matches `2`, `^2`, `>=2 <4` and `latest`: what package.json would read as a version
+            // or range. Other dist-tags do not match, because a word like `next` is also a package.
             let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && (dependency::Tag::infer(name) == dependency::Tag::Npm || name == b"latest"));
             let right = match (classify(b), &left) {
                 // `name@1 2` — a bare second version reuses the first name.
@@ -403,8 +405,8 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     name.to_vec()
 }
 
-/// The npm package that `name` means where the command was run (`name` may be an alias of it) and the version of it
-/// this project's lockfile resolved, if any.
+/// Returns the npm package that `name` refers to in the folder the command was run in, and the
+/// version the lockfile resolved for it. `name` may be an alias of that package.
 fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
     let mut lockfile = core::mem::take(&mut pm.lockfile);
@@ -431,8 +433,8 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
-    // Several copies may be installed. In the order `require(name)` finds them: what the package the command was
-    // run in depends on, then the root node_modules.
+    // Several copies may be installed, so search in the order `require(name)` would: first the
+    // dependencies of the package the command was run in, then the root node_modules.
     let own = lockfile.packages.items_dependencies().get(member as usize);
     let mut folders = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
     let hoisted = folders
@@ -449,7 +451,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
                 == name
         })
         .map(|dep| lockfile.buffers.resolutions[dep as usize] as usize);
-    // Then one that is nested deeper, or installed under an alias only.
+    // Fall back to a copy that is nested deeper, or that is only installed under an alias.
     let by_own_name = (0..names.len()).filter(|&id| names[id].slice(string_buf) == name);
     let found = by_installed_name.chain(by_own_name).find(|&id| {
         resolutions
@@ -929,7 +931,8 @@ fn fetch_registry_tree(
         found.version.fmt(&manifest.string_buf)
     );
 
-    // Keys are read as `PackageManifest::parse` reads them, so this is the entry `found` was made from.
+    // The version keys are parsed the way `PackageManifest::parse` parses them, so this finds the
+    // same entry that `found` was built from.
     let registry_entry = bun_parsers::json::parse_utf8(
         &bun_ast::Source::init_path_string(b"", body.list.as_slice()),
         &mut bun_ast::Log::init(),
@@ -969,7 +972,6 @@ fn fetch_registry_tree(
         None => (tarball_url.into_boxed_slice(), false),
     };
     let tarball = registry_get(pm, scope, URL::parse(&tarball_url), normalized, None, None)?;
-    // Checked as `bun install` checks a download.
     if pm.options.do_.contains(Do::VERIFY_INTEGRITY) {
         let locked = pm.lockfile.npm_integrity(name, found.version);
         for expected in [Some(found.integrity()), locked].into_iter().flatten() {
@@ -1006,7 +1008,7 @@ fn registry_get(
     scope: &npm::registry::Scope,
     url: URL<'_>,
     normalized: bool,
-    // `None`: the client's own, which is what `bun install` asks for a tarball with.
+    // `None` sends the HTTP client's default `Accept` header, as `bun install` does for a tarball.
     accept: Option<&[u8]>,
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
@@ -1141,8 +1143,8 @@ fn has_bidi_controls(bytes: &[u8]) -> bool {
     false
 }
 
-/// What a terminal is sent never lets package bytes drive it: C0/C1 controls (bar tab), bidi overrides and the two
-/// Unicode line separators are drawn as visible stand-ins.
+/// Makes bytes that come from a package safe to print to a terminal. C0 and C1 control characters
+/// (except tab), bidi overrides and the two Unicode line separators become visible stand-ins.
 fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     let suspicious = |b: &u8| (*b < 0x20 && *b != b'\t') || *b == 0x7f || *b == 0xc2 || *b == 0xe2;
     if !text.iter().any(suspicious) {
@@ -1207,8 +1209,9 @@ fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A NUL byte near the start, as for git, unless something reads the file as text: the runtime going by its extension,
-/// an interpreter, or (the name does not matter there) the JavaScript parser.
+/// Like git, treats a file with a NUL byte near the start as binary. The exceptions are files that
+/// something reads as text: those with an extension that Bun loads as text, shebang and `.sh`
+/// scripts, and those with an unknown extension that parse as JavaScript.
 fn is_binary(path: &[u8], bytes: &[u8]) -> bool {
     use bun_ast::Loader;
     strings::contains_char(&bytes[..bytes.len().min(8192)], 0)
@@ -1228,7 +1231,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     bun_fmt::bytes_to_hex_lower_string(&digest)
 }
 
-/// `15 → 74 bytes, sha256 1a2b3c4d5e6f → 0f9e8d7c6b5a`: what there is to say about contents that are not shown.
+/// Summarizes a change whose contents are not shown, for example
+/// `15 → 74 bytes, sha256 1a2b3c4d5e6f → 0f9e8d7c6b5a`.
 fn binary_summary(c: &FileChange<'_>) -> String {
     let hash = |side: Option<&[u8]>| side.map_or_else(|| "none".to_string(), sha256_hex);
     format!(
@@ -1248,8 +1252,9 @@ fn count_lines(bytes: &[u8]) -> usize {
     }
 }
 
-/// `prefix` + `path` as a patch names a file: in C quotes, which `git apply` and GNU patch both read, when either tool
-/// would end the bare name early (a space, a control character) or take it for a quoted one.
+/// Returns `prefix` + `path` the way a patch header names a file. The name is C-quoted, which
+/// `git apply` and GNU patch both understand, when a space, control character, quote or backslash
+/// would otherwise make either tool misread it.
 fn patch_name(prefix: &[u8], path: &[u8]) -> Vec<u8> {
     let needs_quotes = |b: &u8| matches!(*b, 0..=b' ' | 0x7f | b'"' | b'\\');
     if !path.iter().any(needs_quotes) {
@@ -1313,7 +1318,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             .iter()
             .flatten()
             .any(|side| is_binary(path, side));
-        // With the colon this is JSON only: no program starts like it.
+        // Because of the colon, this prefix can only start JSON, never a JavaScript program.
         change.sourcemap = strings::ends_with(path, b".map")
             && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\":"));
         if change.binary || change.sourcemap {
@@ -1436,7 +1441,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     None
                 };
                 match keys {
-                    // A re-print the parser does not take for the file is not put in its place.
+                    // A re-print that does not parse as the same file is not shown in the file's
+                    // place. The raw text is diffed instead.
                     _ if !faithful => {
                         change.semantic = Semantic::Text;
                         unified_hunks(o, n, flags.context, style, &mut change);
@@ -1447,7 +1453,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                         let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
                         let same_key = ko.text == kn.text;
                         if !same_key && shown_o.text == shown_n.text {
-                            // What the re-prints do not tell apart is in the files' own lines.
+                            // The code differs but the re-prints are identical, so only the raw
+                            // text can show the change.
                             change.semantic = Semantic::Text;
                             unified_hunks(o, n, flags.context, style, &mut change);
                         } else if !projection.holds(path, &shown_o.text, &shown_n.text, same_key) {
@@ -1590,7 +1597,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             } else {
                 (1, n, 0, 0)
             };
-            // An empty file has no line to put under a hunk header, and one with nothing under it is a corrupt patch.
+            // An empty file has no lines, and a hunk header without lines corrupts the patch.
             if n > 0 {
                 style.hunk_header(&mut change.hunks, range, true);
             }
@@ -1711,8 +1718,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             Output::print(format_args!("{}", BStr::new(&c.hunks)));
             continue;
         }
-        // `git apply` and GNU patch read a mode line, or a file with no hunk, only under git's own header. A file
-        // whose contents the patch leaves out gets neither: GNU patch would take its mode line for the file above.
+        // `git apply` and GNU patch only accept a mode line, or a file with no hunks, under a
+        // `diff --git` header. A file whose contents the patch omits gets neither that header nor a
+        // mode line, because GNU patch would apply the mode line to the previous file.
         let in_patch = !c.binary && !c.sourcemap;
         let header: &[u8] = if in_patch {
             b"diff --git "
@@ -1723,7 +1731,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         if style.escape {
             (a, b) = (defang(&a).into_owned(), defang(&b).into_owned());
         }
-        // Into a file go bytes, not Display: a Latin-1 context line must round-trip for the patch to apply.
+        // Output that goes to a file is written as raw bytes, not through `Display`. A Latin-1
+        // context line has to come out unchanged for the patch to apply.
         let put = |part: &[u8]| {
             if style.escape {
                 Output::print(format_args!("{}", BStr::new(part)));
@@ -1771,7 +1780,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             ));
             continue;
         }
-        // An empty file, added or removed, as git writes it: the ids of no file and of the empty file, and no hunk.
+        // An added or removed empty file is written the way git writes it: an `index` line with the
+        // null object ID and the empty blob's ID, and no hunk.
         if c.hunks.is_empty() {
             Output::print(format_args!(
                 "index {}\n",
@@ -2150,7 +2160,8 @@ fn split_label(label: &[u8]) -> Option<(&[u8], &[u8])> {
     (at > 0).then(|| (&label[..at], &label[at + 1..]))
 }
 
-/// What `bun install` takes from the registry's entry for a version, not from the package.json in its tarball.
+/// The fields that `bun install` reads from the registry manifest's entry for a version, not from
+/// the package.json inside the tarball.
 const INSTALL_FIELDS: [&[u8]; 8] = [
     b"dependencies",
     b"optionalDependencies",
@@ -2162,11 +2173,12 @@ const INSTALL_FIELDS: [&[u8]; 8] = [
     b"libc",
 ];
 
-/// One side's package.json, read the way `bun install` reads the package.
+/// One side's package.json, with each field read from wherever `bun install` would read it.
 struct Manifest {
     file: bun_ast::Expr,
-    /// The registry's entry for the version, and the fields of it that say something else than `file`.
+    /// The registry manifest's entry for this version.
     entry: Option<bun_ast::Expr>,
+    /// The fields of `entry` whose values differ from those in `file`.
     overridden: Vec<&'static [u8]>,
 }
 
@@ -2179,7 +2191,7 @@ impl Manifest {
     }
 }
 
-/// The string-valued properties of an object.
+/// Returns the properties of the object `e` whose values are strings.
 fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
     let Some(obj) = e.and_then(|e| e.data.e_object()) else {
         return Vec::new();
@@ -2196,8 +2208,8 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
         .collect()
 }
 
-/// One of `INSTALL_FIELDS` as sorted pairs, equal for two spellings that install the same: a registry rewrites some
-/// fields when a package is published.
+/// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
+/// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
     use bun_paths::resolve_path::{join_abs_string_checked, platform};
     let Some(value) = json.get(field) else {
@@ -2206,7 +2218,7 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
     let mut pairs = string_pairs(Some(&value), bump);
     match field {
         b"bin" => {
-            // `"bin": "./cli.js"` is `{ "<the name without its scope>": "cli.js" }`.
+            // `"bin": "./cli.js"` is short for `{ "<package name without its scope>": "cli.js" }`.
             if let (Some(path), Some(name)) = (
                 value.as_string(bump),
                 json.get(b"name").and_then(|name| name.as_string(bump)),
@@ -2234,7 +2246,8 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
                 }
             }
         }
-        // A name in both is optional, and some entries repeat the optional ones here.
+        // A package listed in both fields is optional, and some registry entries repeat the
+        // optional dependencies under `dependencies`.
         b"dependencies" => {
             let optional = install_view(json, b"optionalDependencies", bump);
             pairs.retain(|(name, _)| !optional.iter().any(|(other, _)| other == name));
@@ -2262,7 +2275,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         let mut overridden = Vec::new();
         for field in INSTALL_FIELDS {
             let Some(entry) = &entry else { break };
-            // The short form of the registry's document, the one asked for, leaves `libc` out.
+            // This command requests the abbreviated registry manifest, which omits `libc`.
             if (field == b"libc" && entry.get(field).is_none())
                 || install_view(entry, field, &bump) == install_view(&file, field, &bump)
             {
@@ -2295,7 +2308,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     let (Some(old), Some(new)) = (side(left), side(right)) else {
         return;
     };
-    // Which of two equal keys counts depends on the tool that reads the file.
+    // When a key appears twice, which value wins depends on the tool that reads the file.
     if let Some(object) = new.file.data.e_object() {
         let keys: Vec<&[u8]> = object
             .properties
@@ -2349,7 +2362,8 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     ] {
         let o = string_pairs(old.get(field).as_ref(), &bump);
         let n = string_pairs(new.get(field).as_ref(), &bump);
-        // `^1.0.0` → `^1.0.1`. A range that turns into a URL, a repository or another package's name is not one.
+        // A version bump goes from one range to another, like `^1.0.0` → `^1.0.1`. A range that
+        // becomes a URL, a repository or an alias of another package is not a bump.
         let is_range = |version: &[u8]| {
             dependency::Tag::infer(version) == dependency::Tag::Npm && !version.starts_with(b"npm:")
         };
@@ -2427,11 +2441,12 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
         b"bundleDependencies",
         b"bundledDependencies",
     ] {
-        // The whole values decide; what a note shows of them is cut to size.
+        // Compare the full values. Only the text shown in a note is truncated.
         let differ = |(o, n): &(Option<bun_ast::Expr>, Option<bun_ast::Expr>)| {
             o.map(|e| json_text(&e, true)) != n.map(|e| json_text(&e, true))
         };
-        // What `bun install` goes by, then the files: other tools read those.
+        // Compare the values `bun install` uses first, then the package.json files, which other
+        // tools read.
         let Some((o, n)) = [
             (old.get(field), new.get(field)),
             (old.file.get(field), new.file.get(field)),
@@ -2472,7 +2487,8 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
     }
 }
 
-/// `e` as JSON. Without whitespace the text does not depend on the layout of the file `e` was read from.
+/// Prints `e` as JSON. With `minify_whitespace`, the text does not depend on how the file that `e`
+/// was read from is formatted.
 fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
     let source = bun_ast::Source::init_path_string(b"package.json", b"".as_slice());
@@ -2489,7 +2505,7 @@ fn json_text(e: &bun_ast::Expr, minify_whitespace: bool) -> Vec<u8> {
     printer.ctx.get_written().to_vec()
 }
 
-/// `e` on one line, for a note.
+/// Prints `e` on a single line, for use in a note.
 fn expr_text(e: &bun_ast::Expr, bump: &Bump) -> Vec<u8> {
     if let Some(s) = e.as_string(bump) {
         return s.to_vec();
@@ -2515,12 +2531,12 @@ fn first_difference(a: &[u8], b: &[u8]) -> usize {
     a.iter().zip(b).take_while(|(a, b)| a == b).count()
 }
 
-/// At most some 120 bytes of `text`, with byte `at` among them.
+/// Returns at most about 120 bytes of `text`, in a window that includes the byte at index `at`.
 fn clip(text: &[u8], at: usize) -> Vec<u8> {
     if text.len() <= 120 {
         return text.to_vec();
     }
-    // Never inside a UTF-8 sequence.
+    // Never cut in the middle of a UTF-8 sequence.
     let boundary = |mut i: usize| {
         while i > 0 && i < text.len() && text[i] & 0xC0 == 0x80 {
             i -= 1;
@@ -2601,7 +2617,8 @@ static PALETTES: [Palette; 4] = [
 #[derive(Clone, Copy)]
 struct Style {
     pretty: bool,
-    /// A terminal shows the output, with colours or (`NO_COLOR`) as the plain patch: see `defang`.
+    /// True when the output goes to a terminal, either in color or (with `NO_COLOR`) as a plain
+    /// patch. Bytes from a package then go through `defang`.
     escape: bool,
     width: usize,
     palette: &'static Palette,

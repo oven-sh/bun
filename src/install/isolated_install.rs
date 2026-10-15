@@ -107,7 +107,7 @@ struct WorkFrame {
     child: u32,
 }
 
-/// In the hash of every global-store entry. Bump it when what bun puts into an entry changes.
+/// Part of every global-store entry's hash. Bump it when what Bun writes into an entry changes.
 const GLOBAL_STORE_LAYOUT: u8 = 1;
 
 /// Compute entry_hash for the global virtual store. The hash makes a
@@ -324,7 +324,8 @@ pub struct StoreFolder {
     /// Edges between the root and `dep_id`'s owner.
     pub depth: usize,
     /// `node_modules/.bun/<entry>`; the package is in `node_modules/<package name>` below it.
-    /// A `link:` dependency: the folder of `dep_id`'s owner, and `node_modules/<dependency name>`.
+    /// For a `link:` dependency, this is the folder of the package that declares `dep_id`, and the
+    /// link is in `node_modules/<dependency name>` below it.
     pub entry_dir: Vec<u8>,
 }
 
@@ -465,12 +466,13 @@ pub(crate) fn folder_is_inside_package(
     })
 }
 
-/// Where the first dependency of a name is in a finished node with more than `SHORT_LIST` of them,
-/// for the names that are peers.
+/// For a finished node with more than `SHORT_LIST` dependencies, the index of the first dependency
+/// with a given name. Only names that are peer dependencies somewhere are recorded.
 type FirstNamed = HashMap<(store::node::Id, PackageNameHash), usize>;
 const SHORT_LIST: usize = 16;
 
-/// The dependencies of a finished node, without those before the first one of that name.
+/// Returns the dependencies of a finished node, starting at the first one named `name_hash`.
+/// A list of at most `SHORT_LIST` is returned whole, so callers still have to compare names.
 fn dependencies_named<'a>(
     first_named: &FirstNamed,
     node_dependencies: &'a [Vec<store::node::DependencyIds>],
@@ -698,7 +700,9 @@ fn build_store(
         root_declares_workspace.set(res as usize);
     }
 
-    // The root's own dependency has the name of such a member, for peers and in the hidden folder.
+    // A workspace member is not linked into the root's `node_modules` when one of the root's own
+    // dependencies has the same name. That dependency then also gets the name when peers are
+    // resolved and in `node_modules/.bun/node_modules`.
     let root_folder = (lockfile.buffers.trees.first()).map(|tree| {
         tree.dependencies
             .get(&lockfile.buffers.hoisted_dependencies)
@@ -1469,7 +1473,9 @@ fn build_store(
     })
 }
 
-/// Entry by entry: `node_modules` may be a mount point. `keep_links`: of `bun link`.
+/// Moves what another linker installed out of every `node_modules`, into `.old_modules-<hex>`. The
+/// entries are moved one by one, because `node_modules` itself may be a mount point. `keep_links`
+/// leaves symlinks in place: in the global `node_modules`, `bun link` created them.
 pub(crate) fn move_node_modules_aside(
     lockfile: &Lockfile,
     keep_links: bool,
@@ -1489,7 +1495,8 @@ pub(crate) fn move_node_modules_aside(
     }
     let old_modules_name = old_modules.basename().to_vec();
     let mut not_cleared: Vec<Box<[u8]>> = Vec::new();
-    // See `LinkedNodeModules`. `None`: nothing is there.
+    // Nothing is moved out of a `node_modules` that is a symlink. See `LinkedNodeModules`.
+    // Returns `None` if `node_modules` does not exist.
     let mut is_linked = |node_modules: &mut AutoRelPath| {
         let is_linked = LinkedNodeModules::is_at(node_modules.slice_z())?;
         if is_linked && holds_a_tree(node_modules.slice(), &old_modules_name) {
@@ -1539,7 +1546,8 @@ pub(crate) fn move_node_modules_aside(
     Some(OldModules(old_modules_name.into_boxed_slice()))
 }
 
-/// No package's name begins with a dot: what is no package manager's is another tool's (`.vite`).
+/// Whether a linker created the `node_modules` entry `name`. No package name begins with a dot, so
+/// a dot entry that no package manager creates belongs to another tool (`.vite`).
 fn is_a_linkers(name: &[u8]) -> bool {
     const OF_A_PACKAGE_MANAGER: [&[u8]; 6] = [
         b".bin",
@@ -1555,7 +1563,7 @@ fn is_a_linkers(name: &[u8]) -> bool {
         || crate::prune::is_leftover(name)
 }
 
-/// Whether `move_entries_aside` would take something out of `node_modules`.
+/// Whether `move_entries_aside` would move anything out of `node_modules`.
 fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
     use bun_sys::FdExt as _;
 
@@ -1575,7 +1583,8 @@ fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
     found
 }
 
-/// Makes `to`, a directory in `from` or of its name.
+/// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
+/// directory inside `from`.
 fn move_entries_aside(
     from: &mut AutoRelPath,
     to: &mut AutoRelPath,
@@ -1621,7 +1630,8 @@ fn move_entries_aside(
     dir.close();
 }
 
-/// What stays of the other linker's tree shadows the new one. A mount point is left as is.
+/// Moves `from` to `to`, or deletes it if it cannot be moved, because anything left of the other
+/// linker's tree would shadow the new one. A mount point is left in place.
 fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> sys::Result<()> {
     use bun_sys::FdExt as _;
 
@@ -1633,14 +1643,16 @@ fn move_or_delete(from: &bun_core::ZStr, to: &bun_core::ZStr) -> sys::Result<()>
     }
     match sys::rmdir(from) {
         Err(err) if err.get_errno() != sys::E::EBUSY => {}
-        // A mount point. The rename's error does not tell: EXDEV when `to` is in a volume as well.
+        // `EBUSY` means that `from` is a mount point. The rename's own error does not show that: it
+        // is `EXDEV` when `to` is inside a mounted volume as well.
         _ => return Ok(()),
     }
-    // Another file system, or a directory of a lower overlayfs layer (Docker).
+    // `from` is on another file system, or it is a directory from a lower overlayfs layer (Docker).
     if err.get_errno() == sys::E::EXDEV {
         return Fd::cwd().delete_tree(from);
     }
-    // A program has a file in it open (Windows). A delete would stop midway, so it stays whole.
+    // On Windows, a program has a file in `from` open. Deleting `from` would stop halfway, so it is
+    // left intact.
     Err(err)
 }
 
@@ -1769,10 +1781,11 @@ pub(crate) fn install_isolated_packages(
             // The integrity too: the store path `name@version` is not unique across registries.
             let hash_entry = |seed: u64, id: store::entry::Id| {
                 let mut h = Wyhash::init(seed);
-                // Verified installs never share an entry whose bytes were not checked.
+                // `no_verify` is hashed so that a verified install never shares an entry whose
+                // bytes were not checked.
                 h.update(&[GLOBAL_STORE_LAYOUT, u8::from(no_verify)]);
                 let path = store::entry::fmt_store_path(id, &store, lockfile);
-                // The only part without a fixed length, so it is ended.
+                // The path is the only input without a fixed length, so a NUL marks its end.
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
                 let pkg_id = store.ids(id).pkg_id as usize;
                 h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
@@ -1966,11 +1979,11 @@ pub(crate) fn install_isolated_packages(
                                         if poisoned { 0 } else { sub.final_().max(1) };
                                 }
                             } else if members.len() > 1 {
-                                // One order-independent hash for the whole SCC: a
-                                // sub-hash per member of what it is (store path +
-                                // integrity) and of each link it holds, then the
-                                // sorted sub-hashes. Sorting by *content* (not entry
-                                // index) is what makes this stable across projects.
+                                // One order-independent hash for the whole SCC. Each member gets a
+                                // sub-hash of its own identity (store path + integrity) and of
+                                // every link it holds, and then the sorted sub-hashes are hashed
+                                // together. Sorting by content, not by entry index, is what keeps
+                                // the hash stable across projects.
                                 let own: Vec<u64> = (members.iter())
                                     .map(|&m| hash_entry(0, store::entry::Id::from(m)).final_())
                                     .collect();
@@ -1982,10 +1995,11 @@ pub(crate) fn install_isolated_packages(
                                     }
                                     let mut sub = Wyhash::init(0);
                                     sub.update(bun_core::bytes_of(own_hash));
-                                    // Sorted by the name of the link, the dependency's *alias*.
+                                    // The list is sorted by alias, which is the name of the link.
                                     for dep in entry_dependencies[m as usize].slice() {
                                         let di = dep.entry_id.get();
-                                        // The hash of another member is not known yet: what it is stands for it.
+                                        // The final hash of another member is not known yet, so
+                                        // its `own` hash is used instead.
                                         let in_scc = members.iter().position(|&other| other == di);
                                         let linked = match in_scc {
                                             Some(other) => own[other],
@@ -2271,7 +2285,8 @@ pub(crate) fn install_isolated_packages(
         installer
             .manager_mut()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
-        // `Installer::start_link_task` comes before the tasks of the dependents.
+        // `link:` entries go first, because `Installer::start_link_task` must run before the tasks
+        // of their dependents start.
         let is_link = |&entry: &usize| {
             let pkg_id = node_pkg_ids[entry_node_ids[entry].get() as usize];
             pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Symlink
@@ -2291,7 +2306,8 @@ pub(crate) fn install_isolated_packages(
                         installer.start_task(entry_id);
                         continue;
                     }
-                    // Dependents link to the project's folder. Older versions copied it here.
+                    // Dependents link straight to the project's folder. Older versions of Bun
+                    // copied the project into the store, so that copy is deleted.
                     if !is_new_bun_modules {
                         use bun_sys::FdExt as _;
                         let mut old_copy: AbsPath = AbsPath::init_top_level_dir();
@@ -2429,11 +2445,13 @@ pub(crate) fn install_isolated_packages(
                                 }
                             }
                             if cfg!(windows) {
-                                // Windows drops `..` from a path before it follows links.
+                                // The `..` check below does not work on Windows, which removes `..`
+                                // from a path before it follows links.
                                 store_path.set_length(local_entry_len);
                                 break 'needs_install installer::is_link(store_path.slice_z()) == Some(true);
                             }
-                            // `..` goes up from where a link leads: a path with a link out of the store does not end at the store.
+                            // `..` goes up from a symlink's target. If part of this path is a link
+                            // out of the store, going back up does not reach `node_modules/.bun`.
                             store_path.set_length(package_len);
                             let up: &[u8] = if bun_core::strings::contains_char(pkg_name.slice(string_buf), b'/') {
                                 b"../../../.."
@@ -2457,7 +2475,8 @@ pub(crate) fn install_isolated_packages(
                             // The only per-install work is the project-level
                             // `node_modules/.bun/<storepath>` → global symlink.
                             match installer.link_project_to_global_store(entry_id) {
-                                // New to this project, and no task of the entry runs.
+                                // The entry is new to this project and none of its tasks run, so
+                                // its blocked scripts are counted here.
                                 Ok(true) => {
                                     let blocked = installer::Task::count_blocked_scripts(
                                         &installer,

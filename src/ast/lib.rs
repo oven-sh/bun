@@ -1106,10 +1106,11 @@ impl Data {
     }
 }
 
-/// A line of a file as it is printed: its control characters are spelled out. A tab stays.
+/// Returns a source line as it is shown in a diagnostic: control characters other than tabs are
+/// written as escape sequences such as `\x1b`.
 fn printable(line: &[u8]) -> Vec<u8> {
     let mut printed = Vec::with_capacity(line.len());
-    // A NUL does nothing on a terminal: it stays, as the line has it.
+    // NUL bytes are copied through unescaped because a terminal ignores them.
     for (i, part) in bun_core::strings::split(line, b"\0").enumerate() {
         if i > 0 {
             printed.push(0);
@@ -1120,7 +1121,8 @@ fn printable(line: &[u8]) -> Vec<u8> {
     printed
 }
 
-/// Width in terminal columns of the first `units` UTF-16 code units of `line`, printed. A tab counts as one column.
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`, as `printable`
+/// renders them. A tab counts as one column.
 fn width_before(line: &[u8], units: usize) -> usize {
     use bun_core::strings;
     let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];

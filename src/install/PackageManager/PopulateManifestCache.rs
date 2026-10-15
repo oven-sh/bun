@@ -196,7 +196,8 @@ pub fn populate_manifest_cache(
                     Some(&mut expired),
                     needs_extended_manifest,
                 );
-                // What a manifest says about a published version does not change with its age.
+                // A published version's metadata never changes, so an expired manifest is still
+                // good enough if it lists the resolved version.
                 let has_version = cached.is_some_and(|manifest| {
                     !expired || manifest.find_by_version(res.npm().version).is_some()
                 });

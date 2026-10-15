@@ -94,8 +94,8 @@ pub struct EventLoop {
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
-    /// Drains of `tasks`. One iteration of the uws loop has several: what another thread finishes
-    /// (a `fetch`, say) can run in the iteration that started it. Atomic for a Worker's read.
+    /// How many times `tasks` was drained. One uws loop iteration drains it several times, so a
+    /// `fetch` can start and finish within one iteration. Atomic because a Worker may read it.
     task_drains: AtomicU64,
     pub concurrent_ref: AtomicI32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
@@ -569,7 +569,7 @@ impl EventLoop {
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
-        // Only this thread writes it.
+        // Only this thread writes `task_drains`, so a plain load and store is enough.
         let drains = self.task_drains.load(Ordering::Relaxed);
         self.task_drains.store(drains + 1, Ordering::Relaxed);
         tick_queue_with_count(self, virtual_machine, &mut counter)?;

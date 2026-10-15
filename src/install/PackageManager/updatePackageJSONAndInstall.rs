@@ -541,7 +541,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
         crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
-        // What left may have taken a bin name from a package that stays.
+        // A removed package may have owned a bin name that a remaining package also provides.
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }
 }

@@ -104,10 +104,12 @@ impl Dir {
             Err(e) => Err(e),
         }
     }
-    /// Deletes what this dir holds and keeps the dir itself; nothing is looked up through its name.
-    /// Goes on after an entry that cannot be deleted and returns the first error.
+    /// Deletes everything inside this directory but keeps the directory itself. Works only through
+    /// the open handle, never through the directory's path. Continues past an entry that cannot be
+    /// deleted, and returns the first error.
     pub fn delete_children(&self) -> Maybe<()> {
-        // A listing goes on where the last one through this handle stopped. Windows starts over.
+        // On POSIX, a listing resumes where the last one through this handle stopped, so rewind.
+        // On Windows, every listing starts from the beginning.
         #[cfg(not(windows))]
         set_file_offset(self.fd, 0)?;
         let mut names: Vec<Vec<u8>> = Vec::new();

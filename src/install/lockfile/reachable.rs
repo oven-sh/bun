@@ -82,16 +82,17 @@ impl Options {
     }
 }
 
-/// Each computed once, for one `resolutions` buffer.
+/// Caches that are valid for one `resolutions` buffer. Each set is computed on first use.
 #[derive(Default)]
 pub(crate) struct Linked {
-    /// What a `--production` / `--omit` install links.
+    /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
     members_outside: Option<DynamicBitSet>,
 }
 
 impl Linked {
-    /// `Lockfile::is_member_outside`, which reads the member's path, for a question asked per edge.
+    /// A cached `Lockfile::is_member_outside`. That function inspects the workspace's path, and
+    /// this one is called for every dependency edge.
     pub(crate) fn is_member_outside(&mut self, lockfile: &Lockfile, pkg_id: PackageID) -> bool {
         let outside = self.members_outside.get_or_insert_with(|| {
             let mut outside = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();

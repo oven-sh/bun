@@ -335,7 +335,7 @@ impl Drop for TempOutput {
 }
 
 struct Writer<'a> {
-    /// `None`: a dry run, which reads and checks everything and keeps nothing.
+    /// `None` for `--dry-run`, which still reads and checks every package but writes no pack.
     file: Option<&'a File>,
     buf: Box<[u8]>,
     len: usize,
@@ -950,7 +950,7 @@ pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary
         }
     }
 
-    // The whole pack is verified, and nothing has reached the cache. `staging` removes itself.
+    // The whole pack is verified by now and the cache is untouched. Dropping `staging` deletes it.
     if pm.options.dry_run {
         summary.created = staged.len() as u32;
         return Ok(summary);

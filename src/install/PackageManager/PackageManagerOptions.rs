@@ -462,8 +462,9 @@ impl Options {
         Ok(())
     }
 
-    /// Names the setting that asks for a provenance statement, if the one that counts says so.
-    /// As in npm: the command line, then `publishConfig`, then the environment, then `.npmrc`.
+    /// Returns the name of the setting that turns provenance on, or `None` if provenance is off.
+    /// Only the highest-priority setting that is present counts. The order matches npm: the command
+    /// line, then `publishConfig`, then the environment, then `.npmrc`.
     pub fn provenance_asked_by(
         &self,
         package_json: &Expr,
@@ -672,7 +673,8 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// A path from the environment, where often no shell has seen its `~/`. A relative one stays as it is.
+/// Expands a leading `~/` in a path from an environment variable, because the shell often has not
+/// done so. A relative path is returned unchanged.
 pub(crate) fn expand_home(path: &[u8]) -> Box<[u8]> {
     Api::BunInstall::resolve_path(b"", path)
 }
@@ -689,7 +691,8 @@ impl Options {
         bun_install_ref: Option<&Api::BunInstall>,
         // Runtime auto-install's `.npmrc`: only the registries and their credentials are read.
         runtime_npmrc: Option<&Api::BunInstall>,
-        // Runtime auto-install's bunfig.toml of the project's root, if `bun_install_ref` is another file.
+        // Runtime auto-install only: the bunfig.toml at the project's root, when that is not the
+        // file `bun_install_ref` was read from.
         runtime_root_bunfig: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {
@@ -723,7 +726,8 @@ impl Options {
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
-        // Scopes with credentials and no URL: they are at the default registry, which is not settled yet.
+        // Scopes that have credentials but no URL use the default registry. They are registered
+        // further down, once the default registry's URL is final.
         let mut at_default_registry: Vec<(&[u8], &Api::NpmRegistry)> = Vec::new();
 
         // npmrc < bunfig
@@ -734,7 +738,7 @@ impl Options {
                     let name: &[u8] = name;
                     at_default_registry.retain(|&(earlier, _)| earlier != name);
                     if registry.url.is_empty() {
-                        // Without credentials either, the scope is like one that has no entry.
+                        // A scope with neither a URL nor credentials counts as having no entry.
                         self.registries.remove(&Npm::registry::Scope::hash(name));
                         if registry.has_credentials() {
                             at_default_registry.push((name, registry));
@@ -919,7 +923,8 @@ impl Options {
             break 'brk Output::stderr_descriptor_type() != Output::DescriptorType::Terminal;
         };
 
-        // The default registry as the config files leave it.
+        // The default registry from the config files, before the environment or `--registry`
+        // replaces it.
         let configured = self.scope.clone();
 
         // technically, npm_config is case in-sensitive
@@ -950,7 +955,8 @@ impl Options {
             self.registry_from_command_line = true;
         }
 
-        // Their credentials follow the default registry as its own do. Elsewhere they stay where the config files have them.
+        // If the default registry was replaced, these scopes' credentials move to the new one only
+        // when the default registry's own credentials do. Otherwise they stay with the old one.
         let follows = self.scope.url_hash == configured.url_hash
             || self.inherits_credentials(&configured, &self.scope.url.url());
         let home = if follows { &self.scope } else { &configured };

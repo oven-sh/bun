@@ -197,9 +197,10 @@ impl DeferredLinks {
     }
 }
 
-/// `join_z_buf` for every package of a warm install: nothing in these two is left to normalize.
+/// A cheaper `join_z_buf` for two paths that are already normalized. A warm install calls this for
+/// every package.
 fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
-    // An alias has a `/` after its scope.
+    // A scoped alias contains a `/`, which Windows needs converted to `\`.
     if cfg!(windows) {
         return join_z_buf::<platform::Auto>(buf, &[folder, file_path]);
     }
@@ -216,8 +217,9 @@ fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> 
 }
 
 impl NodeModulesFolder {
-    /// `file_path` in this folder, for a call on the root `node_modules`: from there, which spares the
-    /// kernel the folders above it. The folder of an unlinked member is not below it.
+    /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
+    /// syscall on that directory's fd does not walk the directories above it. The path stays
+    /// absolute for a workspace that is not linked into the root `node_modules`: it is outside it.
     fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
         let top_level_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
         let folder = (self.path.strip_prefix(top_level_dir))
@@ -398,13 +400,14 @@ impl NodeModulesFolder {
     }
 }
 
-/// When the bins of a tree are linked.
+/// The point in the install at which a tree's bins are linked.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BinPass {
-    /// A bin that leads into a tree that is not complete yet waits for `Remaining`.
+    /// The tree just finished installing. A bin that points into a tree that has not finished yet
+    /// is queued again for `Remaining`.
     TreeDone,
     Remaining,
-    /// What is in `.bin` stays as it is.
+    /// Lifecycle scripts have run. Names that already exist in `.bin` are not replaced.
     AfterScripts,
 }
 
@@ -420,8 +423,8 @@ pub struct TreeContext {
     pub(crate) pending_installs: Vec<DependencyInstallContext>,
 
     pub(crate) binaries: bin::PriorityQueue,
-    /// Dependencies with a bin that run scripts, which can write the bin's file. One leaves the
-    /// list when the files of its bins are all there to link.
+    /// Dependencies that have a bin and run lifecycle scripts, which may create the bin's file.
+    /// A dependency is removed from the list once its bins are linked with no file missing.
     pub(crate) bins_after_scripts: Vec<DependencyID>,
 
     /// Number of installed dependencies. Could be successful or failure.
@@ -896,7 +899,8 @@ impl<'a> PackageInstaller<'a> {
                 }
                 if let Some(err) = bin_linker.err {
                     if global {
-                        // A logged error stops the save; `bun remove -g` only knows saved packages.
+                        // Print the error instead of logging it. A logged error stops the lockfile
+                        // from being saved, and `bun remove -g` can only remove saved packages.
                         self.summary.fail += 1;
                         if manager.options.log_level != Options::LogLevel::Silent {
                             bun_core::pretty_errorln!(
@@ -978,7 +982,8 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// Links the `bins_after_scripts`. A name that another package or a script took stays theirs.
+    /// Links the bins in `bins_after_scripts`, skipping any name that another package or a script
+    /// already created.
     pub(crate) fn link_bins_after_scripts(&mut self) {
         let mut queued = false;
         for tree in self.trees.iter_mut() {
@@ -2270,7 +2275,8 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
-            // What a package ships inside itself is not from the cwd.
+            // A folder that a published package ships inside itself is copied from that package's
+            // directory, not from the cwd, so its symlinks are not recreated.
             if resolution.tag == resolution::Tag::Folder
                 && matches!(install_result, package_install::InstallResult::Success)
                 && installer.cache_dir == Fd::cwd()

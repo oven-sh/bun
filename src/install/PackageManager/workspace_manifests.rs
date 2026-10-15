@@ -320,7 +320,8 @@ impl DeclaredDependencies {
     }
 }
 
-/// `bun update` would move it (a tag that moved back moves it down), or `latest` is newer.
+/// True if `bun update` would change the installed version, or if `latest` is newer than it.
+/// `bun update` can also downgrade, when a dist-tag now points to an older version.
 pub fn is_outdated(
     current: Semver::Version,
     current_buf: &[u8],

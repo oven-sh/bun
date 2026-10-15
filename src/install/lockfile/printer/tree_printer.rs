@@ -755,7 +755,7 @@ pub(crate) fn print<W: Write>(
     } else {
         debug_assert_eq!(dependencies_buffer.len(), resolutions_buffer.len());
         let is_update = manager.subcommand == Subcommand::Update;
-        // What an install would put on disk, each package once.
+        // List only the packages that an install would put on disk, and each of them once.
         let wanted = reachable::packages(
             this.lockfile,
             resolutions_buffer,
@@ -765,7 +765,8 @@ pub(crate) fn print<W: Write>(
             },
         );
         let mut listed = Bitset::init_empty(resolved.len())?;
-        // Peer edges come last: they name a package only when no other edge does.
+        // A package is printed under the name of the first edge that reaches it. Peer edges come
+        // last, so a peer dependency's name is used only when no other edge reaches the package.
         let edges = || {
             dependencies_buffer
                 .iter()

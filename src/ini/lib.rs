@@ -1076,7 +1076,7 @@ mod draft {
     }
 
     /// Reads every `.npmrc` into `install`; `bunfig` only tells the diagnostics which registries exist.
-    /// Returns the first one that is there and could not be read.
+    /// Returns the path of the first `.npmrc` that exists but could not be read.
     pub fn load_npmrc_config<'a>(
         install: &mut BunInstall,
         bunfig: &BunInstall,
@@ -1096,7 +1096,8 @@ mod draft {
             ) {
                 Ok(source) => sources.push(source),
                 Err(err) => {
-                    // A directory in its place holds no settings: worth the warning, and nothing to stop for.
+                    // A directory named `.npmrc` gets the warning too, but it is not reported to
+                    // the caller as unreadable.
                     let is_file = err.is_unreadable_file(npmrc_path.as_bytes());
                     if (is_file || err.is_directory())
                         && diagnostics == NpmrcDiagnostics::Print
@@ -1390,7 +1391,7 @@ mod draft {
         // deinitialized at the end of the scope.
         // We need to dupe all strings
         let out = &parser.out;
-        // A relative path starts at the file.
+        // Relative paths in a `.npmrc` are resolved against the directory that contains it.
         let dir = bun_core::dirname(source.path.text).unwrap_or_default();
 
         if let Some(query) = out.as_property(b"registry") {

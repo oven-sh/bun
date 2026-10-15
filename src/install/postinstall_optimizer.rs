@@ -47,7 +47,7 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // `as_array` has nothing for `[]`, which replaces the built-in entries like any other list.
+        // `as_array` returns `None` for `[]`, but an empty list still replaces the built-in list.
         let Some(mut array) = expr.as_array() else {
             return Ok(expr.is_array());
         };
@@ -217,7 +217,8 @@ impl List {
         }
         for default in DEFAULT_IGNORE.iter() {
             if default.name_hash == pkg_info.name_hash {
-                // Only a registry package has one: a fork or a workspace of that name builds itself.
+                // Only a registry package has a version here. A git fork or a workspace with the
+                // same name still has to run its own install scripts.
                 let version = pkg_info.version?;
                 if version.order(
                     default.minimum_version,

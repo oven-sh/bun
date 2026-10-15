@@ -92,7 +92,8 @@ impl Tree {
         deps[dep_id as usize].name.slice(buf)
     }
 
-    /// The tree of a member that the root's `node_modules` has no link to: see `hoist_dependency`.
+    /// Whether this tree belongs to a workspace package that has no symlink in the root
+    /// `node_modules`, because `hoist_dependency` gave its name to a dependency of the root.
     pub(crate) fn is_unlinked_member(
         &self,
         trees: &[Tree],
@@ -147,7 +148,8 @@ impl Tree {
 enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
-    /// Install tree: another group of the same package holds the place in `id` for another package.
+    /// `Filter` only: the same package lists this name in another dependency group, which resolves
+    /// to a different package and already has the name's row in tree `id`.
     Contested {
         id: Id,
     },
@@ -159,7 +161,7 @@ enum HoistDependencyResult {
     ResolveLater,
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
-    /// `Hoisted`, onto another package than the one the required peer is bound to.
+    /// `Hoisted`, but the required peer deduplicated onto this package, not the one it resolves to.
     Served(PackageID),
     Placement {
         id: Id,
@@ -257,7 +259,8 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         self.tree_id = 0;
     }
 
-    /// The saved tree has what such a member needs. No `node_modules` has it: `is_member_outside`.
+    /// Whether tree `id` is under a workspace package whose folder is outside the project. bun.lock
+    /// lists that package's dependencies, but none are installed. See `is_member_outside`.
     fn is_in_member_outside(&self, id: Id) -> bool {
         let mut top = self.trees[id as usize];
         for _ in 0..MAX_DEPTH {
@@ -348,7 +351,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     let mut parent_id = tree.id;
     let mut path_written: usize = match PATH_STYLE {
         IteratorPathStyle::NodeModules => {
-            // The last path in this buffer may have been one of an unlinked member.
+            // The buffer is reused. An unlinked workspace package's path overwrites this prefix.
             path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
             b"node_modules".len()
         }
@@ -398,7 +401,8 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             // `1 <= depth_buf_len <= depth`.
             let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
-            // Below the root, so the first: its own folder on disk, `./<name>` in bun.lock.
+            // The tree of an unlinked workspace package is a child of the root tree, so this is the
+            // first component. The path starts at the package's own folder, or `./` in bun.lock.
             if trees[id as usize].is_unlinked_member(trees, hoisted_dependencies, dependencies) {
                 if PATH_STYLE == IteratorPathStyle::PkgPath {
                     path_buf[..2].copy_from_slice(b"./");
@@ -454,35 +458,36 @@ pub enum BuilderMethod {
     /// changes. For saving to disk.
     Resolvable,
 
-    /// For installing. Every dependency takes its place, so places do not depend on the run; then
-    /// `keep_linked_rows` drops what the run leaves out: by 'os', 'cpu', 'libc' (optional only),
-    /// `--omit=dev/peer/optional`, `--filter`. What only a dropped package needs is dropped too.
+    /// For installing. Every dependency is hoisted first, so where a package is installed does not
+    /// depend on the options of this install. Then `keep_linked_rows` drops what this install skips
+    /// because of 'os', 'cpu', 'libc' (optional only), `--omit=dev/peer/optional` or `--filter`,
+    /// along with anything that only a dropped package depends on.
     Filter,
 }
 
-/// Where the install tree puts a package when the run leaves others out.
+/// Where the `Filter` tree places the remaining packages when an install skips some dependencies.
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(crate) enum Layout {
-    /// Where bun.lock has it.
+    /// Every package is placed where bun.lock has it.
     Locked,
-    /// `Builder::older_layout`.
+    /// See `Builder::older_layout`.
     Older,
 }
 
-/// What `Lockfile::hoist` tells besides the tree.
+/// What `Lockfile::hoist` returns, besides the trees it stores in the lockfile.
 pub(crate) struct Hoisted {
-    /// `Builder::late_bound_peer`.
+    /// See `Builder::late_bound_peer`.
     pub(crate) late_bound_peer: bool,
-    /// `Builder::places`.
+    /// See `Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
 }
 
-/// A number for the `node_modules` of each tree. It is the `place_key` of the tree's owner, and the
-/// same in another hoist that has the folder.
+/// Returns a key for each tree's `node_modules` folder: the `place_key` of the package that owns
+/// the folder. Two hoists give the same folder the same key, even when its tree id differs.
 pub(crate) fn folder_keys(trees: &[Tree], dependencies: &[Dependency]) -> Vec<u64> {
     let mut keys: Vec<u64> = Vec::with_capacity(trees.len());
     for tree in trees {
-        // A tree follows its parent.
+        // A tree always comes after its parent, so the parent's key is already in `keys`.
         let key = match (
             keys.get(tree.parent as usize),
             dependencies.get(tree.dependency_id as usize),
@@ -535,14 +540,17 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
     pub(crate) pending_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// A peer got bound, or moved, and a pass that starts from that can place something elsewhere;
-    /// see `Lockfile::resolve`.
+    /// This pass changed what a peer resolves to, and a pass that starts from the new resolution
+    /// could place a package somewhere else. `Lockfile::resolve` hoists again while this is set.
     pub(crate) late_bound_peer: bool,
-    /// `hoist_root_resolves_elsewhere` reads the rows of packages this pass has yet to walk.
+    /// This pass placed a bundled dependency. From then on, `hoist_root_resolves_elsewhere` may
+    /// read the dependencies of packages that this pass has not walked yet.
     pub(crate) bundle_placed: bool,
-    /// The packages whose rows this pass has walked; it walks them once per place of the package.
+    /// The packages whose dependencies this pass has walked. A package is walked again for every
+    /// tree it is placed in.
     pub(crate) walked: DynamicBitSet,
-    /// Peers `bind_peer` bound, with the other package their dependent finds from its first place.
+    /// Peers that `bind_peer` resolved by version, each with the different package that its
+    /// dependent finds from the first tree it is placed in. See `bind_served_peers`.
     pub(crate) served: Vec<(DependencyID, PackageID)>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
@@ -554,24 +562,28 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) peer_probes: PeerProbes,
     /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
     pub(crate) placed: Placed,
-    /// A row went to a later edge, so it no longer says which edge placed it.
+    /// A later dependency replaced a row, so a row no longer tells which dependency placed it.
     pub(crate) replaced_row: bool,
     /// Install-tree rows a tarball ships: placed as in the saved tree, then dropped by `clean`.
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// The folder `process_subtree` is filling is one of `shipped_rows`.
     pub(crate) in_shipped_folder: bool,
-    /// Install-tree places that two groups of one package want for different packages. The first
-    /// group the run links fills it, so no other package shares what is there.
+    /// `Filter` only: the `(tree, name)` places where two dependency groups of one package resolve
+    /// the name to different packages. Which one is installed depends on what the install skips,
+    /// so no other package deduplicates onto such a place.
     pub(crate) contested: bun_collections::HashMap<(Id, PackageNameHash), ()>,
-    /// The rows that did not get such a place. Each has one tree there, as a placed row has.
+    /// The dependencies that did not get the row at a contested place. Each still gets one tree of
+    /// its own below that place, as a placed row does.
     pub(crate) contested_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
-    /// Install-tree rows this run links, each with the edge the installer reads. `None`: all.
+    /// `Filter` only: the rows this install keeps, each mapped to the dependency id that `clean`
+    /// writes in its place for the installer to read. `None` keeps every row as it is.
     pub(crate) kept: Option<RowMap>,
-    /// The install tree of bun 1.4.3 and before: what the run leaves out takes no place, so the
-    /// rest moves up. `prune::remove_copies_of_the_older_layout` asks where that put a package.
+    /// Builds the `Filter` tree as Bun 1.4.3 and earlier did: skipped dependencies are not placed
+    /// at all, so other packages hoist higher. `prune::remove_copies_of_the_older_layout` uses this
+    /// to find where those versions installed a package.
     pub(crate) older_layout: bool,
-    /// The `place_key` of every row and what is there. Empty if `older_layout` would give the rows of
-    /// this run the places they have.
+    /// The `place_key` of every row, with the package placed there. Left empty when `older_layout`
+    /// would place every row that this install keeps exactly where it is now.
     pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
 }
@@ -658,7 +670,8 @@ impl PeerProbes {
         }
     }
 
-    /// Does the tree hold an out-of-range version of a peer that staying put finds in range?
+    /// Whether tree `tree_id` holds an out-of-range version of a peer that the package would find
+    /// in range if it were not hoisted.
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -756,7 +769,8 @@ fn repeating_period(
     None
 }
 
-/// Once all have a place: a peer of `Builder::served` that is no row of a tree takes that package.
+/// Runs once everything is placed. Resolves each peer in `Builder::served` to the package recorded
+/// with it, unless the peer itself is a row in some tree.
 pub(crate) fn bind_served_peers(
     served: &mut Vec<(DependencyID, PackageID)>,
     list: &MultiArrayList<BuilderEntry>,
@@ -796,7 +810,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    /// What loading `bun.lock` binds a peer edge to at first. `None`: the edge keeps its package.
+    /// The package that loading `bun.lock` first resolves a peer to, going by its version range.
+    /// `None` means the dependency keeps the package it resolves to now.
     #[inline]
     fn peer_by_version(&self, dep_id: DependencyID) -> Option<PackageID> {
         let lockfile = self.lockfile();
@@ -811,7 +826,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         )
     }
 
-    /// Every tree of these packages places a peer from that binding, so they agree.
+    /// Resolves a peer to `peer_by_version` before it is placed, so that every hoist of the same
+    /// packages starts from the same resolution. Returns whether `peer_by_version` found a package.
     #[inline]
     fn bind_peer(&mut self, dep_id: DependencyID) -> bool {
         if !self.dependencies[dep_id as usize].behavior.is_peer() {
@@ -867,7 +883,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         bun_core::Global::crash();
     }
 
-    /// `None` without a `manager`: no run, so nothing is left out.
+    /// Returns `None` without a `manager`: there is no install, so no dependency is skipped.
     fn linked_rows(&mut self) -> Option<LinkedRows<'_>> {
         Some(LinkedRows {
             manager: self.manager?,
@@ -887,7 +903,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         })
     }
 
-    /// Fills `kept` and `places`.
+    /// Computes `kept`, and also `places` if the older layout could differ from this one.
     pub(crate) fn keep_linked_rows(&mut self) {
         if self.older_layout {
             return;
@@ -908,7 +924,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 }
 
-/// A name hash is a hash already.
+/// Hashes a `(tree, name hash)` key cheaply, because the name hash is already well distributed.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct PlaceContext;
 
@@ -926,9 +942,11 @@ impl bun_collections::HashContext<(Id, PackageNameHash)> for PlaceContext {
 pub(crate) type Placed =
     bun_collections::HashMap<(Id, PackageNameHash), DependencyID, PlaceContext>;
 
-/// A number for some rows of the trees. A row is in a second tree only if its owner is placed twice.
+/// Maps a `(tree, row)` pair to a `u32`, where a row is a dependency id in that tree's list. Most
+/// rows are in one tree, which `first` covers. A row is in a second tree only if the package that
+/// lists the dependency is placed twice.
 pub(crate) struct RowMap {
-    /// By row: the first tree that had it, and the number there.
+    /// Indexed by row: the first tree inserted for the row, and the value of that pair.
     first: Vec<Option<(Id, u32)>>,
     more: bun_collections::HashMap<(Id, DependencyID), u32>,
 }
@@ -974,7 +992,7 @@ impl RowMap {
     }
 }
 
-/// What `Builder::keep_linked_rows` reads of a finished install tree.
+/// The parts of a `Builder` that `keep_linked_rows` reads once the `Filter` tree is built.
 struct LinkedRows<'b> {
     manager: &'b PackageManager,
     lockfile: &'b Lockfile,
@@ -993,7 +1011,8 @@ struct LinkedRows<'b> {
 }
 
 impl LinkedRows<'_> {
-    /// Whether this run leaves out the edge `dep_id` of `pkg_id`, a package that no tarball ships.
+    /// Whether this install skips the dependency `dep_id` of `pkg_id`. The answer does not apply to
+    /// a copy of `pkg_id` that is bundled in another package's tarball, which skips nothing.
     fn leaves_out(&mut self, dep_id: DependencyID, pkg_id: PackageID) -> bool {
         let (manager, lockfile) = (self.manager, self.lockfile);
         let dep = &self.dependencies[dep_id as usize];
@@ -1001,11 +1020,11 @@ impl LinkedRows<'_> {
         if target == invalid_package_id {
             return true;
         }
-        // What a tarball ships: see `shipped_rows`.
+        // A bundled dependency is never skipped here: see `shipped_rows`.
         if dep.behavior.is_bundled() {
             return false;
         }
-        // As in `build_store`: the list replaces the filter for the root's own rows.
+        // As in `build_store`, `packages_to_install` replaces the filters for the root's own rows.
         let filtered = match self.packages_to_install.filter(|_| pkg_id == 0) {
             Some(packages_to_install) => !packages_to_install.contains(&target),
             None => is_filtered_dependency_or_workspace(
@@ -1025,13 +1044,14 @@ impl LinkedRows<'_> {
             )
     }
 
-    /// The rows this run's importers reach, each name looked up as node does. `None`: all.
-    /// A pass of its own: an edge the run follows can lead to a row that one it leaves out placed.
-    /// And `older_layout_can_differ`.
+    /// Returns the rows this install keeps (`None` means all) and `older_layout_can_differ`. A row
+    /// is kept if the root reaches it through dependencies that are not skipped, looking up each
+    /// name in the nearest `node_modules` first, as Node does. This has to run after hoisting,
+    /// because such a dependency can resolve to a row that a skipped dependency placed.
     fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
 
-        // By edge, which has one owner.
+        // Indexed by dependency id. Each dependency belongs to exactly one package.
         let mut left_out = vec![false; dependencies.len()];
         let mut any_left_out = false;
         for (pkg_id, list) in lists.iter().enumerate() {
@@ -1041,21 +1061,22 @@ impl LinkedRows<'_> {
                 any_left_out |= out && self.resolutions[dep_id as usize] != invalid_package_id;
             }
         }
-        // A contested place has a tree for each group, and a run links one of them.
+        // Even if nothing is skipped, only one of the trees at a contested place is installed.
         if !any_left_out && self.contested.is_empty() {
             return (None, false);
         }
 
         let mut kept = RowMap::new(dependencies.len());
 
-        // The `node_modules` of what an edge places in `parent`. Not by name: an unlinked member and
-        // the losing group of a contested place have one too.
+        // Maps `(parent tree, dependency)` to the dependency's own tree. It is not keyed by name,
+        // because an unlinked workspace package and the loser of a contested place have trees too,
+        // under the same name as a row.
         let mut own_folder = RowMap::new(dependencies.len());
         for tree in trees.iter().skip(1) {
             own_folder.insert(tree.parent, tree.dependency_id, tree.id);
         }
 
-        // The tree to look up from, the package, whether a tarball ships it.
+        // Each item: the tree to start lookups from, the package, and whether that copy is bundled.
         let mut todo: Vec<(Id, PackageID, bool)> = Vec::new();
         if !trees.is_empty() {
             todo.push((0, 0, false));
@@ -1082,8 +1103,9 @@ impl LinkedRows<'_> {
 
                 let mut tree_id = from;
                 let row = loop {
-                    // Two kinds of row come after an edge found its package further up: another
-                    // group's own copy, and, as in `hoist_dependency`, what a tarball ships.
+                    // Skip two kinds of row, both placed after this dependency found its package
+                    // higher up: one from another dependency group of the same package, and, as in
+                    // `hoist_dependency`, a bundled one.
                     if let Some(&row) = self.placed.get(&(tree_id, dep.name_hash))
                         && (self.resolutions[row as usize] == target
                             || !list.contains(row)
@@ -1108,15 +1130,16 @@ impl LinkedRows<'_> {
                     }
                     continue;
                 }
-                // A contested place goes to the group that placed the row, unless the run leaves it out.
+                // The dependency that placed the row keeps a contested place, unless it is skipped.
                 let takes_over = self.resolutions[row as usize] != target && list.contains(row);
                 if takes_over && (shipped || !left_out[row as usize]) {
                     continue;
                 }
                 let filler = if takes_over { dep_id } else { row };
-                // An edge this run follows: whether it is optional decides what a failure means.
+                // Record a dependency that is not skipped. The installer reads from it whether the
+                // package is optional, which decides how a failure to install it is reported.
                 let follows = takes_over || self.resolutions[row as usize] == target;
-                // Another package, found by name only: the run links it for its own edge or not at all.
+                // The row holds a different package, which is kept only if its own dependency is.
                 if !follows
                     && left_out[row as usize]
                     && !self.shipped_rows.contains_key(&(tree_id, row))
@@ -1137,10 +1160,11 @@ impl LinkedRows<'_> {
         (Some(kept), can_differ)
     }
 
-    /// The older layout is the hoist of the edges that the run follows, in the same order. An edge
-    /// is placed as here unless one that the run does not follow got in its way or did its work:
-    /// placed the row it shares, placed a row of its name above it, or placed a second copy of a
-    /// linked package, whose edges then came early. A package also stays near a peer.
+    /// Whether `older_layout` could place a kept row somewhere else. That layout hoists only the
+    /// dependencies this install does not skip, in the same order. It can differ only if a skipped
+    /// dependency placed a row that a kept one shares, placed a row with the name of a kept row, or
+    /// placed a second copy of a kept package, whose dependencies were then walked earlier. A
+    /// skipped peer counts too, because a package is not hoisted away from its peers.
     fn older_layout_can_differ(&self, kept: &RowMap, mut idle: Vec<bool>, walked: &[bool]) -> bool {
         if self.replaced_row || !self.contested.is_empty() {
             return true;
@@ -1204,7 +1228,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
-            // `is_unlinked_member` looks for the owner's row in the parent's list.
+            // The parent's list gets `edge` in place of this row, and `is_unlinked_member` looks
+            // for `tree.dependency_id` in that list.
             if let Some(kept) = &self.kept
                 && let Some(edge) = kept.get(tree.parent, tree.dependency_id)
             {
@@ -1363,14 +1388,16 @@ impl Tree {
             return Ok(());
         }
 
-        // The install tree has no folder there. The saved tree does not depend on the disk.
+        // Nothing is installed into a workspace package outside the project. Only `Filter` skips
+        // it: the check can depend on symlinks on disk, and the tree saved in bun.lock must not.
         if METHOD == BuilderMethod::Filter
             && builder.lockfile.get().is_member_outside(parent_pkg_id)
         {
             return Ok(());
         }
 
-        // A link to a member from below that member: what it needs has its places further up.
+        // This dependency links back to a workspace package from inside that package's own tree.
+        // The ancestor tree already places what the workspace package needs.
         if dependency_id != ROOT_DEP_ID
             && !builder.dependencies[dependency_id as usize]
                 .behavior
@@ -1451,7 +1478,7 @@ impl Tree {
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
 
-            // unresolved packages already had their chance to resolve. Not what a tarball ships.
+            // Unresolved packages already had their chance to resolve. Bundled ones are still kept.
             if METHOD == BuilderMethod::Filter
                 && !shipped
                 && !dependency.behavior.is_bundled()
@@ -1477,8 +1504,9 @@ impl Tree {
                     builder,
                 )
             };
-            // Nothing has read a row before the first walk of its package. So the pass that starts
-            // from the row on `res_id` is this pass again if the row shares that copy from here.
+            // Whether resolving `dep_id` to `res_id` needs no new pass. Nothing reads a resolution
+            // before the first walk of the package that lists it, so a pass that started with
+            // `res_id` would repeat this one if the dependency still deduplicates onto that copy.
             let stays_on = |res_id: PackageID, builder: &mut Builder<'_, METHOD>| {
                 first_walk
                     && !builder.bundle_placed
@@ -1546,15 +1574,17 @@ impl Tree {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
 
                 HoistDependencyResult::Served(res_id) => {
-                    // One row for all places of its package: the first decides, as in `Rebind`.
+                    // A dependency has one resolution, however many times its package is placed.
+                    // The first placement decides it, as in `Rebind`.
                     if first_walk && bound_by_version {
                         builder.served.push((dep_id, res_id));
                     }
                 }
                 HoistDependencyResult::Contested { id } => {
                     builder.contested.insert((id, dependency.name_hash), ());
-                    // No row, but a tree: what this package needs has places for when it is linked.
-                    // Its owner can be walked again from below that tree, so only the first time.
+                    // The dependency gets no row but still gets a tree, so its own dependencies are
+                    // placed in case `keep_linked_rows` picks it. Queue the tree only once: the
+                    // package that lists the dependency can be walked again from below that tree.
                     if builder.contested_rows.insert((id, dep_id), ()).is_none()
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
@@ -1568,11 +1598,12 @@ impl Tree {
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
-                    // Only this walk found the copy: `pending_peers` wait on a row in another tree.
-                    // As in `Rebind`. Bound later, an optional peer gets a copy at its first place.
+                    // `pending_peers` stay pending, because they wait on a row in another tree.
+                    // As in `Rebind`, only the first walk resolves an optional peer. Resolved on a
+                    // later walk, it would get its own copy at the package's first placement.
                     if first_walk || !dependency.behavior.is_optional_peer() {
                         builder.resolutions[dep_id as usize] = res_id;
-                        // Bound, it can get a copy of its own next to a peer of that package.
+                        // Once resolved, it may get a copy of its own next to a peer of `res_id`.
                         if !stays_on(res_id, &mut *builder) {
                             builder.late_bound_peer = true;
                         }
@@ -1584,7 +1615,8 @@ impl Tree {
                 } => {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.replaced_row = true;
-                    // A member only loses the link: its tree is queued, and holds what cannot hoist.
+                    // A replaced workspace package keeps its resolution and only loses its symlink.
+                    // Its tree is already queued, and holds the dependencies that cannot hoist.
                     if !dependencies[replaced as usize].behavior.is_workspace() {
                         builder.late_bound_peer = true;
                         builder.resolutions[replaced as usize] = pkg_id;
@@ -1614,7 +1646,8 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    // One row for all places of its package: the first decides, alike in each pass.
+                    // A dependency has one resolution, however many times its package is placed.
+                    // The first placement decides it, and that is the same one in every pass.
                     if first_walk {
                         builder.resolutions[dep_id as usize] = res_id;
                         if !stays_on(res_id, &mut *builder) {
@@ -1633,8 +1666,8 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement { id, bundled } => {
-                    // Its own dependency of that name is what the package loads, from wherever that
-                    // one found its copy. A copy for the peer would stand in front of it.
+                    // The package also lists this name as a regular dependency, and loads that copy
+                    // wherever it was placed. A copy for the peer would shadow it.
                     if dependency.behavior.is_peer()
                         && !bundled
                         && let Some(own) =
@@ -1648,7 +1681,7 @@ impl Tree {
                         let own_pkg_id = builder.resolutions[own as usize];
                         let own_behavior = dependencies[own as usize].behavior;
                         let buf = lockfile.buffers.string_bytes.as_slice();
-                        // As for `Served`.
+                        // Recorded under the same conditions as a `Served` result.
                         if first_walk
                             && bound_by_version
                             && !own_behavior.is_optional()
@@ -1816,13 +1849,13 @@ impl Tree {
                         builder.buf(),
                     )
             };
-            // An install that leaves nothing out links such a row on every platform.
+            // Every platform installs such a dependency, unless an option like `--omit` skips it.
             let is_always_linked =
                 |row: &Dependency| !row.behavior.is_optional() && !row.behavior.is_bundled();
 
             if input_dep_range.contains(dep_id) {
-                // The root's own dependency takes the folder from the member of that name, unless
-                // an earlier group asks for the member.
+                // A root dependency named like a workspace package takes `node_modules/<name>` from
+                // it, unless an earlier dependency group resolves to the workspace package.
                 if dep.behavior.is_workspace()
                     && !(input_dep_range.begin()..input_dep_id).any(|earlier| {
                         let row = &deps[earlier as usize];
@@ -1837,7 +1870,8 @@ impl Tree {
                         dep_id,
                     };
                 }
-                // Its own dependency of that name is what the package loads, in every run.
+                // The package's own dependency of this name is always installed, so the peer
+                // resolves to it.
                 if dependency.behavior.is_peer()
                     && !dependency.behavior.is_optional_peer()
                     && is_always_linked(dep)
@@ -1845,7 +1879,8 @@ impl Tree {
                 {
                     return HoistDependencyResult::Served(res_id); // 1
                 }
-                // The root's rows again, below a link to the project: this member has its tree.
+                // The root's dependencies are being walked again, below a link to the project
+                // itself. This workspace package already has its tree.
                 if dependency.behavior.is_workspace() {
                     return HoistDependencyResult::Hoisted; // 1
                 }
@@ -1890,7 +1925,8 @@ impl Tree {
                 };
 
                 if is_in_peer_range() {
-                    // The two rows that provide a name under both linkers, wherever the package is.
+                    // A root dependency and the package's own dependency provide the name under
+                    // both the hoisted and the isolated linker, wherever the package is placed.
                     if !dependency.behavior.is_optional_peer()
                         && ((is_root_dependency && is_always_linked(dep))
                             || own_dependency_shares_it())
@@ -1993,7 +2029,8 @@ impl Tree {
             let pkg_deps = resolution_lists[pkg_id as usize];
             (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
                 let dep = &deps[dep_id as usize];
-                // Until this pass walks its package, a peer has what the last pass `served` it.
+                // Until this pass walks a peer's package, `resolutions` holds what the last pass
+                // wrote in `bind_served_peers`. Ask `peer_by_version` first, as `bind_peer` will.
                 dep.name_hash == name_hash
                     && !dep.behavior.is_bundled()
                     && (builder.peer_by_version(dep_id)).unwrap_or(resolutions[dep_id as usize])
@@ -2099,7 +2136,6 @@ pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
         own_folder.insert((tree.parent, name_hash), tree.id);
     }
 
-    // What each folder holds under a name.
     let mut placed: HashMap<(Id, PackageNameHash), PackageID> = HashMap::default();
     for (tree_id, tree) in trees.iter().enumerate() {
         for &dep_id in tree.dependencies.get(hoisted) {

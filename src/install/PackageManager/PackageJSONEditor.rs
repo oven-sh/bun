@@ -484,7 +484,8 @@ pub(crate) fn edit_update_entries(
                 continue;
             }
 
-            // A peer range says what the package works with: never pinned, and --latest leaves one that allows the version.
+            // A peer range states which versions the package works with, so `--exact` never pins
+            // it, and `--latest` leaves it alone when it already allows the resolved version.
             let is_peer = group.prop == DependencyGroup::PEER.prop;
             let resolved = resolution.npm().version;
             let allowed = is_peer
@@ -553,7 +554,9 @@ pub(crate) fn for_each_catalog_object(
     Ok(())
 }
 
-/// The catalog of the root package.json where `catalog:<catalog_name>` finds `dep_name`, in the order of `CatalogMap::locate`.
+/// Returns the catalog object in the root package.json that `catalog:<catalog_name>` reads
+/// `dep_name` from. Like `CatalogMap::locate`, it prefers the spelling of the default catalog that
+/// matches `catalog_name`.
 pub fn catalog_object_of(
     root_package_json: &Expr,
     catalog_name: &[u8],
@@ -862,7 +865,8 @@ fn resolve_catalog_literals(
             }
         }
 
-        // Publishing writes the entry into every `catalog:` peer range, which is never pinned.
+        // `--exact` does not pin a catalog entry that a `catalog:` peer dependency uses, because
+        // publishing copies the entry into that peer range.
         let exact_versions = exact_versions
             && !lockfile.buffers.dependencies.iter().any(|row| {
                 row.behavior.is_peer()
@@ -999,7 +1003,8 @@ pub(crate) fn edit(
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
     let move_to_target = moves_to_target(manager);
-    // --latest resolves every entry of the name to `latest`, so it rewrites the one an install picks.
+    // `--latest` resolves every entry for a name to `latest`. Only the first match is rewritten, so
+    // the groups are scanned in the order that finds the entry an install uses.
     let lists = if update_to_latest {
         DEPENDENCY_GROUPS
     } else {
@@ -1074,7 +1079,7 @@ pub(crate) fn edit(
                         continue 'loop_;
                     }
                 }
-                // Without `move_to_target` the first match ends the scan.
+                // Unless `move_to_target` is set, the scan stops at the first group with the name.
                 'dependency_group: for list in lists.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -1513,7 +1518,7 @@ pub(crate) fn edit(
                                 ),
                                 None => original,
                             };
-                            // As in `edit_update_entries`: a peer range is never pinned.
+                            // `--exact` never pins a peer range, as in `edit_update_entries`.
                             let is_peer = request.e_string
                                 == string_entry(
                                     current_package_json,
@@ -1570,7 +1575,8 @@ pub(crate) fn edit(
                 // Not the bound row: an unchanged resolution keeps the old row's literal.
                 resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
-                    // `workspace:*` names the workspace by the entry's key, which is the alias.
+                    // An `npm:` alias stays as written. `workspace:*` would look the workspace up
+                    // by the entry's key, which is the alias and not the workspace's name.
                     _ if split_npm_alias(e_string.data.slice()).is_some() => e_string.data.slice(),
                     _ => b"workspace:*",
                 },
@@ -1594,7 +1600,8 @@ pub(crate) fn edit(
             );
         }
     }
-    // Without a group flag all entries take the spec, as for a folder. All or none: not when this install leaves one out.
+    // `bun add` without a group flag writes the new spec to every non-peer group that declares the
+    // package. If this install skips one of those groups, only the entry chosen above is rewritten.
     if !move_to_target && manager.subcommand == Subcommand::Add {
         let features = manager.options.local_package_features;
         for request in updates.iter() {

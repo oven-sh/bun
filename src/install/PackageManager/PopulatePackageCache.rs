@@ -35,7 +35,7 @@ pub fn fetch(
             | Do::SAVE_YARN_LOCK
             | Do::SUMMARY,
     );
-    // The user's `--dry-run` leaves the cache as it is, too.
+    // `--dry-run` must not modify the cache either.
     let count_only = manager.options.dry_run;
     if count_only {
         manager.options.do_.remove(Do::PREFETCH_RESOLVED_TARBALLS);
@@ -53,8 +53,8 @@ pub fn fetch(
     download_pinned_packages(manager, None, count_only)
 }
 
-/// `only`: just that package, which the caller did not find in the cache.
-/// `count_only`: `fetched` is what a run without it would download.
+/// With `only`, downloads just that package, which the caller already knows is not in the cache.
+/// With `count_only`, downloads nothing, and `fetched` counts what would have been downloaded.
 pub(crate) fn download_pinned_packages(
     manager: &mut PackageManager,
     only: Option<PackageID>,
@@ -112,7 +112,8 @@ pub(crate) fn download_pinned_packages(
         let mut name_and_version_hash: Option<u64> = None;
         let mut patchfile_hash: Option<u64> = None;
         let state = if only.is_some() {
-            // Before an install, a patched package would stop at `CalcPatchHash`.
+            // `determine_preinstall_state` would return `CalcPatchHash` for a patched package whose
+            // patch file has not been hashed yet, and the package would be skipped below.
             PreinstallState::Extract
         } else {
             manager.determine_preinstall_state(

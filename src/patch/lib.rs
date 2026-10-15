@@ -40,12 +40,13 @@ pub struct PatchFile<'a> {
     pub skipped: Vec<SkippedSection<'a>>,
 }
 
-/// What `apply` leaves out. No error: older versions wrote such sections and installed the rest.
+/// A section of the patch file that `apply` ignores. It is not an error, because older versions of
+/// Bun wrote such sections and applied the rest of the patch.
 pub struct SkippedSection<'a> {
-    /// Of its first line, in the patch file.
+    /// Byte offset of the section's first line in the patch file.
     pub offset: usize,
     pub path: Option<&'a [u8]>,
-    /// `Binary files a/x and b/x differ`: the patch does not have the new content.
+    /// The section says `Binary files a/x and b/x differ`, so the patch lacks the new content.
     pub is_binary: bool,
 }
 
@@ -142,7 +143,7 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         .map_err(|_| sys::Error::from_code(sys::E::EINVAL, sys::Tag::read))?;
 
     let mut lines: Vec<&[u8]> = strings::split(&filebuf, b"\n").collect();
-    // What follows the last `\n` is not a line.
+    // The empty string after the final `\n` is not a line.
     let mut final_newline = lines.pop_if(|last| last.is_empty()).is_some();
 
     let does_not_apply = |hunk_index: usize, hunk: &Hunk<'_>| ApplyError::HunkDoesNotApply {
@@ -151,15 +152,17 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
         line: hunk.header.original.start,
     };
 
-    // In rising order (only a hand-edited patch is not), one walk over the old lines is enough.
+    // With the hunks sorted by start line, one pass over the old lines is enough. Only a
+    // hand-edited patch has them out of order.
     let mut hunks: Vec<(usize, &Hunk<'_>)> = patch.hunks.iter().enumerate().collect();
     hunks.sort_by_key(|(_, hunk)| hunk.header.original.start);
     let mut patched: Vec<&[u8]> = Vec::with_capacity(lines.len());
-    // The first old line that is not in `patched` or deleted yet.
+    // Index of the first old line that has not yet been copied to `patched` or deleted.
     let mut line_cursor: usize = 0;
     for (hunk_index, hunk) in hunks {
         // `\ No newline at end of file` ends that side of the file: only an insertion may follow it.
-        // On context it is the new side's with `git diff --ignore-cr-at-eol`, and deletions follow.
+        // A marker on a context line is exempt: with `git diff --ignore-cr-at-eol` it belongs to
+        // the new side only, and deletions can follow it.
         if let Some(i) = hunk
             .parts
             .iter()
@@ -175,7 +178,7 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
 
         let original_start = hunk.header.original.start as usize;
         let hunk_start = if hunk.header.original.len == 0 {
-            // `-N,0`: nothing to match; insert after line N (0 = top).
+            // A `-N,0` header has no old lines to match. Insert after line N, where 0 is the top.
             if original_start < line_cursor || original_start > lines.len() {
                 return Err(does_not_apply(hunk_index, hunk));
             }
@@ -195,7 +198,7 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
                 patched.extend_from_slice(&part.lines);
                 continue;
             }
-            // The match above implies this bound; keep it checked anyway.
+            // The match above already guarantees that these lines exist. This is only a safeguard.
             let Some(old) = lines.get(line_cursor..line_cursor + part.lines.len()) else {
                 return Err(does_not_apply(hunk_index, hunk));
             };
@@ -437,7 +440,7 @@ struct FileDeets<'a> {
     to_path: Option<&'a [u8]>,
     hunks: Vec<Hunk<'a>>,
     is_binary: bool,
-    /// Of the section's first line, in the patch file.
+    /// Byte offset of the section's first line in the patch file.
     offset: usize,
 }
 
@@ -491,7 +494,7 @@ pub enum PartType {
 struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
-    /// Of the `@@` line, in the patch file.
+    /// Byte offset of the `@@` line in the patch file.
     offset: usize,
 }
 
@@ -828,7 +831,7 @@ pub enum ParseErr {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ParseErrAt {
     pub err: ParseErr,
-    /// Of the line to blame, in the patch file.
+    /// Byte offset in the patch file of the line that caused the error.
     pub offset: usize,
 }
 
@@ -850,7 +853,8 @@ pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErrAt> {
     })
 }
 
-/// After an error, `offset` is of the line to blame: the first of the section, or a hunk's.
+/// On error, `offset` is the byte offset of the line at fault: either the section's first line or a
+/// hunk's `@@` line.
 fn patch_file_second_pass<'a>(
     files: &mut [FileDeets<'a>],
     offset: &mut usize,
@@ -950,7 +954,7 @@ fn patch_file_second_pass<'a>(
                 })));
         }
 
-        // A copy, say, or text that is not a diff.
+        // A section produces no part if it is, for example, a file copy or text that is not a diff.
         let has_no_part = result.parts.len() == parts_before;
         if has_no_part && let Some(hunk) = file.hunks.first() {
             *offset = hunk.offset;
@@ -974,7 +978,8 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
     FileMode::from_u32(parsed_mode)
 }
 
-/// A relative path that, where no component is a link, stays below the folder it starts in.
+/// True for a relative path that cannot leave the folder it starts in, as long as no component of
+/// the path is a symlink.
 pub fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
@@ -1057,7 +1062,7 @@ struct PatchLinesParser<'a> {
     state: ParserState,
     current_hunk: Option<Hunk<'a>>,
     current_hunk_mutation_part: Option<PatchMutationPart<'a>>,
-    /// Of the line being parsed or, after an error, of the one to blame.
+    /// Byte offset of the line being parsed or, after an error, of the line that caused it.
     offset: usize,
 }
 
@@ -1331,7 +1336,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
         return None;
     }
 
-    // Without a rename both names are the same, so the ` b/` between them is in the middle.
+    // Without a rename both paths are identical, so the ` b/` between them is in the exact middle.
     let (a_path, b_part) = rest.split_at(rest.len().saturating_sub(b" b/".len()) / 2);
     if b_part.strip_prefix(b" b/") == Some(a_path) {
         return Some((a_path, a_path));
@@ -1388,7 +1393,7 @@ pub fn spawn_opts(
         const ARGS: [&[u8]; 11] = [
             b"-c",
             b"core.safecrlf=false",
-            // By default git prints a non-ASCII path as "caf\303\251": the parser cannot read that.
+            // By default git prints non-ASCII paths as "caf\303\251", which the parser cannot read.
             b"-c",
             b"core.quotepath=false",
             b"diff",
@@ -1416,7 +1421,8 @@ pub fn spawn_opts(
         b"HOME=\0",
         b"XDG_CONFIG_HOME=\0",
         b"USERPROFILE=\0",
-        // In a repository git also reads its config and every .gitattributes above both folders.
+        // Without this, git inside a repository would also read that repository's config and every
+        // .gitattributes above the two folders.
         concat!("GIT_DIR=", bun_core::null_device!(), "\0").as_bytes(),
     ];
     let mut envp_buf: Vec<*const core::ffi::c_char> =
@@ -1466,8 +1472,9 @@ pub fn diff_post_process(
     let mut stdout = mem::take(&mut result.stdout);
     let mut stderr = mem::take(&mut result.stderr);
 
-    // 0 is no difference and 1 is differences; stderr may hold a warning next to a good patch.
-    // git that cannot read a folder also exits 1, but then it prints no patch.
+    // Exit code 0 means no differences and 1 means differences. stderr is not checked, because git
+    // can print a warning along with a valid patch. git also exits with 1 when it cannot read a
+    // folder, but then it prints no patch.
     let succeeded = match &result.status {
         bun_spawn::Status::Exited(exit) => exit.code == 0 || (exit.code == 1 && !stdout.is_empty()),
         _ => false,
@@ -1550,7 +1557,8 @@ fn git_diff_postprocess(
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> crate::Result<()> {
-    // An installed package has no symlinks: one that only the checkout in the cache has stays out.
+    // An installed package contains no symlinks, so a symlink that exists only in the cache's copy
+    // is not something the user deleted. Leave it out of the patch.
     while let Some(mode) = strings::index_of(&stdout[..], b"\ndeleted file mode 120000\n") {
         let start = strings::last_index_of_char(&stdout[..mode], b'\n').map_or(0, |i| i + 1);
         let end = strings::index_of(&stdout[mode + 1..], b"\ndiff --git ")

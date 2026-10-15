@@ -795,7 +795,8 @@ impl CreateCommand {
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
             if !had_gitignore {
-                // The template's own .gitignore stays; the user's stays without --force.
+                // The template's `gitignore` does not replace a `.gitignore` that the template also
+                // ships. It only replaces the user's existing `.gitignore` with `--force`.
                 let replaces_the_users =
                     create_options.overwrite && had_dot_gitignore && !template_has_dot_gitignore;
                 if !replaces_the_users
@@ -1043,7 +1044,8 @@ impl CreateCommand {
             bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
-        // What turns off the scripts of a `bun install` here also holds for the tasks and the new project.
+        // Settings that make `bun install` skip scripts in the current directory also apply to the
+        // template's tasks and to the install in the new project.
         let ignore_scripts = create_options.ignore_scripts
             || (!create_options.skip_install
                 && bun_install::package_manager::config_ignores_scripts(
@@ -1254,7 +1256,7 @@ impl CreateCommand {
 
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
-        // The length of the NUL-terminated path in `buf`; `None`: too long to be a path.
+        // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
         let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
             bun_paths::resolve_path::join_abs_string_buf_z_checked::<
                 bun_paths::resolve_path::platform::Loose,

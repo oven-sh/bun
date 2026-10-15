@@ -65,7 +65,7 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
-    /// Hoisted linker: `tree::Builder::places`.
+    /// Set by the hoisted linker only. A copy of `tree::Builder::places`.
     pub(crate) places: Vec<(u64, PackageID)>,
 
     pub(crate) offline_misses: OfflineMisses,
@@ -468,10 +468,12 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` has the names and inodes of `src`, which is `rel` in the folder, as it is now.
+/// Whether `dest` is still a hardlinked copy of `src`: both have the same entry names and inodes.
+/// `rel` is the path of `src` inside the `file:` folder.
 fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
-    // Each name followed by its inode number, 0 for a directory. `folder`: `dir` is not the copy.
+    // Lists each entry name followed by its inode number, or 0 for a directory. `folder` is `Some`
+    // when `dir` is in the source folder and `None` when it is in the copy.
     fn list(
         dir: &Dir,
         mut folder: Option<(&mut FolderRoot<'_>, &mut Vec<u8>)>,
@@ -490,7 +492,8 @@ fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, d
                 EntryKind::Directory if name == b"node_modules" => continue,
                 EntryKind::Directory => 0,
                 EntryKind::Unknown => return None,
-                // What `lay_folder_links` makes of a link of the folder is what the copy has.
+                // For a symlink in the source folder, list what `lay_folder_links` creates for it
+                // in the copy, because that is what the copy is expected to contain.
                 EntryKind::SymLink if name != b"node_modules" => {
                     let link = match &mut folder {
                         Some((root, rel)) => {
@@ -561,13 +564,15 @@ pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
         && is_hardlinked_copy(&mut FolderRoot(src, None), &mut Vec::new(), src, dest)
 }
 
-/// To compare the real path of a link's target with: `top_level_dir` is the cwd as typed.
+/// Real paths to compare a symlink's resolved target against. `top_level_dir` cannot be used for
+/// this because it may contain symlinks itself.
 struct RealPaths {
     folder: Box<[u8]>,
     project: Box<[u8]>,
 }
 
-/// Those of a `file:` folder, looked up for its first link: most folders have none.
+/// The `RealPaths` of a `file:` folder. They are resolved when the first symlink is found, because
+/// most folders have no symlinks.
 struct FolderRoot<'a>(&'a Dir, Option<RealPaths>);
 
 impl FolderRoot<'_> {
@@ -587,8 +592,9 @@ impl FolderRoot<'_> {
     }
 }
 
-/// The backends skip links. Only for `dest`, the copy of a `folder` (from the cwd) the user named.
-/// Returns a warning for each link that is left out, in the order of their paths.
+/// Recreates the symlinks of `folder` (a path relative to the cwd) in `dest`, its installed copy,
+/// because the install backends skip symlinks. Only call this for a folder that the user named.
+/// Returns one warning for each symlink that was left out, sorted by path.
 pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
     let mut left_out: Vec<Box<[u8]>> = Vec::new();
     if let Ok(src) = Dir::open(folder) {
@@ -604,7 +610,7 @@ pub(crate) fn lay_folder_links(folder: &[u8], dest: &Dir) -> Vec<Box<[u8]>> {
     left_out
 }
 
-/// `rel`: the path of `src` in the folder, empty or with a trailing slash.
+/// `rel` is the path of `src` inside the folder. It is either empty or ends with a slash.
 fn lay_links_below(
     root: &mut FolderRoot<'_>,
     rel: &mut Vec<u8>,
@@ -646,7 +652,8 @@ fn lay_links_below(
     rel.truncate(dir_len);
 }
 
-/// What follows the directory `root` in `real`. Both are real paths.
+/// Returns the part of `real` that follows the directory `root`, or `None` if `real` is not inside
+/// `root`. Both must be real paths.
 fn path_below<'a>(root: &[u8], real: &'a [u8]) -> Option<&'a [u8]> {
     real.strip_prefix(strings::without_trailing_slash(root))
         .filter(|rest| rest.first().is_none_or(|&c| c == path::SEP))
@@ -658,17 +665,19 @@ fn read_link(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     (len < text.len()).then(|| Box::from(&text[..len]))
 }
 
-/// What the copy of a folder gets for a link: no way out of itself, nor a file from elsewhere.
+/// What the installed copy of a `file:` folder gets in place of one of the folder's symlinks. A
+/// symlink in the copy never leads out of it, and a file only comes from the folder or the project.
 enum FolderLink {
-    /// A link of this text.
+    /// A symlink with this target text.
     Link(Box<[u8]>),
-    /// The file at this real path.
+    /// A hardlink to the file at this real path, or a copy of it.
     File(bun_core::ZBox, Box<sys::Stat>),
     LeftOut(&'static str),
 }
 
 impl FolderLink {
-    /// Of the link `rel` in the folder. It is `rel[dir_len..]` in `src`.
+    /// Decides what the symlink at `rel` in the folder becomes in the copy. `src` is the symlink's
+    /// parent directory, and `rel[dir_len..]` is its name there.
     fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
         use path::resolve_path::{join_abs_string_buf_z_checked, platform};
         const NOWHERE: FolderLink = FolderLink::LeftOut("it leads nowhere");
@@ -688,11 +697,12 @@ impl FolderLink {
         let Ok(target) = sys::stat(&real_z) else {
             return NOWHERE;
         };
-        // The backends leave `node_modules` out of the copy.
+        // The install backends skip `node_modules`, so a target inside one is not in the copy.
         let in_folder = path_below(root, real)
             .is_some_and(|rest| !strings::split(rest, b"/").any(|part| part == b"node_modules"));
 
-        // Both checks: with `self -> .`, the text of `sub/x -> ../self/..` stays in, it leads out.
+        // A symlink is kept only if both its resolved target and its literal text stay in the
+        // folder. The text alone is not enough, because it can pass through another symlink.
         if cfg!(not(windows))
             && in_folder
             && let Some(text) = read_link(src, &rel[dir_len..])
@@ -1327,8 +1337,8 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
-        // A read that returns less than was asked for is the end of the file, which spares the read
-        // that says so. A few file systems return less before the end: then the document is cut.
+        // The first attempt treats a short read as the end of the file, which saves a `read` call.
+        // A few file systems return short reads earlier and truncate the JSON, so retry until EOF.
         self.verify_installed_package_json(root_node_modules_dir, resolution_tag, false)
             .or_else(|| {
                 self.verify_installed_package_json(root_node_modules_dir, resolution_tag, true)
@@ -1336,7 +1346,7 @@ impl<'a> PackageInstall<'a> {
             .unwrap_or(false)
     }
 
-    /// `None`: what was read is not a whole document.
+    /// Returns `None` if the bytes that were read are not a complete JSON document.
     fn verify_installed_package_json(
         &mut self,
         root_node_modules_dir: &Dir,
@@ -1649,7 +1659,7 @@ impl PackageFiles<'_> {
             let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
             if let Err(err) = sys::mkdir_w(fullpath) {
-                // As `make_open_real_dir`: a link at the last component is not followed.
+                // Like `make_open_real_dir`, replace a symlink at the destination, never follow it.
                 if err.get_errno() == sys::E::EEXIST {
                     let mut narrow = bun_paths::path_buffer_pool::get();
                     let dest = strings::from_wpath(&mut narrow[..], &buf[..i - 1]);

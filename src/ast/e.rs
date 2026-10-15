@@ -1108,7 +1108,7 @@ impl JsonTape {
         &self.props[first as usize..first as usize + count as usize]
     }
 
-    /// The properties of an object of this document, from its [`ObjectJSON::rows`].
+    /// Returns one object's properties, given the row range from its [`ObjectJSON::rows`].
     #[inline]
     pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON] {
         &self.props[rows.start as usize..rows.end as usize]
@@ -1183,7 +1183,8 @@ impl ObjectJSON {
         unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
     }
 
-    /// Where [`Self::properties`] are on the tape, for an owner of the tape that outlives this node.
+    /// The tape rows that hold [`Self::properties`]. Code that keeps the tape alive longer than
+    /// this node can store the range and read it back with [`JsonTape::properties`].
     #[inline]
     pub fn rows(&self) -> core::ops::Range<u32> {
         self.first..self.first + self.count

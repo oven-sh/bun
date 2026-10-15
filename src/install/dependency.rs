@@ -36,7 +36,7 @@ impl NpmAliasRegistry for PackageManager {
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
-        // One install records the same row several times (the differ, `clone_in`).
+        // An install parses the same alias several times. Skip the allocation if it is unchanged.
         if self.get(&hash).is_some_and(|known| **known == *specifier) {
             return;
         }
@@ -1190,8 +1190,9 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// Of what follows `npm:` with no `@` in it: `^1.0.0` and `1.0.0` are, as Yarn reads them, a range of the dependency's own name.
-/// `x`, `v8`, `1` and `1.x` can name a package, so they do, as in npm.
+/// `target` is the text after `npm:` and has no `@version` part. As in Yarn, `npm:^1.0.0` and
+/// `npm:1.0.0` are version ranges for the dependency's own name. `x`, `v8`, `1` and `1.x` are valid
+/// package names, so, as in npm, `npm:x` is an alias for the package `x`.
 #[cold]
 fn is_range_after_npm_protocol(target: &[u8]) -> bool {
     (strings::index_of_any(target, b"^~><=*| ").is_some()
@@ -1199,7 +1200,7 @@ fn is_range_after_npm_protocol(target: &[u8]) -> bool {
         && Tag::infer(target) == Tag::Npm
 }
 
-/// `npm:^1.0.0` -> `^1.0.0`. An alias stays whole.
+/// `npm:^1.0.0` -> `^1.0.0`. An alias such as `npm:name@^1.0.0` is returned unchanged.
 pub(crate) fn without_npm_protocol(literal: &[u8]) -> &[u8] {
     match literal.strip_prefix(b"npm:") {
         Some(target)

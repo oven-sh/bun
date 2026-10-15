@@ -1074,7 +1074,7 @@ pub(crate) fn edit_root_after_install(
                 };
                 let target = match seed.version.tag {
                     dependency::Tag::DistTag => seed.version.dist_tag().name,
-                    // `--exact` pins a typed range too.
+                    // With `--exact`, a range the user typed is also replaced by the exact version.
                     dependency::Tag::Npm
                         if exact && matches!(add.candidate, Candidate::Explicit(_)) =>
                     {

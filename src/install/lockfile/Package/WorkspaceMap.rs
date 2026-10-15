@@ -36,7 +36,8 @@ pub struct Entry {
     /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
-    /// What the walk of a pattern saw on the way to the folder. `None`: nothing listed it.
+    /// Whether the glob walk followed a symlink to reach this workspace's folder. `None` means no
+    /// walk could tell, so whoever needs the answer has to check the disk.
     pub(crate) is_behind_link: Option<bool>,
 }
 
@@ -172,7 +173,8 @@ pub(crate) enum MissingWorkspace<'a> {
     Error,
     Skip,
     SkipIfInLockfile(&'a Lockfile),
-    /// Auto-install: also one whose package.json is empty, which ends `bun install`. The program that runs goes on.
+    /// Like `Skip`, and also skips a workspace whose package.json is empty. `bun install` exits on
+    /// an empty package.json, but runtime auto-install must let the running program continue.
     SkipEmptyToo,
 }
 
@@ -574,7 +576,8 @@ impl WorkspaceMap {
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
-                    // An absolute pattern is opened at its first wildcard.
+                    // The walk of an absolute pattern starts at its first wildcard, so it cannot
+                    // see symlinks in the part of the path before that.
                     let is_behind_link =
                         (!path::is_absolute(user_pattern)).then(|| iter.followed_link());
 
@@ -671,8 +674,9 @@ impl WorkspaceMap {
         Ok(workspace_names.count() as u32)
     }
 
-    /// Whether [`Self::process_names_array`] lists `abs_dir`, which has a package.json with a name.
-    /// It asks the entries and not the disk, so a `**` also goes through a link.
+    /// Whether [`Self::process_names_array`] would make `abs_dir` a workspace, given that `abs_dir`
+    /// has a package.json with a name. It matches the path against the `workspaces` entries without
+    /// reading the disk, so unlike the real walk, `**` also matches through a symlink.
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
         let mut dir_buf = path::path_buffer_pool::get();
@@ -698,7 +702,7 @@ impl WorkspaceMap {
                 }
                 continue;
             }
-            // One listed by its path stays a member, whatever is negated.
+            // A workspace listed by its exact path is a member even if a negated pattern matches.
             if resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                 root_dir,
                 &mut abs_buf.0[..],
@@ -713,7 +717,8 @@ impl WorkspaceMap {
     }
 }
 
-/// Whether the walk of `user_pattern` comes to the package.json of `dir`, which is `abs_dir`.
+/// Whether the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the absolute
+/// path of `dir`, which is what an absolute pattern is matched against.
 fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
     let dir = if path::is_absolute(user_pattern) {
         abs_dir

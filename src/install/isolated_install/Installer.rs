@@ -67,7 +67,7 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
-    /// The project's.
+    /// Set when the project's root `node_modules` is a symlink.
     pub(crate) linked: Option<LinkedNodeModules>,
     /// Taken by the first task that links a project-local package.
     pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
@@ -187,8 +187,9 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    /// Main thread, before the tasks of its dependents start: they write the links to `target`.
-    /// As with the hoisted linker, the scripts of a `link:` dependency run when it is first linked.
+    /// Like the hoisted linker, runs the scripts of a `link:` dependency when it is first linked,
+    /// that is, when no dependent has a symlink to `target` yet. Call this on the main thread
+    /// before the dependents' tasks start, because those tasks create the symlinks.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
         let linked = !self.manager().options.enable.force_install()
             && self.has_link_from_dependent(entry_id, target);
@@ -510,12 +511,13 @@ impl<'a> Installer<'a> {
             let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
-        // As with the hoisted linker, a patch that does not apply ends the install unsaved.
+        // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
         if self.manager().options.enable.fail_early() || matches!(err, TaskError::Patching(_)) {
             Global::exit(1);
         }
 
-        // See `start_link_task`: a link to it would count as installed, and its scripts never run.
+        // Remove the symlinks to this `link:` dependency. Otherwise `start_link_task` in the next
+        // install would consider it already linked and never run its scripts.
         if pkg_res.tag == ResolutionTag::Symlink && self.is_trusted(entry_id) {
             self.left_out_entries.push(entry_id);
         }
@@ -783,12 +785,14 @@ impl<'a> Installer<'a> {
         let store = self.store;
         for (index, step) in store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
-            // Whether an unfinished entry has scripts is not known yet (an older bun.lock does not say).
+            // Every unfinished trusted entry is discarded, because it is not known yet whether it
+            // has scripts: a bun.lock written by an older Bun does not record that.
             if entry_id == failed
                 || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
             {
                 self.delete_store_copy(entry_id);
-                // See `start_link_task`.
+                // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
+                // them to mean that its scripts already ran.
                 if self.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
                 }
@@ -954,7 +958,7 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
-    /// Warnings of `lay_folder_links`. See `Installer::warn_left_out_links`.
+    /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
 
@@ -1237,7 +1241,8 @@ impl Task {
 
         if pkg_res.tag != ResolutionTag::Workspace && !is_trusted {
             // Before the early returns below, like the hoisted installer.
-            // A global-store entry stays in its staging dir until `Step::Binaries` renames it.
+            // `Which::Staging`, because a global-store entry stays in its staging directory until
+            // `Step::Binaries` renames it.
             self.blocked_scripts =
                 Self::count_blocked_scripts(installer, self.entry_id, Which::Staging);
             return Ok(false);
@@ -1291,7 +1296,8 @@ impl Task {
         Ok(has_preinstall)
     }
 
-    /// Of an untrusted dependency. Counts the installed scripts; `hasInstallScript` alone can be a false positive.
+    /// Returns how many lifecycle scripts of an untrusted dependency were blocked. It counts the
+    /// scripts of the installed package, because `hasInstallScript` alone can be a false positive.
     pub(crate) fn count_blocked_scripts(
         installer: &Installer<'_>,
         entry_id: StoreEntryId,
@@ -1512,7 +1518,8 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Task thread: `Step::LinkPackage` of a folder. Returns `Task::left_out_links`.
+    /// Runs `Step::LinkPackage` for a folder dependency, on a task thread. Returns the warnings to
+    /// store in `Task::left_out_links`.
     fn link_folder(&self, entry_id: StoreEntryId) -> sys::Result<Vec<Box<[u8]>>> {
         let skip_dirnames: &[&paths::OSPathSlice] = &[bun_paths::os_path_literal!("node_modules")];
         let path: &[u8] = self.lockfile().str(self.resolution(entry_id).folder());
@@ -1522,7 +1529,9 @@ impl<'a> Installer<'a> {
 
         self.remove_planted_links_in(entry_id, Self::store_path_len())?;
 
-        // Both walks only visit the names the folder has now, and would write through a link.
+        // The hardlink and copy walks below only visit what the folder contains now. So first,
+        // remove what the folder no longer has from the old copy, along with any symlink that the
+        // walks would write through.
         let mut copy = AutoPath::init();
         self.append_store_path(&mut copy, entry_id);
         if let (Ok(src), Ok(dest)) = (sys::Dir::open(path), sys::Dir::open(copy.slice())) {
@@ -1845,7 +1854,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// `entry_id`: of a package that `can_enqueue_install_task`.
+    /// `entry_id` must be the entry of a package whose resolution `can_enqueue_install_task`.
     pub(crate) fn link_hidden_name(
         store: &Store,
         lockfile: &Lockfile,
@@ -1944,7 +1953,8 @@ impl<'a> Installer<'a> {
         made_entry: bool,
     ) -> TaskResult<Relink> {
         match self.symlink_dependencies_behind(None, entry_id, strategy, made_entry) {
-            // See `Symlinker::node_modules_len`.
+            // `ELOOP` means the workspace's `node_modules` is a symlink (see
+            // `Symlinker::node_modules_len`). Try again with that symlink resolved.
             Err(TaskError::SymlinkDependencies(err))
                 if err.get_errno() == sys::E::ELOOP
                     && self.resolution(entry_id).tag == ResolutionTag::Workspace =>
@@ -1960,7 +1970,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// `own`: the `node_modules` of the entry, a member.
+    /// `own` is set when the entry is a workspace whose own `node_modules` is a symlink.
     fn symlink_dependencies_behind(
         &self,
         own: Option<&LinkedNodeModules>,
@@ -1980,7 +1990,8 @@ impl<'a> Installer<'a> {
 
         let mut dest = AutoPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
-        // A relative link counts from where it really is: `node_modules` or a member can be a link.
+        // A relative symlink is resolved from its real location, so `dest` needs its real path when
+        // `node_modules` or the workspace's directory is itself a symlink.
         let is_linked = (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut dest));
         let linked_member = if !is_linked && pkg_res.tag == ResolutionTag::Workspace {
             let path = lockfile.str(pkg_res.workspace());
@@ -1995,10 +2006,11 @@ impl<'a> Installer<'a> {
             dest.append(b"node_modules").assume_ok();
         }
         let base_len = dest.len();
-        // The `node_modules` of the project or of a member, which no first install has reset.
+        // The links go directly into the symlinked `node_modules` of the project or of a workspace.
+        // Not even a first install clears that directory, so it can contain anything.
         let is_behind_link =
             is_linked && matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace);
-        // See `LinkedNodeModules::resolve`.
+        // `LinkedNodeModules::resolve` explains why Windows needs absolute links here.
         let all_absolute = cfg!(windows) && (is_behind_link || linked_member.is_some());
 
         // See `Symlinker::real_len`. A first install with `--filter` does not reset the members.
@@ -2020,7 +2032,8 @@ impl<'a> Installer<'a> {
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
         let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
-            // A store entry's link to another one does not leave what the link leads to.
+            // True if the target is inside the same symlinked `node_modules` as the link, as when
+            // one store entry links to another.
             let stays_behind_link =
                 is_linked && (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut to));
             let dest_len = dest.len();
@@ -2186,7 +2199,8 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread, once every task is done: in the order of the entries, whichever ended first.
+    /// Call on the main thread once every task is done. The warnings are logged in entry order, so
+    /// the output does not depend on which task finished first.
     pub(crate) fn warn_left_out_links(&self) {
         for text in self.tasks.iter().flat_map(|task| &task.left_out_links) {
             self.manager().log_mut().add_warning_fmt(
@@ -2311,7 +2325,8 @@ impl<'a> Installer<'a> {
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
                 )
             });
-        // Such a link leaves the member's `node_modules`: it counts from where that really is.
+        // A bin link to a replacement package points outside the workspace's `node_modules`. If
+        // that directory is a symlink, the relative target has to start from its real path.
         if replacement.is_some() && links.is_behind_link != Some(false) {
             if let Some(linked) = LinkedNodeModules::at(links.node_modules_path.slice_z()) {
                 linked.resolve(&mut links.node_modules_path);
@@ -2436,7 +2451,8 @@ impl<'a> Installer<'a> {
         }
 
         // Under --force, the existing entry may be the corrupt one we were asked to replace.
-        // In one step where the file system can, since other projects load it all the time.
+        // Swap the two atomically where the file system supports it, because other projects may be
+        // loading this entry right now.
         #[cfg(not(windows))]
         {
             let swapped = sys::renameat2(
@@ -2477,7 +2493,8 @@ impl<'a> Installer<'a> {
     }
 
     /// The `StagingPath` next to a project-local entry's package directory.
-    /// `buf` is relative to the project: an absolute one may not fit where the package's path does.
+    /// `buf` must be relative to the project, like the package's path. An absolute staging path
+    /// could exceed the path length limit when the package's relative path does not.
     fn append_local_staging_path(
         &self,
         buf: &mut impl paths::PathLike,
@@ -2560,8 +2577,8 @@ impl<'a> Installer<'a> {
 
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
     /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
-    /// filesystem write for a warm global-store hit, and one `readlink` if the link is there.
-    /// True: the project had nothing of that name.
+    /// filesystem write for a warm global-store hit. A link that is already correct costs one
+    /// `readlink` and no write. Returns true if the project had nothing at that path before.
     pub(crate) fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<bool> {
         let mut dest = AutoPath::init_top_level_dir();
         self.append_local_store_entry_path(&mut dest, entry_id);
@@ -2586,20 +2603,21 @@ impl<'a> Installer<'a> {
             }
         }
 
-        // A `node_modules/.bun` that this install made has no link to read.
+        // If this install created `node_modules/.bun`, there is no existing link to read.
         let mut is_new = self.is_new_bun_modules;
         let mut current = paths::path_buffer_pool::get();
         loop {
             if !is_new {
                 match sys::readlink(dest.slice_z(), current.as_mut_slice()) {
-                    // Kept, so the package can be loaded all the time. libuv ends a junction in a slash.
+                    // Keep a link that is already correct, so the package stays loadable during the
+                    // install. libuv reports a junction's target with a trailing slash.
                     Ok(len)
                         if strings::without_trailing_slash(&current[..len])
                             == target_abs.slice() =>
                     {
                         return Ok(false);
                     }
-                    // The link to another hash, replaced in one step.
+                    // The link points to an entry with a different hash. Replace it atomically.
                     Ok(_) if cfg!(not(windows)) => {
                         let mut tmp = AutoPath::init_top_level_dir();
                         let _ = tmp.append_fmt(format_args!(
@@ -2626,8 +2644,8 @@ impl<'a> Installer<'a> {
                     }
                     Err(err) => match err.get_errno() {
                         sys::Errno::ENOENT => is_new = true,
-                        // A directory: the layout without the global store
-                        // (`bun patch` detaches `node_modules/<pkg>`, not this path).
+                        // `dest` is a real directory from an install without the global store.
+                        // (`bun patch` detaches `node_modules/<pkg>`, not this path.)
                         sys::Errno::EINVAL => Fd::cwd().delete_tree(dest.slice())?,
                         _ => return Err(err),
                     },
@@ -2637,7 +2655,7 @@ impl<'a> Installer<'a> {
                 return Ok(is_new);
             };
             match err.get_errno() {
-                // Another install made it in the meantime.
+                // Another install created the link in the meantime, so go back and read it.
                 sys::Errno::EEXIST => is_new = false,
                 sys::Errno::ENOENT => {
                     if let Some(parent) = dest.dirname() {

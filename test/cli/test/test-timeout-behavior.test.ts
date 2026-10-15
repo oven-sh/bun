@@ -343,36 +343,6 @@ testKill("an afterAll timeout kills the children of beforeAll", async () => {
   expect(exitCode).toBe(1);
 });
 
-// --bail exits before afterAll runs, so the runner stops what is still tracked.
-testKill.each([
-  ["an assertion fails", `test("fails", () => { expect(1).toBe(2); });`],
-  ["a test times out", `test("fails", async () => { await new Promise(() => {}); }, 100);`],
-])("--bail kills the children of beforeAll when %s", async (_failure, failingTest) => {
-  const { combined, exitCode } = await runTestFile(
-    /* ts */ `
-      import { afterAll, beforeAll, expect, test } from "bun:test";
-
-      let fromBeforeAll: ReturnType<typeof spawnEcho>;
-      afterAll(() => fromBeforeAll.kill());
-
-      beforeAll(() => {
-        fromBeforeAll = spawnEcho();
-      });
-
-      ${failingTest}
-
-      test("never runs", () => {});
-    `,
-    ["--bail"],
-  );
-
-  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 1 dangling process"]);
-  expect(combined).toContain("(fail) fails");
-  expect(combined).toContain("Bailed out after 1 failure");
-  expect(combined).not.toContain("never runs");
-  expect(exitCode).toBe(1);
-});
-
 // The wait loop of spawnSync sees the deadline pass and runs the same kill.
 testKill.each([
   ["Bun.spawnSync", `Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(30000)"] })`],

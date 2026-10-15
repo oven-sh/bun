@@ -49,8 +49,7 @@ impl ProcessAutoKiller {
         self.kill_since(self.scope.wrapping_sub(1))
     }
 
-    /// The processes of every scope begun after `mark` was read from [`Self::scope`].
-    /// Earlier scopes stay tracked (and alive) so that [`Self::kill`] still covers them.
+    /// The processes of every scope begun after `mark` was read from [`Self::scope`]. Earlier scopes stay tracked for [`Self::kill`].
     pub fn kill_since(&mut self, mark: u32) -> Result {
         let span = self.scope.wrapping_sub(mark);
         let mut count: u32 = 0;

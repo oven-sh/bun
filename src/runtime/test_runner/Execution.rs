@@ -329,8 +329,7 @@ impl Execution {
 
     /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
-        // The timer can fire after the active entry returned and before `run` steps past it.
-        // That entry did not time out, so its processes are not dangling.
+        // The timer can fire after the active entry returned and before `run` steps past it: that entry did not time out.
         if self.active_entry_reported() {
             return;
         }
@@ -368,8 +367,7 @@ impl Execution {
     /// A result for an active entry is queued: its callback returned and `run` has not stepped yet.
     fn active_entry_reported(&mut self) -> bool {
         let buntest = self.bun_test();
-        // SAFETY: `self` is `BunTest.execution`. `result_queue` is a sibling field, read through the
-        // parent pointer without forming a `&BunTest` that would alias `&mut self`.
+        // SAFETY: `result_queue` is a sibling field of `self` in `BunTest`, read without forming a `&BunTest`.
         let queue = unsafe { &(*buntest).result_queue };
         (0..queue.readable_length())
             .any(|offset| self.get_current_and_valid_execution_sequence(&queue.peek_item(offset)).is_some())

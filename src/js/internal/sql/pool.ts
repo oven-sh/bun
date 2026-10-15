@@ -313,7 +313,7 @@ function retireReplacedPools(generation: number) {
 function saslprep(password: string): string {
   const mapped = password
     .replace(/[\u00a0\u1680\u2000-\u200b\u202f\u205f\u3000]/g, " ")
-    .replace(/[\u00ad\u034f\u1806\u180b-\u180d\u200c\u200d\u2060\ufe00-\ufe0f\ufeff]/g, "");
+    .replace(/\u034f|\u200d|[\ufe00-\ufe0f]|[\u00ad\u1806\u180b-\u180d\u200c\u2060\ufeff]/g, "");
   return mapped === "" || /\p{C}/u.test(mapped) ? password : mapped.normalize("NFKC");
 }
 

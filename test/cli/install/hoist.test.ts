@@ -1782,6 +1782,80 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
   });
 });
 
+// Up to 1.4.3 what a run left out took no place, so the rest moved: here m's b@1.0.0 to the root, which gave n a b of
+// its own, where bun.lock has no key. Nothing is laid there now, and the b that n is linked to is at the root.
+describe.concurrent("a node_modules that an older bun laid for a run that leaves something out", () => {
+  const both = { m: "1.0.0", n: "1.0.0" };
+  const otherOs = process.platform === "darwin" ? "linux" : "darwin";
+  const otherCpu = process.arch === "arm64" ? "x64" : "arm64";
+
+  test.each([
+    { title: "--production", args: ["--production"], leftOut: { devDependencies: { b: "^2.0.0" } } },
+    { title: "--production, below a package", args: ["--production"], leftOut: { devDependencies: { a: "1.0.0" } } },
+    { title: "--omit=dev", args: ["--omit=dev"], leftOut: { devDependencies: { b: "^2.0.0" } } },
+    { title: "--omit=optional", args: ["--omit=optional"], leftOut: { optionalDependencies: { a: "1.0.0" } } },
+    { title: "a package for another os", args: [], leftOut: { optionalDependencies: { "a-os": "1.0.0" } } },
+    { title: "a package for another cpu", args: [], leftOut: { optionalDependencies: { "a-cpu": "1.0.0" } } },
+    { title: "--filter", args: ["--filter", "svc"], leftOut: { dependencies: { b: "^2.0.0" } }, member: true },
+    {
+      title: "--production, with the new bun.lock at once",
+      args: ["--production"],
+      leftOut: { devDependencies: { b: "^2.0.0" } },
+      atOnce: true,
+    },
+  ])("$title", async ({ args, leftOut, member, atOnce }) => {
+    const graph: Record<string, Record<string, object>> = {
+      m: { "1.0.0": { dependencies: { b: "^1.0.0" } } },
+      n: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
+      b: { "1.0.0": {}, "2.0.0": {}, "2.1.0": {} },
+      a: { "1.0.0": { dependencies: { b: "^2.0.0" } } },
+      "a-os": { "1.0.0": { os: [otherOs], dependencies: { b: "^2.0.0" } } },
+      "a-cpu": { "1.0.0": { cpu: [otherCpu], dependencies: { b: "^2.0.0" } } },
+    };
+    using server = await serveGraph(graph, {
+      "n-1.0.0": { "index.js": `module.exports = require("b/package.json").version;` },
+    });
+    const { "2.1.0": published, ...before } = graph.b;
+    graph.b = before;
+
+    const files = (root: object) => ({
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+      ...(member
+        ? {
+            "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"], ...root }),
+            "packages/svc/package.json": JSON.stringify({ name: "svc", dependencies: { b: "^1.0.0", n: "1.0.0" } }),
+          }
+        : { "package.json": JSON.stringify({ name: "app", dependencies: both, ...root }) }),
+    });
+    using laptop = tempDir("hoist-older-laptop", files(leftOut));
+    using machine = tempDir("hoist-older-machine", files({}));
+    const [dev, dir] = [String(laptop), String(machine)];
+    const pull = async () => {
+      await write(join(dir, "package.json"), file(join(dev, "package.json")));
+      await write(join(dir, "bun.lock"), file(join(dev, "bun.lock")));
+    };
+    await run(dev, "install");
+
+    // What an older bun lays with these arguments is what every bun lays when package.json lacks what they leave out.
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(["b@1.0.0", ...(member ? [] : ["m@1.0.0"]), "n@1.0.0", "n/b@2.0.0"]);
+    await pull();
+    if (!atOnce) await run(dir, "install", ...args);
+
+    graph.b = { ...before, "2.1.0": published };
+    await run(dev, "update");
+    await pull();
+    const lockfile = await file(join(dir, "bun.lock")).text();
+    expect(lockfile).toContain("b@2.1.0");
+    expect(lockfile).not.toContain("b@2.0.0");
+
+    await run(dir, "install", ...args);
+    expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
+    expect(await run(dir, "install", ...args)).toContain("(no changes)");
+    expect(await run(dir, "--no-install", "-p", "require('n')")).toBe("2.1.0\n");
+  });
+});
+
 // An install removes a folder only if the bun.lock it started from placed a package there.
 describe.concurrent("a folder that no bun.lock placed stays", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;

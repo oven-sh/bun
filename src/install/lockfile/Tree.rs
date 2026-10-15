@@ -506,6 +506,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) contested_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// Install-tree rows this run links, each with the edge the installer reads. `None`: all.
     pub(crate) kept: Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>>,
+    /// The install tree of bun 1.4.3 and before: what the run leaves out takes no place, so the
+    /// rest moves up. `prune::remove_copies_of_the_older_layout` asks where that put a package.
+    pub(crate) older_layout: bool,
     pub(crate) linked: reachable::Linked,
 }
 
@@ -796,15 +799,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         bun_core::Global::crash();
     }
 
-    /// Fills `kept`.
-    pub(crate) fn keep_linked_rows(&mut self) {
-        let Some(manager) = self.manager else {
-            return;
-        };
-        let lockfile_ref = self.lockfile;
-        self.kept = LinkedRows {
-            manager,
-            lockfile: lockfile_ref.get(),
+    /// `None` without a `manager`: no run, so nothing is left out.
+    fn linked_rows(&mut self) -> Option<LinkedRows<'_>> {
+        Some(LinkedRows {
+            manager: self.manager?,
+            lockfile: self.lockfile.get(),
             trees: self.list.items_tree(),
             dependencies: self.dependencies,
             resolutions: &*self.resolutions,
@@ -816,8 +815,15 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             shipped_rows: &self.shipped_rows,
             contested: &self.contested,
             linked: &mut self.linked,
+        })
+    }
+
+    /// Fills `kept`.
+    pub(crate) fn keep_linked_rows(&mut self) {
+        if !self.older_layout {
+            let kept = self.linked_rows().and_then(|mut rows| rows.walk());
+            self.kept = kept;
         }
-        .walk();
     }
 }
 
@@ -1234,6 +1240,13 @@ impl Tree {
                 && !shipped
                 && !dependency.behavior.is_bundled()
                 && pkg_id == invalid_package_id
+            {
+                continue;
+            }
+            if builder.older_layout
+                && !shipped
+                && (builder.linked_rows())
+                    .is_some_and(|mut rows| rows.leaves_out(dep_id, parent_pkg_id))
             {
                 continue;
             }

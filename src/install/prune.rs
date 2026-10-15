@@ -23,9 +23,9 @@ use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
+use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -825,6 +825,16 @@ fn hoist_install_tree(
     manager: &mut PackageManager,
     all_rows: bool,
 ) -> Result<SavedTree, tree::SubtreeError> {
+    hoist_tree(manager, all_rows, true, &[], false)
+}
+
+fn hoist_tree(
+    manager: &mut PackageManager,
+    all_rows: bool,
+    install_root_dependencies: bool,
+    workspace_filters: &[WorkspaceFilter],
+    older_layout: bool,
+) -> Result<SavedTree, tree::SubtreeError> {
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
@@ -835,7 +845,14 @@ fn hoist_install_tree(
         let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
         let log: *mut bun_ast::Log = (*pm).log;
         let options = (!all_rows).then_some(&*pm);
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, options, true, &[], None)
+        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(
+            &mut *log,
+            options,
+            install_root_dependencies,
+            workspace_filters,
+            None,
+            older_layout,
+        )
     };
     match result {
         Ok(_) => Ok(saved),
@@ -1588,6 +1605,83 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         );
     }
 
+    remove_planned(plan, Layout::Hoisted, manager);
+}
+
+/// Up to 1.4.3 the hoisted linker worked the places out anew for what a run links. With
+/// `--production`, `--omit`, `--filter` or a package for another platform it nested copies where no
+/// bun.lock has a key, and replaced whatever else it found there. Nothing is laid in such a place
+/// now, nor below it, so the folder goes: it hides the package further up, which has what it needs.
+/// For an install that laid something, as the first one over such a tree does. bun.lock is saved.
+pub(crate) fn remove_copies_of_the_older_layout(
+    manager: &mut PackageManager,
+    install_root_dependencies: bool,
+    workspace_filters: &[WorkspaceFilter],
+) {
+    // A hoist can bind a peer.
+    let resolutions = manager.lockfile.buffers.resolutions.clone();
+    let Ok(saved) = hoist_install_tree(manager, true) else {
+        manager.lockfile.buffers.resolutions = resolutions;
+        return;
+    };
+    let mut places: Vec<Box<[u8]>> = Vec::new();
+    {
+        let new = HoistedTree::init(&manager.lockfile, true);
+        for id in 0..new.folders.len() {
+            places.extend((new.expected(id).iter()).map(|&(alias, _)| join(new.path(id), alias)));
+        }
+    }
+    sort_names(&mut places);
+    if hoist_tree(
+        manager,
+        false,
+        install_root_dependencies,
+        workspace_filters,
+        true,
+    )
+    .is_ok()
+    {
+        remove_from_older_places(manager, &places);
+    }
+    restore_tree(&mut manager.lockfile, saved);
+    manager.lockfile.buffers.resolutions = resolutions;
+}
+
+/// `manager.lockfile` carries the older layout. `places`: those of today's, sorted.
+fn remove_from_older_places(manager: &PackageManager, places: &[Box<[u8]>]) {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let older = HoistedTree::init(lockfile, true);
+    let mut plan = Plan::default();
+    for id in 1..older.folders.len() {
+        let path = older.path(id);
+        let only_older = |alias: &[u8]| !contains(places, &join(path, alias));
+        if path.is_empty() || !(older.expected(id).iter()).any(|&(alias, _)| only_older(alias)) {
+            continue;
+        }
+        // A tarball ships folders at any depth below the package that bundles.
+        let mut above = id;
+        while above != 0 && !has_bundled_deps(lockfile, tree_owner(lockfile, above)) {
+            above = older.trees[above].parent as usize;
+        }
+        if above != 0 {
+            continue;
+        }
+        let tree_id = id as tree::Id;
+        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
+            continue;
+        };
+        scan_folder(
+            dir,
+            path,
+            false,
+            &|entry: &Entry| {
+                entry.kind != EntryKind::Directory
+                    || older.expected_in(tree_id, entry.alias).is_none()
+                    || !only_older(entry.alias)
+            },
+            &mut plan,
+        );
+    }
     remove_planned(plan, Layout::Hoisted, manager);
 }
 

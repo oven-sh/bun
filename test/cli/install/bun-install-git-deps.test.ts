@@ -4046,7 +4046,15 @@ test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void 
     : []),
   // A path has room for about 500 levels on macOS, and 2,000 on Linux.
   { what: "holds folders nested deep", change: ({ clone }) => nestFolders(clone, 1500) },
-  { what: "holds folders nested deeper than a path can name", change: ({ clone }) => nestFolders(clone, 3000) },
+  // On macOS the row above is already this case.
+  ...(isLinux
+    ? [
+        {
+          what: "holds folders nested deeper than a path can name",
+          change: ({ clone }: Places) => nestFolders(clone, 3000),
+        },
+      ]
+    : []),
 ])(
   "a cached clone that $what",
   async ({ change }) => {

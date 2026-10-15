@@ -1029,6 +1029,13 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
+    if !isolated && install_summary.success > 0 && install_summary.fail == 0 {
+        crate::prune::remove_copies_of_the_older_layout(
+            manager,
+            install_root_dependencies,
+            &workspace_filters,
+        );
+    }
     if manager.options.global && manager.options.do_.install_packages() {
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);
     }

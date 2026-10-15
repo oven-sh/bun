@@ -19,6 +19,8 @@ pub struct ByteBlobLoader {
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
     pub(crate) content_type: blob::BlobContentType,
+    /// The Blob this reads was a `File` or a view of one.
+    pub(crate) name_detached: bool,
 }
 
 impl Default for ByteBlobLoader {
@@ -30,6 +32,7 @@ impl Default for ByteBlobLoader {
             remain: 1024 * 1024 * 2,
             done: false,
             content_type: blob::BlobContentType::default(),
+            name_detached: false,
         }
     }
 }
@@ -95,6 +98,7 @@ impl ByteBlobLoader {
             remain: size,
             done: false,
             content_type,
+            name_detached: blob.is_file_or_view(),
         };
     }
 
@@ -161,6 +165,7 @@ impl ByteBlobLoader {
         let blob = Blob::init_with_store(store, global);
         blob.offset.set(self.offset);
         blob.size.set(self.remain);
+        blob.name_detached.set(self.name_detached);
 
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988

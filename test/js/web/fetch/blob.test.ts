@@ -1074,11 +1074,16 @@ describe("a Blob made from a File is a plain Blob", () => {
     const renamed = wrapped.slice(0, 5) as Blob & { name?: string };
     renamed.name = "renamed";
     renamed.name = undefined;
+    const bodyReadAsStream = new Response(wrapped);
+    bodyReadAsStream.body;
     const views: Record<string, Blob> = {
       "slice": wrapped.slice(0, 5),
       "slice of slice": wrapped.slice(0, 5).slice(1),
       "new Blob([file])": new Blob([wrapped]),
       "Response.blob()": await new Response(wrapped).blob(),
+      "Response.blob() after .body was read": await bodyReadAsStream.blob(),
+      "Response(file.stream()).blob()": await new Response(wrapped.stream()).blob(),
+      "Response(slice.stream()).blob()": await new Response(wrapped.slice(0, 5).stream()).blob(),
       "structuredClone(slice)": structuredClone(wrapped.slice(0, 5)),
       "bun:jsc deserialize(serialize(slice))": deserialize(serialize(wrapped.slice(0, 5))),
       "node:v8 deserialize(serialize(slice))": v8.deserialize(v8.serialize(wrapped.slice(0, 5))),
@@ -1146,6 +1151,8 @@ describe("a Blob made from a File is a plain Blob", () => {
             return reusedStatic.clone();
           case "/reused-file":
             return reusedFile.clone();
+          case "/array-body":
+            return new Response([makeFile()]);
           case "/slice":
             return new Response(file.slice(0, 5));
           case "/blob":
@@ -1156,7 +1163,7 @@ describe("a Blob made from a File is a plain Blob", () => {
     });
 
     const seen: Record<string, [string | null, string]> = {};
-    for (const pathname of ["/file", "/clone", "/reused-static", "/reused-file", "/slice", "/blob"]) {
+    for (const pathname of ["/file", "/clone", "/reused-static", "/reused-file", "/array-body", "/slice", "/blob"]) {
       const res = await fetch(server.url.origin + pathname);
       seen[pathname] = [res.headers.get("content-disposition"), await res.text()];
     }
@@ -1165,6 +1172,7 @@ describe("a Blob made from a File is a plain Blob", () => {
       "/clone": ['filename="report.pdf"', "0123456789"],
       "/reused-static": ['filename="report.pdf"', "0123456789"],
       "/reused-file": ['filename="download.bin"', "0123456789"],
+      "/array-body": ['filename="report.pdf"', "0123456789"],
       "/slice": [null, "01234"],
       "/blob": [null, "0123456789"],
     });

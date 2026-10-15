@@ -496,6 +496,13 @@ impl Blob {
         self.store_path()
     }
 
+    /// Whether a Blob rebuilt from these bytes (a stream read back into a
+    /// Blob) is a view of a `File`, and so has no name.
+    #[inline]
+    pub fn is_file_or_view(&self) -> bool {
+        self.is_jsdom_file.get() || self.name_detached.get()
+    }
+
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
     /// `None` for fd-backed or unnamed stores.
     pub fn store_path(&self) -> Option<&[u8]> {

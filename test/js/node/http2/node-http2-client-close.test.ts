@@ -833,8 +833,8 @@ test("close() on a stalled request frees its place under SETTINGS_MAX_CONCURRENT
   });
 });
 
-// The request ends on both sides with the response unread, so no RST_STREAM leaves. The stream
-// is destroyed all the same.
+// close() waits for 'finish' here. The response is unread then, and the stream is destroyed
+// all the same.
 test("end(), close() on a request with an unread response frees its place", async () => {
   await withRawServer(async (session, accepted) => {
     const peer = await accepted;
@@ -844,14 +844,14 @@ test("end(), close() on a request with an unread response frees its place", asyn
     await peer.until(() => peer.wire(1) === "H");
     // A response that nobody reads.
     const response = once(req, "response");
-    peer.send(responseHeaders(1), dataFrame(1, 100, true));
+    peer.send(responseHeaders(1), dataFrame(1, 100));
     await response;
     await peer.settle();
     req.end();
     req.close();
     session.request({ ":path": "/" }).on("error", () => {});
     await peer.until(() => peer.wire(3) !== "");
-    assert.deepStrictEqual([peer.wire(1), peer.wire(3)], ["H D0E", "HE"]);
+    assert.deepStrictEqual([peer.wire(1), peer.wire(3)], ["H D0E R0", "HE"]);
   });
 });
 

@@ -1655,6 +1655,30 @@ describe("crypto.diffieHellman key data", () => {
     expect([...new Set(touched)]).toEqual(["publicKey", "privateKey", "public JWK", "private JWK"]);
   });
 
+  it("survives a vm timeout during the import of an EC private JWK", async () => {
+    // The timeout ends the script at the next exception check of the native code that runs.
+    const script = `
+      const vm = require("node:vm");
+      const crypto = require("node:crypto");
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+      const jwk = { key: privateKey.export({ format: "jwk" }), format: "jwk" };
+      const context = vm.createContext({ run: () => crypto.diffieHellman({ privateKey: jwk, publicKey }) });
+      let timeouts = 0;
+      for (let i = 0; i < 100; i++) {
+        try {
+          vm.runInContext("for (;;) run();", context, { timeout: 1 + (i % 3) });
+        } catch (err) {
+          if (err.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw err;
+          timeouts++;
+        }
+      }
+      console.log(timeouts);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "100\n", stderr: "", exitCode: 0 });
+  });
+
   it("reads a key buffer that a getter of privateKey made shorter at its new length", () => {
     const publicPem = Buffer.from(x25519.publicKey.export({ type: "spki", format: "pem" }));
     const privatePem = x25519.privateKey.export({ type: "pkcs8", format: "pem" });

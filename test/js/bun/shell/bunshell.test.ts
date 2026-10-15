@@ -1295,9 +1295,7 @@ booga"
       ${BUN} -e ${childEnv} A OUTER KEEP NOVALUE LATER EMPTY X Y
     `
       .env(env)
-      .stdout(
-        "1 fromenv 1 [] late [] 1 2\nA=1 OUTER=fromenv KEEP=1 NOVALUE=<unset> LATER=late EMPTY= X=1 Y=2\n",
-      )
+      .stdout("1 fromenv 1 [] late [] 1 2\nA=1 OUTER=fromenv KEEP=1 NOVALUE=<unset> LATER=late EMPTY= X=1 Y=2\n")
       .testMini()
       .runAsTest("export NAME keeps the value of the name");
 

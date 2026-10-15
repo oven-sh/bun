@@ -72,10 +72,8 @@ impl Export {
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut entries: Vec<(EnvStr, Option<EnvStr>)> = Builtin::shell(interp, cmd)
-            .vars
-            .exported_names()
-            .collect();
+        let mut entries: Vec<(EnvStr, Option<EnvStr>)> =
+            Builtin::shell(interp, cmd).vars.exported_names().collect();
         index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
 
         let mut buf = Vec::new();

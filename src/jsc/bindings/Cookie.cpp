@@ -2,12 +2,11 @@
 #include "EncodeURIComponent.h"
 #include "JSCookie.h"
 #include "helpers.h"
+#include <JavaScriptCore/MathCommon.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
-#include <wtf/text/StringToIntegerConversion.h>
 #include <JavaScriptCore/DateConversion.h>
 #include <JavaScriptCore/DateInstance.h>
-#include <JavaScriptCore/MathCommon.h>
 #include "HTTPParsers.h"
 namespace WebCore {
 
@@ -60,10 +59,10 @@ static std::optional<double> parseMaxAge(StringView attributeValue)
     if (digits.isEmpty() || !digits.containsOnly<isASCIIDigit>())
         return std::nullopt;
 
-    double magnitude = 0;
+    int64_t magnitude = 0;
     for (auto digit : digits.codeUnits())
-        magnitude = std::min(magnitude * 10 + (digit - '0'), JSC::maxSafeInteger());
-    return isNegative ? -magnitude : magnitude;
+        magnitude = std::min<int64_t>(magnitude * 10 + (digit - '0'), JSC::maxSafeIntegerAsUInt64());
+    return static_cast<double>(isNegative ? -magnitude : magnitude);
 }
 
 ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)

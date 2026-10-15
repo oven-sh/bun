@@ -172,7 +172,10 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     ] as const) {
       expect(Bun.Cookie.parse(`a=b; Max-Age=${value}`).maxAge).toBe(expected);
     }
-    expect(Bun.Cookie.parse("a=b; Max-Age=-0").isExpired()).toBe(true);
+    // "-0" is the integer 0: toBe tells 0 from the JS number -0.
+    const negativeZero = Bun.Cookie.parse("a=b; Max-Age=-0");
+    expect(negativeZero.maxAge).toBe(0);
+    expect(negativeZero.isExpired()).toBe(true);
   });
 
   // A user agent clamps a Max-Age it cannot represent instead of ignoring it, so a huge

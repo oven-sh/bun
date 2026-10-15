@@ -141,6 +141,8 @@ Fake timers or a system time set at the top level of a [preload](/test/configura
 
 ### Timers scheduled after an `await`
 
+No promise job runs before one of the functions above returns, so what a callback does after an `await` hasn't happened yet.
+
 `advanceTimersByTimeAsync`, `advanceTimersToNextTimerAsync`, `runAllTimersAsync` and `runOnlyPendingTimersAsync` return a promise. Between fake timers, they let promise jobs and one turn of the real event loop run, so they pick up timers that a callback schedules after an `await`.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"

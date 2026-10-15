@@ -418,33 +418,51 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
   });
 
-  // A jest timer control runs the microtasks of a timer before the next timer
-  // only when no event loop task is on the stack. The first tests of a file run
-  // that way, so the loop gets a test file of its own.
-  test("a `while (..) await Bun.sleep(0)` loop ends when its condition does", async () => {
-    using dir = tempDir("fake-timers-sleep-loop", {
-      "sleep-loop.test.ts": `
+  test.each([
+    ["advanceTimersByTimeAsync", 5],
+    ["runOnlyPendingTimersAsync", 3],
+  ] as const)("a `while (..) await Bun.sleep(0)` loop ends when its condition does: %s", async (control, now) => {
+    jest.useFakeTimers();
+    let done = false;
+    const polledAt: number[] = [];
+    setTimeout(() => (done = true), 3);
+    (async () => {
+      while (!done && polledAt.length < GIVE_UP) {
+        polledAt.push(performance.now());
+        await Bun.sleep(0);
+      }
+    })();
+    await jest[control](5);
+    expect({ polledAt, done, now: performance.now(), pending: jest.getTimerCount() }).toEqual({
+      polledAt: [0, 0, 1, 2],
+      done: true,
+      now,
+      pending: 0,
+    });
+  });
+
+  // The runner calls the first tests of a file with no event loop task below them, so these get a test file of their own.
+  test("no promise job runs before a timer control returns", async () => {
+    using dir = tempDir("fake-timers-promise-jobs", {
+      "promise-jobs.test.ts": `
         import { jest, test } from "bun:test";
-        test.each(["advanceTimersByTime", "runOnlyPendingTimers"])("%s", control => {
+        test.each(["advanceTimersByTime", "advanceTimersToNextTimer", "runOnlyPendingTimers", "runAllTimers"])("%s", control => {
           jest.useFakeTimers();
-          let done = false;
-          const polledAt = [];
-          setTimeout(() => (done = true), 3);
-          (async () => {
-            while (!done && polledAt.length < ${GIVE_UP}) {
-              polledAt.push(performance.now());
-              await Bun.sleep(0);
-            }
-          })();
-          if (control === "advanceTimersByTime") jest.advanceTimersByTime(5);
-          else jest.runOnlyPendingTimers();
-          console.log(JSON.stringify({ control, polledAt, done, now: performance.now(), pending: jest.getTimerCount() }));
+          const order = [];
+          setTimeout(() => {
+            order.push("timer 1");
+            Promise.resolve().then(() => order.push("promise job"));
+          }, 1);
+          setTimeout(() => order.push("timer 2"), 2);
+          jest[control](2);
+          order.push("returned");
+          console.log(JSON.stringify({ control, order }));
           jest.useRealTimers();
         });
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "sleep-loop.test.ts"],
+      cmd: [bunExe(), "test", "promise-jobs.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -455,10 +473,13 @@ describe("a zero-delay timer armed by a timer callback", () => {
       .split("\n")
       .filter(line => line.startsWith("{"))
       .map(line => JSON.parse(line));
+    const order = ["timer 1", "timer 2", "returned"];
     expect({ results, exitCode }, stderr).toEqual({
       results: [
-        { control: "advanceTimersByTime", polledAt: [0, 0, 1, 2], done: true, now: 5, pending: 0 },
-        { control: "runOnlyPendingTimers", polledAt: [0, 0, 1, 2], done: true, now: 3, pending: 0 },
+        { control: "advanceTimersByTime", order },
+        { control: "advanceTimersToNextTimer", order },
+        { control: "runOnlyPendingTimers", order },
+        { control: "runAllTimers", order },
       ],
       exitCode: 0,
     });

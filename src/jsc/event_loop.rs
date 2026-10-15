@@ -1311,7 +1311,14 @@ impl EventLoop {
             // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
+        // R-2 noalias mitigation — see `run_callback` above.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
+        unsafe { (*this).enter() };
         let result = callback.call(global_object, this_value, arguments);
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above.
+        unsafe { (*this).exit_without_checkpoint() };
         after_call();
         let result = result?;
         result.ensure_still_alive();

@@ -273,6 +273,40 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// An empty chunk is behind the chunks queued before it like any other; a number
+// would tell the caller that nothing is waiting.
+it.skipIf(!isPosix).each([
+  ["string", ""],
+  ["Uint8Array", new Uint8Array(0)],
+])("an empty %s write() behind a backpressured write() returns that write's promise", async (_, empty) => {
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  const size = 4 * 1024 * 1024;
+
+  expect(sink.write(empty)).toBe(0);
+  const first = sink.write(Buffer.alloc(size, 0x61));
+  const second = sink.write(empty);
+
+  let received = 0;
+  const reader = (async () => {
+    for await (const part of Bun.file(readFd).stream()) received += part.byteLength;
+  })();
+
+  try {
+    expect(first).toBeInstanceOf(Promise);
+    expect(second).toBe(first);
+    expect(await second).toBe(size);
+    expect(sink.write(empty)).toBe(0);
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    await reader;
+    fs.closeSync(readFd);
+  }
+
+  expect(received).toBe(size);
+});
+
 // end() called after a backpressured write() with the reader already gone:
 // end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
 // the write()'s outstanding promise orphaned (never settled here; in the spawn

@@ -324,6 +324,44 @@ describe.concurrent.skipIf(isWindows)(
       await expectDrainOverSocket("", 1 << 20);
     });
 
+    // A write's callback says the chunks before it are out, so exiting from it loses nothing. As in Node, the chunks queued
+    // while the pipe is full get one 'drain' between them.
+    test.each([
+      [`""`, 0],
+      [`Buffer.alloc(0)`, 0],
+      [`"B"`, 1],
+    ])(
+      "process.stdout.write(%s, cb) behind a write to a full pipe calls back once both are out",
+      async (chunk, length) => {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const order = [];
+           const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
+           process.stdout.on("drain", () => order.push("drain"));
+           const first = process.stdout.write(Buffer.alloc(1 << 20, "A"), () => order.push("first"));
+           const second = process.stdout.write(${chunk}, () => {
+             order.push("second");
+             report({ order });
+             process.exit(0);
+           });
+           report({ first, second });`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+          lazy: true,
+        });
+        const events = jsonLines(proc.stderr);
+        expect(await events.next()).toEqual({ first: false, second: false });
+        const [stdout, order, exitCode] = await Promise.all([proc.stdout.bytes(), events.next(), proc.exited]);
+        expect(stdout.byteLength).toBe((1 << 20) + length);
+        expect(order).toEqual({ order: ["drain", "first", "second"] });
+        expect(exitCode).toBe(0);
+      },
+    );
+
     // Bun.spawn's "pipe" is a socketpair; these go through sh so fd 1 is a real pipe(2).
     test("console.log and process.stdout.write are not truncated over a real pipe", async () => {
       await using proc = spawn({

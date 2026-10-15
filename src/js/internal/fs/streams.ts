@@ -33,6 +33,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kDrainedWrite]?: Promise<unknown>;
 };
 type FD = number;
 
@@ -43,6 +44,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kDrainedWrite = Symbol("kDrainedWrite");
 const kFs = Symbol("kFs");
 
 const {
@@ -560,7 +562,10 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 }
 
 // Like Writable's afterWrite: no 'drain' once the stream is ending or destroyed.
-function emitDrain(stream: FSStream) {
+// Chunks written while the sink is backed up share `write`, its promise: one 'drain' for all of them.
+function emitDrain(stream: FSStream, write: Promise<unknown>) {
+  if (stream[kDrainedWrite] === write) return;
+  stream[kDrainedWrite] = write;
   const state = stream._writableState;
   if (state === undefined || !(state.ending || state.destroyed)) {
     stream.emit("drain");
@@ -575,7 +580,7 @@ function _write(data, encoding, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          emitDrain(this);
+          emitDrain(this, maybePromise);
           cb(null);
         })
         .catch(cb);
@@ -621,7 +626,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
       maybePromise.then(
         () => {
           if (cb) cb(null);
-          emitDrain(this);
+          emitDrain(this, maybePromise);
         },
         err => {
           if (cb) cb(err);
@@ -688,7 +693,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       // mistaken for a write failure.
       maybePromise.then(
         () => {
-          emitDrain(this);
+          emitDrain(this, maybePromise);
           cb(null);
         },
         err => {
@@ -731,7 +736,7 @@ writeStreamPrototype._writev = function (data, cb) {
     if ($isPromise(maybePromise)) {
       maybePromise
         .then(() => {
-          emitDrain(this);
+          emitDrain(this, maybePromise);
           cb(null);
         })
         .catch(cb);

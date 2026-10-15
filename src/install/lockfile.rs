@@ -268,7 +268,8 @@ impl LinkedMembers {
         });
     }
 
-    fn real_path_of(path: &[u8]) -> Box<[u8]> {
+    /// `path`: from the project. Empty: it could not be resolved.
+    pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
         let Some(path) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
@@ -1721,7 +1722,12 @@ impl Lockfile {
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
         }
 
-        builder.bind_served_peers();
+        tree::bind_served_peers(
+            &mut builder.served,
+            &builder.list,
+            builder.dependencies,
+            &mut *builder.resolutions,
+        );
         builder.keep_linked_rows();
         let cleaned = builder.clean()?;
         let late_bound_peer = builder.late_bound_peer;

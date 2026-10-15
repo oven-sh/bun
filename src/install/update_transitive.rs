@@ -130,13 +130,19 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // Another group of the owner lists the name and keeps the old package.
-                    || (dep_slices[owner].get(deps).iter())
-                        .zip(res_slices[owner].get(resolutions))
-                        .any(|(other, &kept)| {
-                            other.name_hash == dep.name_hash
-                                && !other.behavior.is_peer()
-                                && kept == old
+                    // Another group of the owner lists the name and keeps the old package. So does the
+                    // root's own dependency, whose package a peer only shared (`bind_served_peers`).
+                    || [Some(owner), dep.behavior.is_peer().then_some(0)]
+                        .into_iter()
+                        .flatten()
+                        .any(|holder| {
+                            (dep_slices[holder].get(deps).iter())
+                                .zip(res_slices[holder].get(resolutions))
+                                .any(|(other, &kept)| {
+                                    other.name_hash == dep.name_hash
+                                        && !other.behavior.is_peer()
+                                        && kept == old
+                                })
                         })
                 {
                     continue;
@@ -806,16 +812,17 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             .package_index
             .get(&Semver::string::Builder::string_hash(name))
             .map_or(&[], PackageIndexEntry::as_slice);
+        // A folder, a link and a workspace are never patched.
         if installed
             .iter()
-            .any(|&id| pkg_res[id as usize].tag != ResolutionTag::Npm)
+            .any(|&id| !pkg_res[id as usize].can_enqueue_install_task())
         {
             continue;
         }
         let mut now: Vec<u8> = Vec::new();
         let mut still_applies = false;
         for &id in installed {
-            let current = text(pkg_res[id as usize].npm().version.fmt(buf));
+            let current = text(pkg_res[id as usize].fmt(buf, bun_core::fmt::PathSep::Posix));
             if &*current == version {
                 still_applies = true;
                 break;

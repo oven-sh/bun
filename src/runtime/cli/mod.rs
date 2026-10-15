@@ -723,15 +723,17 @@ pub(crate) mod command {
         if is_bun_x(argv0) {
             if let Some(next) = argv.get(1) {
                 let next_bytes = next.as_bytes();
-                if next_bytes == b"add"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
-                {
-                    return Tag::AddCommand;
+                // `bunx` runs its own executable again for the install, in the directory it installs into.
+                if next_bytes == b"add" {
+                    use bun_install::package_manager_real::run_tasks::is_bunx_tree;
+                    let mut cwd = bun_paths::path_buffer_pool::get();
+                    if bun_sys::getcwd(&mut *cwd).is_ok_and(|len| is_bunx_tree(&cwd[..len])) {
+                        return Tag::AddCommand;
+                    }
                 }
+                // That install does so for a lifecycle script where there is no POSIX shell: `ScriptArgv`.
                 if next_bytes == b"exec"
-                    && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
-                        == Some(true)
+                    && (argv.get(2)).is_some_and(|flag| flag.as_bytes() == b"--no-env-file")
                 {
                     return Tag::ExecCommand;
                 }

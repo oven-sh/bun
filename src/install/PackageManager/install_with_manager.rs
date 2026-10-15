@@ -2311,8 +2311,11 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .filter(|&(row, (dependency, &package_id))| {
             lockfile.overrides.has_rule_for_name(dependency.name_hash)
                 && !dependency.behavior.is_bundled()
+                // As in `locked_version_is_out_of_range`: only clear cases.
+                && !dependency.behavior.is_optional()
                 && (package_id as usize) < resolutions.len()
                 && resolutions[package_id as usize].tag == ResolutionTag::Npm
+                && !resolutions[package_id as usize].npm().version.tag.has_pre()
                 && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
                     .is_some()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
@@ -2346,7 +2349,7 @@ fn reresolve_rows_outside_overrides(
     // As in `enqueue_named_updates`: a peer with a provider only follows it.
     let plannable_peers = plannable_peer_rows(&manager.lockfile, &DirectDependencies::default());
     // So does a peer next to another peer that has no rule against the package they share.
-    let mut held = DynamicBitSet::init_empty(manager.lockfile.packages.len())?;
+    let mut held = DynamicBitSet::init_empty(manager.lockfile.packages.len()).unwrap_or_oom();
     let mut outside_rows = outside.iter().map(|&(row, _)| row as usize).peekable();
     for (row, &package_id) in manager.lockfile.buffers.resolutions.iter().enumerate() {
         if outside_rows.next_if_eq(&row).is_none() && (package_id as usize) < held.bit_length() {
@@ -2354,9 +2357,20 @@ fn reresolve_rows_outside_overrides(
         }
     }
     outside.retain(|&(row, package_id)| {
-        let behavior = manager.lockfile.buffers.dependencies[row as usize].behavior;
-        !behavior.is_peer()
-            || (plannable_peers.is_set(row as usize) && !held.is_set(package_id as usize))
+        let lockfile: &Lockfile = &manager.lockfile;
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let dependency = &dependencies[row as usize];
+        // An older bun.lock has one version for a name that its package lists in two groups.
+        let listed_once = lockfile
+            .get_parent_pkg_of_dependency(row)
+            .is_some_and(|owner| {
+                let rows = lockfile.packages.items_dependencies()[owner as usize];
+                let same_name = |other: &&Dependency| other.name_hash == dependency.name_hash;
+                rows.get(dependencies).iter().filter(same_name).count() == 1
+            });
+        listed_once
+            && (!dependency.behavior.is_peer()
+                || (plannable_peers.is_set(row as usize) && !held.is_set(package_id as usize)))
     });
     let Some(&(first_row, first_package)) = outside.first() else {
         return Ok(Vec::new());

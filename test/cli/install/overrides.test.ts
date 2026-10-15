@@ -1,5 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
 import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
@@ -376,5 +377,458 @@ describe("a bun.lock written by Bun 1.4", () => {
     const saved = await lockfile(dir);
     expect(saved).not.toContain('"a-dep": "1.0.2"');
     await expectLockfileStable(dir, saved);
+  });
+
+  // What the registry's packages declare, as bun.lock prints it.
+  const declares: Record<string, string> = {
+    "bundled-1@1.0.0": `{ "dependencies": { "no-deps": "1.0.0" } }`,
+    "one-dep@1.0.0": `{ "dependencies": { "no-deps": "1.0.1" } }`,
+    "one-optional-peer-dep@1.0.1": `{ "peerDependencies": { "no-deps": "^1.0.0" } }`,
+    "one-optional-peer-dep@1.0.2": `{ "peerDependencies": { "no-deps": "^1.0.0" }, "optionalPeers": ["no-deps"] }`,
+    "one-range-dep@1.0.0": `{ "dependencies": { "no-deps": "^1.0.0" } }`,
+    "peer-deps@1.0.0": `{ "peerDependencies": { "no-deps": "*" } }`,
+  };
+  const noDepsTarball = () => `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+
+  type Saved = {
+    title: string;
+    /** package.json without its name. */
+    pkg: () => Record<string, unknown>;
+    /** The folder and the package.json of each workspace. */
+    members?: Record<string, object>;
+    files?: Record<string, string>;
+    /** "overrides" in bun.lock, where it is not what package.json has. A rule that is not a plain name needs version 3. */
+    rules?: object;
+    version?: 3;
+    catalogs?: object;
+    /** The key, `name@resolution`, and what the entry declares. */
+    packages: () => [key: string, id: string, info?: string][];
+  };
+
+  /** bun.lock prints an object with a key per line and a comma after each. */
+  function block(value: unknown, indent = "  "): string {
+    if (typeof value !== "object" || value === null) return JSON.stringify(value);
+    const lines = Object.entries(value).map(
+      ([key, inner]) => `${indent}  ${JSON.stringify(key)}: ${block(inner, indent + "  ")},\n`,
+    );
+    return `{\n${lines.join("")}${indent}}`;
+  }
+
+  function entryOf14([key, id, info = declares[id] ?? "{}"]: [string, string, string?]) {
+    const at = id.indexOf("@", 1);
+    const [name, resolution] = [id.slice(0, at), id.slice(at + 1)];
+    if (resolution.startsWith("workspace:")) return `    "${key}": ["${id}"],\n`;
+    if (resolution.startsWith("file:")) return `    "${key}": ["${id}", ${info}],\n`;
+    const version = resolution.match(/-([^/-]+)\.tgz$/)?.[1] ?? resolution;
+    const manifest = JSON.parse(readFileSync(join(registry.packagesPath, name, "package.json"), "utf8"));
+    const url = version === resolution ? `"${registry.registryUrl()}${name}/-/${name}-${version}.tgz", ` : "";
+    return `    "${key}": ["${id}", ${url}${info}, "${manifest.versions[version].dist.integrity}"],\n`;
+  }
+
+  function savedBy14({ pkg, members = {}, rules, version, catalogs = {}, packages }: Saved) {
+    const { workspaces: _, overrides, resolutions, ...groups } = pkg();
+    const sections = {
+      lockfileVersion: version ?? 2,
+      configVersion: 1,
+      workspaces: { "": { name: "foo", ...groups }, ...members },
+      overrides: rules ?? overrides ?? resolutions,
+      ...catalogs,
+    };
+    return `${block(sections, "").slice(0, -1)}  "packages": {\n${packages().map(entryOf14).join("\n")}  }\n}\n`;
+  }
+
+  // A fresh install of Bun 1.4 saves each of these: a version stands next to a rule that does not name it, and rightly.
+  test.concurrent.each<Saved>([
+    {
+      title: "the rule is a dist-tag",
+      pkg: () => ({ dependencies: { "dep-with-tags": "^3.0.0" }, overrides: { "dep-with-tags": "pre-1" } }),
+      packages: () => [["dep-with-tags", "dep-with-tags@1.0.1"]],
+    },
+    {
+      title: "the rule is an npm: alias",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps": "npm:a-dep@^1.0.1" } }),
+      packages: () => [
+        ["no-deps", "a-dep@1.0.10"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is an npm: alias of the same name",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps": "npm:no-deps@2.0.0" } }),
+      packages: () => [
+        ["no-deps", "no-deps@2.0.0"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is a tarball URL",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps": noDepsTarball() } }),
+      packages: () => [
+        ["no-deps", `no-deps@${noDepsTarball()}`],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is a folder",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps": "file:./vendored" } }),
+      files: { "vendored/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }) },
+      packages: () => [
+        ["one-dep", "one-dep@1.0.0"],
+        ["one-dep/no-deps", "no-deps@file:./vendored"],
+      ],
+    },
+    {
+      title: "the rule is workspace:*",
+      pkg: () => ({
+        workspaces: ["packages/*"],
+        dependencies: { "one-dep": "1.0.0" },
+        overrides: { "no-deps": "workspace:*" },
+      }),
+      members: { "packages/no-deps": { name: "no-deps", version: "1.0.5" } },
+      packages: () => [
+        ["no-deps", "no-deps@workspace:packages/no-deps"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is catalog:",
+      pkg: () => ({
+        workspaces: { packages: [], catalog: { "no-deps": "~1.0.0" } },
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "catalog:" },
+      }),
+      catalogs: { catalog: { "no-deps": "~1.0.0" } },
+      packages: () => [
+        ["no-deps", "no-deps@1.0.1"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is a named catalog",
+      pkg: () => ({
+        workspaces: { packages: [], catalogs: { x: { "no-deps": "1.0.0" } } },
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "catalog:x" },
+      }),
+      catalogs: { catalogs: { x: { "no-deps": "1.0.0" } } },
+      packages: () => [
+        ["no-deps", "no-deps@1.0.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is $name",
+      pkg: () => ({
+        dependencies: { "no-deps": "~1.0.0", "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "$no-deps" },
+      }),
+      rules: { "no-deps": "~1.0.0" },
+      packages: () => [
+        ["no-deps", "no-deps@1.0.1"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "a prerelease under ^",
+      pkg: () => ({
+        dependencies: { "prereleases-3": "5.0.0-alpha.153" },
+        overrides: { "prereleases-3": "^5.0.0-alpha.100" },
+      }),
+      packages: () => [["prereleases-3", "prereleases-3@5.0.0-alpha.153"]],
+    },
+    {
+      title: "a prerelease under >=",
+      pkg: () => ({
+        dependencies: { "prereleases-3": "5.0.0-alpha.153" },
+        overrides: { "prereleases-3": ">=5.0.0-alpha.150" },
+      }),
+      packages: () => [["prereleases-3", "prereleases-3@5.0.0-alpha.153"]],
+    },
+    {
+      title: "a workspace has the name and another version",
+      pkg: () => ({
+        workspaces: ["packages/*"],
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+      members: { "packages/no-deps": { name: "no-deps", version: "1.0.5" } },
+      packages: () => [
+        ["no-deps", "no-deps@workspace:packages/no-deps"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+        ["one-range-dep/no-deps", "no-deps@1.0.0"],
+      ],
+    },
+    {
+      title: "a workspace has the name and a version the rule allows",
+      pkg: () => ({
+        workspaces: ["packages/*"],
+        dependencies: { "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "^1.0.0" },
+      }),
+      members: { "packages/no-deps": { name: "no-deps", version: "1.0.5" } },
+      packages: () => [
+        ["no-deps", "no-deps@workspace:packages/no-deps"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "a bundled dependency",
+      pkg: () => ({ dependencies: { "bundled-1": "1.0.0", "one-dep": "1.0.0" }, overrides: { "no-deps": "2.0.0" } }),
+      packages: () => [
+        ["bundled-1", "bundled-1@1.0.0"],
+        ["no-deps", "no-deps@2.0.0"],
+        ["one-dep", "one-dep@1.0.0"],
+        ["bundled-1/no-deps", "no-deps@2.0.0", `{ "bundled": true }`],
+      ],
+    },
+    {
+      title: "an optional peer that nothing provides",
+      pkg: () => ({ dependencies: { "one-optional-peer-dep": "1.0.2" }, overrides: { "no-deps": "2.0.0" } }),
+      packages: () => [["one-optional-peer-dep", "one-optional-peer-dep@1.0.2"]],
+    },
+    {
+      title: "an optional peer takes the project's version",
+      pkg: () => ({
+        dependencies: { "no-deps": "1.1.0", "one-optional-peer-dep": "1.0.2" },
+        overrides: { "one-optional-peer-dep>no-deps": "1.0.0" },
+      }),
+      rules: { "one-optional-peer-dep": { "no-deps": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-optional-peer-dep", "one-optional-peer-dep@1.0.2"],
+      ],
+    },
+    {
+      title: "a peer takes the project's version",
+      pkg: () => ({
+        dependencies: { "no-deps": "1.1.0", "one-optional-peer-dep": "1.0.1" },
+        overrides: { "one-optional-peer-dep>no-deps": "1.0.0" },
+      }),
+      rules: { "one-optional-peer-dep": { "no-deps": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-optional-peer-dep", "one-optional-peer-dep@1.0.1"],
+      ],
+    },
+    {
+      title: "a peer shares the version of a peer without a rule",
+      pkg: () => ({
+        dependencies: { "one-optional-peer-dep": "1.0.1", "peer-deps": "1.0.0" },
+        overrides: { "one-optional-peer-dep>no-deps": "1.0.0" },
+      }),
+      rules: { "one-optional-peer-dep": { "no-deps": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@2.0.0"],
+        ["one-optional-peer-dep", "one-optional-peer-dep@1.0.1"],
+        ["peer-deps", "peer-deps@1.0.0"],
+      ],
+    },
+    {
+      title: "the project's own peer takes the version of a scoped rule",
+      pkg: () => ({
+        dependencies: { "one-dep": "1.0.0" },
+        peerDependencies: { "no-deps": "^2.0.0" },
+        overrides: { "one-dep>no-deps": "1.0.0" },
+      }),
+      rules: { "one-dep": { "no-deps": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.0.0"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is for another parent",
+      pkg: () => ({
+        dependencies: { "one-dep": "1.0.0", "one-range-dep": "1.0.0" },
+        overrides: { "one-dep>no-deps": "2.0.0" },
+      }),
+      rules: { "one-dep": { "no-deps": "2.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@2.0.0"],
+        ["one-dep", "one-dep@1.0.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+        ["one-range-dep/no-deps", "no-deps@1.1.0"],
+      ],
+    },
+    {
+      title: "the rule is for another version of the parent",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "one-dep@2>no-deps": "2.0.0" } }),
+      rules: { "one-dep@2": { "no-deps": "2.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.0.1"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is nested under a parent that is not installed",
+      pkg: () => ({ dependencies: { "one-range-dep": "1.0.0" }, overrides: { "one-dep": { "no-deps": "2.0.0" } } }),
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is for another declared range",
+      pkg: () => ({ dependencies: { "one-dep": "1.0.0" }, overrides: { "no-deps@2": "1.0.0" } }),
+      rules: { "no-deps@2": { ".": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["no-deps", "no-deps@1.0.1"],
+        ["one-dep", "one-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "the rule is for a declared range and the dependency declares a dist-tag",
+      pkg: () => ({ dependencies: { "no-deps": "latest" }, overrides: { "no-deps@2": "1.0.0" } }),
+      rules: { "no-deps@2": { ".": "1.0.0" } },
+      version: 3,
+      packages: () => [["no-deps", "no-deps@2.0.0"]],
+    },
+    {
+      title: "the project declares an npm: alias under the rule's name",
+      pkg: () => ({
+        dependencies: { "no-deps": "npm:no-deps@2.0.0", "one-dep": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+      packages: () => [
+        ["no-deps", "no-deps@2.0.0"],
+        ["one-dep", "one-dep@1.0.0"],
+        ["one-dep/no-deps", "no-deps@1.0.0"],
+      ],
+    },
+    {
+      title: "the project declares an npm: alias to another package under the rule's name",
+      pkg: () => ({
+        dependencies: { "no-deps": "npm:a-dep@1.0.1", "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+      packages: () => [
+        ["no-deps", "a-dep@1.0.1"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+    },
+    {
+      title: "an optional dependency whose rule no version serves",
+      pkg: () => ({
+        workspaces: ["packages/*"],
+        dependencies: { "no-deps": "2.0.0" },
+        overrides: { "app>no-deps": "9.9.9" },
+      }),
+      members: { "packages/app": { name: "app", version: "1.0.0", optionalDependencies: { "no-deps": "^1.0.0" } } },
+      rules: { app: { "no-deps": "9.9.9" } },
+      version: 3,
+      packages: () => [
+        ["app", "app@workspace:packages/app"],
+        ["no-deps", "no-deps@2.0.0"],
+      ],
+    },
+    {
+      title: "a workspace's peer takes the version of its devDependency",
+      pkg: () => ({ workspaces: ["packages/*"], overrides: { "no-deps@1": "1.0.0" } }),
+      members: {
+        "packages/app": {
+          name: "app",
+          version: "1.0.0",
+          devDependencies: { "no-deps": "^2.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0 || ^2.0.0" },
+        },
+      },
+      rules: { "no-deps@1": { ".": "1.0.0" } },
+      version: 3,
+      packages: () => [
+        ["app", "app@workspace:packages/app"],
+        ["no-deps", "no-deps@2.0.0"],
+      ],
+    },
+  ])("$title: bun install and --frozen-lockfile say nothing", async saved => {
+    const lock = savedBy14(saved);
+    const members = Object.entries(saved.members ?? {}).map(([folder, pkg]) => [
+      `${folder}/package.json`,
+      JSON.stringify(pkg),
+    ]);
+    const dir = await project(
+      { name: "foo", ...saved.pkg() },
+      { "bun.lock": lock, ...saved.files, ...Object.fromEntries(members) },
+    );
+    await expectLockfileStable(dir, lock);
+  });
+
+  test.concurrent("a name in two groups has one version, whichever group the rule is for", async () => {
+    const saved: Saved = {
+      title: "",
+      pkg: () => ({
+        dependencies: { "no-deps": "^1.0.0" },
+        devDependencies: { "no-deps": "^2.0.0" },
+        overrides: { "no-deps@1": "1.0.0" },
+      }),
+      rules: { "no-deps@1": { ".": "1.0.0" } },
+      version: 3,
+      packages: () => [["no-deps", "no-deps@2.0.0"]],
+    };
+    const lock = savedBy14(saved);
+    const dir = await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock });
+    for (const args of [["--frozen-lockfile"], []]) {
+      const { stderr, exitCode } = await bun(dir, "install", ...args);
+      expect(stderr.split("\n").filter(line => /^(warn|error|note):/.test(line))).toEqual([
+        'warn: Duplicate dependency: "no-deps" specified in package.json',
+        'note: "no-deps" originally specified here',
+      ]);
+      expect(exitCode).toBe(0);
+      expect(await lockfile(dir)).toBe(lock);
+    }
+  });
+
+  describe.each<Saved & { held: string }>([
+    {
+      title: "a merge took the rule of one branch and the entry of the other",
+      pkg: () => ({ dependencies: { "one-range-dep": "1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
+      packages: () => [
+        ["no-deps", "no-deps@1.1.0"],
+        ["one-range-dep", "one-range-dep@1.0.0"],
+      ],
+      held: "no-deps@1.1.0",
+    },
+    {
+      title: "the rule came after the install, for a package that only a peer holds",
+      pkg: () => ({ dependencies: { "peer-deps": "1.0.0" }, overrides: { "no-deps": "1.0.0" } }),
+      packages: () => [
+        ["no-deps", "no-deps@2.0.0"],
+        ["peer-deps", "peer-deps@1.0.0"],
+      ],
+      held: "no-deps@2.0.0",
+    },
+  ])("$title", saved => {
+    const held = async () => {
+      const lock = savedBy14(saved);
+      return { lock, dir: await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock }) };
+    };
+
+    test.concurrent.each(frozen)("bun %s names the entry and the rule", async command => {
+      const { dir, lock } = await held();
+      const { stderr, exitCode } = await bun(dir, ...command.split(" "));
+      expect(stderr).toBe(
+        `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${saved.held}, and overrides in package.json asks for 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
+      );
+      expect(exitCode).toBe(1);
+      expect(await lockfile(dir)).toBe(lock);
+    });
+
+    test.concurrent("bun install resolves the entry again", async () => {
+      const { dir } = await held();
+      const { stderr, exitCode } = await bun(dir, "install");
+      expect(stderr).toBe("Saved lockfile");
+      expect(exitCode).toBe(0);
+      expect(nodeModulesPackages(dir)).toContain("node_modules/no-deps/no-deps@1.0.0");
+      const repaired = await lockfile(dir);
+      expect(repaired).not.toContain(saved.held);
+      await expectLockfileStable(dir, repaired);
+    });
   });
 });

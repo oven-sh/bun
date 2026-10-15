@@ -690,6 +690,26 @@ fn repeating_period(
     None
 }
 
+/// Once all have a place: a peer of `Builder::served` that is no row of a tree takes that package.
+pub(crate) fn bind_served_peers(
+    served: &mut Vec<(DependencyID, PackageID)>,
+    list: &MultiArrayList<BuilderEntry>,
+    dependencies: &[Dependency],
+    resolutions: &mut [PackageID],
+) {
+    if served.is_empty() {
+        return;
+    }
+    for &row in list.items_dependencies().iter().flatten() {
+        if dependencies[row as usize].behavior.is_peer() {
+            served.retain(|&(dep_id, _)| dep_id != row);
+        }
+    }
+    for (dep_id, pkg_id) in served.drain(..) {
+        resolutions[dep_id as usize] = pkg_id;
+    }
+}
+
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// MUST NOT be used to read `buffers.resolutions`: `self.resolutions` is a live `&mut` to it.
     #[inline]
@@ -732,22 +752,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             self.resolutions[dep_id as usize] = pkg_id;
         }
         bound.is_some()
-    }
-
-    /// Once all have a place: a peer that is no row of a tree takes the package its dependent loads.
-    pub(crate) fn bind_served_peers(&mut self) {
-        if self.served.is_empty() {
-            return;
-        }
-        let (served, dependencies) = (&mut self.served, self.dependencies);
-        for &row in self.list.items_dependencies().iter().flatten() {
-            if dependencies[row as usize].behavior.is_peer() {
-                served.retain(|&(dep_id, _)| dep_id != row);
-            }
-        }
-        for (dep_id, pkg_id) in self.served.drain(..) {
-            self.resolutions[dep_id as usize] = pkg_id;
-        }
     }
 
     #[cold]
@@ -1565,6 +1569,22 @@ impl Tree {
                 return HoistDependencyResult::Hoisted; // 1
             }
 
+            let is_in_peer_range = || {
+                let range = (builder.lockfile().catalogs).resolve_range(builder.buf(), dependency);
+                let resolution: &Resolution =
+                    &builder.lockfile().packages.items_resolution()[res_id as usize];
+                range.tag == crate::dependency::VersionTag::Npm
+                    && resolution.tag == crate::resolution::Tag::Npm
+                    && (range.npm().version).satisfies(
+                        resolution.npm().version,
+                        builder.buf(),
+                        builder.buf(),
+                    )
+            };
+            // An install that leaves nothing out links such a row on every platform.
+            let is_always_linked =
+                |row: &Dependency| !row.behavior.is_optional() && !row.behavior.is_bundled();
+
             if input_dep_range.contains(dep_id) {
                 // The root's own dependency takes the folder from the member of that name.
                 if dep.behavior.is_workspace() {
@@ -1574,7 +1594,11 @@ impl Tree {
                     };
                 }
                 // Its own dependency of that name is what the package loads, in every run.
-                if dependency.behavior.is_peer() && !dependency.behavior.is_optional_peer() {
+                if dependency.behavior.is_peer()
+                    && !dependency.behavior.is_optional_peer()
+                    && is_always_linked(dep)
+                    && is_in_peer_range()
+                {
                     return HoistDependencyResult::Served(res_id); // 1
                 }
                 // same package lists this name in another dependency group
@@ -1606,44 +1630,44 @@ impl Tree {
 
                 // An optional peer's binding follows the dedupe, but only in the tree being saved.
                 let dedupe = || {
-                    if !dependency.behavior.is_optional_peer() {
-                        HoistDependencyResult::Served(res_id)
-                    } else if METHOD == BuilderMethod::Resolvable {
+                    if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
+                    {
                         HoistDependencyResult::Rebind(res_id)
                     } else {
                         HoistDependencyResult::Hoisted
                     }
                 };
+                let is_root_dependency = builder.lockfile().is_workspace_root_dependency(dep_id);
+                let own_dependency_shares_it = || {
+                    !dependency.behavior.is_optional_peer()
+                        && (input_dep_range.begin()..input_dep_range.end()).any(|own| {
+                            let own_row = &deps[own as usize];
+                            own_row.name_hash == dependency.name_hash
+                                && !own_row.behavior.is_peer()
+                                && is_always_linked(own_row)
+                                && builder.resolutions[own as usize] == res_id
+                        })
+                };
 
-                let peer_range: &crate::dependency::Version = builder
-                    .lockfile()
-                    .catalogs
-                    .resolve_range(builder.buf(), dependency);
-                if peer_range.tag == crate::dependency::VersionTag::Npm {
-                    let resolution: Resolution =
-                        builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &peer_range.npm().version;
-                    if resolution.tag == crate::resolution::Tag::Npm
-                        && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
+                if is_in_peer_range() {
+                    // The two rows that provide a name under both linkers, wherever the package is.
+                    if !dependency.behavior.is_optional_peer()
+                        && ((is_root_dependency && is_always_linked(dep))
+                            || own_dependency_shares_it())
                     {
-                        return dedupe(); // 1
+                        return HoistDependencyResult::Served(res_id); // 1
                     }
+                    return dedupe(); // 1
                 }
 
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
-                if builder.lockfile().is_workspace_root_dependency(dep_id) {
+                if is_root_dependency {
                     return dedupe(); // 1
                 }
 
                 // Its own dependency of that name shares this copy: a copy below would hide it.
-                if !dependency.behavior.is_optional_peer()
-                    && (input_dep_range.begin()..input_dep_range.end()).any(|own| {
-                        deps[own as usize].name_hash == dependency.name_hash
-                            && !deps[own as usize].behavior.is_peer()
-                            && builder.resolutions[own as usize] == res_id
-                    })
-                {
+                if own_dependency_shares_it() {
                     return dedupe(); // 1
                 }
             }

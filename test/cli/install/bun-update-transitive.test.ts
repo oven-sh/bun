@@ -1208,6 +1208,30 @@ test.concurrent("every install warns about a patchedDependencies key that matche
   expect(removed.exitCode).toBe(0);
 });
 
+test.concurrent.each<[string, (version: string) => string]>([
+  ["a tarball file", version => `file:./no-deps-${version}.tgz`],
+  ["a tarball URL", version => `${registry.registryUrl()}no-deps/-/no-deps-${version}.tgz`],
+])("every install warns about the patch of %s that the dependency no longer names", async (_, spec) => {
+  const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps.patch": NO_DEPS_PATCH });
+  for (const tarball of ["no-deps-1.0.0.tgz", "no-deps-1.0.1.tgz"]) {
+    await write(join(dir, tarball), file(join(registry.packagesPath, "no-deps", tarball)));
+  }
+  await reinstall(dir, pkgJson({ "no-deps": spec("1.0.0") }));
+  const locked = async (): Promise<string> => (await lock(dir)).packages["no-deps"][0];
+  const patched = { patchedDependencies: { [await locked()]: "patches/no-deps.patch" } };
+  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": spec("1.0.0") }, patched)));
+  expect(warningLines(await install(dir))).toEqual([]);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeTrue();
+
+  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": spec("1.0.1") }, patched)));
+  const stderr = await install(dir);
+  const now = (await locked()).slice("no-deps@".length);
+  const moved = [`warn: patches/no-deps.patch no longer applies (no-deps is now ${now})`];
+  expect(warningLines(stderr)).toEqual(moved);
+  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+  expect(warningLines(await frozen(dir))).toEqual(moved);
+});
+
 test.concurrent("a patchedDependencies key without a version is pointed out where it is in package.json", async () => {
   const dir = await setup({
     "package.json": pkgJson({ "no-deps": "1.0.0" }, { patchedDependencies: { "no-deps": "patches/no-deps.patch" } }),

@@ -3227,19 +3227,22 @@ fn highest_peer_candidate(
 }
 
 /// `package_id` is held only by non-root peer rows, usually this entry's own earlier install.
+/// For the peer of a dependency: by no row, since a changed rule unbound them all.
 fn would_revive_leftover(
     lockfile: &Lockfile::Lockfile,
     row: DependencyID,
     package_id: PackageID,
 ) -> bool {
-    if package_id >= lockfile.loaded_package_count || !lockfile.is_workspace_dependency(row) {
+    if package_id >= lockfile.loaded_package_count {
         return false;
     }
+    let any_holder = !lockfile.is_workspace_dependency(row);
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     !(lockfile.packages.items_dependencies().iter().enumerate()).any(|(owner, list)| {
         (list.begin() as usize..list.end() as usize).any(|row| {
-            resolutions[row] == package_id && (owner == 0 || !deps[row].behavior.is_peer())
+            resolutions[row] == package_id
+                && (any_holder || owner == 0 || !deps[row].behavior.is_peer())
         })
     })
 }

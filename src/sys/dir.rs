@@ -104,6 +104,20 @@ impl Dir {
             Err(e) => Err(e),
         }
     }
+    /// Deletes what this dir holds and keeps the dir itself; nothing is looked up through its name.
+    /// Goes on after an entry that cannot be deleted and returns the first error.
+    pub fn delete_children(&self) -> Maybe<()> {
+        let mut names: Vec<Vec<u8>> = Vec::new();
+        let mut entries = dir_iterator::iterate(self.fd);
+        while let Some(entry) = entries.next()? {
+            names.push(entry.name.slice_u8().to_vec());
+        }
+        let mut result = Ok(());
+        for name in &names {
+            result = result.and(self.delete_tree(name));
+        }
+        result
+    }
     /// Recursive `rm -rf`
     /// (stack-based depth-first walk).
     pub fn delete_tree(&self, sub_path: &[u8]) -> Maybe<()> {

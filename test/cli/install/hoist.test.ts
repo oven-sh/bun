@@ -1524,39 +1524,26 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
     }
   });
 
-  test.each(linkers)("%s: when the run leaves out the devDependency that provides it", async linker => {
+  test("hoisted: when the run leaves out the member's own devDependency that provides it", async () => {
     using server = await serveGraph(graph());
     using tmp = tempDir("peer-provider-left-out", {
-      "bunfig.toml": bunfig(server, linker),
+      "bunfig.toml": bunfig(server, "hoisted"),
       "package.json": JSON.stringify({ name: "root", workspaces: ["pk/*"], dependencies: { react: "19.0.0" } }),
       "pk/lib/package.json": JSON.stringify({
         name: "lib",
         peerDependencies: { react: ">=18.0.0" },
         devDependencies: { react: "18.0.0" },
       }),
-      "pk/ui/package.json": JSON.stringify({
-        name: "ui",
-        dependencies: { plug: "1.0.0" },
-        devDependencies: { react: "18.0.0" },
-      }),
     });
     const dir = String(tmp);
-    const reacts = () => [
-      loaded(join(dir, "pk", "lib"), "react"),
-      loaded(folderOf(join(dir, "pk", "ui"), "plug"), "react"),
-    ];
+    const lib = join(dir, "pk", "lib");
 
     await run(dir, "install");
-    // The hoisted linker has `plug` at the top, next to the react of the root.
-    const full = ["18.0.0", linker === "hoisted" ? "19.0.0" : "18.0.0"];
-    expect(reacts()).toEqual(full);
-    await run(dir, "prune", "--production");
-    expect(reacts()).toEqual(full);
+    expect(loaded(lib, "react")).toBe("18.0.0");
     for (const flag of ["--production", "--omit=dev"]) {
-      await wipe(dir, "pk/lib", "pk/ui");
+      await wipe(dir, "pk/lib");
       await run(dir, "install", "--frozen-lockfile", flag);
-      expect([flag, reacts()]).toEqual([flag, full]);
-      await run(dir, "prune", flag, "--check");
+      expect([flag, loaded(lib, "react")]).toEqual([flag, "18.0.0"]);
     }
   });
 

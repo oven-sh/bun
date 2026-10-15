@@ -993,6 +993,7 @@ impl PackageManager {
     }
 
     /// A blocking request, with the proxy and the certificate check the environment asks for.
+    /// `send_with_retries` sends it, unless the registry must not get it twice.
     pub fn registry_request<'a>(
         &self,
         method: http::Method,
@@ -1013,6 +1014,7 @@ impl PackageManager {
             http::FetchRedirect::Follow,
         );
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
+        req.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
         req
     }
 
@@ -2332,8 +2334,7 @@ pub fn init(
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root(cli.positionals.len() > 1) {
             // Above `bunx`'s tree are the user's cache and home: no workspace of it.
-            let is_bunx_install =
-                bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
+            let is_bunx_install = run_tasks::is_bunx_tree(child_cwd);
             if !created_package_json
                 && !no_project
                 && !is_bunx_install
@@ -2430,6 +2431,9 @@ pub fn init(
         };
         env.load(&env_probe_keys, &[], suffix, false)?;
     }
+    // From `bunx`, for this command alone. Scripts and the security scanner get a copy of this map.
+    env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+    env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
     initialize_store();
 

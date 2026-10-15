@@ -3118,8 +3118,8 @@ pub(crate) fn parse_into_binary_lockfile(
 /// so the isolated store's ancestor walk and the hoisted tree's dedupe
 /// both resolve the name through the root's workspace entry.
 ///
-/// The hoist only starts from this binding: an edge that gets no place of its own ends on the
-/// package its dependent finds in the tree (`Builder::bind_served_peers`).
+/// The hoist only starts from this binding: an edge that finds the root's dependency of that name,
+/// or its package's own, in range ends on that package (`tree::bind_served_peers`).
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,

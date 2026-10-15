@@ -1636,7 +1636,7 @@ fn run_tasks_erased(
 }
 
 /// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
-fn download_outcome(
+pub(crate) fn download_outcome(
     response: &http::HTTPClientResult<'static>,
     options: &Options::Options,
 ) -> (bool, bool) {
@@ -1852,6 +1852,7 @@ fn manifest_retry_count(
     fail: Option<http::Error>,
 ) -> u16 {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_HAS_COPY.get() == Some(true)
+        && is_bunx_install()
         && (manager.update_requests.iter()).any(|request| strings::eql(request.name, name))
     {
         return 0;
@@ -1880,11 +1881,38 @@ static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
 /// Tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved nothing.
 pub const BUNX_REGISTRY_UNREACHABLE: u32 = 75;
 
+/// Whether `dir`, which has the root package.json, is the directory `bunx` spawned its `bun add` in.
+/// A command that only inherits the variable runs in another directory, and is a command like any other.
+pub fn is_bunx_tree(dir: &[u8]) -> bool {
+    let Some(tree) = bun_core::env_var::BUN_INTERNAL_BUNX_INSTALL.get() else {
+        return false;
+    };
+    if !bun_paths::is_absolute(tree) {
+        return false;
+    }
+    let [tree, dir] = [tree, dir].map(strings::without_trailing_slash);
+    if tree == dir {
+        return true;
+    }
+    // `dir` comes from `getcwd`, which follows the links in what `bunx` passed.
+    let mut real_tree = bun_paths::path_buffer_pool::get();
+    let mut real_dir = bun_paths::path_buffer_pool::get();
+    match (
+        bun_sys::realpath(&bun_core::ZBox::from_bytes(tree), &mut real_tree),
+        bun_sys::realpath(&bun_core::ZBox::from_bytes(dir), &mut real_dir),
+    ) {
+        (Ok(tree), Ok(dir)) => tree == dir,
+        _ => false,
+    }
+}
+
+fn is_bunx_install() -> bool {
+    is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
+}
+
 /// How a command ends whose request failed, before it linked or saved anything.
 pub(crate) fn failed_request_error() -> crate::Error {
-    if REQUEST_GOT_NO_ANSWER.load(Ordering::Relaxed)
-        && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
-    {
+    if REQUEST_GOT_NO_ANSWER.load(Ordering::Relaxed) && is_bunx_install() {
         bun_core::Global::exit(BUNX_REGISTRY_UNREACHABLE);
     }
     crate::Error::InstallFailed
@@ -1895,7 +1923,7 @@ pub const BUNX_UNFINISHED_PACKAGE_JSON: &[u8] = b"{}\n";
 
 /// Right before anything is linked. Until then the tree that `bunx` has stays as it is, so it needs all of the next one.
 pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, had_errors: bool) {
-    if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() != Some(true) {
+    if !bun_paths::dirname(root_package_json_path.as_bytes()).is_some_and(is_bunx_tree) {
         return;
     }
     if had_errors {
@@ -1921,8 +1949,7 @@ fn fail_update_requests(
         return;
     }
     // Everything in the tree of `bunx` is there for its one request.
-    let for_bunx = unanswered
-        && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
+    let for_bunx = unanswered && is_bunx_install();
     let lockfile = &*this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();

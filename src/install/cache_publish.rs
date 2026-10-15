@@ -61,7 +61,7 @@ impl<'a> StagedEntry<'a> {
                 _ if attempts == MAX_ATTEMPTS => return Err(err),
                 // Emptied through its own handle; `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
-                    delete_children(&incomplete);
+                    let _ = incomplete.delete_children();
                     incomplete.close();
                     let _ = sys::rmdirat(cache_dir, to);
                 }
@@ -79,14 +79,6 @@ impl Drop for StagedEntry<'_> {
         if !self.renamed {
             let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
         }
-    }
-}
-
-/// Deletes what `dir` holds. Nothing is looked up through the name of `dir`.
-fn delete_children(dir: &Dir) {
-    let mut entries = sys::iterate_dir(dir.fd());
-    while let Ok(Some(entry)) = entries.next() {
-        let _ = dir.delete_tree(entry.name.slice_u8());
     }
 }
 

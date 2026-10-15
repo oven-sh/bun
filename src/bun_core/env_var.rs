@@ -184,6 +184,8 @@ new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
 new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
+// Set by `bunx` for the `bun add` it spawns: the directory it installs into. It means nothing to a command elsewhere.
+new!(pub BUN_INTERNAL_BUNX_INSTALL: string, "BUN_INTERNAL_BUNX_INSTALL", {});
 // Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
 // name is running. In those, `bun check` is the type checker and not the script again.
 new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
@@ -304,7 +306,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_HAS_COPY, "BUN_INTERNAL_BUNX_HAS_COPY", {});
-    new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
     // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
     new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so

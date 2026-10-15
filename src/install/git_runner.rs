@@ -69,10 +69,14 @@ impl PackageManager {
 enum Step {
     /// `GitEnv::CONFIG_QUERY`, ahead of the first task's own commands.
     Config,
-    /// `git fetch` in this cached bare repository (clone task).
-    Fetch { repo: bun_sys::Dir, is_retry: bool },
-    /// `git clone --bare <url> <tmp>` (clone task).
-    Clone,
+    /// `git fetch <url>` in this cached bare repository (clone task).
+    Fetch {
+        repo: bun_sys::Dir,
+        url: Vec<u8>,
+        is_retry: bool,
+    },
+    /// `git clone --bare <this URL> <tmp>` (clone task).
+    Clone(Vec<u8>),
     /// `git log -1 <committish>` (commit task).
     Log,
     /// `git <this --git-dir=> ls-tree -r <resolved>` in the bare repository (checkout task).
@@ -86,8 +90,8 @@ enum Step {
 pub(crate) enum Finalize {
     /// The bare repository exists (a cache hit, or `git fetch` refreshed it).
     Repo(Fd),
-    /// A fresh bare clone, to move into the cache.
-    PublishRepo(CacheStaging),
+    /// A fresh bare clone of this URL, to move into the cache.
+    PublishRepo(CacheStaging, Vec<u8>),
     /// A checkout the cache already has, and what `read_package_json_in` returned for it.
     CachedCheckout(bun_sys::Dir, bun_sys::Maybe<Vec<u8>>),
     /// A fresh checkout, to strip and move into the cache.
@@ -112,18 +116,10 @@ impl Finalize {
             Finalize::Repo(fd) => Ok(Task::Data {
                 git_clone: ManuallyDrop::new(fd),
             }),
-            Finalize::PublishRepo(staging) => {
-                let name = task.request_git_clone().name.slice().to_vec();
-                staging
-                    .publish(
-                        &mut task.log,
-                        &name,
-                        &bare_repo_folder_name(task.id),
-                        is_bare_repo,
-                    )
-                    .map(|dir| Task::Data {
-                        git_clone: ManuallyDrop::new(dir.into_raw()),
-                    })
+            Finalize::PublishRepo(staging, url) => {
+                finish_clone(task, staging, &url).map(|dir| Task::Data {
+                    git_clone: ManuallyDrop::new(dir.into_raw()),
+                })
             }
             Finalize::CachedCheckout(dir, json) => {
                 read_package_json(task, dir, json).map(|data| Task::Data {
@@ -222,7 +218,7 @@ fn finish_checkout(
     }
 
     let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name, is_usable_checkout)?;
+    let package_dir = staging.publish(&mut task.log, &name, &folder_name, &is_usable_checkout)?;
     let json = read_package_json_in(&package_dir);
     read_package_json(task, package_dir, json)
 }
@@ -469,13 +465,13 @@ impl CacheStaging {
         log: &mut bun_ast::Log,
         name: &[u8],
         folder_name: &[u8],
-        is_complete: fn(&bun_sys::Dir) -> bool,
+        is_complete: &dyn Fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
         StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
             .publish_and_open(
                 self.cache_dir,
                 &bun_core::ZBox::from_bytes(folder_name),
-                &is_complete,
+                is_complete,
             )
             .map_err(|err| {
                 log.add_error_fmt(
@@ -507,15 +503,130 @@ fn is_usable_checkout(dir: &bun_sys::Dir) -> bool {
     is_tagged_checkout(dir) && !is_link(&read_package_json_in(dir))
 }
 
-/// git's own test. A tool that copies no empty folder drops the `refs` of a fresh clone.
-fn is_bare_repo(dir: &bun_sys::Dir) -> bool {
+/// The forms of `url` to clone from, last first (https before ssh).
+fn clone_urls(url: &[u8]) -> Vec<Vec<u8>> {
+    let mut urls: Vec<Vec<u8>> = Vec::new();
+    urls.extend(Repository::try_ssh(url));
+    urls.extend(Repository::try_https(url));
+    // git reads anything that is not a URL as a path relative to the project.
+    if urls.is_empty() && strings::contains(url, b"://") {
+        urls.push(url.to_vec());
+    }
+    urls
+}
+
+/// All that the `config` of a clone in the cache says. `url` is the form that could be cloned.
+fn clone_config(url: &[u8], is_sha256: bool) -> Vec<u8> {
+    let mut quoted: Vec<u8> = Vec::with_capacity(url.len());
+    for &byte in url {
+        match byte {
+            b'\\' | b'"' => quoted.extend_from_slice(&[b'\\', byte]),
+            b'\n' => quoted.extend_from_slice(b"\\n"),
+            _ => quoted.push(byte),
+        }
+    }
+    let format: &[u8] = if is_sha256 {
+        b"1\n\tbare = true\n[extensions]\n\tobjectformat = sha256\n"
+    } else {
+        b"0\n\tbare = true\n"
+    };
     [
-        bun_core::zstr!("HEAD"),
-        bun_core::zstr!("objects"),
-        bun_core::zstr!("refs"),
+        b"[core]\n\trepositoryformatversion = ".as_slice(),
+        format,
+        b"[remote \"origin\"]\n\turl = \"",
+        &quoted,
+        b"\"\n",
     ]
-    .iter()
-    .all(|name| bun_sys::exists_at_type(dir.fd(), name).is_ok())
+    .concat()
+}
+
+/// The one of `urls` that the clone in `repo` was made from. `None` unless the folder is as
+/// `finish_clone` and git left it: git takes nothing from it but refs and objects.
+fn own_clone_url<'a>(repo: &bun_sys::Dir, urls: &'a [Vec<u8>]) -> Option<&'a [u8]> {
+    use bun_sys::O;
+    let config = repo
+        .open_file(b"config", O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)
+        .and_then(|file| file.read_to_end())
+        .ok()?;
+    let url = urls
+        .iter()
+        .find(|url| clone_config(url, false) == config || clone_config(url, true) == config)?;
+    let has = |name: &bun_core::ZStr| bun_sys::exists_at_type(repo.fd(), name).is_ok();
+    // The first three are git's own test: a tool that copies no empty folder drops `refs`.
+    (has(bun_core::zstr!("HEAD"))
+        && has(bun_core::zstr!("objects"))
+        && has(bun_core::zstr!("refs"))
+        && !has(bun_core::zstr!("commondir"))
+        && !has(bun_core::zstr!("objects/info/alternates"))
+        && !has(bun_core::zstr!("objects/info/http-alternates"))
+        && has_no_links(repo))
+    .then_some(url.as_slice())
+}
+
+fn has_no_links(dir: &bun_sys::Dir) -> bool {
+    use bun_sys::{EntryKind, O};
+    let mut folders: Vec<Vec<u8>> = Vec::new();
+    let mut entries = bun_sys::iterate_dir(dir.fd());
+    loop {
+        let entry = match entries.next() {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(_) => return false,
+        };
+        let name = entry.name.slice_u8();
+        let kind = match entry.kind {
+            EntryKind::Unknown => {
+                match bun_sys::lstatat(dir.fd(), &bun_core::ZBox::from_bytes(name)) {
+                    Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+                    Err(_) => return false,
+                }
+            }
+            known => known,
+        };
+        match kind {
+            EntryKind::SymLink => return false,
+            EntryKind::Directory => folders.push(name.to_vec()),
+            _ => {}
+        }
+    }
+    folders.iter().all(|folder| {
+        dir.open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
+            .is_ok_and(|folder| has_no_links(&folder))
+    })
+}
+
+/// Replaces the `config` that git wrote for the clone in `staging`, and moves it into the cache.
+fn finish_clone(
+    task: &mut Task::Task<'_>,
+    staging: CacheStaging,
+    url: &[u8],
+) -> Result<bun_sys::Dir, Error> {
+    let req = task.request_git_clone();
+    let (name, urls) = (req.name.slice().to_vec(), clone_urls(req.url.slice()));
+    let config = bun_core::ZBox::from_bytes(&[&staging.tmp_name[..], b"/config"].concat());
+    let written = bun_sys::File::read_from(staging.cache_dir, config.as_bytes()).and_then(|git| {
+        let is_sha256 = strings::contains(&git, b"objectformat = sha256");
+        bun_sys::File::write_file(staging.cache_dir, &config, &clone_config(url, is_sha256))
+    });
+    if let Err(err) = written {
+        staging.discard();
+        task.log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "writing \"config\" for \"{}\" failed: {}",
+                for_terminal(BStr::new(&name)),
+                BStr::new(err.name())
+            ),
+        );
+        return Err(Error::InstallFailed);
+    }
+    staging.publish(
+        &mut task.log,
+        &name,
+        &bare_repo_folder_name(task.id),
+        &|repo| own_clone_url(repo, &urls).is_some(),
+    )
 }
 
 /// `<hex(clone task id)>.git`: the cache folder of a bare clone.
@@ -579,7 +690,7 @@ impl GitSubprocess {
             name,
             event_loop,
             cache_dir,
-            step: JsCell::new(Step::Clone),
+            step: JsCell::new(Step::Config),
             urls: JsCell::new(Vec::new()),
             clone_output: JsCell::new(Vec::new()),
             staging: JsCell::new(None),
@@ -653,36 +764,30 @@ impl GitSubprocess {
     /// May free `this` on `Ok`.
     fn begin_clone(this: ThisPtr<Self>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
-        let url = this.task().request_git_clone().url.slice().to_vec();
-        // Pushed in reverse so `pop` yields the https form first.
-        this.urls.with_mut(|urls| {
-            urls.extend(Repository::try_ssh(&url));
-            urls.extend(Repository::try_https(&url));
-            // git reads anything that is not a URL as a path relative to the project.
-            if urls.is_empty() && strings::contains(&url, b"://") {
-                urls.push(url);
-            }
-        });
+        use bun_sys::{E, O};
+        let urls = clone_urls(this.task().request_git_clone().url.slice());
 
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
         let folder_name = bare_repo_folder_name(this.task().id);
+        // `publish` replaces whatever else has the name.
         match bun_sys::Dir::borrow(&this.cache_dir)
-            .open_dir_z(&bun_core::ZBox::from_bytes(&folder_name))
+            .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
         {
-            Ok(repo) if is_bare_repo(&repo) => {
-                // --prefer-offline still fetches: a stale clone may lack the pinned commit.
-                if offline {
-                    Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
-                    return Ok(());
+            Ok(repo) => {
+                if let Some(url) = own_clone_url(&repo, &urls) {
+                    // --prefer-offline still fetches: a stale clone may lack the pinned commit.
+                    if offline {
+                        Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
+                        return Ok(());
+                    }
+                    return Self::spawn_fetch(this, repo, url.to_vec(), false);
                 }
-                return Self::spawn_fetch(this, repo, false);
             }
-            // `publish` replaces what is left of a repository.
-            Ok(_) => {}
-            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {}
             Err(err) => return Err(err.into()),
         }
+        this.urls.set(urls);
         if offline {
             this.log_failure(format_args!(
                 "--offline: git repository for \"{}\" is not in the cache",
@@ -709,10 +814,19 @@ impl GitSubprocess {
     }
 
     /// May free `this` on `Ok`.
-    fn spawn_fetch(this: ThisPtr<Self>, repo: bun_sys::Dir, is_retry: bool) -> Result<(), Error> {
+    fn spawn_fetch(
+        this: ThisPtr<Self>,
+        repo: bun_sys::Dir,
+        url: Vec<u8>,
+        is_retry: bool,
+    ) -> Result<(), Error> {
         let git_dir = this.git_dir_arg(this.task().id);
-        this.step.set(Step::Fetch { repo, is_retry });
-        // A bare clone has no fetch refspec; --prune clears refs renamed upstream.
+        this.step.set(Step::Fetch {
+            repo,
+            url: url.clone(),
+            is_retry,
+        });
+        // --prune clears refs renamed upstream.
         Self::spawn(
             this,
             &[
@@ -720,7 +834,9 @@ impl GitSubprocess {
                 b"fetch",
                 b"--quiet",
                 b"--prune",
-                b"origin",
+                b"--no-recurse-submodules",
+                b"--",
+                &url,
                 // A pattern may match nothing: the HEAD of a remote can name no branch.
                 b"+HEAD*:refs/remotes/origin/HEAD*",
                 b"+refs/heads/*:refs/heads/*",
@@ -739,18 +855,19 @@ impl GitSubprocess {
         this.clone_output
             .with_mut(|output| output.extend_from_slice(heading.as_bytes()));
         let tmp_path = this.new_staging()?;
-        this.step.set(Step::Clone);
+        this.step.set(Step::Clone(url.clone()));
         Self::spawn(
             this,
             &[
+                // `clone_config` has no word for another one.
+                b"-c",
+                b"init.defaultRefFormat=files",
                 b"clone",
                 b"-c",
                 b"core.longpaths=true",
                 b"--quiet",
                 b"--bare",
-                // The refresh fetches "origin" by name. Not `-o origin`: git before 2.39 refuses it with --bare.
-                b"-c",
-                b"clone.defaultRemoteName=origin",
+                b"--template=",
                 b"--",
                 &url,
                 &tmp_path,
@@ -899,9 +1016,13 @@ impl GitSubprocess {
             ));
             return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
-        let mut argv: Vec<CString> = Vec::with_capacity(args.len() + 1);
+        let mut argv: Vec<CString> = Vec::with_capacity(args.len() + 3);
         argv.push(CString::new(git.as_bytes()).map_err(|_| Error::InvalidCharacter)?);
-        for arg in args {
+        // No git of the install runs a hook.
+        for arg in [b"-c".as_slice(), b"core.hooksPath=/dev/null"]
+            .iter()
+            .chain(args)
+        {
             argv.push(CString::new(*arg).map_err(|_| Error::InvalidCharacter)?);
         }
         let argv: Vec<&CStr> = argv.iter().map(CString::as_c_str).collect();
@@ -1068,10 +1189,10 @@ impl GitSubprocess {
     fn on_command_exit(this: ThisPtr<Self>, status: &Status, stdout: &[u8], stderr: &[u8]) {
         let ok = matches!(status, Status::Exited(exit) if exit.code == 0)
             && this.read_error.get().is_none();
-        let step = this.step.replace(Step::Clone);
+        let step = this.step.replace(Step::Config);
         // "remote: Repository not found." / "fatal: repository '<url>' does not exist"
         let not_found = !ok
-            && matches!(step, Step::Clone)
+            && matches!(step, Step::Clone(_))
             && ((strings::contains(stderr, b"remote:")
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
@@ -1084,7 +1205,7 @@ impl GitSubprocess {
                 ..
             }
         ) && matches!(status, Status::Exited(exit) if exit.code == 1);
-        if !ok && !lost_a_ref && !matches!(step, Step::Clone | Step::Config) {
+        if !ok && !lost_a_ref && !matches!(step, Step::Clone(_) | Step::Config) {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
@@ -1099,12 +1220,12 @@ impl GitSubprocess {
                     Self::fail(this, err);
                 }
             }
-            Step::Fetch { repo, .. } => {
+            Step::Fetch { repo, url, .. } => {
                 if ok {
                     Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
                 } else if lost_a_ref {
                     this.reset_polls();
-                    if let Err(err) = Self::spawn_fetch(this, repo, true) {
+                    if let Err(err) = Self::spawn_fetch(this, repo, url, true) {
                         Self::fail(this, err);
                     }
                 } else {
@@ -1112,10 +1233,10 @@ impl GitSubprocess {
                     Self::fail(this, Error::InstallFailed);
                 }
             }
-            Step::Clone => {
+            Step::Clone(url) => {
                 if ok {
                     let staging = this.staging.take().expect("clone has a staging folder");
-                    Self::finish_on_pool(this, Finalize::PublishRepo(staging));
+                    Self::finish_on_pool(this, Finalize::PublishRepo(staging, url));
                     return;
                 }
                 this.clone_output.with_mut(|output| {

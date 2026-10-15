@@ -43,6 +43,9 @@ impl GitEnv {
     /// `configured` is what `CONFIG_QUERY` printed.
     pub(crate) fn new(configured: Option<&[u8]>) -> GitEnv {
         let mut map = bun_core::handle_oom(bun_dotenv::Map::for_git_child());
+        // From `bunx`, for this command alone: git runs the user's hooks.
+        map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
+        map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
         if let Some(configured) = configured {
             // No prompts by default: the install's own output would hide them.

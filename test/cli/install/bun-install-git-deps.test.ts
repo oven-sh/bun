@@ -1638,14 +1638,14 @@ reach() { : > "$steps/$1"; }
 wait_for() { i=0; while [ ! -e "$steps/$1" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done; }
 case "$INSTALL $*" in
   # Both look for the bare clone in the cache before "first" publishes its own.
-  "first clone "*" --bare "*) wait_for second-clones-bare ;;
+  "first "*" clone "*" --bare "*) wait_for second-clones-bare ;;
   # "second" publishes its bare clone after "first" did, and before "first" uses its own.
-  "second clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
-  "first --git-dir="*" log "*) reach first-runs-log; wait_for second-runs-log ;;
-  "second --git-dir="*" log "*) reach second-runs-log ;;
+  "second "*" clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
+  "first "*" --git-dir="*" log "*) reach first-runs-log; wait_for second-runs-log ;;
+  "second "*" --git-dir="*" log "*) reach second-runs-log ;;
   # Both look for the checkout in the cache before either publishes its own.
-  "first --git-dir="*" ls-tree "*) reach first-clones-checkout; wait_for second-clones-checkout ;;
-  "second --git-dir="*" ls-tree "*) reach second-clones-checkout; wait_for first-clones-checkout ;;
+  "first "*" --git-dir="*" ls-tree "*) reach first-clones-checkout; wait_for second-clones-checkout ;;
+  "second "*" --git-dir="*" ls-tree "*) reach second-clones-checkout; wait_for first-clones-checkout ;;
 esac
 exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
 `,
@@ -2622,7 +2622,7 @@ test.concurrent("git credentials in the project's .env are not sent", async () =
 async function failingGitCalls(dependency: string) {
   using dir = tempDir("git-dep-clone-url", {
     // `git config`: the install first asks for the user's own ssh command
-    "bin/git": `#!/bin/sh\n[ "$2" = config ] && exit 1\nfor arg in "$@"; do printf '%s\\n' "$arg"; done >> "$GIT_CALLS"\necho >> "$GIT_CALLS"\nexit 128\n`,
+    "bin/git": `#!/bin/sh\n[ "$4" = config ] && exit 1\nfor arg in "$@"; do printf '%s\\n' "$arg"; done >> "$GIT_CALLS"\necho >> "$GIT_CALLS"\nexit 128\n`,
   });
   const root = String(dir);
   chmodSync(join(root, "bin", "git"), 0o755);
@@ -2701,13 +2701,16 @@ test.concurrent.skipIf(isWindows).each([
   const { calls, stderr, exitCode } = await failingGitCalls(dependency);
   // `--`: whatever follows is not an option of git
   const clone = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "init.defaultRefFormat=files",
     "clone",
     "-c",
     "core.longpaths=true",
     "--quiet",
     "--bare",
-    "-c",
-    "clone.defaultRemoteName=origin",
+    "--template=",
     "--",
   ];
   expect(calls).toEqual([
@@ -2922,8 +2925,8 @@ test.concurrent.skipIf(isWindows)(
     writeFileSync(
       join(bin, "git"),
       `#!/bin/sh
-[ "$2" = config ] && exit 1
-trap 'echo $$ >> ${quote(exited)}' EXIT
+[ "$4" = config ] && exit 1
+trap'echo $$ >> ${quote(exited)}' EXIT
 trap ': > ${quote(gotSigint)}; exit 130' INT
 echo $$ >> ${quote(running)}
 i=0
@@ -3811,6 +3814,85 @@ exec ${realGit} "$@"
   expect(exitCode).toBe(0);
 });
 
+// The folder of a cached clone is used only as the install itself left it: git takes its refs
+// and objects from it and nothing else. Whatever else has that name is replaced by a new clone.
+type Places = { clone: string; other: string; kept: string; command: string };
+test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void }>([
+  {
+    what: "is a link",
+    change({ clone, other }) {
+      rmSync(clone, { recursive: true });
+      symlinkSync(join(other, ".git"), clone);
+    },
+  },
+  {
+    what: "has more settings",
+    change: ({ clone, command }) =>
+      writeFileSync(join(clone, "config"), `[remote "origin"]\n\tuploadpack = "${command}; git-upload-pack"\n`, {
+        flag: "a",
+      }),
+  },
+  {
+    what: "has a hook",
+    change({ clone, command }) {
+      mkdirSync(join(clone, "hooks"), { recursive: true });
+      writeFileSync(join(clone, "hooks", "reference-transaction"), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
+    },
+  },
+  {
+    what: "names another folder",
+    change: ({ clone, other }) => writeFileSync(join(clone, "commondir"), join(other, ".git")),
+  },
+  {
+    what: "holds a link to a folder",
+    change({ clone, other }) {
+      rmSync(join(clone, "refs", "heads"), { recursive: true });
+      symlinkSync(join(other, ".git", "refs", "heads"), join(clone, "refs", "heads"));
+    },
+  },
+  {
+    what: "holds a link to a file",
+    change({ clone, kept }) {
+      rmSync(join(clone, "FETCH_HEAD"), { force: true });
+      symlinkSync(kept, join(clone, "FETCH_HEAD"));
+    },
+  },
+])("a cached clone that $what", async ({ change }) => {
+  using dir = tempDir("git-dep-clone-as-left", { kept: "kept\n", other: {} });
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+
+  // another checkout, with work that was never pushed
+  const other = join(root, "other");
+  await git(other, "init", "-q", "-b", "main");
+  await git(other, "commit", "-q", "--allow-empty", "-m", "pushed");
+  await git(root, "clone", "-q", "--bare", other, "other-origin.git");
+  await git(other, "remote", "add", "origin", join(root, "other-origin.git"));
+  await git(other, "checkout", "-q", "-b", "feature");
+  await git(other, "commit", "-q", "--allow-empty", "-m", "not pushed");
+  await git(other, "tag", "local-tag");
+  const refs = await refsOf(other);
+
+  const [clone, ran, kept] = [bareCloneIn(cache), join(root, "ran"), join(root, "kept")];
+  change({ clone, other, kept, command: `: > ${quote(ran)}` });
+  await moveBranch(bare, "main", "main-v2");
+
+  const { stderr, exitCode } = await runBun(project, cache, {}, "update", "--ignore-scripts");
+  expect({ ran: existsSync(ran), refs: await refsOf(other), kept: readFileSync(kept, "utf8") }).toEqual({
+    ran: false,
+    refs,
+    kept: "kept\n",
+  });
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(lstatSync(clone).isDirectory()).toBe(true);
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
 // Only a file of the repository itself is read as its package.json.
 test.concurrent.each([
   { what: "a text file", target: "notes.txt" },
@@ -4076,7 +4158,7 @@ test.concurrent.skipIf(isWindows).each([
 );
 
 test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, before the first clone", async () => {
-  using dir = tempDir("git-dep-config-once", { "bin/git": `#!/bin/sh\necho "$1 $2" >> "$GIT_CALLS"\nexit 1\n` });
+  using dir = tempDir("git-dep-config-once", { "bin/git": `#!/bin/sh\necho "$3 $4 $5" >> "$GIT_CALLS"\nexit 1\n` });
   const root = String(dir);
   chmodSync(join(root, "bin", "git"), 0o755);
   const calls = join(root, "git-calls");
@@ -4090,8 +4172,8 @@ test.concurrent.skipIf(isWindows)("asks git for the user's own commands once, be
   const project = writeProject(root, Object.fromEntries(names.map(name => [name, `git+http://localhost/${name}.git`])));
   const { exitCode } = await runInstall(project, join(root, "cache"), env);
   expect(readFileSync(calls, "utf8").trim().split("\n")).toEqual([
-    "--git-dir=/dev/null config",
-    ...names.map(() => "clone -c"),
+    "--git-dir=/dev/null config --name-only",
+    ...names.map(() => "-c init.defaultRefFormat=files clone"),
   ]);
   expect(exitCode).toBe(1);
 });

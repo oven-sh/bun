@@ -175,7 +175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EIdentifier(id) => {
                     // A local holding one module's namespace (`const ns = await
                     // import(…)`) reads its exports as `import * as ns` does:
-                    // `ns.a` becomes an import item of that record, below.
+                    // `ns.a` gets an import item of that record, below.
                     let mut dynamic_record = None;
                     if p.dynamic_import_namespace_locals.contains_key(&id.ref_) {
                         if can_track_dynamic_import_member {
@@ -224,8 +224,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         loc: name_loc,
                                         ref_: new_ref,
                                     };
-                                    // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
+                                    // Such an item never prints under its own name.
+                                    if dynamic_record.is_none() {
+                                        // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
+                                        VecExt::append(
+                                            &mut p.module_scope_mut().generated,
+                                            new_ref,
+                                        );
+                                    }
 
                                     p.import_items_for_namespace
                                         .get_mut(&id.ref_)
@@ -281,6 +287,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
                             {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+                            }
+
+                            // The linker decides if the item binds: the node stays as written.
+                            if dynamic_record.is_some() {
+                                p.note_import_use(ref_, identifier_opts);
+                                break 'sw;
                             }
 
                             return Some(

@@ -1344,6 +1344,7 @@ impl<'a> SelectorParser<'a> {
         &mut self,
         name: Str,
         parser: &mut CssParser,
+        state: &mut SelectorParsingState,
     ) -> CResult<PseudoClass> {
         let pseudo_class = crate::match_ignore_ascii_case! { name, {
             b"lang" => {
@@ -1366,12 +1367,12 @@ impl<'a> SelectorParser<'a> {
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(parser.with_css_module_scope(CssModuleScope::Local, |parser| {
-                    Selector::parse(self, parser)
+                    Selector::parse_inner(self, parser, state)
                 })?),
             },
             b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
                 selector: Box::new(parser.with_css_module_scope(CssModuleScope::Global, |parser| {
-                    Selector::parse(self, parser)
+                    Selector::parse_inner(self, parser, state)
                 })?),
             },
             _ => {
@@ -1802,6 +1803,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
+    }
+
+    /// `&` in the parsed selector counts as `&` in the selector that holds it.
+    pub(crate) fn parse_inner(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        outer_state: &mut SelectorParsingState,
+    ) -> CResult<Self> {
+        let mut state = SelectorParsingState::empty();
+        let selector = parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)?;
+        if state.contains(SelectorParsingState::AFTER_NESTING) {
+            outer_state.insert(SelectorParsingState::AFTER_NESTING);
+        }
+        Ok(selector)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -3636,7 +3651,7 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
 
-    let result = parser.parse_non_ts_functional_pseudo_class(name, input)?;
+    let result = parser.parse_non_ts_functional_pseudo_class(name, input, state)?;
 
     Ok(GenericComponent::NonTsPseudoClass(result))
 }

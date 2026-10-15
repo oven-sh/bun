@@ -366,6 +366,31 @@ describe.concurrent("auto-install uses the versions of the lockfile", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `bun install` resolves such a range to the patched version too.
+  test("bun.lock, for a range that is not locked and admits a patched version", async () => {
+    using registry = fixtureRegistry();
+    const patchedDependencies = { "no-deps@1.0.1": "no-deps.patch" };
+    using dir = tempDir("autoinstall-lockfile-patched", {
+      "package.json": JSON.stringify({ name: "app", patchedDependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "app" } },
+        patchedDependencies,
+        packages: {},
+      }),
+      "no-deps.patch":
+        "diff --git a/extra.js b/extra.js\nnew file mode 100644\nindex 0000000..7898192\n--- /dev/null\n+++ b/extra.js\n@@ -0,0 +1 @@\n+a\n",
+      "index.js": `console.log(require("no-deps@^1.0.0").version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.0.1\n");
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("bun.lockb", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-lockb", {

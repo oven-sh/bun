@@ -2885,11 +2885,7 @@ impl Package<u64> {
                             .self_contained_workspaces
                             .put(external_name.hash, ())?;
                     }
-                    match entry.is_behind_link {
-                        Some(false) => {}
-                        Some(true) => lockfile.linked_members.add(path_),
-                        None => lockfile.linked_members.look_at(path_),
-                    }
+                    lockfile.linked_members.see(path_, entry.is_behind_link);
                     if let Some(v) = &entry.unsupported_hoisting_limits {
                         log.add_warning_fmt(
                             Some(source),

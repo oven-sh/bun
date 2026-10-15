@@ -845,6 +845,19 @@ pub(crate) fn print<W: Write>(
             continue;
         }
 
+        if (this.lockfile.get_parent_pkg_of_dependency(dependency_id))
+            .is_some_and(|owner| this.lockfile.is_member_outside(owner))
+        {
+            bun_core::write_pretty!(
+                writer,
+                enable_ansi_colors,
+                "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(workspace outside the project)<r>\n",
+                escape_control_chars(dependency.name.slice(string_buf)),
+                bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
+            )?;
+            continue;
+        }
+
         let has_binaries = !matches!(bin.tag, bin::Tag::None | bin::Tag::Dir);
         print_installed_update_request(
             writer,

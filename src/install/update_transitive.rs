@@ -709,9 +709,20 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
+    // `PackageManager::root_dir`
+    root_dir: &[u8],
 ) -> Option<(&'a bun_ast::Source, bun_ast::Expr)> {
     // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let mut path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    // Auto-install does not go through `init`: the one beside the lockfile it loaded.
+    if path.is_empty() {
+        path = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            root_dir,
+            &mut path_buf.0,
+            &[b"package.json"],
+        );
+    }
     let opts = GetJsonOptions {
         init_reset_store: false,
         ..Default::default()
@@ -726,8 +737,9 @@ fn root_patched_dependencies<'a>(
 /// The `patchedDependencies` keys of the root package.json: the lockfile has only their hashes.
 pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
     let log = manager.log_mut();
+    let root_dir = manager.root_dir.dir;
     let Some((_, patched)) =
-        root_patched_dependencies(&mut manager.workspace_package_json_cache, log)
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
     else {
         return Vec::new();
     };
@@ -782,8 +794,9 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         return;
     }
     let log = manager.log_mut();
+    let root_dir = manager.root_dir.dir;
     let Some((source, patched)) =
-        root_patched_dependencies(&mut manager.workspace_package_json_cache, log)
+        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
     else {
         return;
     };

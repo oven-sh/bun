@@ -430,6 +430,8 @@ pub struct PackageManager {
     pub(crate) peer_askers: Option<Vec<(PackageNameHash, DependencyID, PackageID)>>,
     // Filled with it: the names the root resolves to a folder, a tarball or a repository.
     pub(crate) local_in_root: Vec<PackageNameHash>,
+    // Filled with it: (the name, the package that declares it, what it resolved to) of each `npm:` alias.
+    pub(crate) alias_rows: Vec<(PackageNameHash, PackageID, PackageID)>,
     // What the keys of `patchedDependencies` name; see enqueue::index_patched_versions.
     pub(crate) patched_versions: Option<Vec<(PackageNameHash, Semver::Version)>>,
 
@@ -602,6 +604,29 @@ impl Subcommand {
             self,
             Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit
         ) || (matches!(self, Self::Install | Self::Link) && has_package_args)
+    }
+
+    /// Lays or removes packages, with the edits of package.json and bun.lock that go with it.
+    pub(crate) fn installs(self, positionals: &[&[u8]]) -> bool {
+        match self {
+            Self::Install
+            | Self::Update
+            | Self::Add
+            | Self::Remove
+            | Self::Link
+            | Self::Patch
+            | Self::PatchCommit
+            | Self::Dedupe
+            | Self::Prune => true,
+            Self::Audit => positionals.get(1).is_some_and(|arg| *arg == b"fix"),
+            Self::Pm
+            | Self::Unlink
+            | Self::Outdated
+            | Self::Pack
+            | Self::Publish
+            | Self::Info
+            | Self::Why => false,
+        }
     }
 }
 
@@ -1595,6 +1620,7 @@ fn allocate_package_manager(
         );
         wr!(peer_askers, None);
         wr!(local_in_root, Vec::new());
+        wr!(alias_rows, Vec::new());
         wr!(patched_versions, None);
         wr!(known_npm_aliases, NpmAliasMap::default());
         wr!(trusted_deps_to_add_to_package_json, Vec::new());
@@ -2130,6 +2156,34 @@ fn find_workspace_root_above<'a>(
     Ok(None)
 }
 
+/// See `Lockfile::is_member_outside`: a command that installs can do nothing for such a member, so
+/// typed in one it ends here, before anything is written. `top_level_dir` is the project's.
+fn exit_if_started_in_member_outside(
+    members: &Package::WorkspaceMap::WorkspaceMap,
+    name_hash: PackageNameHash,
+) {
+    let Some((path, entry)) = (members.keys().iter().zip(members.values().iter()))
+        .find(|(_, entry)| Semver::string::Builder::string_hash(&entry.name) == name_hash)
+    else {
+        return;
+    };
+    let mut linked = crate::lockfile_real::LinkedMembers::default();
+    linked.see(path, entry.is_behind_link);
+    let Some(real_path) = linked.outside_and_started_in(path) else {
+        return;
+    };
+    let real_path = bun_core::fmt::escape_control_chars(real_path);
+    Output::err_generic(
+        "workspace \"{}\" is a link to \"{}\", which is outside the project, so nothing was changed",
+        (bun_core::fmt::escape_control_chars(path), &real_path),
+    );
+    bun_core::note!(
+        "run the command in \"{}\" to use that folder as its own project",
+        real_path
+    );
+    Global::crash();
+}
+
 /// Sticky and group- or world-writable, like `/tmp`: any local user can put a `package.json` there.
 #[cfg(unix)]
 fn is_shared_directory(dir: &[u8]) -> bool {
@@ -2481,6 +2535,9 @@ pub fn init(
                 // Intern via the resolver's DirnameStore so the slice is
                 // process-lifetime (`set_top_level_dir` requires `'static`).
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
+                if subcommand.installs(cli.positionals) {
+                    exit_if_started_in_member_outside(&workspace_names, name_hash);
+                }
                 let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
                 // Found by the path as typed. The root reads the member's package.json by that name.

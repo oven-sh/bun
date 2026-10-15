@@ -1545,6 +1545,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
+    let self_contained = after.self_contained_workspace_ids();
     for pkg_id in 0..after.packages.len() {
         let Some(folder_path) = workspace_node_modules(after, pkg_id as PackageID) else {
             continue;
@@ -1576,7 +1577,23 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         let still_placed =
             |alias: &[u8]| surviving.is_some_and(|id| new.expected_in(id, alias).is_some());
         let all_stay = old_rows.iter().all(|&(alias, _)| still_placed(alias));
-        if !removes_other_entries && all_stay {
+        // The saved tree has no barrier: what a self-contained member reaches was laid in its
+        // folder, and `old` has most of it at the root.
+        let reached: Option<DynamicBitSet> = (self_contained.contains(&(pkg_id as PackageID)))
+            .then(|| {
+                let name_hash = after.packages.items_name_hash()[pkg_id];
+                (before.packages.items_name_hash().iter())
+                    .zip(before.packages.items_resolution())
+                    .position(|(&hash, res)| {
+                        hash == name_hash && res.tag == ResolutionTag::Workspace
+                    })
+            })
+            .flatten()
+            .map(|id| {
+                let options = reachable::Options::all(id as PackageID);
+                reachable::packages(before, before.buffers.resolutions.as_slice(), options)
+            });
+        if !removes_other_entries && all_stay && reached.is_none() {
             continue;
         }
         let links = plan.linked_folders.len();
@@ -1594,7 +1611,13 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 }
                 let was_row = old_rows
                     .binary_search_by(|(name, _)| (*name).cmp(entry.alias))
-                    .is_ok();
+                    .is_ok()
+                    || reached.as_ref().is_some_and(|reached| {
+                        old.expected_in(0, entry.alias).is_some_and(|row| {
+                            let id = old.expected[row].1 as usize;
+                            reached.is_set_allow_out_of_bound(id, false)
+                        })
+                    });
                 if was_row {
                     !new.removable(0, entry.alias, &folder_path)
                 } else {

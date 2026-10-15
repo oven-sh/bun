@@ -5340,6 +5340,43 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // `provider` installs `plugin` and, under the name of its peer, another package.
+  describe("a peer whose name is an npm: alias of the package that depends on it", () => {
+    const provider = { "1.0.0": { dependencies: { kept: "npm:short@1.0.0", plugin: "1.0.0" } } };
+    const plugin = { "1.0.0": { peerDependencies: { kept: "^1.0.0" } } };
+
+    it.each<{ name: string; registry: Record<string, Record<string, object>> }>([
+      { name: "has the name", registry: { kept } },
+      {
+        name: "has the name for a package that cannot be completed",
+        registry: { kept: { "1.0.0": { dependencies: { gone: "1.0.0" } } } },
+      },
+      { name: "does not have the name", registry: {} },
+    ])("takes the alias when the registry $name", async ({ registry }) => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, heldRegistry(ctx, urls, { provider, plugin, short, ...registry }));
+        await writeProject(ctx, { "package.json": { name: "foo", dependencies: { provider: "1.0.0" } } });
+        expect({ packages: await installAndReadLock(ctx), requests: urls.sort() }).toEqual({
+          packages: { "kept": "short@1.0.0", "plugin": "plugin@1.0.0", "provider": "provider@1.0.0" },
+          requests: ["plugin", "plugin-1.0.0.tgz", "provider", "provider-1.0.0.tgz", "short", "short-1.0.0.tgz"],
+        });
+      });
+    });
+
+    it("asks the registry when something else depends on it too", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, heldRegistry(ctx, urls, { provider, plugin, short, kept }));
+        await writeProject(ctx, {
+          "package.json": { name: "foo", dependencies: { provider: "1.0.0", plugin: "1.0.0" } },
+        });
+        await installAndReadLock(ctx);
+        expect(urls).toContain("kept");
+      });
+    });
+  });
+
   it.each<{ range: string; published: string[]; resolved: string | null }>([
     { range: "1.0.0 || ^2.0.0", published: ["1.0.0", "2.5.0"], resolved: "2.5.0" },
     { range: "1.0.0 || ^2.0.0", published: ["2.5.0"], resolved: "2.5.0" },

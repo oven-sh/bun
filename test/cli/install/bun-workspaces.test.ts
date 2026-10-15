@@ -4420,7 +4420,7 @@ describe("a workspace outside the project", () => {
 });
 
 describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", () => {
-  /** `cwd` and `pwd` are relative to the directory that holds `repo`, `other` and `elsewhere`. */
+  /** `cwd` and `pwd` are relative to the directory that holds `repo` and `other`. */
   async function install(cwd: string, pwd: string) {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
@@ -4429,11 +4429,11 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
       write(join(packageDir, "repo", "package.json"), JSON.stringify({ name: "repo", workspaces: ["packages/*"] })),
       write(join(packageDir, "repo", "packages", "lib", "package.json"), JSON.stringify({ name: "lib" })),
       write(join(packageDir, "other", "package.json"), JSON.stringify({ name: "other", workspaces: ["packages/*"] })),
-      write(join(packageDir, "elsewhere", "app", "package.json"), JSON.stringify(app)),
-      write(join(packageDir, "elsewhere", "app", "src", "index.js"), ""),
+      write(join(packageDir, "repo", "elsewhere", "app", "package.json"), JSON.stringify(app)),
+      write(join(packageDir, "repo", "elsewhere", "app", "src", "index.js"), ""),
     ]);
-    symlinkSync(join("..", "..", "elsewhere", "app"), join(packageDir, "repo", "packages", "app"));
-    symlinkSync(join("..", "elsewhere", "app"), join(packageDir, "other", "app"));
+    symlinkSync(join("..", "elsewhere", "app"), join(packageDir, "repo", "packages", "app"));
+    symlinkSync(join("..", "repo", "elsewhere", "app"), join(packageDir, "other", "app"));
 
     await using proc = spawn({
       cmd: [bunExe(), "install"],
@@ -4443,7 +4443,8 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
       env: { ...env, PWD: join(packageDir, pwd) },
     });
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lockfiles = ["repo", "other", "elsewhere/app"].filter(dir => existsSync(join(packageDir, dir, "bun.lock")));
+    const folders = ["repo", "other", "repo/elsewhere/app"];
+    const lockfiles = folders.filter(dir => existsSync(join(packageDir, dir, "bun.lock")));
     return { errors: err.split("\n").filter(line => line.startsWith("error:")), lockfiles, exitCode };
   }
   const alone = {
@@ -4456,13 +4457,10 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
     expect(await install(cwd, cwd)).toEqual({ errors: [], lockfiles: ["repo"], exitCode: 0 });
   });
 
-  test.concurrent.each([
-    ["inside the project", "repo/libs/shared"],
-    ["outside the project", "shared"],
-  ])("bun add and bun remove work, with the folder %s", async (_, real) => {
+  test.concurrent("bun add and bun remove work", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
-    const repo = join(packageDir, "repo");
+    const [repo, real] = [join(packageDir, "repo"), "repo/libs/shared"];
     const shared = { name: "shared", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } };
     await Promise.all([
       verdaccio.writeBunfig(repo),
@@ -4497,8 +4495,155 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
     expect(existsSync(join(packageDir, real, "bun.lock"))).toBe(false);
   });
 
+  describe.each(["hoisted", "isolated"])("outside the project, with the %s linker", linker => {
+    /** `repo/packages/w` is a link to `elsewhere/w`. `at`: where a command is typed, from `dir`. */
+    async function setup(dir: string, env: Record<string, string>) {
+      const [repo, w] = [join(dir, "repo"), join(dir, "elsewhere", "w")];
+      const manifest = {
+        name: "w",
+        version: "1.0.0",
+        scripts: { hi: "echo hi" },
+        dependencies: { lib: "workspace:*", "what-bin": "1.0.0" },
+      };
+      await Promise.all([
+        verdaccio.writeBunfig(repo),
+        write(join(repo, "package.json"), JSON.stringify({ name: "repo", workspaces: ["packages/*"] })),
+        write(join(repo, "packages", "lib", "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" })),
+        write(join(w, "package.json"), JSON.stringify(manifest)),
+        write(join(w, "src", "index.js"), ""),
+      ]);
+      symlinkSync(w, join(repo, "packages", "w"));
+      const bun = async (at: string, ...args: string[]) => {
+        const cwd = join(dir, at);
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: { ...env, PWD: cwd, npm_config_registry: verdaccio.registryUrl() },
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out, err, exitCode };
+      };
+      return { repo, w, bun };
+    }
+
+    /** Every entry below `dir`, a file with its bytes and a link with its text. */
+    function contentsOf(dir: string) {
+      const entries = new Bun.Glob("**").scanSync({ cwd: dir, dot: true, onlyFiles: false, followSymlinks: false });
+      return Array.from(entries, entry => {
+        const stat = lstatSync(join(dir, entry));
+        if (stat.isSymbolicLink()) return [entry, readlinkSync(join(dir, entry))];
+        return [entry, stat.isFile() && readFileSync(join(dir, entry), "latin1")];
+      }).sort();
+    }
+
+    const skipped = 'note: skipped the dependencies and scripts of 1 workspace outside the project: "packages/w"\n';
+
+    test.concurrent.each(["before", "after"])(
+      "a command that installs, typed there %s the project is installed, changes nothing",
+      async when => {
+        using ctx = await setupTest();
+        const { w, bun } = await setup(ctx.packageDir, ctx.env);
+        if (when === "after") expect((await bun("repo", "install", "--linker", linker)).exitCode).toBe(0);
+        const before = contentsOf(ctx.packageDir);
+        const real = realpathSync(w);
+
+        for (const [at, ...args] of [
+          ["repo/packages/w", "install"],
+          ["repo/packages/w/src", "install"],
+          ["repo/packages/w", "install", "--lockfile-only"],
+          ["repo/packages/w", "add", "no-deps"],
+          ["repo/packages/w", "add", "no-deps", "--filter", "lib"],
+          ["repo/packages/w", "remove", "what-bin"],
+          ["repo/packages/w", "update"],
+          ["repo/packages/w", "update", "--latest", "what-bin"],
+          ["repo/packages/w", "link", "no-deps"],
+          ["repo/packages/w", "patch", "what-bin"],
+          ["repo/packages/w", "dedupe"],
+          ["repo/packages/w", "prune"],
+          ["repo/packages/w", "audit", "fix"],
+        ]) {
+          const { err, exitCode } = await bun(at, ...args);
+
+          expect({ args, err }).toEqual({
+            args,
+            err:
+              `error: workspace "packages/w" is a link to "${real}", which is outside the project, so nothing was changed\n` +
+              `note: run the command in "${real}" to use that folder as its own project\n`,
+          });
+          expect({ args, contents: contentsOf(ctx.packageDir) }).toEqual({ args, contents: before });
+          expect(exitCode).toBe(1);
+        }
+      },
+    );
+
+    test.concurrent("a command that only reads works there, as in any other member", async () => {
+      using ctx = await setupTest();
+      const { repo, bun } = await setup(ctx.packageDir, ctx.env);
+      expect((await bun("repo", "install", "--linker", linker)).exitCode).toBe(0);
+
+      for (const [args, printed] of [
+        [["pm", "ls"], `${repo} node_modules`],
+        [["why", "lib"], "w@workspace (requires workspace:*)"],
+        [["outdated"], "what-bin"],
+        [["info", "what-bin", "version"], "1.5.0"],
+        [["run", "hi"], "hi\n"],
+      ] as const) {
+        const { out, err, exitCode } = await bun("repo/packages/w", ...args);
+        expect({ args, err }).toEqual({ args, err: expect.not.stringContaining("error:") });
+        expect(out).toContain(printed);
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test.concurrent("an install typed elsewhere in the project leaves it as it is", async () => {
+      using ctx = await setupTest();
+      const { w, bun } = await setup(ctx.packageDir, ctx.env);
+      const before = contentsOf(w);
+
+      for (const at of ["repo", "repo/packages/lib"]) {
+        const { err, exitCode } = await bun(at, "install", "--linker", linker);
+        expect(err).toContain(skipped);
+        expect({ at, contents: contentsOf(w), exitCode }).toEqual({ at, contents: before, exitCode: 0 });
+      }
+    });
+
+    test.concurrent("bun add --filter typed in the root does not say installed", async () => {
+      using ctx = await setupTest();
+      const { w, bun } = await setup(ctx.packageDir, ctx.env);
+
+      for (const verbosity of [[], ["--verbose"]]) {
+        const args = ["add", "no-deps@1.0.0", "--filter", "w", "--linker", linker, ...verbosity];
+        const { out, err, exitCode } = await bun("repo", ...args);
+        expect(err).toContain(skipped);
+        expect(out).not.toContain("installed no-deps");
+        expect(out).toContain("skipped no-deps@1.0.0 (workspace outside the project)\n");
+        expect({ laid: existsSync(join(w, "node_modules")), exitCode }).toEqual({ laid: false, exitCode: 0 });
+      }
+    });
+
+    test.concurrent("a link to a folder above the project is not where a command in the project is typed", async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const { repo, bun } = await setup(packageDir, env);
+      const above = { name: "above", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
+      await write(join(packageDir, "package.json"), JSON.stringify(above));
+      symlinkSync(join("..", ".."), join(repo, "packages", "above"));
+
+      for (const at of ["repo", "repo/packages/lib"]) {
+        const { exitCode } = await bun(at, "install", "--linker", linker);
+        expect({ at, laid: existsSync(join(packageDir, "node_modules")), exitCode }).toEqual({
+          at,
+          laid: false,
+          exitCode: 0,
+        });
+      }
+    });
+  });
+
   test.concurrent("a $PWD that is another folder does not count", async () => {
-    expect(await install("elsewhere/app", "repo/packages/lib")).toEqual(alone);
+    expect(await install("repo/elsewhere/app", "repo/packages/lib")).toEqual(alone);
   });
 
   test.concurrent("a package.json above that does not list the folder is not its project", async () => {

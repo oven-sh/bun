@@ -1133,11 +1133,11 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
         }),
         "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
         "packages": {},
+        "elsewhere/app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
       },
-      "elsewhere/app/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
     });
     const project = join(String(dir), "real", "proj");
-    symlinkSync(join(String(dir), "elsewhere", "app"), join(project, "packages", "app"));
+    symlinkSync(join(project, "elsewhere", "app"), join(project, "packages", "app"));
     symlinkSync(join("..", "..", "shared", "tsconfig.base.json"), join(project, "vendor", "lib", "tsconfig.json"));
     symlinkSync("real", join(String(dir), "typed"));
 

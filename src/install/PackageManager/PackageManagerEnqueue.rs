@@ -2606,6 +2606,10 @@ fn get_or_put_resolved_package(
                 if is_peer_provided_locally(this, dependency, dependency_id) {
                     return Ok(Some(ResolvedPackageResult::default()));
                 }
+                if let Some(id) = alias_of_every_dependent(this, dependency, version, dependency_id)
+                {
+                    return bind_existing(this, dependency_id, id, success_fn);
+                }
             }
 
             // Resolve the version from the loaded NPM manifest
@@ -3120,7 +3124,7 @@ fn local_rows(
 
 /// Fills `peer_askers`: the required peer rows of the packages that are in the tree without any peer.
 /// No peer adds to them: `wait_for_resolution` resolves those packages before the first peer.
-/// And `local_in_root`, which is as settled.
+/// And `local_in_root` and `alias_rows`, which are as settled.
 fn index_peer_askers(this: &mut PackageManager) {
     if this.peer_askers.is_some() {
         return;
@@ -3128,6 +3132,7 @@ fn index_peer_askers(this: &mut PackageManager) {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     this.local_in_root = local_rows(lockfile, 0, this.options.local_package_features).collect();
     let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
     let known = reachable::packages(
         lockfile,
         lockfile.buffers.resolutions.as_slice(),
@@ -3138,16 +3143,57 @@ fn index_peer_askers(this: &mut PackageManager) {
         },
     );
     let mut askers = Vec::new();
+    let mut aliases = Vec::new();
     for (owner, list) in lockfile.packages.items_dependencies().iter().enumerate() {
         for id in (list.begin()..list.end()).filter(|_| known.is_set(owner)) {
             let dep = &deps[id as usize];
-            if dep.behavior.is_peer() && !dep.behavior.is_optional_peer() {
-                askers.push((dep.name_hash, id, owner as PackageID));
+            if dep.behavior.is_peer() {
+                if !dep.behavior.is_optional_peer() {
+                    askers.push((dep.name_hash, id, owner as PackageID));
+                }
+            } else if dep.version.try_npm().is_some_and(|npm| npm.is_alias)
+                && resolutions[id as usize] != invalid_package_id
+            {
+                aliases.push((dep.name_hash, owner as PackageID, resolutions[id as usize]));
             }
         }
     }
     bun_collections::index_sort::sort_vec_by(&mut askers, |a, b| a.0.cmp(&b.0));
     this.peer_askers = Some(askers);
+    this.alias_rows = aliases;
+}
+
+/// What every package that depends on the peer's package installs under the peer's name, with an
+/// `npm:` alias of its own. They provide the peer. The alias of any other package does not count.
+fn alias_of_every_dependent(
+    this: &PackageManager,
+    peer: &Dependency,
+    range: &dependency::Version,
+    row: DependencyID,
+) -> Option<PackageID> {
+    let named = (this.alias_rows.iter()).filter(|alias| alias.0 == peer.name_hash);
+    named.clone().next()?;
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let package = lockfile.get_parent_pkg_of_dependency(row)?;
+    let mut target = None;
+    for (dependent, list) in lockfile.packages.items_dependencies().iter().enumerate() {
+        if (list.begin() as usize..list.end() as usize)
+            .any(|id| resolutions[id] == package && !deps[id].behavior.is_peer())
+        {
+            let alias = named
+                .clone()
+                .find(|alias| alias.1 == dependent as PackageID)?;
+            target = target.or(Some(alias.2));
+        }
+    }
+    let target = target?;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let resolution = &lockfile.packages.items_resolution()[target as usize];
+    (resolution.tag == ResolutionTag::Npm
+        && (range.try_npm()?.version).satisfies(resolution.npm().version, buf, buf))
+    .then_some(target)
 }
 
 /// The rows of `peer_askers` that ask for the name, in the order of the packages.

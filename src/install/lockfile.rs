@@ -223,6 +223,34 @@ impl LinkedMembers {
         self.members.get(strings::without_trailing_slash(path))
     }
 
+    /// `is_behind_link`: what the directory listings told, see `WorkspaceMap::Entry`.
+    pub(crate) fn see(&mut self, path: &[u8], is_behind_link: Option<bool>) {
+        match is_behind_link {
+            Some(false) => {}
+            Some(true) => self.add(path),
+            None => self.look_at(path),
+        }
+    }
+
+    /// The real path of the workspace `path`, if it is outside the project and the process started
+    /// in it.
+    pub(crate) fn outside_and_started_in(&self, path: &[u8]) -> Option<&[u8]> {
+        let member = self.get(path).filter(|member| member.is_outside)?;
+        let start = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
+        let start = Self::real_path_of(start);
+        // A link can lead to a folder above the project.
+        (Self::is_in(&member.real_path, &start) && !Self::is_in(&self.real_root, &start))
+            .then_some(&*member.real_path)
+    }
+
+    /// Both are real paths. One that could not be resolved is in nothing, and has nothing in it.
+    fn is_in(folder: &[u8], path: &[u8]) -> bool {
+        !folder.is_empty()
+            && !path.is_empty()
+            && resolve_path::is_parent_or_equal(folder, path)
+                != resolve_path::ParentEqual::Unrelated
+    }
+
     /// For a workspace that no directory listing told the kind of: one `lstat` for each new folder.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
@@ -264,10 +292,7 @@ impl LinkedMembers {
         }
         let real_path = Self::real_path_of(path);
         let member = LinkedMember {
-            is_outside: self.real_root.is_empty()
-                || real_path.is_empty()
-                || resolve_path::is_parent_or_equal(&self.real_root, &real_path)
-                    == resolve_path::ParentEqual::Unrelated,
+            is_outside: !Self::is_in(&self.real_root, &real_path),
             real_path,
         };
         self.members.put(path, member).unwrap_or_oom();

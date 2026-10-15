@@ -68,14 +68,8 @@ fn commands(file: &[u8]) -> Result<Vec<(u32, usize, usize)>> {
         at += size;
     }
     // So that what follows can add and subtract these.
-    let mut all_sections = 0;
     for &(_, at, size) in list.iter().filter(|c| c.0 == LC_SEGMENT_64) {
         let sections = u32_at(file, at + 64)? as usize;
-        // A symbol says which it is in with a byte.
-        all_sections += sections;
-        if all_sections > 255 {
-            return Err(Error::InvalidExecutable);
-        }
         if size != SEGMENT + sections * SECTION
             || plus(u64_at(file, at + 40)?, u64_at(file, at + 48)?)? > file.len() as u64
         {
@@ -288,9 +282,8 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
 
     // ---- the load commands
     let mut header = slice(file, 0, 32)?.to_vec();
-    // {number the section had, addresses of the part, number the part has}. Numbers start at 1.
-    let mut parts: Vec<(u8, Range<u64>, u8)> = Vec::new();
-    let (mut old_number, mut number) = (0u8, 0u8);
+    // The sections there are now, in the order of their numbers, which start at 1.
+    let mut parts: Vec<Range<u64>> = Vec::new();
     for &(kind, at, size) in &commands {
         let mut bytes = slice(file, at, size)?.to_vec();
         if at == text {
@@ -308,19 +301,16 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                 put_u64(&mut segment, 48, stretch.end - stretch.start)?;
                 put_u32(&mut segment, 64, inside.len() as u32)?;
                 for (section, part) in inside {
-                    let nth = (*section - (at + SEGMENT)) / SECTION;
                     let mut section = slice(file, *section, SECTION)?.to_vec();
                     put_u64(&mut section, 32, part.start)?;
                     put_u64(&mut section, 40, part.end - part.start)?;
                     let offset = offset_of_stretch[index] + (part.start - stretch.start);
                     put_u32(&mut section, 48, narrow(offset)?)?;
                     segment.extend_from_slice(&section);
-                    number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
-                    parts.push((old_number + 1 + nth as u8, part.clone(), number));
+                    parts.push(part.clone());
                 }
                 header.extend_from_slice(&segment);
             }
-            old_number += sections.len() as u8;
             continue;
         }
         if kind == LC_SEGMENT_64 {
@@ -335,14 +325,8 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                     offset => narrow(minus(offset, dropped)?)?,
                 };
                 put_u32(&mut bytes, section + 48, offset)?;
-                number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
-                old_number += 1;
                 let address = u64_at(&bytes, section + 32)?;
-                parts.push((
-                    old_number,
-                    address..address + u64_at(&bytes, section + 40)?,
-                    number,
-                ));
+                parts.push(address..address + u64_at(&bytes, section + 40)?);
             }
             if at == linkedit {
                 let size = (out.len() - new_linkedit_offset) as u64;
@@ -374,25 +358,28 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         .ok_or(Error::InvalidExecutable)?
         .copy_from_slice(&header);
 
-    // ---- symbols say which section they are in, by number
+    // ---- symbols say which section they are in, by number, in a byte. The linker writes what of the number fits.
     if let Some(c) = command(LC_SYMTAB) {
+        let mut by_address: Vec<(Range<u64>, usize)> = parts.into_iter().zip(1..).collect();
+        sort_slice_by_key(&mut by_address, |part| part.0.start);
         let symbols = moved(u32_at(file, c + 8)?)? as usize;
         for index in 0..u32_at(file, c + 12)? as usize {
             let at = symbols + index * 16;
-            let (kind, old) = (u8_at(&out, at + 4)?, u8_at(&out, at + 5)?);
+            let kind = u8_at(&out, at + 4)?;
             // Of the entries for a debugger: a function, a static, its begin and its end. In others the field is something else.
             let is_in_a_section = match kind & N_STAB {
                 0 => kind & N_TYPE == N_SECT,
-                _ => matches!(kind, 0x24 | 0x26 | 0x28 | 0x2e | 0x4e),
+                _ => matches!(kind, 0x24 | 0x26 | 0x28 | 0x2e | 0x4e) && u8_at(&out, at + 5)? != 0,
             };
-            let of_section = || parts.iter().filter(|p| p.0 == old);
-            if is_in_a_section && let Some(first) = of_section().next() {
-                let value = u64_at(&out, at + 8)?;
-                // One in a gap is of something that is gone.
-                out[at + 5] = of_section()
-                    .find(|p| p.1.contains(&value))
-                    .unwrap_or(first)
-                    .2;
+            let value = u64_at(&out, at + 8)?;
+            let after = by_address.partition_point(|part| part.0.start <= value);
+            // One in a gap is of something that is gone.
+            if is_in_a_section
+                && let Some(part) = by_address[..after]
+                    .last()
+                    .filter(|part| part.0.contains(&value))
+            {
+                out[at + 5] = part.1 as u8;
             }
         }
     }
